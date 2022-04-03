@@ -10,24 +10,24 @@ pub enum Split {
 }
 
 #[derive(Debug)]
-pub struct SwayStartWait {
-    pub app_id_match: String,
-    pub class_match: String,
+pub struct SwayLaunch<'a> {
+    pub app_id_match: &'a str,
+    pub class_match: &'a str,
     pub split: Option<Split>,
     pub timeout: time::Duration,
     pub verbose: bool,
-    pub command: String,
+    pub command: &'a str,
 }
 
-impl SwayStartWait {
-    pub fn print_verbose(&self, message: String) {
+impl SwayLaunch<'_> {
+    pub fn print_verbose(&self, message: &str) {
         match self.verbose {
             false => return,
             true => eprintln!("{}", message),
         }
     }
 
-    pub fn run_sway_command(&self, command: &String) -> Result<(), String> {
+    pub fn run_sway_command(&self, command: &str) -> Result<(), String> {
         let mut connection = match Connection::new() {
             Ok(connection) => connection,
             Err(error) => return Err(format!("{}", error)),
@@ -48,28 +48,28 @@ impl SwayStartWait {
         Ok(())
     }
 
-    pub fn check_app_id_window_match(&self, window: &WindowEvent, app_id_match: &String) -> bool {
+    pub fn check_app_id_window_match(&self, window: &WindowEvent, app_id_match: &str) -> bool {
         let app_id = match window.container.app_id.as_ref().ok_or(()) {
             Ok(app_id) => app_id,
             Err(_) => return false,
         };
 
         if app_id_match == app_id {
-            self.print_verbose(format!(
+            self.print_verbose(&format!(
                 "app_id match {} matches window app_id {}",
                 app_id_match, app_id
             ));
             return true;
         }
 
-        self.print_verbose(format!(
+        self.print_verbose(&format!(
             "app_id match {} does not match window app_id {}",
             app_id_match, app_id
         ));
         false
     }
 
-    pub fn check_class_window_match(&self, window: &WindowEvent, class_match: &String) -> bool {
+    pub fn check_class_window_match(&self, window: &WindowEvent, class_match: &str) -> bool {
         let window_properties = match window.container.window_properties.as_ref().ok_or(()) {
             Ok(window_properties) => window_properties,
             Err(_) => return false,
@@ -81,14 +81,14 @@ impl SwayStartWait {
         };
 
         if class_match == class {
-            self.print_verbose(format!(
+            self.print_verbose(&format!(
                 "class match {} matches window class {}",
                 class_match, class
             ));
             return true;
         }
 
-        self.print_verbose(format!(
+        self.print_verbose(&format!(
             "class match {} does not match window class {}",
             class_match, class
         ));
