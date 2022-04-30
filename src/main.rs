@@ -1,9 +1,8 @@
-use clap::Parser;
+use clap::{CommandFactory, ErrorKind, Parser};
+use regex::Regex;
 use std::{process, time};
-use swayipc::reply::{Event, WindowChange};
-use swayipc::{Connection, EventType, Fallible};
 
-mod sway_start_wait;
+mod sway_launch;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -18,95 +17,107 @@ struct Args {
 
     /// Change split for new window
     #[clap(arg_enum, short, long)]
-    split: Option<sway_start_wait::Split>,
+    split: Option<sway_launch::Split>,
+
+    /// Make new window floating
+    #[clap(short, long)]
+    floating: bool,
+
+    /// Add mark to new window
+    #[clap(short, long)]
+    mark: Option<String>,
+
+    /// Move window to new column
+    #[clap(short, long)]
+    new_column: bool,
+
+    /// Set height on new window
+    #[clap(long, parse(try_from_str=validate_size_argument))]
+    height: Option<String>,
+
+    /// Set width on new window
+    #[clap(long, parse(try_from_str=validate_size_argument))]
+    width: Option<String>,
+
+    /// Move window to new row
+    #[clap(short, long, short = 'r')]
+    new_row: bool,
 
     /// Timeout in seconds
     #[clap(short, long, default_value_t = 5)]
     timeout: u64,
+
+    /// Wait time in ms. Used for actions that do not have a corresponding Sway IPC event.
+    #[clap(short, long, default_value_t = 20)]
+    wait_time: u64,
+
+    /// Debug events. Output all Sway IPC events until stopped.
+    #[clap(short, long)]
+    debug_events: bool,
 
     /// Verbose output
     #[clap(short, long)]
     verbose: bool,
 
     /// Command to execute
-    command: String,
+    command: Option<String>,
 }
 
-fn main() -> Fallible<()> {
-    let subs = [EventType::Window];
-
+fn main() {
     let args = Args::parse();
-    let sway_launch = sway_start_wait::SwayLaunch {
+
+    // Validate that command is non empty when not running with --debug-events
+    let command = args.command.unwrap_or_default();
+    if !args.debug_events && command.is_empty() {
+        Args::command()
+            .error(ErrorKind::EmptyValue, "Missing COMMAND")
+            .exit();
+    }
+
+    // Setup SwayLaunch
+    let sway_launch = sway_launch::SwayLaunch {
         app_id_match: &args.app_id.unwrap_or_default(),
         class_match: &args.class.unwrap_or_default(),
         split: args.split,
+        floating: args.floating,
+        mark: &args.mark.unwrap_or_default(),
+        new_column: args.new_column,
+        new_row: args.new_row,
+        height: args.height.as_deref(),
+        width: args.width.as_deref(),
         timeout: time::Duration::from_secs(args.timeout),
+        wait_time: time::Duration::from_millis(args.wait_time),
         verbose: args.verbose,
-        command: &args.command,
+        command: &command,
     };
 
-    // Use Sway exec to runn supplied argument command
-    match sway_launch.run_sway_command(&format!("exec {}", &sway_launch.command)) {
-        Ok(()) => (),
+    // Run debug events and exit
+    if args.debug_events {
+        match sway_launch.debug_events() {
+            Ok(_) => process::exit(0),
+            Err(error) => {
+                eprintln!("{}", error);
+                process::exit(1);
+            }
+        }
+    }
+
+    // Normal run
+    match sway_launch.run() {
+        Ok(container_id) => println!("{}", container_id),
         Err(error) => {
-            eprintln!("Error: {}", error);
+            eprint!("{}", error);
             process::exit(1);
         }
+    };
+}
+
+fn validate_size_argument(value: &str) -> Result<String, String> {
+    let re = Regex::new(r"^\d+(px|ppt)$").unwrap();
+    match re.is_match(value) {
+        true => Ok(value.to_string()),
+        false => {
+            Err("Must be in format <HEIGHT>px|ppt. E.g. 300px/20ppt. ppt = percent".to_string())
+        }
     }
-
-    let start_time = time::Instant::now();
-    for event in Connection::new()?.subscribe(&subs)? {
-        // Timeout check. This will only run on every new event but that's
-        // okay for now.
-        if time::Instant::now() - start_time > sway_launch.timeout {
-            eprintln!(
-                "Error: {} sec timeout reached",
-                sway_launch.timeout.as_secs()
-            );
-            process::exit(1);
-        }
-
-        // Handle event. Continue to next event when event isn't a WindowEvent
-        // or not of type new or move
-        let event = event;
-        let window = match event? {
-            Event::Window(window) => window,
-            _ => continue,
-        };
-
-        match window.change {
-            WindowChange::New | WindowChange::Move => (),
-            _ => continue,
-        }
-        sway_launch.print_verbose(&format!("Window event id {}", window.container.id));
-
-        // Supplied argument app_id_match is not empty therefore
-        // check if current window event matches app_id. If not
-        // continue to the next window event.
-        if !sway_launch.app_id_match.is_empty()
-            && !sway_launch.check_app_id_window_match(&window, &sway_launch.app_id_match)
-        {
-            continue;
-        }
-
-        // Supplied argument class_match is not empty therefore
-        // check if current window event matches class. If not
-        // continue to the next window event.
-        if !sway_launch.class_match.is_empty()
-            && !sway_launch.check_class_window_match(&window, &sway_launch.class_match)
-        {
-            continue;
-        }
-
-        // Run split on the newly created window when set
-        if sway_launch.split.is_some() {
-            sway_launch.set_split_on_container(window.container.id, args.split.unwrap());
-        }
-
-        // Print container_id and break the event loop to exit the program
-        println!("{}", window.container.id);
-        break;
-    }
-
-    Ok(())
 }
