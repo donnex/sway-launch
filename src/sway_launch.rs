@@ -1,8 +1,6 @@
 use clap::ArgEnum;
 use std::{fmt, thread, time, vec};
-use swayipc::reply::WindowEvent;
-use swayipc::reply::{Event, WindowChange};
-use swayipc::{Connection, EventIterator, EventType};
+use swayipc::{Connection, Event, EventStream, EventType, WindowChange, WindowEvent};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ArgEnum, Debug)]
 pub enum Split {
@@ -468,7 +466,7 @@ fn new_connection() -> Result<Connection, String> {
     }
 }
 
-fn event_loop(subscriptions: &[EventType]) -> Result<EventIterator, String> {
+fn event_loop(subscriptions: &[EventType]) -> Result<EventStream, String> {
     match self::new_connection()?.subscribe(subscriptions) {
         Ok(event_iterator) => Ok(event_iterator),
         Err(error) => Err(error.to_string()),
@@ -482,9 +480,9 @@ fn run_sway_command(command: &str) -> Result<(), String> {
     };
 
     if let Some(outcome) = outcomes.into_iter().next() {
-        match outcome.success {
-            true => return Ok(()),
-            false => return Err(outcome.error.unwrap_or_default()),
+        match outcome {
+            Ok(()) => return Ok(()),
+            Err(error) => return Err(error.to_string()),
         }
     }
 
