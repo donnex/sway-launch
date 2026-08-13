@@ -208,7 +208,7 @@ impl SwayAction<'_> {
             SwayAction::Mark {
                 container_id, mark, ..
             } => {
-                format!("[con_id={}] mark {}", container_id, mark)
+                format!("[con_id={}] mark {}", container_id, quote_sway_string(mark))
             }
             SwayAction::NewColumn { container_id, .. } => {
                 format!("[con_id={}] move right", container_id)
@@ -489,6 +489,15 @@ fn run_sway_command(command: &str) -> Result<(), String> {
     Err(format!("{} command failed", command))
 }
 
+/// Quotes a value for safe interpolation into a Sway IPC command string.
+/// Sway's command parser splits on `,`/`;` and whitespace outside quotes, so
+/// an unquoted value containing one of those could inject additional
+/// commands; wrapping it in escaped double quotes forces it to be read back
+/// as a single literal argument.
+fn quote_sway_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 fn window_app_id_match(window: &WindowEvent, app_id_match: &str) -> bool {
     let window_app_id = match window.container.app_id.as_ref().ok_or(()) {
         Ok(app_id) => app_id,
@@ -636,5 +645,35 @@ impl SwayLaunch<'_> {
         }
 
         Ok(container_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::quote_sway_string;
+
+    #[test]
+    fn quote_sway_string_wraps_plain_value() {
+        assert_eq!(quote_sway_string("foo"), "\"foo\"");
+    }
+
+    #[test]
+    fn quote_sway_string_escapes_embedded_quotes() {
+        assert_eq!(quote_sway_string("foo\"bar"), "\"foo\\\"bar\"");
+    }
+
+    #[test]
+    fn quote_sway_string_escapes_backslashes() {
+        assert_eq!(quote_sway_string("foo\\bar"), "\"foo\\\\bar\"");
+    }
+
+    #[test]
+    fn quote_sway_string_neutralizes_command_separators() {
+        // Regression test: an unquoted mark containing a command separator
+        // used to let extra Sway commands be injected into the same call.
+        let injected = "foo, exec malicious-command";
+        let quoted = quote_sway_string(injected);
+        assert_eq!(quoted, "\"foo, exec malicious-command\"");
+        assert!(!quoted.trim_matches('"').contains('"'));
     }
 }
