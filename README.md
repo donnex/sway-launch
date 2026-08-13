@@ -18,8 +18,8 @@ cargo build --release
 
 The binary is written to `target/release/sway-launch` — put it somewhere on your `PATH`.
 
-Prebuilt Linux x86_64 binaries for tagged releases are also available from the repository's
-Releases page.
+Prebuilt Linux x86_64 binaries for tagged releases are also available from the
+[Releases page](https://github.com/donnex/sway-launch/releases).
 
 ```shell
 Usage: sway-launch [OPTIONS] [COMMAND]
