@@ -1,8 +1,8 @@
-use clap::ArgEnum;
+use clap::ValueEnum;
 use std::{fmt, thread, time, vec};
 use swayipc::{Connection, Event, EventStream, EventType, WindowChange, WindowEvent};
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ArgEnum, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
 pub enum Split {
     V,
     H,

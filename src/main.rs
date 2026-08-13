@@ -1,4 +1,4 @@
-use clap::{CommandFactory, ErrorKind, Parser};
+use clap::{error::ErrorKind, CommandFactory, Parser};
 use regex::Regex;
 use std::{process, time};
 
@@ -16,7 +16,7 @@ struct Args {
     class: Option<String>,
 
     /// Change split for new window
-    #[clap(arg_enum, short, long)]
+    #[clap(value_enum, short, long)]
     split: Option<sway_launch::Split>,
 
     /// Make new window floating
@@ -32,11 +32,11 @@ struct Args {
     new_column: bool,
 
     /// Set height on new window
-    #[clap(long, parse(try_from_str=validate_size_argument))]
+    #[clap(long, value_parser = validate_size_argument)]
     height: Option<String>,
 
     /// Set width on new window
-    #[clap(long, parse(try_from_str=validate_size_argument))]
+    #[clap(long, value_parser = validate_size_argument)]
     width: Option<String>,
 
     /// Move window to new row (move down)
@@ -70,7 +70,7 @@ fn main() {
     let command = args.command.unwrap_or_default();
     if !args.debug_events && command.is_empty() {
         Args::command()
-            .error(ErrorKind::EmptyValue, "Missing COMMAND")
+            .error(ErrorKind::MissingRequiredArgument, "Missing COMMAND")
             .exit();
     }
 
