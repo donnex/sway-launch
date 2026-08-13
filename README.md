@@ -1,6 +1,25 @@
 # sway-launch
 
-`sway-launch` is a [Sway](https://swaywm.org/) tool for launching applications with windows and run addition actions against the new window. This can solve some problems like *Create a new floating Firefox window* or *Launch application and wait for the window before exiting*. This in turn can be used to create scripts that setups a workspace with some basic saved layouts.
+`sway-launch` is a [Sway](https://swaywm.org/) tool for launching applications and running
+additional actions against the new window they create. This solves problems like *creating a new
+floating Firefox window* or *launching an application and waiting for its window before exiting*.
+In turn, this can be used to build scripts that set up a workspace with a basic saved layout.
+
+Requires a running Sway session — `sway-launch` talks to Sway over its IPC socket (the same one
+`swaymsg` uses), so it won't do anything useful outside of one.
+
+## Installation
+
+Build from source with Cargo:
+
+```shell
+cargo build --release
+```
+
+The binary is written to `target/release/sway-launch` — put it somewhere on your `PATH`.
+
+Prebuilt Linux x86_64 binaries for tagged releases are also available from the repository's
+Releases page.
 
 ```shell
 Usage: sway-launch [OPTIONS] [COMMAND]
@@ -26,7 +45,8 @@ Options:
   -V, --version                Print version
 ```
 
-The most basic use just execute the command given and it then waits for a matching Sway IPC new window event before returning the unique container id.
+The most basic use is to just execute the given command; it then waits for a matching Sway IPC
+new-window event before returning the window's unique container id.
 
 ```shell
 $ sway-launch kitty
@@ -40,8 +60,12 @@ $ sway-launch 'firefox --new-window https://example.com'
 272
 ```
 
-While this is not very useful on it's own the fact that all commands are blocking (waits for the window to be created before exiting) multiple `sway-launch` commands can be combined in scripts. This makes sure the previous window is created before the next command runs and no custom `sleep` needs to be run. The next command will run as soon as the previous window was created.
-Since the container id of the matching window is returned it's also possible to combine `sway-launch` with custom `swaymsg` commands.
+On its own this isn't very useful, but since every `sway-launch` command blocks until its window
+is created, multiple commands can be chained together in a script without needing a manual
+`sleep` — each command starts only once the previous window exists.
+
+Since the container id of the matching window is returned, it's also possible to combine
+`sway-launch` with custom `swaymsg` commands.
 
 ```shell
 #!/bin/sh
@@ -55,7 +79,9 @@ sway-launch 'firefox --new-window https://example.com'
 sway-launch 'firefox --new-window https://example.com'
 ```
 
-It is possible to add addition checks against the new window. This makes sure the new window matches `app_id` or `class`. Could be useful when multiple commands are run at the same time in order to make sure the correct window are matched.
+It is possible to add additional checks against the new window, to make sure it matches a given
+`app_id` or `class`. This is useful when multiple commands run at the same time and you need to
+make sure each one matches the correct window.
 
 ```shell
 sway-launch -a kitty kitty
@@ -64,11 +90,17 @@ sway-launch -c Code code
 
 ## Recreatable layouts
 
-Since `sway-launch` runs everything blocking it's possible to combine the different arguments to created scripts that recreate a static window setup/layout. For example always setup workspace 1 the same way when Sway starts or start VS Code together with tree terminals arranged in a cetain way with a launch script.
+Since `sway-launch` blocks on every command, its arguments can be combined into scripts that
+recreate a static window setup/layout — for example, always setting up workspace 1 the same way
+when Sway starts, or starting VS Code together with three terminals arranged in a certain way via
+a launch script.
 
-Not everything will work with the current implementation. It's all dependend on the layout and current workspace layout. Most of the issues should be fixable by catching the container id and run some additional `swaymsg` commands.
+Not everything will work with the current implementation — it all depends on the layout and the
+current workspace state. Most issues should be fixable by capturing the container id and running
+some additional `swaymsg` commands.
 
-The `kitty` terminal will be used in these examples. It could as well be Firefox or any other slow loading window/application.
+The `kitty` terminal will be used in these examples. It could as well be Firefox or any other
+slow-loading window/application.
 
 ### Examples
 
@@ -87,15 +119,19 @@ More advanced layouts should be possible by focusing earlier windows between lau
 
 ## In depth
 
-It's possible to run additional actions on the new window. Currently all these actions will wait for the corresponding Sway IPC event or a static `--wait-time` ms for actions without an event.
+It's possible to run additional actions on the new window. Each action waits for its
+corresponding Sway IPC event, or for a static `--wait-time` ms if the action doesn't have one.
 
 Multiple actions can be added to `sway-launch` and they'll be run one after another.
 
-These exist for convinience. You could as well just get the container id and run manual `swaymsg` commands against the container id, setup windows rules with mark or other window rules.
+These flags exist for convenience — you could just as well get the container id and run manual
+`swaymsg` commands against it, set up window rules with a mark, or use other window rules
+directly.
 
 ### Floating
 
-Makes the windows floating. Useful for applications with a single shared `app_id`. Firefox for example uses `app_id=firefox`. With `--floating` the window will be set to floating.
+Makes the window floating. Useful for applications that share a single `app_id` across all their
+windows — Firefox, for example, uses `app_id=firefox`.
 
 ```shell
 sway-launch --floating 'firefox --new-window https://example.com'
@@ -103,7 +139,9 @@ sway-launch --floating 'firefox --new-window https://example.com'
 
 ### Mark
 
-Add a mark to the new window. This is useful when additional rules are setup in Sway. For example a left floating Firefox window with devdocs.io opened.
+Add a mark to the new window. This is useful when additional rules are set up in Sway — for
+example, a floating Firefox window pinned to the left side of the screen with a specific page
+open.
 
 ```shell
 # sway config
@@ -116,7 +154,8 @@ sway-launch --mark firefox-floating-left 'firefox --new-window https://example.c
 
 ### Height and width
 
-Set the height and widht on the new window. This usually works but it's dependend on the current Sway container layout. Should work on both tiled and floating windows.
+Set the height and width of the new window. This usually works, but it depends on the current
+Sway container layout — should work on both tiled and floating windows.
 
 The format used is `100px` or `100ppt` for percent.
 
@@ -152,7 +191,9 @@ Sway command: [con_id=437] splith
 
 ### Wait time
 
-Some actions like split and move does not have a corresponding Sway IPC event. For these actions a static sleep time will be used. For some machines or setups the wait time must be set higher or lower than the default.
+Some actions, like split and move, do not have a corresponding Sway IPC event. For these, a
+static sleep time is used instead. Depending on the machine or setup, the wait time may need to
+be set higher or lower than the default.
 
 ```shell
 ...
