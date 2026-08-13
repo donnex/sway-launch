@@ -27,7 +27,7 @@ struct Args {
     #[clap(short, long)]
     mark: Option<String>,
 
-    /// Move window to new column
+    /// Move window to new column (move right)
     #[clap(short, long)]
     new_column: bool,
 
@@ -39,7 +39,7 @@ struct Args {
     #[clap(long, parse(try_from_str=validate_size_argument))]
     width: Option<String>,
 
-    /// Move window to new row
+    /// Move window to new row (move down)
     #[clap(short, long, short = 'r')]
     new_row: bool,
 
