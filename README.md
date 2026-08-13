@@ -3,29 +3,27 @@
 `sway-launch` is a [Sway](https://swaywm.org/) tool for launching applications with windows and run addition actions against the new window. This can solve some problems like *Create a new floating Firefox window* or *Launch application and wait for the window before exiting*. This in turn can be used to create scripts that setups a workspace with some basic saved layouts.
 
 ```shell
-USAGE:
-    sway-launch [OPTIONS] [COMMAND]
+Usage: sway-launch [OPTIONS] [COMMAND]
 
-ARGS:
-    <COMMAND>    Command to execute
+Arguments:
+  [COMMAND]  Command to execute
 
-OPTIONS:
-    -a, --app-id <APP_ID>          app_id match
-    -c, --class <CLASS>            class match
-    -d, --debug-events             Debug events. Output all Sway IPC events until stopped
-    -f, --floating                 Make new window floating
-    -h, --help                     Print help information
-        --height <HEIGHT>          Set height on new window
-    -m, --mark <MARK>              Add mark to new window
-    -n, --new-column               Move window to new column (move right)
-    -r, --new-row                  Move window to new row (move down)
-    -s, --split <SPLIT>            Change split for new window [possible values: v, h]
-    -t, --timeout <TIMEOUT>        Timeout in seconds [default: 5]
-    -v, --verbose                  Verbose output
-    -V, --version                  Print version information
-    -w, --wait-time <WAIT_TIME>    Wait time in ms. Used for actions that do not have a
-                                   corresponding Sway IPC event [default: 20]
-        --width <WIDTH>            Set width on new window
+Options:
+  -a, --app-id <APP_ID>        app_id match
+  -c, --class <CLASS>          class match
+  -s, --split <SPLIT>          Change split for new window [possible values: v, h]
+  -f, --floating               Make new window floating
+  -m, --mark <MARK>            Add mark to new window
+  -n, --new-column             Move window to new column (move right)
+      --height <HEIGHT>        Set height on new window
+      --width <WIDTH>          Set width on new window
+  -r, --new-row                Move window to new row (move down)
+  -t, --timeout <TIMEOUT>      Timeout in seconds [default: 5]
+  -w, --wait-time <WAIT_TIME>  Wait time in ms. Used for actions that do not have a corresponding Sway IPC event [default: 20]
+  -d, --debug-events           Debug events. Output all Sway IPC events until stopped
+  -v, --verbose                Verbose output
+  -h, --help                   Print help
+  -V, --version                Print version
 ```
 
 The most basic use just execute the command given and it then waits for a matching Sway IPC new window event before returning the unique container id.

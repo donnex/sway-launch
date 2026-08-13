@@ -17,8 +17,9 @@ manual `sleep`s. See `README.md` for full CLI usage and layout-building examples
 - Run: `cargo run -- [OPTIONS] [COMMAND]` (e.g. `cargo run -- -a kitty kitty`)
 - Format: `cargo fmt`
 - Lint: `cargo clippy`
-- Test: `cargo test` — note there are currently no `#[test]` functions in the crate; this will
-  succeed trivially. Manual layout verification lives in `layout-tests/` (see below).
+- Test: `cargo test` — runs the unit tests in `src/sway_launch.rs` (currently covering
+  `quote_sway_string`, the Sway command-string quoting helper). Manual layout verification lives
+  in `layout-tests/` (see below).
   - Run a single test: `cargo test <test_name>`
   - Run with debug output: `cargo test -- --nocapture`
 
@@ -37,7 +38,11 @@ The crate is two files:
 Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`, `NewColumn`,
 `NewRow`, `Mark`, `Height`, `Width`). Each variant knows how to:
 
-- render itself as a `swaymsg` command string (`sway_command()`)
+- render itself as a `swaymsg` command string (`sway_command()`) — `Mark`'s value is wrapped
+  through `quote_sway_string()` before interpolation, since Sway's command parser splits on
+  unquoted `,`/`;` and an unescaped mark could otherwise inject additional commands; `Height` and
+  `Width` don't need this since they're already regex-constrained in `main.rs`, and `Exec`'s
+  command is passed through unquoted by design (the tool's whole job is to run it)
 - declare which `WindowChange` event(s) would confirm it completed (`matching_window_change_events()`)
 - declare its IPC event subscription (`event_subscription()`)
 
