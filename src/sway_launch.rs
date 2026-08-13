@@ -198,9 +198,9 @@ impl SwayAction<'_> {
                 ..
             } => {
                 if split == &Split::V {
-                    return format!("[con_id={}] splitv", container_id);
+                    format!("[con_id={}] splitv", container_id)
                 } else if split == &Split::H {
-                    return format!("[con_id={}] splith", container_id);
+                    format!("[con_id={}] splith", container_id)
                 } else {
                     unreachable!();
                 }
@@ -383,7 +383,7 @@ impl SwayAction<'_> {
                     if self.verbose() {
                         println!(
                             "Event match: {:?} container id {} ({})",
-                            &window.change, &window.container.id, result
+                            window.change, window.container.id, result
                         );
                     }
 
@@ -394,7 +394,7 @@ impl SwayAction<'_> {
                     if self.verbose() {
                         println!(
                             "Event mismatch: {:?} container id {} ({})",
-                            &window.change, &window.container.id, error_result
+                            window.change, window.container.id, error_result
                         );
                     }
                 }
@@ -590,10 +590,10 @@ impl SwayLaunch<'_> {
             }
             .run()?;
         }
-        if self.split.is_some() {
+        if let Some(split) = self.split {
             SwayAction::Split {
                 container_id,
-                split: self.split.unwrap(),
+                split,
                 verbose: self.verbose,
                 wait_time: self.wait_time,
             }
@@ -607,19 +607,19 @@ impl SwayLaunch<'_> {
             }
             .run()?;
         }
-        if self.height.is_some() {
+        if let Some(height) = self.height {
             SwayAction::Height {
                 container_id,
-                height: self.height.unwrap(),
+                height,
                 verbose: self.verbose,
                 wait_time: self.wait_time,
             }
             .run()?;
         }
-        if self.width.is_some() {
+        if let Some(width) = self.width {
             SwayAction::Width {
                 container_id,
-                width: self.width.unwrap(),
+                width,
                 verbose: self.verbose,
                 wait_time: self.wait_time,
             }
