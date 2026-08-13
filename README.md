@@ -86,9 +86,6 @@ sway-launch -a kitty kitty
 ```
 
 More advanced layouts should be possible by focusing earlier windows between launches.
-EXAMPLE
-
-## Future ideas
 
 ## In depth
 
