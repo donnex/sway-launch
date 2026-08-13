@@ -462,8 +462,8 @@ linter, a new required check, a build step added or removed), the workflow file(
 with it, in the same change that changed the tooling. Don't let this slip to a follow-up — treat an
 out-of-date workflow as a bug, the same way a stale doc would be.
 
-There is no CI workflow set up yet, and no git remote configured for this repo. Per the rule above,
-this is a standing prompt to suggest CI setup once a remote exists (or sooner, if asked).
+There is no CI workflow set up yet. This repo now has a GitHub `origin` remote configured, so per
+the rule above this is a standing prompt to suggest a GitHub Actions workflow.
 
 ## Content
 
@@ -493,8 +493,8 @@ matters more once the repo is public.
 ## Issues
 
 For tracking issues on GitHub (github.com or a GitHub Enterprise Server host), managed with the
-`gh` CLI (<https://cli.github.com/>) rather than the web UI for routine operations. This repo has
-no GitHub remote configured yet — these conventions apply once one is set up.
+`gh` CLI (<https://cli.github.com/>) rather than the web UI for routine operations. This repo now
+has a GitHub `origin` remote configured, so these conventions are active.
 
 **GitHub issues are frequently public, and even a private repo's issues can be read by anyone with
 access to it — treat every issue title, body, comment, and label as content that could leak beyond
