@@ -462,8 +462,11 @@ linter, a new required check, a build step added or removed), the workflow file(
 with it, in the same change that changed the tooling. Don't let this slip to a follow-up — treat an
 out-of-date workflow as a bug, the same way a stale doc would be.
 
-There is no CI workflow set up yet. This repo now has a GitHub `origin` remote configured, so per
-the rule above this is a standing prompt to suggest a GitHub Actions workflow.
+GitHub Actions is set up: `.github/workflows/check.yml` runs `cargo fmt --check`, `cargo clippy`,
+`cargo build`, and `cargo test` on every push and pull request, plus a `cargo audit` job via the
+`rustsec/audit-check` action. `.github/workflows/release.yml` re-runs the same checks against the
+exact tagged commit, then builds and publishes a release archive when a `v*` tag is pushed. Keep
+both in sync with this file's Rust conventions above whenever the checks change.
 
 ## Content
 
