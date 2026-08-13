@@ -493,6 +493,12 @@ matters more once the repo is public.
   data and replace it with a placeholder. When in doubt, default to a placeholder rather than
   asking whether the real value is fine to use.
 
+**Approved exception:** `README.md`'s Installation section links directly to this repo's own
+GitHub Releases page. That's a real URL, but it's self-referential (the repo linking to its own
+page) rather than a leak of unrelated real-world data, and the user explicitly signed off on it
+after being asked. Don't flag it in a future content-policy review, and don't use it as precedent
+for adding other real URLs without the same explicit confirmation.
+
 ## Issues
 
 For tracking issues on GitHub (github.com or a GitHub Enterprise Server host), managed with the
