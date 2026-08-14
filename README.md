@@ -88,6 +88,9 @@ sway-launch -a kitty kitty
 sway-launch -c Code code
 ```
 
+`--app-id` and `--class` can't be combined — pick whichever matches the application (native
+Wayland apps expose `app_id`; XWayland apps expose `class`).
+
 ## Recreatable layouts
 
 Since `sway-launch` blocks on every command, its arguments can be combined into scripts that

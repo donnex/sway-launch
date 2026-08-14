@@ -1,8 +1,9 @@
 use clap::ValueEnum;
-use std::{fmt, thread, time, vec};
+use std::sync::mpsc;
+use std::{fmt, thread, time};
 use swayipc::{Connection, Event, EventStream, EventType, WindowChange, WindowEvent};
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+#[derive(Copy, Clone, PartialEq, ValueEnum, Debug)]
 pub enum Split {
     V,
     H,
@@ -69,7 +70,7 @@ impl fmt::Display for WindowEventMatchError {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Copy, Clone, Debug)]
 enum SwayAction<'a> {
     Exec {
         command: &'a str,
@@ -196,15 +197,10 @@ impl SwayAction<'_> {
                 container_id,
                 split,
                 ..
-            } => {
-                if split == &Split::V {
-                    format!("[con_id={}] splitv", container_id)
-                } else if split == &Split::H {
-                    format!("[con_id={}] splith", container_id)
-                } else {
-                    unreachable!();
-                }
-            }
+            } => match split {
+                Split::V => format!("[con_id={}] splitv", container_id),
+                Split::H => format!("[con_id={}] splith", container_id),
+            },
             SwayAction::Mark {
                 container_id, mark, ..
             } => {
@@ -281,13 +277,17 @@ impl SwayAction<'_> {
 
     fn matching_window_change_events(&self) -> Option<Vec<WindowChange>> {
         match self {
-            SwayAction::Exec { .. } => Some(vec![WindowChange::New, WindowChange::Move]),
+            // Only `New` identifies a window as the one just launched.
+            // `Move` ("the view has been reparented in the tree") fires for
+            // any window whenever Sway's tree is restructured, including
+            // pre-existing windows unrelated to this exec — accepting it
+            // here let sway-launch return the wrong container id.
+            SwayAction::Exec { .. } => Some(vec![WindowChange::New]),
             SwayAction::Floating { .. } => Some(vec![WindowChange::Floating]),
             SwayAction::NewColumn { .. } | SwayAction::NewRow { .. } => {
                 Some(vec![WindowChange::Move])
             }
             SwayAction::Mark { .. } => Some(vec![WindowChange::Mark]),
-            // Some actions does not trigger a corresponding Sway IPC event
             SwayAction::Split { .. } | SwayAction::Height { .. } | SwayAction::Width { .. } => None,
         }
     }
@@ -308,8 +308,6 @@ impl SwayAction<'_> {
             println!("Sway action: {}", self);
         }
 
-        // If action has a corresponding change event run action and wait for event.
-        // If not just run the action and sleep for set wait time.
         match self.matching_window_change_events() {
             Some(_) => self.run_wait_matching_events(),
             None => self.run_wait_time(),
@@ -326,10 +324,9 @@ impl SwayAction<'_> {
             );
         }
 
-        // Wait a few ms before and after run of Sway command.
-        // Before to allow other running IPC clients to finish their commands
-        // After to allow the actual command to finish before running the next
-        // action.
+        // Wait before and after running the Sway command: before, to let
+        // other running IPC clients finish their own commands; after, to
+        // let this command finish before the next action runs.
         thread::sleep(wait_time);
 
         let sway_command = self.sway_command();
@@ -344,41 +341,59 @@ impl SwayAction<'_> {
     }
 
     fn run_wait_matching_events(&self) -> Result<i64, String> {
-        // Start time for timeout check
-        let start_time = time::Instant::now();
-
-        // Setup event loop
         let subscription = self.event_subscription().unwrap();
         let event_loop = self::event_loop(&[subscription])?;
 
-        // Run Sway command for action and wait for a matching event in the
-        // event loop
         let sway_command = self.sway_command();
         if self.verbose() {
             println!("Sway command: {}", sway_command);
         }
         run_sway_command(&sway_command)?;
-        for event in event_loop {
-            // Timeout check. This will only run on every new event but that's
-            // okay for now.
-            if time::Instant::now() - start_time > self.timeout() {
+
+        // Read events on a separate thread and forward them through a
+        // channel, so recv_timeout() below enforces a real deadline even if
+        // the event stream itself never produces another event (a blocking
+        // iterator has no way to time out on its own). The thread may
+        // outlive this function if it's still blocked on the socket when we
+        // return — harmless, since sway-launch is a short-lived process and
+        // the thread dies with it.
+        let (event_sender, event_receiver) = mpsc::channel();
+        thread::spawn(move || {
+            for event in event_loop {
+                if event_sender.send(event).is_err() {
+                    break;
+                }
+            }
+        });
+
+        let deadline = time::Instant::now() + self.timeout();
+        loop {
+            let remaining = deadline.saturating_duration_since(time::Instant::now());
+            if remaining.is_zero() {
                 return Err(format!("{} sec timeout reached", self.timeout().as_secs()));
             }
+
+            let event = match event_receiver.recv_timeout(remaining) {
+                Ok(event) => event,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    return Err(format!("{} sec timeout reached", self.timeout().as_secs()));
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err("Event stream closed unexpectedly".to_string());
+                }
+            };
 
             let event = match event {
                 Ok(event) => event,
                 Err(error) => return Err(error.to_string()),
             };
 
-            // Continue to next event when event isn't a window event
             let window = match event {
                 Event::Window(window) => window,
                 _ => continue,
             };
 
-            // Check if window event matches the current action
             match self.matches_window_event(&window) {
-                // Event match, return container id
                 Ok(result) => {
                     if self.verbose() {
                         println!(
@@ -389,7 +404,6 @@ impl SwayAction<'_> {
 
                     return Ok(window.container.id);
                 }
-                // No event match
                 Err(error_result) => {
                     if self.verbose() {
                         println!(
@@ -400,8 +414,6 @@ impl SwayAction<'_> {
                 }
             }
         }
-
-        Err("No matching event".to_string())
     }
 
     fn matches_window_event(
@@ -410,23 +422,16 @@ impl SwayAction<'_> {
     ) -> Result<WindowEventMatch, WindowEventMatchError> {
         let matching_window_change_events = self.matching_window_change_events().unwrap();
 
-        // Window event change type mismatch
         if !matching_window_change_events.contains(&window.change) {
             return Err(WindowEventMatchError::EventChangeTypeMismatch);
         }
 
-        // Check if window matches action.
-        // For exec compare app_id or class when set.
-        // For all other actions compare window container id for match.
         match self {
-            // Action is exec (new window). Check if window
-            // is a match and return container id.
             SwayAction::Exec {
                 app_id_match,
                 class_match,
                 ..
             } => {
-                // app_id_match is set
                 if !app_id_match.is_empty() {
                     match window_app_id_match(window, app_id_match) {
                         true => return Ok(WindowEventMatch::WindowAppId),
@@ -434,7 +439,6 @@ impl SwayAction<'_> {
                     }
                 }
 
-                // class_match is set
                 if !class_match.is_empty() {
                     match window_class_match(window, class_match) {
                         true => return Ok(WindowEventMatch::WindowClass),
@@ -442,12 +446,8 @@ impl SwayAction<'_> {
                     }
                 }
 
-                // When no app_id_match or class_match set return Ok()
-                // and consider the new window a match.
                 return Ok(WindowEventMatch::NewWindowMatchWithoutCheck);
             }
-            // All other actions check that container id of the event
-            // matches our container id set on event.
             _ => {
                 if self.container_id().unwrap() == window.container.id {
                     return Ok(WindowEventMatch::WindowContainerIdMatch);
@@ -479,14 +479,28 @@ fn run_sway_command(command: &str) -> Result<(), String> {
         Err(error) => return Err(error.to_string()),
     };
 
-    if let Some(outcome) = outcomes.into_iter().next() {
-        match outcome {
-            Ok(()) => return Ok(()),
-            Err(error) => return Err(error.to_string()),
+    first_outcome_error(outcomes, command)
+}
+
+/// Sway splits a command string into multiple sub-commands on unquoted
+/// `,`/`;`, so `run_command()` can return more than one outcome for a single
+/// call. Report the first failure found among all of them, rather than only
+/// the first outcome — an early success must not hide a later failure.
+fn first_outcome_error<E: fmt::Display>(
+    outcomes: Vec<Result<(), E>>,
+    command: &str,
+) -> Result<(), String> {
+    if outcomes.is_empty() {
+        return Err(format!("{} command failed", command));
+    }
+
+    for outcome in outcomes {
+        if let Err(error) = outcome {
+            return Err(error.to_string());
         }
     }
 
-    Err(format!("{} command failed", command))
+    Ok(())
 }
 
 /// Quotes a value for safe interpolation into a Sway IPC command string.
@@ -568,7 +582,6 @@ impl SwayLaunch<'_> {
     }
 
     pub fn run(&self) -> Result<i64, String> {
-        // Run command by using exec
         let container_id = SwayAction::Exec {
             command: self.command,
             app_id_match: self.app_id_match,
@@ -582,7 +595,6 @@ impl SwayLaunch<'_> {
             println!("New window match container id: {}", container_id);
         }
 
-        // Run actions on new window
         if self.new_column {
             SwayAction::NewColumn {
                 container_id,
@@ -650,7 +662,52 @@ impl SwayLaunch<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::quote_sway_string;
+    use super::*;
+
+    fn window_event(
+        change: &str,
+        container_id: i64,
+        app_id: Option<&str>,
+        class: Option<&str>,
+    ) -> WindowEvent {
+        let app_id_json = match app_id {
+            Some(value) => format!("\"{}\"", value),
+            None => "null".to_string(),
+        };
+        let window_properties_json = match class {
+            Some(value) => format!("{{\"class\": \"{}\"}}", value),
+            None => "null".to_string(),
+        };
+
+        let json = format!(
+            r#"{{
+                "change": "{change}",
+                "container": {{
+                    "id": {container_id},
+                    "type": "con",
+                    "border": "normal",
+                    "current_border_width": 0,
+                    "layout": "none",
+                    "orientation": "none",
+                    "rect": {{"x": 0, "y": 0, "width": 0, "height": 0}},
+                    "window_rect": {{"x": 0, "y": 0, "width": 0, "height": 0}},
+                    "deco_rect": {{"x": 0, "y": 0, "width": 0, "height": 0}},
+                    "geometry": {{"x": 0, "y": 0, "width": 0, "height": 0}},
+                    "urgent": false,
+                    "focused": false,
+                    "focus": [],
+                    "floating_nodes": [],
+                    "sticky": false,
+                    "app_id": {app_id_json},
+                    "window_properties": {window_properties_json}
+                }}
+            }}"#
+        );
+
+        serde_json::from_str(&json).expect("valid WindowEvent test fixture")
+    }
+
+    // quote_sway_string
 
     #[test]
     fn quote_sway_string_wraps_plain_value() {
@@ -675,5 +732,723 @@ mod tests {
         let quoted = quote_sway_string(injected);
         assert_eq!(quoted, "\"foo, exec malicious-command\"");
         assert!(!quoted.trim_matches('"').contains('"'));
+    }
+
+    // Split
+
+    #[test]
+    fn split_display_v_is_vertical() {
+        assert_eq!(Split::V.to_string(), "Vertical");
+    }
+
+    #[test]
+    fn split_display_h_is_horizontal() {
+        assert_eq!(Split::H.to_string(), "Horizontal");
+    }
+
+    // SwayAction::sway_command
+
+    #[test]
+    fn sway_command_exec() {
+        let action = SwayAction::Exec {
+            command: "kitty",
+            app_id_match: "",
+            class_match: "",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(action.sway_command(), "exec kitty");
+    }
+
+    #[test]
+    fn sway_command_floating() {
+        let action = SwayAction::Floating {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(action.sway_command(), "[con_id=42] floating enable");
+    }
+
+    #[test]
+    fn sway_command_split_v() {
+        let action = SwayAction::Split {
+            container_id: 42,
+            split: Split::V,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(action.sway_command(), "[con_id=42] splitv");
+    }
+
+    #[test]
+    fn sway_command_split_h() {
+        let action = SwayAction::Split {
+            container_id: 42,
+            split: Split::H,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(action.sway_command(), "[con_id=42] splith");
+    }
+
+    #[test]
+    fn sway_command_mark_quotes_the_mark() {
+        let action = SwayAction::Mark {
+            container_id: 42,
+            mark: "foo, exec evil",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(action.sway_command(), "[con_id=42] mark \"foo, exec evil\"");
+    }
+
+    #[test]
+    fn sway_command_new_column() {
+        let action = SwayAction::NewColumn {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(action.sway_command(), "[con_id=42] move right");
+    }
+
+    #[test]
+    fn sway_command_new_row() {
+        let action = SwayAction::NewRow {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(action.sway_command(), "[con_id=42] move down");
+    }
+
+    #[test]
+    fn sway_command_height() {
+        let action = SwayAction::Height {
+            container_id: 42,
+            height: "300px",
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(action.sway_command(), "[con_id=42] resize set height 300px");
+    }
+
+    #[test]
+    fn sway_command_width() {
+        let action = SwayAction::Width {
+            container_id: 42,
+            width: "20ppt",
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(action.sway_command(), "[con_id=42] resize set width 20ppt");
+    }
+
+    // SwayAction::Display
+
+    #[test]
+    fn display_exec() {
+        let action = SwayAction::Exec {
+            command: "kitty",
+            app_id_match: "kitty",
+            class_match: "",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(
+            action.to_string(),
+            "Exec \"kitty\" (app_id_match: \"kitty\") (class_match: \"\")"
+        );
+    }
+
+    #[test]
+    fn display_split() {
+        let action = SwayAction::Split {
+            container_id: 42,
+            split: Split::H,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(
+            action.to_string(),
+            "Split (container id: 42) (split: Horizontal)"
+        );
+    }
+
+    #[test]
+    fn display_floating() {
+        let action = SwayAction::Floating {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(action.to_string(), "Floating (container_id: 42)");
+    }
+
+    #[test]
+    fn display_new_column() {
+        let action = SwayAction::NewColumn {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(action.to_string(), "New column (container_id: 42)");
+    }
+
+    #[test]
+    fn display_new_row() {
+        let action = SwayAction::NewRow {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(action.to_string(), "New row (container_id: 42)");
+    }
+
+    #[test]
+    fn display_mark() {
+        let action = SwayAction::Mark {
+            container_id: 42,
+            mark: "foo",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(action.to_string(), "Mark (container id: 42) (mark: foo)");
+    }
+
+    #[test]
+    fn display_height() {
+        let action = SwayAction::Height {
+            container_id: 42,
+            height: "300px",
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(
+            action.to_string(),
+            "Height (container id: 42) (height: 300px)"
+        );
+    }
+
+    #[test]
+    fn display_width() {
+        let action = SwayAction::Width {
+            container_id: 42,
+            width: "20ppt",
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(
+            action.to_string(),
+            "Width (container id: 42) (width: 20ppt)"
+        );
+    }
+
+    // SwayAction accessors
+
+    #[test]
+    fn verbose_reflects_the_flag() {
+        let action = SwayAction::Floating {
+            container_id: 42,
+            verbose: true,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert!(action.verbose());
+    }
+
+    #[test]
+    fn timeout_returns_the_configured_duration() {
+        let action = SwayAction::Floating {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(7),
+        };
+        assert_eq!(action.timeout(), time::Duration::from_secs(7));
+    }
+
+    #[test]
+    #[should_panic]
+    fn timeout_panics_for_actions_without_one() {
+        let action = SwayAction::Split {
+            container_id: 42,
+            split: Split::V,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        action.timeout();
+    }
+
+    #[test]
+    fn wait_time_returns_the_configured_duration() {
+        let action = SwayAction::Height {
+            container_id: 42,
+            height: "300px",
+            verbose: false,
+            wait_time: time::Duration::from_millis(42),
+        };
+        assert_eq!(action.wait_time(), time::Duration::from_millis(42));
+    }
+
+    #[test]
+    #[should_panic]
+    fn wait_time_panics_for_actions_without_one() {
+        let action = SwayAction::Floating {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        action.wait_time();
+    }
+
+    #[test]
+    fn container_id_is_none_for_exec() {
+        let action = SwayAction::Exec {
+            command: "kitty",
+            app_id_match: "",
+            class_match: "",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(action.container_id(), None);
+    }
+
+    #[test]
+    fn container_id_is_set_for_other_actions() {
+        let action = SwayAction::Floating {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(action.container_id(), Some(42));
+    }
+
+    // SwayAction::matching_window_change_events / event_subscription
+
+    #[test]
+    fn exec_only_matches_new_window_change() {
+        // Regression test: `Move` used to be accepted here too, which meant
+        // any pre-existing window being reparented (not just the one we
+        // just launched) could be mistaken for a match.
+        let action = SwayAction::Exec {
+            command: "kitty",
+            app_id_match: "",
+            class_match: "",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(
+            action.matching_window_change_events(),
+            Some(vec![WindowChange::New])
+        );
+    }
+
+    #[test]
+    fn floating_matches_floating_window_change() {
+        let action = SwayAction::Floating {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(
+            action.matching_window_change_events(),
+            Some(vec![WindowChange::Floating])
+        );
+    }
+
+    #[test]
+    fn new_column_and_new_row_match_move_window_change() {
+        let new_column = SwayAction::NewColumn {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        let new_row = SwayAction::NewRow {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(
+            new_column.matching_window_change_events(),
+            Some(vec![WindowChange::Move])
+        );
+        assert_eq!(
+            new_row.matching_window_change_events(),
+            Some(vec![WindowChange::Move])
+        );
+    }
+
+    #[test]
+    fn mark_matches_mark_window_change() {
+        let action = SwayAction::Mark {
+            container_id: 42,
+            mark: "foo",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(
+            action.matching_window_change_events(),
+            Some(vec![WindowChange::Mark])
+        );
+    }
+
+    #[test]
+    fn split_height_width_have_no_matching_window_change() {
+        let split = SwayAction::Split {
+            container_id: 42,
+            split: Split::V,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        let height = SwayAction::Height {
+            container_id: 42,
+            height: "300px",
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        let width = SwayAction::Width {
+            container_id: 42,
+            width: "20ppt",
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(split.matching_window_change_events(), None);
+        assert_eq!(height.matching_window_change_events(), None);
+        assert_eq!(width.matching_window_change_events(), None);
+    }
+
+    #[test]
+    fn event_subscription_is_window_for_event_backed_actions() {
+        let action = SwayAction::Mark {
+            container_id: 42,
+            mark: "foo",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(action.event_subscription(), Some(EventType::Window));
+    }
+
+    #[test]
+    fn event_subscription_is_none_for_time_based_actions() {
+        let action = SwayAction::Split {
+            container_id: 42,
+            split: Split::V,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(action.event_subscription(), None);
+    }
+
+    // SwayAction::matches_window_event
+
+    #[test]
+    fn exec_without_filter_matches_any_new_window() {
+        let action = SwayAction::Exec {
+            command: "kitty",
+            app_id_match: "",
+            class_match: "",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        let event = window_event("new", 99, Some("kitty"), None);
+        assert!(matches!(
+            action.matches_window_event(&event),
+            Ok(WindowEventMatch::NewWindowMatchWithoutCheck)
+        ));
+    }
+
+    #[test]
+    fn exec_without_filter_rejects_non_new_window_change() {
+        // Regression test for the Move-over-matching bug: with no
+        // app_id/class filter, only a `New` event may identify the window
+        // just launched — not a `Move` (or any other) event belonging to
+        // some other, pre-existing window.
+        let action = SwayAction::Exec {
+            command: "kitty",
+            app_id_match: "",
+            class_match: "",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        let event = window_event("move", 99, Some("kitty"), None);
+        assert!(matches!(
+            action.matches_window_event(&event),
+            Err(WindowEventMatchError::EventChangeTypeMismatch)
+        ));
+    }
+
+    #[test]
+    fn exec_with_app_id_match_accepts_matching_app_id() {
+        let action = SwayAction::Exec {
+            command: "kitty",
+            app_id_match: "kitty",
+            class_match: "",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        let event = window_event("new", 99, Some("kitty"), None);
+        assert!(matches!(
+            action.matches_window_event(&event),
+            Ok(WindowEventMatch::WindowAppId)
+        ));
+    }
+
+    #[test]
+    fn exec_with_app_id_match_rejects_different_app_id() {
+        let action = SwayAction::Exec {
+            command: "kitty",
+            app_id_match: "kitty",
+            class_match: "",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        let event = window_event("new", 99, Some("alacritty"), None);
+        assert!(matches!(
+            action.matches_window_event(&event),
+            Err(WindowEventMatchError::WindowAppIdMismatch)
+        ));
+    }
+
+    #[test]
+    fn exec_with_app_id_match_rejects_missing_app_id() {
+        let action = SwayAction::Exec {
+            command: "firefox",
+            app_id_match: "firefox",
+            class_match: "",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        let event = window_event("new", 99, None, None);
+        assert!(matches!(
+            action.matches_window_event(&event),
+            Err(WindowEventMatchError::WindowAppIdMismatch)
+        ));
+    }
+
+    #[test]
+    fn exec_with_class_match_accepts_matching_class() {
+        let action = SwayAction::Exec {
+            command: "firefox",
+            app_id_match: "",
+            class_match: "Firefox",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        let event = window_event("new", 99, None, Some("Firefox"));
+        assert!(matches!(
+            action.matches_window_event(&event),
+            Ok(WindowEventMatch::WindowClass)
+        ));
+    }
+
+    #[test]
+    fn exec_with_class_match_rejects_different_class() {
+        let action = SwayAction::Exec {
+            command: "firefox",
+            app_id_match: "",
+            class_match: "Firefox",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        let event = window_event("new", 99, None, Some("Chromium"));
+        assert!(matches!(
+            action.matches_window_event(&event),
+            Err(WindowEventMatchError::WindowClassMismatch)
+        ));
+    }
+
+    #[test]
+    fn exec_with_class_match_rejects_missing_window_properties() {
+        let action = SwayAction::Exec {
+            command: "firefox",
+            app_id_match: "",
+            class_match: "Firefox",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        let event = window_event("new", 99, None, None);
+        assert!(matches!(
+            action.matches_window_event(&event),
+            Err(WindowEventMatchError::WindowClassMismatch)
+        ));
+    }
+
+    #[test]
+    fn exec_with_app_id_match_ignores_class_match_when_both_set() {
+        // Documents current behavior: when both are set, app_id_match takes
+        // priority and class_match is never consulted (see also
+        // Args::app_id's conflicts_with in main.rs, which now prevents a
+        // caller from setting both in the first place).
+        let action = SwayAction::Exec {
+            command: "kitty",
+            app_id_match: "kitty",
+            class_match: "SomethingElseEntirely",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        let event = window_event("new", 99, Some("kitty"), Some("SomethingElseEntirely"));
+        assert!(matches!(
+            action.matches_window_event(&event),
+            Ok(WindowEventMatch::WindowAppId)
+        ));
+    }
+
+    #[test]
+    fn non_exec_action_matches_on_container_id() {
+        let action = SwayAction::Floating {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        let event = window_event("floating", 42, None, None);
+        assert!(matches!(
+            action.matches_window_event(&event),
+            Ok(WindowEventMatch::WindowContainerIdMatch)
+        ));
+    }
+
+    #[test]
+    fn non_exec_action_rejects_different_container_id() {
+        let action = SwayAction::Floating {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        let event = window_event("floating", 99, None, None);
+        assert!(matches!(
+            action.matches_window_event(&event),
+            Err(WindowEventMatchError::NoMatchingEvent)
+        ));
+    }
+
+    #[test]
+    fn non_exec_action_rejects_wrong_change_type() {
+        let action = SwayAction::Floating {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        let event = window_event("mark", 42, None, None);
+        assert!(matches!(
+            action.matches_window_event(&event),
+            Err(WindowEventMatchError::EventChangeTypeMismatch)
+        ));
+    }
+
+    // window_app_id_match / window_class_match
+
+    #[test]
+    fn window_app_id_match_true_when_equal() {
+        let event = window_event("new", 1, Some("kitty"), None);
+        assert!(window_app_id_match(&event, "kitty"));
+    }
+
+    #[test]
+    fn window_app_id_match_false_when_different() {
+        let event = window_event("new", 1, Some("kitty"), None);
+        assert!(!window_app_id_match(&event, "alacritty"));
+    }
+
+    #[test]
+    fn window_app_id_match_false_when_absent() {
+        let event = window_event("new", 1, None, None);
+        assert!(!window_app_id_match(&event, "kitty"));
+    }
+
+    #[test]
+    fn window_class_match_true_when_equal() {
+        let event = window_event("new", 1, None, Some("Firefox"));
+        assert!(window_class_match(&event, "Firefox"));
+    }
+
+    #[test]
+    fn window_class_match_false_when_different() {
+        let event = window_event("new", 1, None, Some("Firefox"));
+        assert!(!window_class_match(&event, "Chromium"));
+    }
+
+    #[test]
+    fn window_class_match_false_when_window_properties_absent() {
+        let event = window_event("new", 1, None, None);
+        assert!(!window_class_match(&event, "Firefox"));
+    }
+
+    // first_outcome_error
+
+    #[test]
+    fn first_outcome_error_ok_when_all_succeed() {
+        let outcomes: Vec<Result<(), String>> = vec![Ok(()), Ok(())];
+        assert_eq!(first_outcome_error(outcomes, "cmd"), Ok(()));
+    }
+
+    #[test]
+    fn first_outcome_error_fails_when_empty() {
+        let outcomes: Vec<Result<(), String>> = vec![];
+        assert_eq!(
+            first_outcome_error(outcomes, "cmd"),
+            Err("cmd command failed".to_string())
+        );
+    }
+
+    #[test]
+    fn first_outcome_error_surfaces_a_leading_failure() {
+        let outcomes: Vec<Result<(), String>> = vec![Err("boom".to_string()), Ok(())];
+        assert_eq!(
+            first_outcome_error(outcomes, "cmd"),
+            Err("boom".to_string())
+        );
+    }
+
+    #[test]
+    fn first_outcome_error_surfaces_a_trailing_failure() {
+        // Regression test: a prior version only inspected the first outcome
+        // and returned Ok(()) here, silently dropping this failure.
+        let outcomes: Vec<Result<(), String>> = vec![Ok(()), Err("boom".to_string())];
+        assert_eq!(
+            first_outcome_error(outcomes, "cmd"),
+            Err("boom".to_string())
+        );
+    }
+
+    // Display impls for the private matching-result enums
+
+    #[test]
+    fn window_event_match_display() {
+        assert_eq!(
+            WindowEventMatch::WindowAppId.to_string(),
+            "Window app_id match"
+        );
+        assert_eq!(
+            WindowEventMatch::WindowClass.to_string(),
+            "Window class match"
+        );
+        assert_eq!(
+            WindowEventMatch::NewWindowMatchWithoutCheck.to_string(),
+            "New window without app_id or class check"
+        );
+        assert_eq!(
+            WindowEventMatch::WindowContainerIdMatch.to_string(),
+            "Window container id match"
+        );
+    }
+
+    #[test]
+    fn window_event_match_error_display() {
+        assert_eq!(
+            WindowEventMatchError::EventChangeTypeMismatch.to_string(),
+            "Event does not match action event matches"
+        );
+        assert_eq!(
+            WindowEventMatchError::WindowAppIdMismatch.to_string(),
+            "app_id mismatch"
+        );
+        assert_eq!(
+            WindowEventMatchError::WindowClassMismatch.to_string(),
+            "class mismatch"
+        );
+        assert_eq!(
+            WindowEventMatchError::NoMatchingEvent.to_string(),
+            "No matching event"
+        );
     }
 }
