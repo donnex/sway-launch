@@ -76,9 +76,13 @@ killed. Useful for discovering event shapes when adding a new action.
 ## Example layout scripts
 
 `examples/` holds tracked, user-facing example scripts, each a small standalone shell script built
-out of `sway-launch` calls that demonstrates one layout (`dual-terminals`, `triple-row`,
-`column-split`, `quad-terminals`). README.md's "Recreatable layouts" section links to these; they
-are full scripts a user runs directly, so they follow every Scripts/Shell convention below,
+out of `sway-launch` calls that demonstrates one layout. Basic examples (`dual-terminals`,
+`triple-row`, `column-split`, `quad-terminals`) use only `kitty`; advanced examples
+(`dev-workspace`, `floating-file-manager`, `browser-comparison`, `quad-mixed-apps`,
+`editor-with-floating-terminal`) combine multiple applications (Firefox, Chromium, Thunar, VS
+Code) and exercise more of the CLI surface (`--class` matching, `--floating`, `--mark`,
+`--width`/`--height`). README.md's "Recreatable layouts" section links to and groups all of these;
+they are full scripts a user runs directly, so they follow every Scripts/Shell convention below,
 including `-h`/`--help`. Keep this set and README's list of them in sync when either changes.
 
 There is no separate ad-hoc/scratch scripts directory — a prior `layout-tests/` served that

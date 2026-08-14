@@ -1,0 +1,24 @@
+#!/bin/sh
+#
+# Launch a 2x2 grid of four different applications: a kitty terminal,
+# Firefox, Thunar, and VS Code.
+#
+set -eu
+
+usage() {
+  printf 'Usage: %s\n' "$(basename "$0")"
+  printf 'Launch a 2x2 grid: kitty, Firefox, Thunar, and VS Code.\n'
+}
+
+case "${1:-}" in
+-h | --help)
+  usage
+  exit 0
+  ;;
+esac
+
+sway-launch -a kitty --split h kitty
+sway-launch -a firefox --split v 'firefox --new-window https://example.com'
+
+sway-launch --new-row -a thunar --split h thunar
+sway-launch -c Code code

@@ -1,0 +1,21 @@
+#!/bin/sh
+#
+# Launch VS Code full-width, then a small floating kitty terminal on top of
+# it for quick one-off commands.
+#
+set -eu
+
+usage() {
+  printf 'Usage: %s\n' "$(basename "$0")"
+  printf 'Launch VS Code plus a small floating quick-terminal on top.\n'
+}
+
+case "${1:-}" in
+-h | --help)
+  usage
+  exit 0
+  ;;
+esac
+
+sway-launch -c Code code
+sway-launch -a kitty --floating --width 700px --height 450px kitty
