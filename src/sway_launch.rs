@@ -366,7 +366,13 @@ impl SwayAction<'_> {
             }
         });
 
-        let deadline = time::Instant::now() + self.timeout();
+        // checked_add rather than a plain `+`: an unrepresentable deadline
+        // (a pathological --timeout) is treated as already expired instead
+        // of panicking.
+        let deadline = match time::Instant::now().checked_add(self.timeout()) {
+            Some(deadline) => deadline,
+            None => return Err(format!("{} sec timeout reached", self.timeout().as_secs())),
+        };
         loop {
             let remaining = deadline.saturating_duration_since(time::Instant::now());
             if remaining.is_zero() {
@@ -670,41 +676,30 @@ mod tests {
         app_id: Option<&str>,
         class: Option<&str>,
     ) -> WindowEvent {
-        let app_id_json = match app_id {
-            Some(value) => format!("\"{}\"", value),
-            None => "null".to_string(),
-        };
-        let window_properties_json = match class {
-            Some(value) => format!("{{\"class\": \"{}\"}}", value),
-            None => "null".to_string(),
-        };
+        let value = serde_json::json!({
+            "change": change,
+            "container": {
+                "id": container_id,
+                "type": "con",
+                "border": "normal",
+                "current_border_width": 0,
+                "layout": "none",
+                "orientation": "none",
+                "rect": {"x": 0, "y": 0, "width": 0, "height": 0},
+                "window_rect": {"x": 0, "y": 0, "width": 0, "height": 0},
+                "deco_rect": {"x": 0, "y": 0, "width": 0, "height": 0},
+                "geometry": {"x": 0, "y": 0, "width": 0, "height": 0},
+                "urgent": false,
+                "focused": false,
+                "focus": [],
+                "floating_nodes": [],
+                "sticky": false,
+                "app_id": app_id,
+                "window_properties": class.map(|class| serde_json::json!({"class": class})),
+            }
+        });
 
-        let json = format!(
-            r#"{{
-                "change": "{change}",
-                "container": {{
-                    "id": {container_id},
-                    "type": "con",
-                    "border": "normal",
-                    "current_border_width": 0,
-                    "layout": "none",
-                    "orientation": "none",
-                    "rect": {{"x": 0, "y": 0, "width": 0, "height": 0}},
-                    "window_rect": {{"x": 0, "y": 0, "width": 0, "height": 0}},
-                    "deco_rect": {{"x": 0, "y": 0, "width": 0, "height": 0}},
-                    "geometry": {{"x": 0, "y": 0, "width": 0, "height": 0}},
-                    "urgent": false,
-                    "focused": false,
-                    "focus": [],
-                    "floating_nodes": [],
-                    "sticky": false,
-                    "app_id": {app_id_json},
-                    "window_properties": {window_properties_json}
-                }}
-            }}"#
-        );
-
-        serde_json::from_str(&json).expect("valid WindowEvent test fixture")
+        serde_json::from_value(value).expect("valid WindowEvent test fixture")
     }
 
     // quote_sway_string
