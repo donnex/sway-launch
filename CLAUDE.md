@@ -19,7 +19,8 @@ manual `sleep`s. See `README.md` for full CLI usage and layout-building examples
 - Lint: `cargo clippy`
 - Test: `cargo test` — runs the unit tests in `src/sway_launch.rs` and `src/main.rs`, covering all
   pure/logic functions (see the Testing bullet under Rust conventions for what's exempted and
-  why). Manual layout verification lives in `layout-tests/` (see below).
+  why). The IPC-touching functions that can't run headless are exercised manually by running the
+  scripts in `examples/` (see below) against a live Sway session.
   - Run a single test: `cargo test <test_name>`
   - Run with debug output: `cargo test -- --nocapture`
 
@@ -80,23 +81,12 @@ out of `sway-launch` calls that demonstrates one layout (`dual-terminals`, `trip
 are full scripts a user runs directly, so they follow every Scripts/Shell convention below,
 including `-h`/`--help`. Keep this set and README's list of them in sync when either changes.
 
-This is distinct from `layout-tests/` below, which is untracked scratch space for verifying a
-layout interactively before it's polished into a tracked example — not every scratch script is
-expected to graduate to `examples/`.
-
-## Manual layout testing
-
-`layout-tests/` holds ad-hoc, untracked shell scripts used to interactively verify layouts against
-a live Sway session (not run via `cargo test`). `layout-tests/run LAYOUT_FILE` switches to a
-dedicated scratch workspace (`WORKSPACE=9`) and execs the given layout script, which itself calls
-the built `sway-launch` binary (expects it on `PATH`) with various flag combinations.
-
-Being ad-hoc and untracked doesn't exempt these scripts from the Shell conventions below — keep
-them `chmod +x`, `shellcheck`/`shfmt`-clean, and free of unbound-variable/dead-code issues, the
-same as any other script in this repo. The one thing that is exempt is `-h`/`--help` conventions
-on the throwaway per-layout scripts (`test_kitty*`, `tmp*`, `3-1`, `4-1`, `5-1`, `ws1`, `test`) —
-those are invoked only by `layout-tests/run`, never run directly by a human, so they fall under the
-Scripts section's exemption for scripts whose caller is another program.
+There is no separate ad-hoc/scratch scripts directory — a prior `layout-tests/` served that
+purpose (untracked, personal iteration history) but was removed once its useful layouts had all
+been polished into tracked `examples/` scripts. If a similar need for throwaway manual-verification
+scripts comes up again, recreate it under the same untracked-scratch-space conventions this section
+used to document, rather than letting one-off verification scripts accumulate in `examples/`
+unpolished.
 
 ## Rust conventions
 
@@ -126,10 +116,11 @@ Scripts section's exemption for scripts whose caller is another program.
     open, read, or write the Sway IPC socket directly (`new_connection`, `event_loop`,
     `run_sway_command`'s connection call, `run_wait_time`, `run_wait_matching_events`,
     `SwayAction::run`, `SwayLaunch::run`, `SwayLaunch::debug_events`) are exempted — they require a
-    live Sway compositor, can't run headless in GitHub Actions CI, and are exercised manually via
-    `layout-tests/` instead. No mocking layer has been introduced for these on the judgment that a
-    trait-based abstraction purely to unit-test thin IPC wiring isn't worth the added indirection
-    for a tool this size; revisit if the IPC-touching logic grows more complex than it is today.
+    live Sway compositor, can't run headless in GitHub Actions CI, and are exercised manually by
+    running `examples/` scripts instead. No mocking layer has been introduced for these on the
+    judgment that a trait-based abstraction purely to unit-test thin IPC wiring isn't worth the
+    added indirection for a tool this size; revisit if the IPC-touching logic grows more complex
+    than it is today.
 - Measure coverage with `cargo llvm-cov` (requires the `cargo-llvm-cov` subcommand and the
   `llvm-tools-preview` rustup component):
   - `cargo llvm-cov --summary-only --ignore-filename-regex 'main\.rs'` — summary
