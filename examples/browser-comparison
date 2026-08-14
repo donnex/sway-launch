@@ -1,0 +1,21 @@
+#!/bin/sh
+#
+# Launch Firefox and Chromium side by side, both on example.com, for
+# comparing how a page renders in each.
+#
+set -eu
+
+usage() {
+  printf 'Usage: %s\n' "$(basename "$0")"
+  printf 'Launch Firefox and Chromium side by side on example.com.\n'
+}
+
+case "${1:-}" in
+-h | --help)
+  usage
+  exit 0
+  ;;
+esac
+
+sway-launch -a firefox --split h 'firefox --new-window https://example.com'
+sway-launch -a chromium 'chromium --new-window https://example.com'

@@ -1,0 +1,21 @@
+#!/bin/sh
+#
+# Launch Thunar as a floating, fixed-size window with a mark set, so a
+# for_window rule in the Sway config could reposition it automatically
+# (see the Mark section of README.md for the pattern).
+#
+set -eu
+
+usage() {
+  printf 'Usage: %s\n' "$(basename "$0")"
+  printf 'Launch Thunar floating at a fixed size, marked file-manager.\n'
+}
+
+case "${1:-}" in
+-h | --help)
+  usage
+  exit 0
+  ;;
+esac
+
+sway-launch -a thunar --floating --width 900px --height 600px --mark file-manager thunar

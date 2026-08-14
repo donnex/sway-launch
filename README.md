@@ -102,19 +102,39 @@ Not everything will work with the current implementation — it all depends on t
 current workspace state. Most issues should be fixable by capturing the container id and running
 some additional `swaymsg` commands.
 
-The `kitty` terminal will be used in these examples. It could as well be Firefox or any other
-slow-loading window/application.
+The `kitty` terminal is used as a stand-in slow-loading application in most of these examples; a
+few combine several different applications to show off more advanced layouts.
 
 ### Examples
 
 Runnable example scripts live in [`examples/`](examples/) — each one is a small, standalone shell
 script built entirely out of `sway-launch` calls; run any of them directly (e.g.
-`examples/quad-terminals`) against a live Sway session to see the layout it builds:
+`examples/quad-terminals`) against a live Sway session to see the layout it builds. The advanced
+examples expect Firefox, Chromium, Thunar, and VS Code (the `code` command) to be installed and on
+`PATH`, in addition to `kitty`.
+
+Basic (all `kitty`):
 
 - [`examples/dual-terminals`](examples/dual-terminals) — two terminals side by side, one row.
 - [`examples/triple-row`](examples/triple-row) — three terminals side by side, one row.
 - [`examples/column-split`](examples/column-split) — two terminals stacked in one column.
 - [`examples/quad-terminals`](examples/quad-terminals) — four terminals as a 2x2 grid, two rows.
+
+Advanced (multiple applications):
+
+- [`examples/dev-workspace`](examples/dev-workspace) — VS Code taking most of the width, with two
+  terminals stacked in a column beside it. Demonstrates `--class` matching (`-c Code`) alongside
+  `--app-id`, plus `--width` and `--new-column`.
+- [`examples/floating-file-manager`](examples/floating-file-manager) — Thunar as a floating,
+  fixed-size window with a mark set, ready for a `for_window` rule to reposition it (see the Mark
+  section above). Demonstrates combining `--floating`, `--width`/`--height`, and `--mark`.
+- [`examples/browser-comparison`](examples/browser-comparison) — Firefox and Chromium side by
+  side on the same page, for comparing how each renders it.
+- [`examples/quad-mixed-apps`](examples/quad-mixed-apps) — a 2x2 grid like
+  `examples/quad-terminals`, but with four different applications (kitty, Firefox, Thunar, VS
+  Code) instead of four terminals.
+- [`examples/editor-with-floating-terminal`](examples/editor-with-floating-terminal) — VS Code
+  full-width, with a small floating terminal on top for quick one-off commands.
 
 More advanced layouts should be possible by focusing earlier windows between launches.
 
