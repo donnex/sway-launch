@@ -8,7 +8,7 @@ mod sway_launch;
 #[clap(author, version, about, long_about = None)]
 struct Args {
     /// app_id match
-    #[clap(short, long)]
+    #[clap(short, long, conflicts_with = "class")]
     app_id: Option<String>,
 
     /// class match
@@ -66,7 +66,6 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    // Validate that command is non empty when not running with --debug-events
     let command = args.command.unwrap_or_default();
     if !args.debug_events && command.is_empty() {
         Args::command()
@@ -74,7 +73,6 @@ fn main() {
             .exit();
     }
 
-    // Setup SwayLaunch
     let sway_launch = sway_launch::SwayLaunch {
         app_id_match: &args.app_id.unwrap_or_default(),
         class_match: &args.class.unwrap_or_default(),
@@ -91,7 +89,6 @@ fn main() {
         command: &command,
     };
 
-    // Run debug events and exit
     if args.debug_events {
         match sway_launch.debug_events() {
             Ok(_) => process::exit(0),
@@ -102,7 +99,6 @@ fn main() {
         }
     }
 
-    // Normal run
     match sway_launch.run() {
         Ok(container_id) => println!("{}", container_id),
         Err(error) => {
@@ -119,5 +115,118 @@ fn validate_size_argument(value: &str) -> Result<String, String> {
         false => {
             Err("Must be in format <HEIGHT>px|ppt. E.g. 300px/20ppt. ppt = percent".to_string())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_size_argument_accepts_px() {
+        assert_eq!(validate_size_argument("300px"), Ok("300px".to_string()));
+    }
+
+    #[test]
+    fn validate_size_argument_accepts_ppt() {
+        assert_eq!(validate_size_argument("20ppt"), Ok("20ppt".to_string()));
+    }
+
+    #[test]
+    fn validate_size_argument_accepts_zero() {
+        assert_eq!(validate_size_argument("0px"), Ok("0px".to_string()));
+    }
+
+    #[test]
+    fn validate_size_argument_rejects_missing_unit() {
+        assert!(validate_size_argument("300").is_err());
+    }
+
+    #[test]
+    fn validate_size_argument_rejects_unknown_unit() {
+        assert!(validate_size_argument("300pixels").is_err());
+    }
+
+    #[test]
+    fn validate_size_argument_rejects_negative() {
+        assert!(validate_size_argument("-5px").is_err());
+    }
+
+    #[test]
+    fn validate_size_argument_rejects_decimal() {
+        assert!(validate_size_argument("3.5px").is_err());
+    }
+
+    #[test]
+    fn validate_size_argument_rejects_empty() {
+        assert!(validate_size_argument("").is_err());
+    }
+
+    #[test]
+    fn validate_size_argument_rejects_trailing_garbage() {
+        assert!(validate_size_argument("300px ").is_err());
+    }
+
+    #[test]
+    fn args_accepts_app_id_alone() {
+        let args = Args::try_parse_from(["sway-launch", "-a", "kitty", "kitty"]).unwrap();
+        assert_eq!(args.app_id, Some("kitty".to_string()));
+        assert_eq!(args.class, None);
+    }
+
+    #[test]
+    fn args_accepts_class_alone() {
+        let args = Args::try_parse_from(["sway-launch", "-c", "Kitty", "kitty"]).unwrap();
+        assert_eq!(args.class, Some("Kitty".to_string()));
+        assert_eq!(args.app_id, None);
+    }
+
+    #[test]
+    fn args_rejects_app_id_and_class_together() {
+        // Regression test: combining -a/-c used to silently ignore -c
+        // instead of being rejected.
+        let result = Args::try_parse_from(["sway-launch", "-a", "kitty", "-c", "Kitty", "kitty"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn args_accepts_neither_app_id_nor_class() {
+        let args = Args::try_parse_from(["sway-launch", "kitty"]).unwrap();
+        assert_eq!(args.app_id, None);
+        assert_eq!(args.class, None);
+    }
+
+    #[test]
+    fn args_new_row_short_flag_is_r() {
+        let args = Args::try_parse_from(["sway-launch", "-r", "kitty"]).unwrap();
+        assert!(args.new_row);
+    }
+
+    #[test]
+    fn args_rejects_invalid_height() {
+        let result = Args::try_parse_from(["sway-launch", "--height", "notasize", "kitty"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn args_accepts_valid_height_and_width() {
+        let args = Args::try_parse_from([
+            "sway-launch",
+            "--height",
+            "80ppt",
+            "--width",
+            "1200px",
+            "kitty",
+        ])
+        .unwrap();
+        assert_eq!(args.height, Some("80ppt".to_string()));
+        assert_eq!(args.width, Some("1200px".to_string()));
+    }
+
+    #[test]
+    fn args_defaults_timeout_and_wait_time() {
+        let args = Args::try_parse_from(["sway-launch", "kitty"]).unwrap();
+        assert_eq!(args.timeout, 5);
+        assert_eq!(args.wait_time, 20);
     }
 }
