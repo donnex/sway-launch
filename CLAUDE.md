@@ -72,6 +72,18 @@ is no persistent/shared connection across actions.
 `SwayLaunch::debug_events()` subscribes to all Sway IPC event types and prints every event until
 killed. Useful for discovering event shapes when adding a new action.
 
+## Example layout scripts
+
+`examples/` holds tracked, user-facing example scripts, each a small standalone shell script built
+out of `sway-launch` calls that demonstrates one layout (`dual-terminals`, `triple-row`,
+`column-split`, `quad-terminals`). README.md's "Recreatable layouts" section links to these; they
+are full scripts a user runs directly, so they follow every Scripts/Shell convention below,
+including `-h`/`--help`. Keep this set and README's list of them in sync when either changes.
+
+This is distinct from `layout-tests/` below, which is untracked scratch space for verifying a
+layout interactively before it's polished into a tracked example — not every scratch script is
+expected to graduate to `examples/`.
+
 ## Manual layout testing
 
 `layout-tests/` holds ad-hoc, untracked shell scripts used to interactively verify layouts against

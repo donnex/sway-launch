@@ -1,0 +1,21 @@
+#!/bin/sh
+#
+# Launch three kitty terminals side by side in a single row.
+#
+set -eu
+
+usage() {
+  printf 'Usage: %s\n' "$(basename "$0")"
+  printf 'Launch three kitty terminals side by side in a single row.\n'
+}
+
+case "${1:-}" in
+-h | --help)
+  usage
+  exit 0
+  ;;
+esac
+
+sway-launch -a kitty --split h kitty
+sway-launch -a kitty --split h kitty
+sway-launch -a kitty kitty
