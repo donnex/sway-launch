@@ -79,6 +79,13 @@ a live Sway session (not run via `cargo test`). `layout-tests/run LAYOUT_FILE` s
 dedicated scratch workspace (`WORKSPACE=9`) and execs the given layout script, which itself calls
 the built `sway-launch` binary (expects it on `PATH`) with various flag combinations.
 
+Being ad-hoc and untracked doesn't exempt these scripts from the Shell conventions below — keep
+them `chmod +x`, `shellcheck`/`shfmt`-clean, and free of unbound-variable/dead-code issues, the
+same as any other script in this repo. The one thing that is exempt is `-h`/`--help` conventions
+on the throwaway per-layout scripts (`test_kitty*`, `tmp*`, `3-1`, `4-1`, `5-1`, `ws1`, `test`) —
+those are invoked only by `layout-tests/run`, never run directly by a human, so they fall under the
+Scripts section's exemption for scripts whose caller is another program.
+
 ## Rust conventions
 
 - Always target the latest stable Rust release, and verify the toolchain is current before
