@@ -1,0 +1,23 @@
+#!/bin/sh
+#
+# Launch a kitty terminal, then retarget it two ways without relaunching:
+# first via --con-id using the captured container id, then via --existing
+# matching --app-id against the already-open window.
+#
+set -eu
+
+usage() {
+  printf 'Usage: %s\n' "$(basename "$0")"
+  printf 'Launch a terminal, then retarget it via --con-id and --existing.\n'
+}
+
+case "${1:-}" in
+-h | --help)
+  usage
+  exit 0
+  ;;
+esac
+
+container_id="$(sway-launch -a kitty kitty)"
+sway-launch --con-id "$container_id" --floating --width 800px --height 600px
+sway-launch --existing -a kitty --mark retargeted

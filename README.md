@@ -28,8 +28,10 @@ Arguments:
   [COMMAND]  Command to execute
 
 Options:
-  -a, --app-id <APP_ID>        app_id match
-  -c, --class <CLASS>          class match
+  -a, --app-id <APP_ID>        app_id match. With --existing, matches an already-open window instead of the newly launched one
+  -c, --class <CLASS>          class match. With --existing, matches an already-open window instead of the newly launched one
+      --con-id <CON_ID>        Act on an already-open window with this container id, instead of launching a new one
+      --existing               Act on an already-open window found via --app-id/--class, instead of launching a new one
   -s, --split <SPLIT>          Change split for new window [possible values: v, h]
   -f, --floating               Make new window floating
       --fullscreen             Make new window fullscreen
@@ -124,6 +126,9 @@ Basic (all `kitty`):
 - [`examples/quad-terminals`](examples/quad-terminals) — four terminals as a 2x2 grid, two rows.
 - [`examples/workspace-and-position`](examples/workspace-and-position) — a floating terminal moved
   to workspace 2 and centered. Demonstrates `--workspace` and `--position` together.
+- [`examples/retarget-floating`](examples/retarget-floating) — a terminal adjusted twice after
+  launch, without relaunching it: once via `--con-id` with a captured container id, once via
+  `--existing` matching `--app-id`.
 
 Advanced (multiple applications):
 
@@ -153,6 +158,29 @@ Multiple actions can be added to `sway-launch` and they'll be run one after anot
 These flags exist for convenience — you could just as well get the container id and run manual
 `swaymsg` commands against it, set up window rules with a mark, or use other window rules
 directly.
+
+### Target an existing window
+
+All the actions above can also run against a window that's already open, instead of always
+launching a new one — useful for adjusting a window from a later step in a script without
+relaunching it.
+
+Target a specific container id (e.g. one captured from an earlier `sway-launch` call):
+
+```shell
+container_id="$(sway-launch -a kitty kitty)"
+sway-launch --con-id "$container_id" --floating
+```
+
+Or target an already-open window by matching `--app-id`/`--class` against currently open windows,
+the same way those flags match a newly launched window:
+
+```shell
+sway-launch --existing -a kitty --fullscreen
+```
+
+`--existing` requires `--app-id` or `--class`, and errors if that doesn't match exactly one
+window — it won't guess which one you meant.
 
 ### Floating
 
