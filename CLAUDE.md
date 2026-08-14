@@ -17,13 +17,13 @@ manual `sleep`s. See `README.md` for full CLI usage and layout-building examples
 - Run: `cargo run -- [OPTIONS] [COMMAND]` (e.g. `cargo run -- -a kitty kitty`)
 - Format: `cargo fmt`
 - Lint: `cargo clippy`
-- Test: `cargo test` — runs the unit tests in `src/sway_launch.rs` (currently covering
-  `quote_sway_string`, the Sway command-string quoting helper). Manual layout verification lives
-  in `layout-tests/` (see below).
+- Test: `cargo test` — runs the unit tests in `src/sway_launch.rs` and `src/main.rs`, covering all
+  pure/logic functions (see the Testing bullet under Rust conventions for what's exempted and
+  why). Manual layout verification lives in `layout-tests/` (see below).
   - Run a single test: `cargo test <test_name>`
   - Run with debug output: `cargo test -- --nocapture`
 
-There is no CI config in this repo.
+See the CI section below for how GitHub Actions runs these same checks.
 
 ## Architecture
 
@@ -77,8 +77,7 @@ killed. Useful for discovering event shapes when adding a new action.
 `layout-tests/` holds ad-hoc, untracked shell scripts used to interactively verify layouts against
 a live Sway session (not run via `cargo test`). `layout-tests/run LAYOUT_FILE` switches to a
 dedicated scratch workspace (`WORKSPACE=9`) and execs the given layout script, which itself calls
-the built `sway-launch` binary (expects it on `PATH`) with various flag combinations. `TRASH/`
-contains old/backup copies of `main.rs` and is not part of the build — ignore it when reading code.
+the built `sway-launch` binary (expects it on `PATH`) with various flag combinations.
 
 ## Rust conventions
 
@@ -103,6 +102,15 @@ contains old/backup copies of `main.rs` and is not part of the build — ignore 
   per project and keep coverage at or above it as code is added, rather than letting it slip. It's
   fine for genuinely untestable paths (e.g. something that can't run headless) to stay uncovered —
   note why in the project's issue tracker rather than forcing a brittle test.
+  - This project's agreed target: cover every pure/logic function (command-string building, event
+    dispatch tables, window-match logic, CLI argument validation/parsing). The functions that
+    open, read, or write the Sway IPC socket directly (`new_connection`, `event_loop`,
+    `run_sway_command`'s connection call, `run_wait_time`, `run_wait_matching_events`,
+    `SwayAction::run`, `SwayLaunch::run`, `SwayLaunch::debug_events`) are exempted — they require a
+    live Sway compositor, can't run headless in GitHub Actions CI, and are exercised manually via
+    `layout-tests/` instead. No mocking layer has been introduced for these on the judgment that a
+    trait-based abstraction purely to unit-test thin IPC wiring isn't worth the added indirection
+    for a tool this size; revisit if the IPC-touching logic grows more complex than it is today.
 - Measure coverage with `cargo llvm-cov` (requires the `cargo-llvm-cov` subcommand and the
   `llvm-tools-preview` rustup component):
   - `cargo llvm-cov --summary-only --ignore-filename-regex 'main\.rs'` — summary
