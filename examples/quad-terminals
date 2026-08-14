@@ -1,0 +1,23 @@
+#!/bin/sh
+#
+# Launch four kitty terminals as an equally sized 2x2 grid, two rows of two.
+#
+set -eu
+
+usage() {
+  printf 'Usage: %s\n' "$(basename "$0")"
+  printf 'Launch four kitty terminals as a 2x2 grid.\n'
+}
+
+case "${1:-}" in
+-h | --help)
+  usage
+  exit 0
+  ;;
+esac
+
+sway-launch -a kitty --split h kitty
+sway-launch -a kitty --split v kitty
+
+sway-launch --new-row -a kitty --split h kitty
+sway-launch -a kitty kitty

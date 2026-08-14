@@ -107,16 +107,14 @@ slow-loading window/application.
 
 ### Examples
 
-Quad terminals with four equally sized terminal windows in two rows.
+Runnable example scripts live in [`examples/`](examples/) — each one is a small, standalone shell
+script built entirely out of `sway-launch` calls; run any of them directly (e.g.
+`examples/quad-terminals`) against a live Sway session to see the layout it builds:
 
-```shell
-#!/bin/sh
-sway-launch -a kitty --split h kitty
-sway-launch -a kitty --split v kitty
-
-sway-launch --new-row -a kitty --split h kitty
-sway-launch -a kitty kitty
-```
+- [`examples/dual-terminals`](examples/dual-terminals) — two terminals side by side, one row.
+- [`examples/triple-row`](examples/triple-row) — three terminals side by side, one row.
+- [`examples/column-split`](examples/column-split) — two terminals stacked in one column.
+- [`examples/quad-terminals`](examples/quad-terminals) — four terminals as a 2x2 grid, two rows.
 
 More advanced layouts should be possible by focusing earlier windows between launches.
 
