@@ -6,7 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `sway-launch` is a CLI tool for the [Sway](https://swaywm.org/) window manager. It launches an
 application, waits for its window to appear via the Sway IPC event stream, then optionally runs
-follow-up actions against that window (floating, split, resize, move to new row/column, mark).
+follow-up actions against that window (floating, fullscreen, split, resize, move to new
+row/column, mark).
 Because it blocks until the window exists (and until each follow-up action completes), it's
 designed to be chained in shell scripts to deterministically build up window layouts without
 manual `sleep`s. See `README.md` for full CLI usage and layout-building examples.
@@ -36,8 +37,8 @@ The crate is two files:
 
 ### Core model: `SwayAction`
 
-Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`, `NewColumn`,
-`NewRow`, `Mark`, `Height`, `Width`). Each variant knows how to:
+Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`, `Fullscreen`,
+`NewColumn`, `NewRow`, `Mark`, `Height`, `Width`). Each variant knows how to:
 
 - render itself as a `swaymsg` command string (`sway_command()`) — `Mark`'s value is wrapped
   through `quote_sway_string()` before interpolation, since Sway's command parser splits on
@@ -49,7 +50,8 @@ Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`,
 
 `SwayAction::run()` dispatches based on whether the action has a corresponding IPC event:
 
-- **Has an event** (`Exec`, `Floating`, `NewColumn`, `NewRow`, `Mark`) → `run_wait_matching_events()`:
+- **Has an event** (`Exec`, `Floating`, `Fullscreen`, `NewColumn`, `NewRow`, `Mark`) →
+  `run_wait_matching_events()`:
   connects to Sway, sends the command, then reads the event stream until a `Window` event matches
   (checked via `matches_window_event()`, e.g. app_id/class for `Exec`, container id for others), or
   the `--timeout` is hit.
@@ -61,9 +63,9 @@ Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`,
 
 Runs `Exec` first (always) to launch the command and obtain the new window's `container_id`, then
 conditionally runs the other actions in a fixed order (`NewColumn` → `NewRow` → `Split` →
-`Floating` → `Height` → `Width` → `Mark`) based on which CLI flags were set, each against that same
-`container_id`. The final container id is printed to stdout — this is what makes commands
-chainable/scriptable (see README examples).
+`Floating` → `Fullscreen` → `Height` → `Width` → `Mark`) based on which CLI flags were set, each
+against that same `container_id`. The final container id is printed to stdout — this is what makes
+commands chainable/scriptable (see README examples).
 
 Each Sway IPC call opens its own fresh `Connection` (`new_connection()` in `sway_launch.rs`) — there
 is no persistent/shared connection across actions.

@@ -23,6 +23,10 @@ struct Args {
     #[clap(short, long)]
     floating: bool,
 
+    /// Make new window fullscreen
+    #[clap(long)]
+    fullscreen: bool,
+
     /// Add mark to new window
     #[clap(short, long)]
     mark: Option<String>,
@@ -78,6 +82,7 @@ fn main() {
         class_match: &args.class.unwrap_or_default(),
         split: args.split,
         floating: args.floating,
+        fullscreen: args.fullscreen,
         mark: &args.mark.unwrap_or_default(),
         new_column: args.new_column,
         new_row: args.new_row,
