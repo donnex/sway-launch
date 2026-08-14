@@ -38,6 +38,8 @@ Options:
       --height <HEIGHT>        Set height on new window
       --width <WIDTH>          Set width on new window
   -r, --new-row                Move window to new row (move down)
+      --workspace <WORKSPACE>  Move new window to workspace
+      --position <POSITION>    Set position on new window. Either "center" or "<x>,<y>" in pixels
   -t, --timeout <TIMEOUT>      Timeout in seconds [default: 5]
   -w, --wait-time <WAIT_TIME>  Wait time in ms. Used for actions that do not have a corresponding Sway IPC event [default: 20]
   -d, --debug-events           Debug events. Output all Sway IPC events until stopped
@@ -120,6 +122,8 @@ Basic (all `kitty`):
 - [`examples/triple-row`](examples/triple-row) — three terminals side by side, one row.
 - [`examples/column-split`](examples/column-split) — two terminals stacked in one column.
 - [`examples/quad-terminals`](examples/quad-terminals) — four terminals as a 2x2 grid, two rows.
+- [`examples/workspace-and-position`](examples/workspace-and-position) — a floating terminal moved
+  to workspace 2 and centered. Demonstrates `--workspace` and `--position` together.
 
 Advanced (multiple applications):
 
@@ -182,6 +186,14 @@ for_window [con_mark="firefox-floating-left"] resize set 1100 px 90 ppt, move po
 sway-launch --mark firefox-floating-left 'firefox --new-window https://example.com'
 ```
 
+### Workspace
+
+Move the new window to a workspace.
+
+```shell
+sway-launch --workspace 2 kitty
+```
+
 ### Height and width
 
 Set the height and width of the new window. This usually works, but it depends on the current
@@ -191,6 +203,17 @@ The format used is `100px` or `100ppt` for percent.
 
 ```shell
 sway-launch --floating --width 1200px --height 80ppt kitty
+```
+
+### Position
+
+Set the position of the new window. Only makes sense for a floating window — a tiled window's
+position is determined by the layout, not by coordinates. Either `center`, or `<x>,<y>` in pixels
+from the top-left corner.
+
+```shell
+sway-launch --floating --position center kitty
+sway-launch --floating --position 100,200 kitty
 ```
 
 ### Split

@@ -105,6 +105,12 @@ enum SwayAction<'a> {
         verbose: bool,
         timeout: time::Duration,
     },
+    Workspace {
+        container_id: i64,
+        workspace: &'a str,
+        verbose: bool,
+        timeout: time::Duration,
+    },
     Mark {
         container_id: i64,
         mark: &'a str,
@@ -120,6 +126,12 @@ enum SwayAction<'a> {
     Width {
         container_id: i64,
         width: &'a str,
+        verbose: bool,
+        wait_time: time::Duration,
+    },
+    Position {
+        container_id: i64,
+        position: &'a str,
         verbose: bool,
         wait_time: time::Duration,
     },
@@ -163,6 +175,17 @@ impl fmt::Display for SwayAction<'_> {
             SwayAction::NewRow { container_id, .. } => {
                 write!(f, "New row (container_id: {})", container_id)
             }
+            SwayAction::Workspace {
+                container_id,
+                workspace,
+                ..
+            } => {
+                write!(
+                    f,
+                    "Workspace (container id: {}) (workspace: {})",
+                    container_id, workspace
+                )
+            }
             SwayAction::Mark {
                 container_id, mark, ..
             } => {
@@ -188,6 +211,17 @@ impl fmt::Display for SwayAction<'_> {
                     f,
                     "Width (container id: {}) (width: {})",
                     container_id, width
+                )
+            }
+            SwayAction::Position {
+                container_id,
+                position,
+                ..
+            } => {
+                write!(
+                    f,
+                    "Position (container id: {}) (position: {})",
+                    container_id, position
                 )
             }
         }
@@ -223,6 +257,17 @@ impl SwayAction<'_> {
             SwayAction::NewRow { container_id, .. } => {
                 format!("[con_id={}] move down", container_id)
             }
+            SwayAction::Workspace {
+                container_id,
+                workspace,
+                ..
+            } => {
+                format!(
+                    "[con_id={}] move workspace {}",
+                    container_id,
+                    quote_sway_string(workspace)
+                )
+            }
             SwayAction::Height {
                 container_id,
                 height,
@@ -237,6 +282,20 @@ impl SwayAction<'_> {
             } => {
                 format!("[con_id={}] resize set width {}", container_id, width)
             }
+            SwayAction::Position {
+                container_id,
+                position,
+                ..
+            } => {
+                let position_command = match *position {
+                    "center" => "center".to_string(),
+                    coords => coords.replace(',', " "),
+                };
+                format!(
+                    "[con_id={}] move position {}",
+                    container_id, position_command
+                )
+            }
         }
     }
 
@@ -248,9 +307,11 @@ impl SwayAction<'_> {
             | SwayAction::Fullscreen { verbose, .. }
             | SwayAction::NewColumn { verbose, .. }
             | SwayAction::NewRow { verbose, .. }
+            | SwayAction::Workspace { verbose, .. }
             | SwayAction::Mark { verbose, .. }
             | SwayAction::Height { verbose, .. }
-            | SwayAction::Width { verbose, .. } => verbose,
+            | SwayAction::Width { verbose, .. }
+            | SwayAction::Position { verbose, .. } => verbose,
         }
     }
 
@@ -261,6 +322,7 @@ impl SwayAction<'_> {
             | SwayAction::Fullscreen { timeout, .. }
             | SwayAction::NewColumn { timeout, .. }
             | SwayAction::NewRow { timeout, .. }
+            | SwayAction::Workspace { timeout, .. }
             | SwayAction::Mark { timeout, .. } => timeout,
             _ => unreachable!(),
         }
@@ -270,7 +332,8 @@ impl SwayAction<'_> {
         match self {
             SwayAction::Split { wait_time, .. }
             | SwayAction::Height { wait_time, .. }
-            | SwayAction::Width { wait_time, .. } => wait_time,
+            | SwayAction::Width { wait_time, .. }
+            | SwayAction::Position { wait_time, .. } => wait_time,
             _ => unreachable!(),
         }
     }
@@ -282,9 +345,11 @@ impl SwayAction<'_> {
             | SwayAction::Fullscreen { container_id, .. }
             | SwayAction::NewColumn { container_id, .. }
             | SwayAction::NewRow { container_id, .. }
+            | SwayAction::Workspace { container_id, .. }
             | SwayAction::Mark { container_id, .. }
             | SwayAction::Height { container_id, .. }
-            | SwayAction::Width { container_id, .. } => Some(container_id),
+            | SwayAction::Width { container_id, .. }
+            | SwayAction::Position { container_id, .. } => Some(container_id),
             SwayAction::Exec { .. } => None,
         }
     }
@@ -299,11 +364,14 @@ impl SwayAction<'_> {
             SwayAction::Exec { .. } => Some(vec![WindowChange::New]),
             SwayAction::Floating { .. } => Some(vec![WindowChange::Floating]),
             SwayAction::Fullscreen { .. } => Some(vec![WindowChange::FullscreenMode]),
-            SwayAction::NewColumn { .. } | SwayAction::NewRow { .. } => {
-                Some(vec![WindowChange::Move])
-            }
+            SwayAction::NewColumn { .. }
+            | SwayAction::NewRow { .. }
+            | SwayAction::Workspace { .. } => Some(vec![WindowChange::Move]),
             SwayAction::Mark { .. } => Some(vec![WindowChange::Mark]),
-            SwayAction::Split { .. } | SwayAction::Height { .. } | SwayAction::Width { .. } => None,
+            SwayAction::Split { .. }
+            | SwayAction::Height { .. }
+            | SwayAction::Width { .. }
+            | SwayAction::Position { .. } => None,
         }
     }
 
@@ -314,8 +382,12 @@ impl SwayAction<'_> {
             | SwayAction::Fullscreen { .. }
             | SwayAction::NewColumn { .. }
             | SwayAction::NewRow { .. }
+            | SwayAction::Workspace { .. }
             | SwayAction::Mark { .. } => Some(EventType::Window),
-            SwayAction::Split { .. } | SwayAction::Height { .. } | SwayAction::Width { .. } => None,
+            SwayAction::Split { .. }
+            | SwayAction::Height { .. }
+            | SwayAction::Width { .. }
+            | SwayAction::Position { .. } => None,
         }
     }
 
@@ -569,8 +641,10 @@ pub struct SwayLaunch<'a> {
     pub mark: &'a str,
     pub new_column: bool,
     pub new_row: bool,
+    pub workspace: Option<&'a str>,
     pub height: Option<&'a str>,
     pub width: Option<&'a str>,
+    pub position: Option<&'a str>,
 
     pub verbose: bool,
     pub timeout: time::Duration,
@@ -634,6 +708,15 @@ impl SwayLaunch<'_> {
             }
             .run()?;
         }
+        if let Some(workspace) = self.workspace {
+            SwayAction::Workspace {
+                container_id,
+                workspace,
+                verbose: self.verbose,
+                timeout: self.timeout,
+            }
+            .run()?;
+        }
         if let Some(split) = self.split {
             SwayAction::Split {
                 container_id,
@@ -672,6 +755,15 @@ impl SwayLaunch<'_> {
             SwayAction::Width {
                 container_id,
                 width,
+                verbose: self.verbose,
+                wait_time: self.wait_time,
+            }
+            .run()?;
+        }
+        if let Some(position) = self.position {
+            SwayAction::Position {
+                container_id,
+                position,
                 verbose: self.verbose,
                 wait_time: self.wait_time,
             }
@@ -854,6 +946,20 @@ mod tests {
     }
 
     #[test]
+    fn sway_command_workspace_quotes_the_workspace() {
+        let action = SwayAction::Workspace {
+            container_id: 42,
+            workspace: "web, exec evil",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(
+            action.sway_command(),
+            "[con_id=42] move workspace \"web, exec evil\""
+        );
+    }
+
+    #[test]
     fn sway_command_height() {
         let action = SwayAction::Height {
             container_id: 42,
@@ -873,6 +979,28 @@ mod tests {
             wait_time: time::Duration::from_millis(20),
         };
         assert_eq!(action.sway_command(), "[con_id=42] resize set width 20ppt");
+    }
+
+    #[test]
+    fn sway_command_position_center() {
+        let action = SwayAction::Position {
+            container_id: 42,
+            position: "center",
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(action.sway_command(), "[con_id=42] move position center");
+    }
+
+    #[test]
+    fn sway_command_position_coordinates() {
+        let action = SwayAction::Position {
+            container_id: 42,
+            position: "100,200",
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(action.sway_command(), "[con_id=42] move position 100 200");
     }
 
     // SwayAction::Display
@@ -947,6 +1075,20 @@ mod tests {
     }
 
     #[test]
+    fn display_workspace() {
+        let action = SwayAction::Workspace {
+            container_id: 42,
+            workspace: "web",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(
+            action.to_string(),
+            "Workspace (container id: 42) (workspace: web)"
+        );
+    }
+
+    #[test]
     fn display_mark() {
         let action = SwayAction::Mark {
             container_id: 42,
@@ -982,6 +1124,20 @@ mod tests {
         assert_eq!(
             action.to_string(),
             "Width (container id: 42) (width: 20ppt)"
+        );
+    }
+
+    #[test]
+    fn display_position() {
+        let action = SwayAction::Position {
+            container_id: 42,
+            position: "center",
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(
+            action.to_string(),
+            "Position (container id: 42) (position: center)"
         );
     }
 
@@ -1132,6 +1288,20 @@ mod tests {
     }
 
     #[test]
+    fn workspace_matches_move_window_change() {
+        let action = SwayAction::Workspace {
+            container_id: 42,
+            workspace: "web",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(
+            action.matching_window_change_events(),
+            Some(vec![WindowChange::Move])
+        );
+    }
+
+    #[test]
     fn mark_matches_mark_window_change() {
         let action = SwayAction::Mark {
             container_id: 42,
@@ -1165,9 +1335,16 @@ mod tests {
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
+        let position = SwayAction::Position {
+            container_id: 42,
+            position: "center",
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
         assert_eq!(split.matching_window_change_events(), None);
         assert_eq!(height.matching_window_change_events(), None);
         assert_eq!(width.matching_window_change_events(), None);
+        assert_eq!(position.matching_window_change_events(), None);
     }
 
     #[test]
@@ -1354,6 +1531,21 @@ mod tests {
             timeout: time::Duration::from_secs(5),
         };
         let event = window_event("floating", 42, None, None);
+        assert!(matches!(
+            action.matches_window_event(&event),
+            Ok(WindowEventMatch::WindowContainerIdMatch)
+        ));
+    }
+
+    #[test]
+    fn workspace_matches_on_container_id() {
+        let action = SwayAction::Workspace {
+            container_id: 42,
+            workspace: "web",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        let event = window_event("move", 42, None, None);
         assert!(matches!(
             action.matches_window_event(&event),
             Ok(WindowEventMatch::WindowContainerIdMatch)

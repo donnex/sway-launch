@@ -47,6 +47,14 @@ struct Args {
     #[clap(short, long, short = 'r')]
     new_row: bool,
 
+    /// Move new window to workspace
+    #[clap(long)]
+    workspace: Option<String>,
+
+    /// Set position on new window. Either "center" or "<x>,<y>" in pixels
+    #[clap(long, value_parser = validate_position_argument)]
+    position: Option<String>,
+
     /// Timeout in seconds
     #[clap(short, long, default_value_t = 5)]
     timeout: u64,
@@ -86,8 +94,10 @@ fn main() {
         mark: &args.mark.unwrap_or_default(),
         new_column: args.new_column,
         new_row: args.new_row,
+        workspace: args.workspace.as_deref(),
         height: args.height.as_deref(),
         width: args.width.as_deref(),
+        position: args.position.as_deref(),
         timeout: time::Duration::from_secs(args.timeout),
         wait_time: time::Duration::from_millis(args.wait_time),
         verbose: args.verbose,
@@ -119,6 +129,16 @@ fn validate_size_argument(value: &str) -> Result<String, String> {
         true => Ok(value.to_string()),
         false => {
             Err("Must be in format <HEIGHT>px|ppt. E.g. 300px/20ppt. ppt = percent".to_string())
+        }
+    }
+}
+
+fn validate_position_argument(value: &str) -> Result<String, String> {
+    let re = Regex::new(r"^center$|^\d+,\d+$").unwrap();
+    match re.is_match(value) {
+        true => Ok(value.to_string()),
+        false => {
+            Err("Must be \"center\" or \"<X>,<Y>\" in pixels. E.g. center/100,200".to_string())
         }
     }
 }
@@ -170,6 +190,63 @@ mod tests {
     #[test]
     fn validate_size_argument_rejects_trailing_garbage() {
         assert!(validate_size_argument("300px ").is_err());
+    }
+
+    #[test]
+    fn validate_position_argument_accepts_center() {
+        assert_eq!(
+            validate_position_argument("center"),
+            Ok("center".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_position_argument_accepts_coordinates() {
+        assert_eq!(
+            validate_position_argument("100,200"),
+            Ok("100,200".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_position_argument_rejects_missing_y() {
+        assert!(validate_position_argument("100").is_err());
+    }
+
+    #[test]
+    fn validate_position_argument_rejects_negative() {
+        assert!(validate_position_argument("-1,200").is_err());
+    }
+
+    #[test]
+    fn validate_position_argument_rejects_unknown_word() {
+        assert!(validate_position_argument("middle").is_err());
+    }
+
+    #[test]
+    fn validate_position_argument_rejects_empty() {
+        assert!(validate_position_argument("").is_err());
+    }
+
+    #[test]
+    fn args_accepts_valid_workspace_and_position() {
+        let args = Args::try_parse_from([
+            "sway-launch",
+            "--workspace",
+            "2",
+            "--position",
+            "center",
+            "kitty",
+        ])
+        .unwrap();
+        assert_eq!(args.workspace, Some("2".to_string()));
+        assert_eq!(args.position, Some("center".to_string()));
+    }
+
+    #[test]
+    fn args_rejects_invalid_position() {
+        let result = Args::try_parse_from(["sway-launch", "--position", "notvalid", "kitty"]);
+        assert!(result.is_err());
     }
 
     #[test]
