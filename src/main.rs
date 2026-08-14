@@ -7,13 +7,25 @@ mod sway_launch;
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    /// app_id match
-    #[clap(short, long, conflicts_with = "class")]
+    /// app_id match. With --existing, matches an already-open window instead
+    /// of the newly launched one
+    #[clap(short, long, conflicts_with_all = ["class", "con_id"])]
     app_id: Option<String>,
 
-    /// class match
-    #[clap(short, long)]
+    /// class match. With --existing, matches an already-open window instead
+    /// of the newly launched one
+    #[clap(short, long, conflicts_with = "con_id")]
     class: Option<String>,
+
+    /// Act on an already-open window with this container id, instead of
+    /// launching a new one
+    #[clap(long, conflicts_with = "command")]
+    con_id: Option<i64>,
+
+    /// Act on an already-open window found via --app-id/--class, instead of
+    /// launching a new one
+    #[clap(long, conflicts_with_all = ["command", "con_id"])]
+    existing: bool,
 
     /// Change split for new window
     #[clap(value_enum, short, long)]
@@ -79,15 +91,39 @@ fn main() {
     let args = Args::parse();
 
     let command = args.command.unwrap_or_default();
-    if !args.debug_events && command.is_empty() {
+    let app_id_match = args.app_id.unwrap_or_default();
+    let class_match = args.class.unwrap_or_default();
+
+    if !args.debug_events && command.is_empty() && args.con_id.is_none() && !args.existing {
         Args::command()
-            .error(ErrorKind::MissingRequiredArgument, "Missing COMMAND")
+            .error(
+                ErrorKind::MissingRequiredArgument,
+                "Missing COMMAND, or one of --con-id/--existing",
+            )
             .exit();
     }
 
+    if args.existing && app_id_match.is_empty() && class_match.is_empty() {
+        Args::command()
+            .error(
+                ErrorKind::MissingRequiredArgument,
+                "--existing requires --app-id or --class",
+            )
+            .exit();
+    }
+
+    let target = if let Some(con_id) = args.con_id {
+        sway_launch::Target::ConId(con_id)
+    } else if args.existing {
+        sway_launch::Target::Existing
+    } else {
+        sway_launch::Target::Exec { command: &command }
+    };
+
     let sway_launch = sway_launch::SwayLaunch {
-        app_id_match: &args.app_id.unwrap_or_default(),
-        class_match: &args.class.unwrap_or_default(),
+        target,
+        app_id_match: &app_id_match,
+        class_match: &class_match,
         split: args.split,
         floating: args.floating,
         fullscreen: args.fullscreen,
@@ -101,7 +137,6 @@ fn main() {
         timeout: time::Duration::from_secs(args.timeout),
         wait_time: time::Duration::from_millis(args.wait_time),
         verbose: args.verbose,
-        command: &command,
     };
 
     if args.debug_events {
@@ -268,6 +303,50 @@ mod tests {
         // Regression test: combining -a/-c used to silently ignore -c
         // instead of being rejected.
         let result = Args::try_parse_from(["sway-launch", "-a", "kitty", "-c", "Kitty", "kitty"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn args_accepts_con_id_alone() {
+        let args = Args::try_parse_from(["sway-launch", "--con-id", "42"]).unwrap();
+        assert_eq!(args.con_id, Some(42));
+        assert_eq!(args.command, None);
+    }
+
+    #[test]
+    fn args_rejects_con_id_and_command_together() {
+        let result = Args::try_parse_from(["sway-launch", "--con-id", "42", "kitty"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn args_rejects_con_id_and_app_id_together() {
+        let result = Args::try_parse_from(["sway-launch", "--con-id", "42", "-a", "kitty"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn args_rejects_con_id_and_class_together() {
+        let result = Args::try_parse_from(["sway-launch", "--con-id", "42", "-c", "Kitty"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn args_accepts_existing_with_app_id() {
+        let args = Args::try_parse_from(["sway-launch", "--existing", "-a", "kitty"]).unwrap();
+        assert!(args.existing);
+        assert_eq!(args.app_id, Some("kitty".to_string()));
+    }
+
+    #[test]
+    fn args_rejects_existing_and_command_together() {
+        let result = Args::try_parse_from(["sway-launch", "--existing", "-a", "kitty", "kitty"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn args_rejects_existing_and_con_id_together() {
+        let result = Args::try_parse_from(["sway-launch", "--existing", "--con-id", "42"]);
         assert!(result.is_err());
     }
 

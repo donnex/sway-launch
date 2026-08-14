@@ -1,7 +1,7 @@
 use clap::ValueEnum;
 use std::sync::mpsc;
 use std::{fmt, thread, time};
-use swayipc::{Connection, Event, EventStream, EventType, WindowChange, WindowEvent};
+use swayipc::{Connection, Event, EventStream, EventType, Node, WindowChange, WindowEvent};
 
 #[derive(Copy, Clone, PartialEq, ValueEnum, Debug)]
 pub enum Split {
@@ -527,14 +527,14 @@ impl SwayAction<'_> {
                 ..
             } => {
                 if !app_id_match.is_empty() {
-                    match window_app_id_match(window, app_id_match) {
+                    match window_app_id_match(&window.container, app_id_match) {
                         true => return Ok(WindowEventMatch::WindowAppId),
                         false => return Err(WindowEventMatchError::WindowAppIdMismatch),
                     }
                 }
 
                 if !class_match.is_empty() {
-                    match window_class_match(window, class_match) {
+                    match window_class_match(&window.container, class_match) {
                         true => return Ok(WindowEventMatch::WindowClass),
                         false => return Err(WindowEventMatchError::WindowClassMismatch),
                     }
@@ -606,31 +606,110 @@ fn quote_sway_string(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-fn window_app_id_match(window: &WindowEvent, app_id_match: &str) -> bool {
-    let window_app_id = match window.container.app_id.as_ref().ok_or(()) {
+fn window_app_id_match(node: &Node, app_id_match: &str) -> bool {
+    let node_app_id = match node.app_id.as_ref().ok_or(()) {
         Ok(app_id) => app_id,
         Err(_) => return false,
     };
 
-    matches!(window_app_id, _ if window_app_id == app_id_match)
+    matches!(node_app_id, _ if node_app_id == app_id_match)
 }
 
-fn window_class_match(window: &WindowEvent, class_match: &str) -> bool {
-    let window_properties = match window.container.window_properties.as_ref().ok_or(()) {
+fn window_class_match(node: &Node, class_match: &str) -> bool {
+    let window_properties = match node.window_properties.as_ref().ok_or(()) {
         Ok(window_properties) => window_properties,
         Err(_) => return false,
     };
 
-    let window_class = match window_properties.class.as_ref().ok_or(()) {
+    let node_class = match window_properties.class.as_ref().ok_or(()) {
         Ok(class) => class,
         Err(_) => return false,
     };
 
-    matches!(window_class, _ if window_class == class_match)
+    matches!(node_class, _ if node_class == class_match)
+}
+
+/// Recursively collects the container ids of every node in `tree` (tiling
+/// and floating children at every level) whose app_id/class matches, used to
+/// target an already-open window instead of launching a new one. app_id
+/// takes priority over class when both are set, mirroring
+/// `matches_window_event`'s Exec-matching precedence.
+fn matching_container_ids(tree: &Node, app_id_match: &str, class_match: &str) -> Vec<i64> {
+    let matches = if !app_id_match.is_empty() {
+        window_app_id_match(tree, app_id_match)
+    } else if !class_match.is_empty() {
+        window_class_match(tree, class_match)
+    } else {
+        false
+    };
+
+    let mut ids = if matches { vec![tree.id] } else { vec![] };
+
+    for child in tree.nodes.iter().chain(tree.floating_nodes.iter()) {
+        ids.extend(matching_container_ids(child, app_id_match, class_match));
+    }
+
+    ids
+}
+
+/// Finds exactly one already-open window matching `app_id_match`/
+/// `class_match` via `get_tree()`, for `Target::Existing`. Errors — rather
+/// than silently picking one — if zero or more than one window matches,
+/// since guessing which of several matches the caller meant would be a
+/// worse default than asking them to retarget with `--con-id`.
+fn find_existing_container_id(app_id_match: &str, class_match: &str) -> Result<i64, String> {
+    let tree = match self::new_connection()?.get_tree() {
+        Ok(tree) => tree,
+        Err(error) => return Err(error.to_string()),
+    };
+
+    let criteria = if !app_id_match.is_empty() {
+        format!("app_id \"{}\"", app_id_match)
+    } else {
+        format!("class \"{}\"", class_match)
+    };
+
+    resolve_matches(
+        matching_container_ids(&tree, app_id_match, class_match),
+        &criteria,
+    )
+}
+
+/// Turns the container ids `matching_container_ids()` found into a single
+/// target, erroring — rather than silently picking one — on zero or more
+/// than one match.
+fn resolve_matches(matches: Vec<i64>, criteria: &str) -> Result<i64, String> {
+    match matches.len() {
+        0 => Err(format!("No existing window matches {}", criteria)),
+        1 => Ok(matches[0]),
+        _ => {
+            let ids = matches
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(format!(
+                "{} windows match {}: {} — retarget with --con-id",
+                matches.len(),
+                criteria,
+                ids
+            ))
+        }
+    }
+}
+
+/// What `SwayLaunch::run()` should act on: launch a new window (the
+/// original, still-default behavior), a specific already-open window by
+/// container id, or an already-open window found by matching
+/// `app_id_match`/`class_match` against currently open windows.
+pub enum Target<'a> {
+    Exec { command: &'a str },
+    ConId(i64),
+    Existing,
 }
 
 pub struct SwayLaunch<'a> {
-    pub command: &'a str,
+    pub target: Target<'a>,
 
     pub app_id_match: &'a str,
     pub class_match: &'a str,
@@ -678,18 +757,28 @@ impl SwayLaunch<'_> {
         Ok(())
     }
 
-    pub fn run(&self) -> Result<i64, String> {
-        let container_id = SwayAction::Exec {
-            command: self.command,
-            app_id_match: self.app_id_match,
-            class_match: self.class_match,
-            verbose: self.verbose,
-            timeout: self.timeout,
+    fn resolve_container_id(&self) -> Result<i64, String> {
+        match self.target {
+            Target::Exec { command } => SwayAction::Exec {
+                command,
+                app_id_match: self.app_id_match,
+                class_match: self.class_match,
+                verbose: self.verbose,
+                timeout: self.timeout,
+            }
+            .run(),
+            Target::ConId(container_id) => Ok(container_id),
+            Target::Existing => {
+                self::find_existing_container_id(self.app_id_match, self.class_match)
+            }
         }
-        .run()?;
+    }
+
+    pub fn run(&self) -> Result<i64, String> {
+        let container_id = self.resolve_container_id()?;
 
         if self.verbose {
-            println!("New window match container id: {}", container_id);
+            println!("Target container id: {}", container_id);
         }
 
         if self.new_column {
@@ -817,6 +906,66 @@ mod tests {
         });
 
         serde_json::from_value(value).expect("valid WindowEvent test fixture")
+    }
+
+    fn leaf_node_value(
+        container_id: i64,
+        app_id: Option<&str>,
+        class: Option<&str>,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "id": container_id,
+            "type": "con",
+            "border": "normal",
+            "current_border_width": 0,
+            "layout": "none",
+            "orientation": "none",
+            "rect": {"x": 0, "y": 0, "width": 0, "height": 0},
+            "window_rect": {"x": 0, "y": 0, "width": 0, "height": 0},
+            "deco_rect": {"x": 0, "y": 0, "width": 0, "height": 0},
+            "geometry": {"x": 0, "y": 0, "width": 0, "height": 0},
+            "urgent": false,
+            "focused": false,
+            "focus": [],
+            "floating_nodes": [],
+            "sticky": false,
+            "app_id": app_id,
+            "window_properties": class.map(|class| serde_json::json!({"class": class})),
+        })
+    }
+
+    fn container_node_value(
+        container_id: i64,
+        nodes: Vec<serde_json::Value>,
+        floating_nodes: Vec<serde_json::Value>,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "id": container_id,
+            "type": "con",
+            "border": "normal",
+            "current_border_width": 0,
+            "layout": "none",
+            "orientation": "none",
+            "rect": {"x": 0, "y": 0, "width": 0, "height": 0},
+            "window_rect": {"x": 0, "y": 0, "width": 0, "height": 0},
+            "deco_rect": {"x": 0, "y": 0, "width": 0, "height": 0},
+            "geometry": {"x": 0, "y": 0, "width": 0, "height": 0},
+            "urgent": false,
+            "focused": false,
+            "focus": [],
+            "nodes": nodes,
+            "floating_nodes": floating_nodes,
+            "sticky": false,
+        })
+    }
+
+    fn node_tree(
+        container_id: i64,
+        nodes: Vec<serde_json::Value>,
+        floating_nodes: Vec<serde_json::Value>,
+    ) -> Node {
+        serde_json::from_value(container_node_value(container_id, nodes, floating_nodes))
+            .expect("valid Node test fixture")
     }
 
     // quote_sway_string
@@ -1599,37 +1748,109 @@ mod tests {
     #[test]
     fn window_app_id_match_true_when_equal() {
         let event = window_event("new", 1, Some("kitty"), None);
-        assert!(window_app_id_match(&event, "kitty"));
+        assert!(window_app_id_match(&event.container, "kitty"));
     }
 
     #[test]
     fn window_app_id_match_false_when_different() {
         let event = window_event("new", 1, Some("kitty"), None);
-        assert!(!window_app_id_match(&event, "alacritty"));
+        assert!(!window_app_id_match(&event.container, "alacritty"));
     }
 
     #[test]
     fn window_app_id_match_false_when_absent() {
         let event = window_event("new", 1, None, None);
-        assert!(!window_app_id_match(&event, "kitty"));
+        assert!(!window_app_id_match(&event.container, "kitty"));
     }
 
     #[test]
     fn window_class_match_true_when_equal() {
         let event = window_event("new", 1, None, Some("Firefox"));
-        assert!(window_class_match(&event, "Firefox"));
+        assert!(window_class_match(&event.container, "Firefox"));
     }
 
     #[test]
     fn window_class_match_false_when_different() {
         let event = window_event("new", 1, None, Some("Firefox"));
-        assert!(!window_class_match(&event, "Chromium"));
+        assert!(!window_class_match(&event.container, "Chromium"));
     }
 
     #[test]
     fn window_class_match_false_when_window_properties_absent() {
         let event = window_event("new", 1, None, None);
-        assert!(!window_class_match(&event, "Firefox"));
+        assert!(!window_class_match(&event.container, "Firefox"));
+    }
+
+    // matching_container_ids
+
+    #[test]
+    fn matching_container_ids_finds_tiling_and_floating_matches() {
+        let tree = node_tree(
+            1,
+            vec![
+                leaf_node_value(10, Some("kitty"), None),
+                leaf_node_value(11, Some("firefox"), None),
+            ],
+            vec![leaf_node_value(20, Some("kitty"), None)],
+        );
+        let mut ids = matching_container_ids(&tree, "kitty", "");
+        ids.sort();
+        assert_eq!(ids, vec![10, 20]);
+    }
+
+    #[test]
+    fn matching_container_ids_empty_when_no_match() {
+        let tree = node_tree(1, vec![leaf_node_value(10, Some("kitty"), None)], vec![]);
+        assert_eq!(
+            matching_container_ids(&tree, "nonexistent", ""),
+            Vec::<i64>::new()
+        );
+    }
+
+    #[test]
+    fn matching_container_ids_matches_by_class() {
+        let tree = node_tree(1, vec![leaf_node_value(10, None, Some("Firefox"))], vec![]);
+        assert_eq!(matching_container_ids(&tree, "", "Firefox"), vec![10]);
+    }
+
+    #[test]
+    fn matching_container_ids_recurses_into_nested_containers() {
+        let inner = container_node_value(2, vec![leaf_node_value(10, Some("kitty"), None)], vec![]);
+        let tree = node_tree(1, vec![inner], vec![]);
+        assert_eq!(matching_container_ids(&tree, "kitty", ""), vec![10]);
+    }
+
+    #[test]
+    fn matching_container_ids_prefers_app_id_over_class_when_both_set() {
+        let tree = node_tree(
+            1,
+            vec![leaf_node_value(10, Some("kitty"), Some("NoMatch"))],
+            vec![],
+        );
+        assert_eq!(matching_container_ids(&tree, "kitty", "NoMatch"), vec![10]);
+    }
+
+    // resolve_matches
+
+    #[test]
+    fn resolve_matches_errors_on_zero_matches() {
+        assert_eq!(
+            resolve_matches(vec![], "app_id \"kitty\""),
+            Err("No existing window matches app_id \"kitty\"".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_matches_ok_on_single_match() {
+        assert_eq!(resolve_matches(vec![42], "app_id \"kitty\""), Ok(42));
+    }
+
+    #[test]
+    fn resolve_matches_errors_listing_ids_on_multiple_matches() {
+        assert_eq!(
+            resolve_matches(vec![42, 91], "app_id \"kitty\""),
+            Err("2 windows match app_id \"kitty\": 42, 91 — retarget with --con-id".to_string())
+        );
     }
 
     // first_outcome_error

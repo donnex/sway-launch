@@ -69,11 +69,21 @@ to:
 
 ### Orchestration: `SwayLaunch::run()`
 
-Runs `Exec` first (always) to launch the command and obtain the new window's `container_id`, then
-conditionally runs the other actions in a fixed order (`NewColumn` → `NewRow` → `Workspace` →
-`Split` → `Floating` → `Fullscreen` → `Height` → `Width` → `Position` → `Mark`) based on which CLI
-flags were set, each against that same `container_id`. The final container id is printed to
-stdout — this is what makes commands chainable/scriptable (see README examples).
+`SwayLaunch` no longer always launches a new window — it has a `target: Target` field
+(`Target::Exec { command }`, `Target::ConId(i64)`, or `Target::Existing`), and
+`resolve_container_id()` turns whichever one is set into a `container_id`:
+
+- `Exec` — today's original behavior: build and run a `SwayAction::Exec`.
+- `ConId(id)` — the id directly, no IPC call at all.
+- `Existing` — `get_tree()` + `matching_container_ids()` (a recursive walk over `Node::nodes`/
+  `Node::floating_nodes`, reusing `window_app_id_match`/`window_class_match` — refactored to take
+  `&Node` instead of `&WindowEvent`, since `WindowEvent.container` already *is* a `Node`) +
+  `resolve_matches()`, which errors on zero or more than one match rather than guessing.
+
+`run()` then conditionally runs the other actions in a fixed order (`NewColumn` → `NewRow` →
+`Workspace` → `Split` → `Floating` → `Fullscreen` → `Height` → `Width` → `Position` → `Mark`)
+based on which CLI flags were set, each against that same `container_id`. The final container id
+is printed to stdout — this is what makes commands chainable/scriptable (see README examples).
 
 Each Sway IPC call opens its own fresh `Connection` (`new_connection()` in `sway_launch.rs`) — there
 is no persistent/shared connection across actions.
@@ -87,8 +97,8 @@ killed. Useful for discovering event shapes when adding a new action.
 
 `examples/` holds tracked, user-facing example scripts, each a small standalone shell script built
 out of `sway-launch` calls that demonstrates one layout. Basic examples (`dual-terminals`,
-`triple-row`, `column-split`, `quad-terminals`, `workspace-and-position`) use only `kitty`;
-advanced examples (`dev-workspace`, `floating-file-manager`, `browser-comparison`,
+`triple-row`, `column-split`, `quad-terminals`, `workspace-and-position`, `retarget-floating`) use
+only `kitty`; advanced examples (`dev-workspace`, `floating-file-manager`, `browser-comparison`,
 `quad-mixed-apps`, `editor-with-floating-terminal`) combine multiple applications (Firefox,
 Chromium, Thunar, VS Code) and exercise more of the CLI surface (`--class` matching, `--floating`,
 `--mark`, `--width`/`--height`). README.md's "Recreatable layouts" section links to and groups all
@@ -130,12 +140,13 @@ unpolished.
     dispatch tables, window-match logic, CLI argument validation/parsing). The functions that
     open, read, or write the Sway IPC socket directly (`new_connection`, `event_loop`,
     `run_sway_command`'s connection call, `run_wait_time`, `run_wait_matching_events`,
-    `SwayAction::run`, `SwayLaunch::run`, `SwayLaunch::debug_events`) are exempted — they require a
-    live Sway compositor, can't run headless in GitHub Actions CI, and are exercised manually by
-    running `examples/` scripts instead. No mocking layer has been introduced for these on the
-    judgment that a trait-based abstraction purely to unit-test thin IPC wiring isn't worth the
-    added indirection for a tool this size; revisit if the IPC-touching logic grows more complex
-    than it is today.
+    `find_existing_container_id`'s connection call, `SwayAction::run`,
+    `SwayLaunch::resolve_container_id`, `SwayLaunch::run`, `SwayLaunch::debug_events`) are
+    exempted — they require a live Sway compositor, can't run headless in GitHub Actions CI, and
+    are exercised manually by running `examples/` scripts instead. No mocking layer has been
+    introduced for these on the judgment that a trait-based abstraction purely to unit-test thin
+    IPC wiring isn't worth the added indirection for a tool this size; revisit if the
+    IPC-touching logic grows more complex than it is today.
 - Measure coverage with `cargo llvm-cov` (requires the `cargo-llvm-cov` subcommand and the
   `llvm-tools-preview` rustup component):
   - `cargo llvm-cov --summary-only --ignore-filename-regex 'main\.rs'` — summary
