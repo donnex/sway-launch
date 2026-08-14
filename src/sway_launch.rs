@@ -90,6 +90,11 @@ enum SwayAction<'a> {
         verbose: bool,
         timeout: time::Duration,
     },
+    Fullscreen {
+        container_id: i64,
+        verbose: bool,
+        timeout: time::Duration,
+    },
     NewColumn {
         container_id: i64,
         verbose: bool,
@@ -149,6 +154,9 @@ impl fmt::Display for SwayAction<'_> {
             SwayAction::Floating { container_id, .. } => {
                 write!(f, "Floating (container_id: {})", container_id)
             }
+            SwayAction::Fullscreen { container_id, .. } => {
+                write!(f, "Fullscreen (container_id: {})", container_id)
+            }
             SwayAction::NewColumn { container_id, .. } => {
                 write!(f, "New column (container_id: {})", container_id)
             }
@@ -193,6 +201,9 @@ impl SwayAction<'_> {
             SwayAction::Floating { container_id, .. } => {
                 format!("[con_id={}] floating enable", container_id)
             }
+            SwayAction::Fullscreen { container_id, .. } => {
+                format!("[con_id={}] fullscreen enable", container_id)
+            }
             SwayAction::Split {
                 container_id,
                 split,
@@ -234,6 +245,7 @@ impl SwayAction<'_> {
             SwayAction::Exec { verbose, .. }
             | SwayAction::Split { verbose, .. }
             | SwayAction::Floating { verbose, .. }
+            | SwayAction::Fullscreen { verbose, .. }
             | SwayAction::NewColumn { verbose, .. }
             | SwayAction::NewRow { verbose, .. }
             | SwayAction::Mark { verbose, .. }
@@ -246,6 +258,7 @@ impl SwayAction<'_> {
         match self {
             SwayAction::Exec { timeout, .. }
             | SwayAction::Floating { timeout, .. }
+            | SwayAction::Fullscreen { timeout, .. }
             | SwayAction::NewColumn { timeout, .. }
             | SwayAction::NewRow { timeout, .. }
             | SwayAction::Mark { timeout, .. } => timeout,
@@ -266,6 +279,7 @@ impl SwayAction<'_> {
         match self {
             SwayAction::Split { container_id, .. }
             | SwayAction::Floating { container_id, .. }
+            | SwayAction::Fullscreen { container_id, .. }
             | SwayAction::NewColumn { container_id, .. }
             | SwayAction::NewRow { container_id, .. }
             | SwayAction::Mark { container_id, .. }
@@ -284,6 +298,7 @@ impl SwayAction<'_> {
             // here let sway-launch return the wrong container id.
             SwayAction::Exec { .. } => Some(vec![WindowChange::New]),
             SwayAction::Floating { .. } => Some(vec![WindowChange::Floating]),
+            SwayAction::Fullscreen { .. } => Some(vec![WindowChange::FullscreenMode]),
             SwayAction::NewColumn { .. } | SwayAction::NewRow { .. } => {
                 Some(vec![WindowChange::Move])
             }
@@ -296,6 +311,7 @@ impl SwayAction<'_> {
         match self {
             SwayAction::Exec { .. }
             | SwayAction::Floating { .. }
+            | SwayAction::Fullscreen { .. }
             | SwayAction::NewColumn { .. }
             | SwayAction::NewRow { .. }
             | SwayAction::Mark { .. } => Some(EventType::Window),
@@ -549,6 +565,7 @@ pub struct SwayLaunch<'a> {
 
     pub split: Option<Split>,
     pub floating: bool,
+    pub fullscreen: bool,
     pub mark: &'a str,
     pub new_column: bool,
     pub new_row: bool,
@@ -628,6 +645,14 @@ impl SwayLaunch<'_> {
         }
         if self.floating {
             SwayAction::Floating {
+                container_id,
+                verbose: self.verbose,
+                timeout: self.timeout,
+            }
+            .run()?;
+        }
+        if self.fullscreen {
+            SwayAction::Fullscreen {
                 container_id,
                 verbose: self.verbose,
                 timeout: self.timeout,
@@ -766,6 +791,16 @@ mod tests {
     }
 
     #[test]
+    fn sway_command_fullscreen() {
+        let action = SwayAction::Fullscreen {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(action.sway_command(), "[con_id=42] fullscreen enable");
+    }
+
+    #[test]
     fn sway_command_split_v() {
         let action = SwayAction::Split {
             container_id: 42,
@@ -879,6 +914,16 @@ mod tests {
             timeout: time::Duration::from_secs(5),
         };
         assert_eq!(action.to_string(), "Floating (container_id: 42)");
+    }
+
+    #[test]
+    fn display_fullscreen() {
+        let action = SwayAction::Fullscreen {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(action.to_string(), "Fullscreen (container_id: 42)");
     }
 
     #[test]
@@ -1048,6 +1093,19 @@ mod tests {
         assert_eq!(
             action.matching_window_change_events(),
             Some(vec![WindowChange::Floating])
+        );
+    }
+
+    #[test]
+    fn fullscreen_matches_fullscreen_mode_window_change() {
+        let action = SwayAction::Fullscreen {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(
+            action.matching_window_change_events(),
+            Some(vec![WindowChange::FullscreenMode])
         );
     }
 
@@ -1296,6 +1354,20 @@ mod tests {
             timeout: time::Duration::from_secs(5),
         };
         let event = window_event("floating", 42, None, None);
+        assert!(matches!(
+            action.matches_window_event(&event),
+            Ok(WindowEventMatch::WindowContainerIdMatch)
+        ));
+    }
+
+    #[test]
+    fn fullscreen_matches_on_container_id() {
+        let action = SwayAction::Fullscreen {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        let event = window_event("fullscreen_mode", 42, None, None);
         assert!(matches!(
             action.matches_window_event(&event),
             Ok(WindowEventMatch::WindowContainerIdMatch)

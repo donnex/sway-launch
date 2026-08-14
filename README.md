@@ -32,6 +32,7 @@ Options:
   -c, --class <CLASS>          class match
   -s, --split <SPLIT>          Change split for new window [possible values: v, h]
   -f, --floating               Make new window floating
+      --fullscreen             Make new window fullscreen
   -m, --mark <MARK>            Add mark to new window
   -n, --new-column             Move window to new column (move right)
       --height <HEIGHT>        Set height on new window
@@ -156,6 +157,14 @@ windows — Firefox, for example, uses `app_id=firefox`.
 
 ```shell
 sway-launch --floating 'firefox --new-window https://example.com'
+```
+
+### Fullscreen
+
+Makes the window fullscreen.
+
+```shell
+sway-launch --fullscreen kitty
 ```
 
 ### Mark
