@@ -1,0 +1,19 @@
+#!/bin/sh
+#
+# Launch a floating kitty terminal, move it to workspace 2, and center it.
+#
+set -eu
+
+usage() {
+  printf 'Usage: %s\n' "$(basename "$0")"
+  printf 'Launch a floating kitty terminal on workspace 2, centered.\n'
+}
+
+case "${1:-}" in
+-h | --help)
+  usage
+  exit 0
+  ;;
+esac
+
+sway-launch -a kitty --floating --workspace 2 --position center kitty

@@ -38,34 +38,42 @@ The crate is two files:
 ### Core model: `SwayAction`
 
 Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`, `Fullscreen`,
-`NewColumn`, `NewRow`, `Mark`, `Height`, `Width`). Each variant knows how to:
+`NewColumn`, `NewRow`, `Workspace`, `Mark`, `Height`, `Width`, `Position`). Each variant knows how
+to:
 
-- render itself as a `swaymsg` command string (`sway_command()`) — `Mark`'s value is wrapped
-  through `quote_sway_string()` before interpolation, since Sway's command parser splits on
-  unquoted `,`/`;` and an unescaped mark could otherwise inject additional commands; `Height` and
-  `Width` don't need this since they're already regex-constrained in `main.rs`, and `Exec`'s
-  command is passed through unquoted by design (the tool's whole job is to run it)
+- render itself as a `swaymsg` command string (`sway_command()`) — `Mark`'s and `Workspace`'s
+  values are wrapped through `quote_sway_string()` before interpolation, since Sway's command
+  parser splits on unquoted `,`/`;` and an unescaped value could otherwise inject additional
+  commands; `Height`, `Width`, and `Position` don't need this since they're already
+  regex-constrained in `main.rs` (`Position` additionally translates its validated `<x>,<y>` CLI
+  form into Sway's space-separated `move position <x> <y>` syntax), and `Exec`'s command is passed
+  through unquoted by design (the tool's whole job is to run it)
 - declare which `WindowChange` event(s) would confirm it completed (`matching_window_change_events()`)
 - declare its IPC event subscription (`event_subscription()`)
 
 `SwayAction::run()` dispatches based on whether the action has a corresponding IPC event:
 
-- **Has an event** (`Exec`, `Floating`, `Fullscreen`, `NewColumn`, `NewRow`, `Mark`) →
+- **Has an event** (`Exec`, `Floating`, `Fullscreen`, `NewColumn`, `NewRow`, `Workspace`, `Mark`) →
   `run_wait_matching_events()`:
   connects to Sway, sends the command, then reads the event stream until a `Window` event matches
   (checked via `matches_window_event()`, e.g. app_id/class for `Exec`, container id for others), or
-  the `--timeout` is hit.
-- **No event exists in Sway IPC for it** (`Split`, `Height`, `Width`) → `run_wait_time()`: sends the
-  command and sleeps for `--wait-time` before and after, since Sway doesn't emit an event to
-  confirm these.
+  the `--timeout` is hit. `Workspace` reuses `NewColumn`/`NewRow`'s `WindowChange::Move` matching,
+  since moving to a different workspace also reparents the container in Sway's tree — this hasn't
+  been confirmed against a live Sway session (no Wayland/Sway available in the dev sandbox this was
+  built in); if it turns out `Move` doesn't fire reliably for a workspace change, switch `Workspace`
+  to the `run_wait_time()` pattern below instead.
+- **No event exists in Sway IPC for it** (`Split`, `Height`, `Width`, `Position`) →
+  `run_wait_time()`: sends the command and sleeps for `--wait-time` before and after, since Sway
+  doesn't emit an event to confirm these. `Position` has no dedicated event because moving a
+  floating window doesn't reparent it in the tree.
 
 ### Orchestration: `SwayLaunch::run()`
 
 Runs `Exec` first (always) to launch the command and obtain the new window's `container_id`, then
-conditionally runs the other actions in a fixed order (`NewColumn` → `NewRow` → `Split` →
-`Floating` → `Fullscreen` → `Height` → `Width` → `Mark`) based on which CLI flags were set, each
-against that same `container_id`. The final container id is printed to stdout — this is what makes
-commands chainable/scriptable (see README examples).
+conditionally runs the other actions in a fixed order (`NewColumn` → `NewRow` → `Workspace` →
+`Split` → `Floating` → `Fullscreen` → `Height` → `Width` → `Position` → `Mark`) based on which CLI
+flags were set, each against that same `container_id`. The final container id is printed to
+stdout — this is what makes commands chainable/scriptable (see README examples).
 
 Each Sway IPC call opens its own fresh `Connection` (`new_connection()` in `sway_launch.rs`) — there
 is no persistent/shared connection across actions.
@@ -79,13 +87,14 @@ killed. Useful for discovering event shapes when adding a new action.
 
 `examples/` holds tracked, user-facing example scripts, each a small standalone shell script built
 out of `sway-launch` calls that demonstrates one layout. Basic examples (`dual-terminals`,
-`triple-row`, `column-split`, `quad-terminals`) use only `kitty`; advanced examples
-(`dev-workspace`, `floating-file-manager`, `browser-comparison`, `quad-mixed-apps`,
-`editor-with-floating-terminal`) combine multiple applications (Firefox, Chromium, Thunar, VS
-Code) and exercise more of the CLI surface (`--class` matching, `--floating`, `--mark`,
-`--width`/`--height`). README.md's "Recreatable layouts" section links to and groups all of these;
-they are full scripts a user runs directly, so they follow every Scripts/Shell convention below,
-including `-h`/`--help`. Keep this set and README's list of them in sync when either changes.
+`triple-row`, `column-split`, `quad-terminals`, `workspace-and-position`) use only `kitty`;
+advanced examples (`dev-workspace`, `floating-file-manager`, `browser-comparison`,
+`quad-mixed-apps`, `editor-with-floating-terminal`) combine multiple applications (Firefox,
+Chromium, Thunar, VS Code) and exercise more of the CLI surface (`--class` matching, `--floating`,
+`--mark`, `--width`/`--height`). README.md's "Recreatable layouts" section links to and groups all
+of these; they are full scripts a user runs directly, so they follow every Scripts/Shell
+convention below, including `-h`/`--help`. Keep this set and README's list of them in sync when
+either changes.
 
 There is no separate ad-hoc/scratch scripts directory — a prior `layout-tests/` served that
 purpose (untracked, personal iteration history) but was removed once its useful layouts had all
