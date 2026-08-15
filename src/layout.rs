@@ -28,6 +28,8 @@ pub struct LayoutStep {
     pub floating: bool,
     #[serde(default)]
     pub fullscreen: bool,
+    #[serde(default)]
+    pub focus: bool,
     pub mark: Option<String>,
     #[serde(default)]
     pub new_column: bool,
@@ -108,6 +110,7 @@ impl LayoutStep {
             split: self.split,
             floating: self.floating,
             fullscreen: self.fullscreen,
+            focus: self.focus,
             mark: self.mark.as_deref().unwrap_or_default(),
             new_column: self.new_column,
             new_row: self.new_row,
@@ -198,6 +201,7 @@ mod tests {
             split: None,
             floating: false,
             fullscreen: false,
+            focus: false,
             mark: None,
             new_column: false,
             new_row: false,

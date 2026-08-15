@@ -78,7 +78,13 @@ impl Drop for KillOnDrop {
 }
 
 fn launch_foot(extra_args: &[&str]) -> (i64, KillOnDrop) {
-    let mut args = vec!["--app-id", "foot", "--timeout", "10"];
+    // A higher --wait-time than the 20ms CLI default: the headless/pixman
+    // compositor these tests run against is otherwise flaky on multi-action
+    // invocations (e.g. --floating followed by --position), occasionally
+    // querying tree state before the second wait-time-based action's Sway
+    // command has actually taken effect. Later args win on conflict, so a
+    // test can still override this via extra_args if it needs to.
+    let mut args = vec!["--app-id", "foot", "--timeout", "10", "--wait-time", "100"];
     args.extend_from_slice(extra_args);
     args.push("foot");
 
@@ -161,6 +167,29 @@ fn fullscreen_enables_fullscreen_mode() {
 
     let node = get_node(&mut connection, container_id);
     assert_ne!(node.fullscreen_mode, Some(0));
+}
+
+#[test]
+fn focus_focuses_a_previously_unfocused_window() {
+    let mut connection = connect();
+    let (first_id, _first_guard) = launch_foot(&[]);
+    // Launching a second window steals focus from the first, giving this
+    // test an actual unfocused-to-focused transition to confirm — proves
+    // WindowChange::Focus fires for real, rather than the --focus command
+    // being a no-op on an already-focused window.
+    let (_second_id, _second_guard) = launch_foot(&[]);
+    assert!(!get_node(&mut connection, first_id).focused);
+
+    let output = sway_launch_command()
+        .args(["--con-id", &first_id.to_string(), "--focus"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --focus failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(get_node(&mut connection, first_id).focused);
 }
 
 #[test]
