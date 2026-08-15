@@ -1,0 +1,12 @@
+# usage [exit_code]
+# Prints usage (via a script-defined print_usage()) to stdout and exits 0,
+# or to stderr and exits with the given non-zero code. Defaults to 0.
+# Requires the calling script to define its own print_usage().
+usage() {
+  if [ "${1:-0}" -ne 0 ]; then
+    print_usage >&2
+  else
+    print_usage
+  fi
+  exit "${1:-0}"
+}

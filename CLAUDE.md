@@ -21,17 +21,25 @@ manual `sleep`s. See `README.md` for full CLI usage and layout-building examples
 - Test: `cargo test` — runs the unit tests in `src/sway_launch.rs` and `src/main.rs` (covering all
   pure/logic functions; see the Testing bullet under Rust conventions for what's exempted and why)
   plus the integration tests in `tests/` (driving the compiled binary directly, for the couple of
-  things that need a real subprocess — see Architecture below). The IPC-touching functions that
-  can't run headless are exercised manually by running the scripts in `examples/` (see below)
-  against a live Sway session.
+  things that need a real subprocess — see Architecture below). This never touches a real Sway
+  compositor, so it runs headlessly in CI.
   - Run a single test: `cargo test <test_name>`
   - Run with debug output: `cargo test -- --nocapture`
+- Live-Sway test: `scripts/run-live-sway-tests` — starts a throwaway headless Sway compositor, runs
+  `tests/live_sway.rs` (gated behind the `live-sway-tests` Cargo feature) against it, then tears it
+  down. This is what actually exercises the IPC-touching functions `cargo test` exempts (see the
+  Testing bullet under Rust conventions), plus anything else worth confirming against real Sway
+  behavior rather than assuming it. Requires `sway`, `swaymsg`, and `foot` on `PATH`; runs in its
+  own CI job (`live-sway-tests` in `.github/workflows/check.yml`) separate from the main `check`
+  job, so a live-Sway hiccup doesn't block the fast unit-test feedback loop. Running the scripts in
+  `examples/` against a live Sway session is still useful for eyeballing real layouts, but is no
+  longer the only way these code paths get exercised.
 
 See the CI section below for how GitHub Actions runs these same checks.
 
 ## Architecture
 
-The crate is three source files plus three integration test files:
+The crate is three source files plus four integration test files:
 
 - `src/main.rs` — defines the `clap`-derived `Args` struct (CLI flags) and constructs a
   `sway_launch::SwayLaunch` (direct CLI mode) or dispatches to `run_layout()`/`layout.rs`
@@ -51,10 +59,18 @@ The crate is three source files plus three integration test files:
   target mode that never touches the Sway socket, so this runs headless in CI.
 - `tests/layout.rs` — asserts `--layout`'s end-to-end behavior (file reading, TOML parsing, step
   iteration, `--json` output, error messages) the same way, using `con_id`-only steps.
+- `tests/live_sway.rs` — the odd one out: gated behind the `live-sway-tests` Cargo feature (so a
+  plain `cargo test` skips it entirely) and needs a real, reachable Sway compositor, run via
+  `scripts/run-live-sway-tests` rather than directly. Drives the compiled binary against real
+  windows (`foot`, the only software-rendered — no GPU/EGL needed — client already pulled in as
+  sway's own default-terminal dependency; `kitty`, this project's usual example app, needs a real
+  GPU and fails headlessly) and asserts on real tree state read back via `swayipc::Connection`,
+  covering the IPC-touching functions the other three test files, and `cargo llvm-cov`, can't
+  reach headlessly (see the Testing bullet under Rust conventions).
 
-All three integration test files need `CARGO_BIN_EXE_sway-launch` (to invoke the compiled binary
-as a subprocess), which is only set for files under `tests/`, not for the bin crate's own unit
-test harness — that's why these live here instead of as `#[cfg(test)]` modules in `src/main.rs`.
+All four integration test files need `CARGO_BIN_EXE_sway-launch` (to invoke the compiled binary as
+a subprocess), which is only set for files under `tests/`, not for the bin crate's own unit test
+harness — that's why these live here instead of as `#[cfg(test)]` modules in `src/main.rs`.
 
 ### Core model: `SwayAction`
 
@@ -74,19 +90,21 @@ to:
 
 `SwayAction::run()` dispatches based on whether the action has a corresponding IPC event:
 
-- **Has an event** (`Exec`, `Floating`, `Fullscreen`, `NewColumn`, `NewRow`, `Workspace`, `Mark`) →
+- **Has an event** (`Exec`, `Floating`, `Fullscreen`, `Workspace`, `Mark`) →
   `run_wait_matching_events()`:
   connects to Sway, sends the command, then reads the event stream until a `Window` event matches
   (checked via `matches_window_event()`, e.g. app_id/class for `Exec`, container id for others), or
-  the `--timeout` is hit. `Workspace` reuses `NewColumn`/`NewRow`'s `WindowChange::Move` matching,
-  since moving to a different workspace also reparents the container in Sway's tree — this hasn't
-  been confirmed against a live Sway session (no Wayland/Sway available in the dev sandbox this was
-  built in); if it turns out `Move` doesn't fire reliably for a workspace change, switch `Workspace`
-  to the `run_wait_time()` pattern below instead.
-- **No event exists in Sway IPC for it** (`Split`, `Height`, `Width`, `Position`) →
-  `run_wait_time()`: sends the command and sleeps for `--wait-time` before and after, since Sway
-  doesn't emit an event to confirm these. `Position` has no dedicated event because moving a
-  floating window doesn't reparent it in the tree.
+  the `--timeout` is hit. `Workspace` uses `WindowChange::Move`, since moving to a different
+  workspace also reparents the container in Sway's tree — confirmed reliable against a live Sway
+  session by `tests/live_sway.rs`'s `workspace_moves_window_to_named_workspace`.
+- **No event exists in Sway IPC for it** (`Split`, `NewColumn`, `NewRow`, `Height`, `Width`,
+  `Position`) → `run_wait_time()`: sends the command and sleeps for `--wait-time` before and after,
+  since Sway doesn't emit an event to confirm these. `Position` has no dedicated event because
+  moving a floating window doesn't reparent it in the tree. `NewColumn`/`NewRow` (`move
+  right`/`move down`) used to be event-confirmed via `WindowChange::Move`, but live-Sway testing
+  showed `move right` doesn't fire that event when the window is already at the tree's rightmost
+  position — the ordinary two-window case — so it hung until `--timeout` every time; both moved to
+  this wait-time pattern instead.
 
 ### Orchestration: `SwayLaunch::run()`
 
@@ -203,15 +221,20 @@ unpolished.
   fine for genuinely untestable paths (e.g. something that can't run headless) to stay uncovered —
   note why in the project's issue tracker rather than forcing a brittle test.
   - This project's agreed target: cover every pure/logic function (command-string building, event
-    dispatch tables, window-match logic, CLI argument validation/parsing). The functions that
-    open, read, or write the Sway IPC socket directly (`new_connection`, `event_loop`,
-    `run_sway_command`'s connection call, `run_wait_time`, `run_wait_matching_events`,
-    `find_existing_container_id`'s connection call, `SwayAction::run`, `SwayLaunch::run`,
-    `SwayLaunch::debug_events`) are exempted — they require a live Sway compositor, can't run
-    headless in GitHub Actions CI, and are exercised manually by running `examples/` scripts
-    instead. No mocking layer has been introduced for these on the judgment that a trait-based
-    abstraction purely to unit-test thin IPC wiring isn't worth the added indirection for a tool
-    this size; revisit if the IPC-touching logic grows more complex than it is today.
+    dispatch tables, window-match logic, CLI argument validation/parsing) via `cargo test`. The
+    functions that open, read, or write the Sway IPC socket directly (`new_connection`,
+    `event_loop`, `run_sway_command`'s connection call, `run_wait_time`,
+    `run_wait_matching_events`, `find_existing_container_id`'s connection call, `SwayAction::run`,
+    `SwayLaunch::run`, `SwayLaunch::debug_events`) are exempted from the `cargo llvm-cov` line-
+    coverage measurement — they require a live Sway compositor, so `cargo test`/`cargo llvm-cov`
+    (which run headlessly, without one) never execute them. They're no longer *unverifiable*,
+    though: `tests/live_sway.rs` (see the Testing section below) exercises them for real against a
+    throwaway headless Sway compositor via `scripts/run-live-sway-tests`, both in CI and locally —
+    it's just a separate test tier from `cargo test`'s coverage-measured suite, gated behind the
+    `live-sway-tests` Cargo feature so it stays fully opt-in. No mocking layer has been introduced
+    for these on the judgment that a trait-based abstraction purely to unit-test thin IPC wiring
+    isn't worth the added indirection for a tool this size; revisit if the IPC-touching logic grows
+    more complex than it is today.
     `SwayLaunch::resolve_container_id`'s `Target::ConId` branch is the one exception — it never
     touches the socket, so it's covered headlessly by `tests/json_output.rs` driving the compiled
     binary with `--con-id` instead.
@@ -575,10 +598,13 @@ with it, in the same change that changed the tooling. Don't let this slip to a f
 out-of-date workflow as a bug, the same way a stale doc would be.
 
 GitHub Actions is set up: `.github/workflows/check.yml` runs `cargo fmt --check`, `cargo clippy`,
-`cargo build`, and `cargo test` on every push and pull request, plus a `cargo audit` job via the
-`rustsec/audit-check` action. `.github/workflows/release.yml` re-runs the same checks against the
-exact tagged commit, then builds and publishes a release archive when a `v*` tag is pushed. Keep
-both in sync with this file's Rust conventions above whenever the checks change.
+`cargo build`, and `cargo test` on every push and pull request, a separate `live-sway-tests` job
+that installs `sway`+`foot` and runs `scripts/run-live-sway-tests` (kept as its own job so a
+live-Sway hiccup doesn't block the fast unit-test feedback loop), and a `cargo audit` job via the
+`rustsec/audit-check` action. `.github/workflows/release.yml` re-runs the same core checks (not the
+live-Sway job — a release build doesn't need a compositor) against the exact tagged commit, then
+builds and publishes a release archive when a `v*` tag is pushed. Keep both in sync with this
+file's Rust conventions above whenever the checks change.
 
 ## Content
 
