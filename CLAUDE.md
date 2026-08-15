@@ -708,6 +708,15 @@ page) rather than a leak of unrelated real-world data, and the user explicitly s
 after being asked. Don't flag it in a future content-policy review, and don't use it as precedent
 for adding other real URLs without the same explicit confirmation.
 
+**Approved exception:** `README.md:3`/`CLAUDE.md:7` (`https://swaywm.org/`, the window manager
+this tool is built for), `CLAUDE.md:714` (`https://cli.github.com/`, the `gh` CLI's own site), and
+`Cargo.toml:6` (`https://doc.rust-lang.org/cargo/reference/manifest.html`, `cargo init`'s
+boilerplate "see more keys" comment pointing at Cargo's own manifest reference docs) are real
+URLs, but each is a necessary reference to the specific upstream project/tool the surrounding text
+is about, not a leak of unrelated real-world data — the user explicitly signed off on these after
+being asked (2026-08-15). Don't flag these specific ones in a future content-policy review, and
+don't use this as precedent for adding other real URLs without the same explicit confirmation.
+
 ## Issues
 
 For tracking issues on GitHub (github.com or a GitHub Enterprise Server host), managed with the
