@@ -317,26 +317,21 @@ impl SwayAction<'_> {
         }
     }
 
-    fn timeout(self) -> time::Duration {
+    /// The `--timeout` for an event-confirmed action, or the `--wait-time`
+    /// for a time-based one — whichever field this variant actually has.
+    fn duration(self) -> time::Duration {
         match self {
             SwayAction::Exec { timeout, .. }
             | SwayAction::Floating { timeout, .. }
             | SwayAction::Fullscreen { timeout, .. }
             | SwayAction::Workspace { timeout, .. }
             | SwayAction::Mark { timeout, .. } => timeout,
-            _ => unreachable!(),
-        }
-    }
-
-    fn wait_time(self) -> time::Duration {
-        match self {
             SwayAction::Split { wait_time, .. }
             | SwayAction::NewColumn { wait_time, .. }
             | SwayAction::NewRow { wait_time, .. }
             | SwayAction::Height { wait_time, .. }
             | SwayAction::Width { wait_time, .. }
             | SwayAction::Position { wait_time, .. } => wait_time,
-            _ => unreachable!(),
         }
     }
 
@@ -386,22 +381,6 @@ impl SwayAction<'_> {
         }
     }
 
-    fn event_subscription(&self) -> Option<EventType> {
-        match self {
-            SwayAction::Exec { .. }
-            | SwayAction::Floating { .. }
-            | SwayAction::Fullscreen { .. }
-            | SwayAction::Workspace { .. }
-            | SwayAction::Mark { .. } => Some(EventType::Window),
-            SwayAction::Split { .. }
-            | SwayAction::NewColumn { .. }
-            | SwayAction::NewRow { .. }
-            | SwayAction::Height { .. }
-            | SwayAction::Width { .. }
-            | SwayAction::Position { .. } => None,
-        }
-    }
-
     fn run(&self) -> Result<i64, String> {
         if self.verbose() {
             eprintln!("Sway action: {}", self);
@@ -414,7 +393,7 @@ impl SwayAction<'_> {
     }
 
     fn run_wait_time(&self) -> Result<i64, String> {
-        let wait_time = self.wait_time();
+        let wait_time = self.duration();
 
         if self.verbose() {
             eprintln!(
@@ -440,8 +419,7 @@ impl SwayAction<'_> {
     }
 
     fn run_wait_matching_events(&self) -> Result<i64, String> {
-        let subscription = self.event_subscription().unwrap();
-        let event_loop = self::event_loop(&[subscription])?;
+        let event_loop = self::event_loop(&[EventType::Window])?;
 
         let sway_command = self.sway_command();
         if self.verbose() {
@@ -468,20 +446,20 @@ impl SwayAction<'_> {
         // checked_add rather than a plain `+`: an unrepresentable deadline
         // (a pathological --timeout) is treated as already expired instead
         // of panicking.
-        let deadline = match time::Instant::now().checked_add(self.timeout()) {
+        let deadline = match time::Instant::now().checked_add(self.duration()) {
             Some(deadline) => deadline,
-            None => return Err(format!("{} sec timeout reached", self.timeout().as_secs())),
+            None => return Err(format!("{} sec timeout reached", self.duration().as_secs())),
         };
         loop {
             let remaining = deadline.saturating_duration_since(time::Instant::now());
             if remaining.is_zero() {
-                return Err(format!("{} sec timeout reached", self.timeout().as_secs()));
+                return Err(format!("{} sec timeout reached", self.duration().as_secs()));
             }
 
             let event = match event_receiver.recv_timeout(remaining) {
                 Ok(event) => event,
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    return Err(format!("{} sec timeout reached", self.timeout().as_secs()));
+                    return Err(format!("{} sec timeout reached", self.duration().as_secs()));
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     return Err("Event stream closed unexpectedly".to_string());
@@ -1421,47 +1399,24 @@ mod tests {
     }
 
     #[test]
-    fn timeout_returns_the_configured_duration() {
+    fn duration_returns_the_timeout_for_an_event_based_action() {
         let action = SwayAction::Floating {
             container_id: 42,
             verbose: false,
             timeout: time::Duration::from_secs(7),
         };
-        assert_eq!(action.timeout(), time::Duration::from_secs(7));
+        assert_eq!(action.duration(), time::Duration::from_secs(7));
     }
 
     #[test]
-    #[should_panic]
-    fn timeout_panics_for_actions_without_one() {
-        let action = SwayAction::Split {
-            container_id: 42,
-            split: Split::V,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        action.timeout();
-    }
-
-    #[test]
-    fn wait_time_returns_the_configured_duration() {
+    fn duration_returns_the_wait_time_for_a_time_based_action() {
         let action = SwayAction::Height {
             container_id: 42,
             height: "300px",
             verbose: false,
             wait_time: time::Duration::from_millis(42),
         };
-        assert_eq!(action.wait_time(), time::Duration::from_millis(42));
-    }
-
-    #[test]
-    #[should_panic]
-    fn wait_time_panics_for_actions_without_one() {
-        let action = SwayAction::Floating {
-            container_id: 42,
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
-        action.wait_time();
+        assert_eq!(action.duration(), time::Duration::from_millis(42));
     }
 
     #[test]
@@ -1486,7 +1441,7 @@ mod tests {
         assert_eq!(action.container_id(), Some(42));
     }
 
-    // SwayAction::matching_window_change_events / event_subscription
+    // SwayAction::matching_window_change_events
 
     #[test]
     fn exec_only_matches_new_window_change() {
@@ -1602,28 +1557,6 @@ mod tests {
         assert_eq!(height.matching_window_change_events(), None);
         assert_eq!(width.matching_window_change_events(), None);
         assert_eq!(position.matching_window_change_events(), None);
-    }
-
-    #[test]
-    fn event_subscription_is_window_for_event_backed_actions() {
-        let action = SwayAction::Mark {
-            container_id: 42,
-            mark: "foo",
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
-        assert_eq!(action.event_subscription(), Some(EventType::Window));
-    }
-
-    #[test]
-    fn event_subscription_is_none_for_time_based_actions() {
-        let action = SwayAction::Split {
-            container_id: 42,
-            split: Split::V,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        assert_eq!(action.event_subscription(), None);
     }
 
     // SwayAction::matches_window_event
