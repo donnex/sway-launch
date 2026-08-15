@@ -2,7 +2,7 @@
 # the first one by its step id -- something --existing has no way to express,
 # since --existing --app-id kitty would be ambiguous between the two. Run
 # with:
-#   sway-launch --layout examples/retarget-by-id.toml
+#   sway-launch --layout examples/layouts/retarget-by-id.toml
 
 [[step]]
 id = "first"

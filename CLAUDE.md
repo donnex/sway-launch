@@ -32,8 +32,8 @@ manual `sleep`s. See `README.md` for full CLI usage and layout-building examples
   behavior rather than assuming it. Requires `sway`, `swaymsg`, and `foot` on `PATH`; runs in its
   own CI job (`live-sway-tests` in `.github/workflows/check.yml`) separate from the main `check`
   job, so a live-Sway hiccup doesn't block the fast unit-test feedback loop. Running the scripts in
-  `examples/` against a live Sway session is still useful for eyeballing real layouts, but is no
-  longer the only way these code paths get exercised.
+  `examples/scripts/` against a live Sway session is still useful for eyeballing real layouts, but
+  is no longer the only way these code paths get exercised.
 
 See the CI section below for how GitHub Actions runs these same checks.
 
@@ -238,22 +238,25 @@ in both `layout.rs` and `template.rs`).
 
 ## Example layout scripts
 
-`examples/` holds tracked, user-facing example scripts, each a small standalone shell script built
-out of `sway-launch` calls that demonstrates one layout. Basic examples (`dual-terminals`,
-`triple-row`, `column-split`, `quad-terminals`, `workspace-and-position`, `retarget-floating`) use
-only `kitty`; advanced examples (`dev-workspace`, `floating-file-manager`, `browser-comparison`,
-`quad-mixed-apps`, `editor-with-floating-terminal`) combine multiple applications (Firefox,
-Chromium, Thunar, VS Code) and exercise more of the CLI surface (`--class` matching, `--floating`,
-`--mark`, `--width`/`--height`). README.md's "Recreatable layouts" section links to and groups all
-of these; they are full scripts a user runs directly, so they follow every Scripts/Shell
-convention below, including `-h`/`--help`. Keep this set and README's list of them in sync when
-either changes.
+`examples/` splits into three subdirectories by what each file actually is, not just topic:
 
-`examples/quad-terminals.toml`, `examples/retarget-by-id.toml`, and
-`examples/templates/quad-grid.toml` are the non-shell-script examples — a `--layout`/`--template`
-file each, run via `sway-launch --layout <file>`/`sway-launch --template <file> --apps ...` rather
-than executed directly, so they're plain data (not executable, no `-h`/`--help`) and the
-Scripts/Shell conventions don't apply to them.
+- `examples/scripts/` — tracked, user-facing example scripts, each a small standalone shell script
+  built out of `sway-launch` calls that demonstrates one layout. Basic examples (`dual-terminals`,
+  `triple-row`, `column-split`, `quad-terminals`, `workspace-and-position`, `retarget-floating`)
+  use only `kitty`; advanced examples (`dev-workspace`, `floating-file-manager`,
+  `browser-comparison`, `quad-mixed-apps`, `editor-with-floating-terminal`) combine multiple
+  applications (Firefox, Chromium, Thunar, VS Code) and exercise more of the CLI surface
+  (`--class` matching, `--floating`, `--mark`, `--width`/`--height`). README.md's "Recreatable
+  layouts" section links to and groups all of these; they are full scripts a user runs directly,
+  so they follow every Scripts/Shell convention below, including `-h`/`--help`. Keep this set and
+  README's list of them in sync when either changes.
+- `examples/layouts/` (`quad-terminals.toml`, `retarget-by-id.toml`) — `--layout` files, run via
+  `sway-launch --layout <file>` rather than executed directly.
+- `examples/templates/` (`quad-grid.toml`) — `--template` files, run via `sway-launch --template
+  <file> --apps ...`/`--bindings <file>`.
+
+The files under `examples/layouts/` and `examples/templates/` are plain data (not executable, no
+`-h`/`--help`), so the Scripts/Shell conventions don't apply to them.
 
 There is no separate ad-hoc/scratch scripts directory — a prior `layout-tests/` served that
 purpose (untracked, personal iteration history) but was removed once its useful layouts had all
@@ -424,11 +427,11 @@ Run a script directly with `sh <script>`; make it executable first with `chmod +
   regardless of statement count.
 - Aim for reusable building blocks, but never as standalone scripts other scripts call out to at
   runtime — see Reusable snippets below. Before implementing any non-trivial functionality, check
-  this repo's `snippets/` library (if one exists yet) for something that already does it and copy
-  it in. If something you're implementing feels reusable, extract it into a single-function
-  snippet and add it to the snippet index below.
+  this repo's `scripts/` directory for a snippet source file (if one exists yet) that already does
+  it and copy it in. If something you're implementing feels reusable, extract it into a
+  single-function snippet and add it to the snippet index below.
 - Use a shared `retry` snippet for retry logic instead of a bespoke loop — extract one into
-  `snippets/` if one doesn't exist yet.
+  `scripts/` if one doesn't exist yet.
 - Before a script comes to depend on a new external command not already used elsewhere in the
   project, confirm the choice with the user first. This excludes standard POSIX/base-OS utilities
   guaranteed present on the target system (e.g. `sort`, `cut`, `awk`); confirmation is for
@@ -441,12 +444,14 @@ Run a script directly with `sh <script>`; make it executable first with `chmod +
 
 ### Reusable snippets
 
-Reusable code lives in a `snippets/` directory (create it the first time a script needs one), not
-as standalone scripts. Each file in `snippets/` contains exactly one shell function — a short
-usage comment above it, and nothing else: no shebang, no `set -eu`, no CLI wrapper (`-h`/`--help`,
-its own `usage()`, etc.). A snippet is copied and pasted verbatim into the script that needs it; it
-is never executed or sourced at runtime. This keeps every script self-contained (no dependency on
-other scripts being on `PATH`) while keeping the *implementation* in one canonical place.
+Reusable code lives directly in `scripts/`, alongside the repo's real, directly-run scripts (e.g.
+`scripts/run-live-sway-tests`) — not in a separate directory, and not as standalone scripts other
+scripts call out to at runtime. A snippet source file (e.g. `scripts/die`) is told apart from a
+real script by its shape: it contains exactly one shell function — a short usage comment above it,
+and nothing else: no shebang, no `set -eu`, no CLI wrapper (`-h`/`--help`, its own `usage()`,
+etc.). A snippet is copied and pasted verbatim into the script that needs it; it is never executed
+or sourced at runtime. This keeps every script self-contained (no dependency on other scripts
+being on `PATH`) while keeping the *implementation* in one canonical place.
 
 Snippet functions are always written in full multi-line form — never a single-line `{ ...; }`
 block, even when the body is a single statement. This keeps every snippet visually consistent and
@@ -454,29 +459,30 @@ easy to diff, independent of how simple the function happens to be.
 
 **Workflow**:
 
-- Before implementing non-trivial functionality, check `snippets/` for a snippet that already does
-  it, and paste it in.
-- When something you're implementing feels reusable, extract it into `snippets/<name>` as a single
+- Before implementing non-trivial functionality, check `scripts/` for a snippet source file that
+  already does it, and paste it in.
+- When something you're implementing feels reusable, extract it into `scripts/<name>` as a single
   function, note it in this file's snippet index (add one if this is the first snippet), then
   paste it into the script(s) that need it.
 - Mark every pasted-in snippet function with a `# snippet: <name>` comment directly above its
   definition. This makes sync audits trivial: `grep -rn '# snippet:' .`.
 - A pasted copy must match its snippet file exactly. If a script seems to need different behavior
-  from a snippet it already uses, that means the *snippet* should change — update `snippets/<name>`
+  from a snippet it already uses, that means the *snippet* should change — update `scripts/<name>`
   first, then re-copy it into every script that uses it, so implementations never drift apart.
   Don't let a local copy silently diverge.
-- Whenever you edit a file in `snippets/`, for any reason, immediately find every script with a
-  matching `# snippet: <name>` comment (`grep -rln '# snippet: <name>' .`) and update each copy to
-  match. A snippet change is not done until every consumer is resynced in the same change.
+- Whenever you edit a snippet source file under `scripts/`, for any reason, immediately find every
+  script with a matching `# snippet: <name>` comment (`grep -rln '# snippet: <name>' .`) and
+  update each copy to match. A snippet change is not done until every consumer is resynced in the
+  same change.
 - When creating a new script or editing an existing one, check that any `# snippet: <name>`-marked
-  function in it still matches the current `snippets/<name>` — resync if not.
+  function in it still matches the current `scripts/<name>` — resync if not.
 
 ### Shell workflow
 
 - After making changes to a script, always review the summary comment below the shebang and update
   it if it no longer accurately describes what the script does.
 - After making changes to a script, check every `# snippet: <name>`-marked function against its
-  source in `snippets/<name>` — if you changed one, update the snippet and resync every other
+  source in `scripts/<name>` — if you changed one, update the snippet and resync every other
   script that copies it.
 - Run `shellcheck --shell=sh <script>` after making changes and fix any findings before committing.
 - Run `shfmt -i 2 -w <script>` after making changes to format the script.
