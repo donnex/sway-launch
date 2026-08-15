@@ -252,8 +252,12 @@ in both `layout.rs` and `template.rs`).
   README's list of them in sync when either changes.
 - `examples/layouts/` (`quad-terminals.toml`, `retarget-by-id.toml`) — `--layout` files, run via
   `sway-launch --layout <file>` rather than executed directly.
-- `examples/templates/` (`quad-grid.toml`) — `--template` files, run via `sway-launch --template
-  <file> --apps ...`/`--bindings <file>`.
+- `examples/templates/` (`quad-grid.toml` and a wider library of other app-agnostic shapes — see
+  README.md's "Templates" section for the full, grouped list) — `--template` files, run via
+  `sway-launch --template <file> --apps ...`/`--bindings <file>`. Named for the shape alone, never
+  an application: spelled-out count words for even splits/grids (`dual-row.toml`,
+  `triple-column.toml`, `six-grid.toml`, ...) and descriptive compound names for special-purpose
+  shapes (`master-dual-stack.toml`, `sidebar-left.toml`, `floating-overlay.toml`, ...).
 
 The files under `examples/layouts/` and `examples/templates/` are plain data (not executable, no
 `-h`/`--help`), so the Scripts/Shell conventions don't apply to them.
