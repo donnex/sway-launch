@@ -78,6 +78,9 @@ impl LayoutStep {
     ) -> Result<sway_launch::SwayLaunch<'a>, String> {
         let app_id_match = self.app_id.as_deref().unwrap_or_default();
         let class_match = self.class.as_deref().unwrap_or_default();
+        if !app_id_match.is_empty() && !class_match.is_empty() {
+            return Err("step must set only one of: app_id, class".to_string());
+        }
 
         let target_fields_set = [
             self.command.is_some(),
@@ -110,9 +113,13 @@ impl LayoutStep {
             }
             sway_launch::Target::Existing
         } else {
-            let command = self.command.as_deref().ok_or_else(|| {
-                "step needs one of: command, con_id, existing, target_id".to_string()
-            })?;
+            let command = self
+                .command
+                .as_deref()
+                .filter(|command| !command.is_empty())
+                .ok_or_else(|| {
+                    "step needs one of: command, con_id, existing, target_id".to_string()
+                })?;
             sway_launch::Target::Exec { command }
         };
 
@@ -313,6 +320,35 @@ mod tests {
     fn to_sway_launch_step_without_a_target_errors() {
         let mut step = minimal_step();
         step.command = None;
+        assert!(step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &HashMap::new()
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_app_id_and_class_together() {
+        let mut step = minimal_step();
+        step.app_id = Some("kitty".to_string());
+        step.class = Some("Kitty".to_string());
+        assert!(step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &HashMap::new()
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_empty_command() {
+        let mut step = minimal_step();
+        step.command = Some(String::new());
         assert!(step
             .to_sway_launch(
                 time::Duration::from_secs(5),

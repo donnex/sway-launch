@@ -1970,6 +1970,14 @@ mod tests {
         assert!(!window_class_match(&event.container, "Firefox"));
     }
 
+    #[test]
+    fn window_class_match_false_when_class_absent_but_window_properties_present() {
+        let mut value = leaf_node_value(1, None, None);
+        value["window_properties"] = serde_json::json!({});
+        let node: Node = serde_json::from_value(value).expect("valid Node test fixture");
+        assert!(!window_class_match(&node, "Firefox"));
+    }
+
     // matching_container_ids
 
     #[test]
