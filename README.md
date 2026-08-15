@@ -58,6 +58,9 @@ Options:
   -v, --verbose                    Verbose output
       --json                       Print the result as a JSON object instead of a bare container id
       --layout <LAYOUT>            Run a declarative TOML layout file instead of a single command; see README.md for the schema. Each step is the equivalent of one sway-launch invocation's flags, so this conflicts with every per-window flag below, which would otherwise apply to no specific step
+      --template <TEMPLATE>        Run a reusable declarative TOML layout template instead of a single command; see README.md for the schema. Steps declare a `slot` instead of an application, resolved via --bindings or --apps. Conflicts with --layout and every per-window flag, same reasoning as --layout
+      --bindings <BINDINGS>        Bindings file supplying each --template slot's application identity. Requires --template; conflicts with --apps
+      --apps <APPS>                Comma-separated list of commands to launch into --template's slots, in the order they first appear in the template. Requires --template; conflicts with --bindings
   -h, --help                       Print help
   -V, --version                    Print version
 ```
@@ -148,6 +151,10 @@ Basic (all `kitty`):
   `app_id`, then a third step that retargets specifically the first one by its step `id` —
   something `--existing` can't express, since it'd be ambiguous between the two. Demonstrates
   `id`/`target_id`. Run with `sway-launch --layout examples/retarget-by-id.toml`.
+- [`examples/templates/quad-grid.toml`](examples/templates/quad-grid.toml) — the app-agnostic
+  version of `examples/quad-terminals.toml`'s shape: the same 2x2 grid, but with no application
+  baked in. Run with `sway-launch --template examples/templates/quad-grid.toml --apps
+  kitty,firefox,code,thunar` (or any four commands). See Templates below.
 
 Advanced (multiple applications):
 
@@ -211,6 +218,59 @@ Every top-level per-window flag (`--split`, `--floating`, etc.) conflicts with `
 would otherwise be unclear which step it applied to — `--timeout`, `--wait-time`, `--verbose`, and
 `--json` still apply, the latter printing one `{"container_ids": [...]}` array at the end instead
 of a line per step.
+
+### Templates
+
+A `--layout` file bakes a specific application into every step (`command`/`app_id`), which means
+reusing one for a different application means editing it. `--template <FILE>` separates the two: a
+template step describes *what to do*, and a `slot` names *which window* — the application itself
+comes from a separate `--bindings <FILE>` or `--apps <list>`, so the same template can be shared or
+reused across completely different applications.
+
+```toml
+[[step]]
+slot = "editor"
+split = "h"
+
+[[step]]
+slot = "terminal"
+```
+
+Applied to a plain list of commands, launched into the slots in the order they first appear in the
+template:
+
+```shell
+sway-launch --template template.toml --apps code,kitty
+```
+
+Or applied via a bindings file, for full control over each slot's identity — including matching an
+already-open window instead of launching a new one:
+
+```toml
+[[binding]]
+slot = "editor"
+command = "code"
+class = "Code"
+
+[[binding]]
+slot = "terminal"
+existing = true
+app_id = "kitty"
+```
+
+```shell
+sway-launch --template template.toml --bindings bindings.toml
+```
+
+A `Binding`'s keys are the same target-selection subset a layout step has (`command`, `con_id`,
+`existing`, `app_id`, `class`) — exactly one of `command`/`con_id`/`existing = true` is required, same
+rule as `--layout`. A template step's action keys (`split`, `floating`, `height`, etc.) are the same
+ones `--layout` has; `slot` and `target_id` are its only two target-selection keys, and exactly one
+is required per step — a `slot` step resolves its window via a binding, a `target_id` step
+retargets an earlier `slot`'s resolved window (see `id`/`target_id` above; a template step's
+resolved `id` is always its slot name). `--template` requires exactly one of `--bindings`/`--apps`,
+and conflicts with `--layout` and every per-window flag, same reasoning as `--layout`. See
+[`examples/templates/quad-grid.toml`](examples/templates/quad-grid.toml).
 
 ## In depth
 

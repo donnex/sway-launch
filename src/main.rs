@@ -5,6 +5,7 @@ use std::{io, process, time};
 
 mod layout;
 mod sway_launch;
+mod template;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -113,6 +114,29 @@ struct Args {
     ])]
     layout: Option<PathBuf>,
 
+    /// Run a reusable declarative TOML layout template instead of a single
+    /// command; see README.md for the schema. Steps declare a `slot` instead
+    /// of an application, resolved via --bindings or --apps. Conflicts with
+    /// --layout and every per-window flag, same reasoning as --layout
+    #[clap(long, conflicts_with_all = [
+        "command", "con_id", "existing", "app_id", "class", "split",
+        "floating", "fullscreen", "focus", "mark", "new_column", "new_row",
+        "workspace", "output", "height", "width", "position", "debug_events",
+        "layout",
+    ])]
+    template: Option<PathBuf>,
+
+    /// Bindings file supplying each --template slot's application identity.
+    /// Requires --template; conflicts with --apps
+    #[clap(long, requires = "template", conflicts_with = "apps")]
+    bindings: Option<PathBuf>,
+
+    /// Comma-separated list of commands to launch into --template's slots,
+    /// in the order they first appear in the template. Requires --template;
+    /// conflicts with --bindings
+    #[clap(long, requires = "template")]
+    apps: Option<String>,
+
     /// Command to execute
     command: Option<String>,
 }
@@ -132,6 +156,20 @@ fn main() {
 
     if let Some(layout_path) = &args.layout {
         run_layout(layout_path, &args);
+    }
+
+    if let Some(template_path) = &args.template {
+        let bindings_source = match (&args.bindings, &args.apps) {
+            (Some(bindings_path), None) => BindingsSource::File(bindings_path),
+            (None, Some(apps)) => BindingsSource::Apps(apps),
+            _ => Args::command()
+                .error(
+                    ErrorKind::MissingRequiredArgument,
+                    "--template requires one of --bindings/--apps",
+                )
+                .exit(),
+        };
+        run_template(template_path, bindings_source, &args);
     }
 
     let command = args.command.unwrap_or_default();
@@ -210,11 +248,7 @@ fn main() {
     };
 }
 
-/// Runs every step of a `--layout` file sequentially, in the order they
-/// appear, stopping at the first error — the same `set -eu`-chained
-/// behavior as the shell-script examples this mode is meant to replace.
-/// Exits the process directly (success or failure) rather than returning,
-/// matching the rest of main()'s error-handling style.
+/// Reads and parses a `--layout` file, then hands its steps to `run_steps()`.
 fn run_layout(path: &Path, args: &Args) -> ! {
     let contents = match std::fs::read_to_string(path) {
         Ok(contents) => contents,
@@ -232,12 +266,131 @@ fn run_layout(path: &Path, args: &Args) -> ! {
         }
     };
 
+    run_steps(&parsed_layout.step, args);
+}
+
+/// Where `run_template()` gets each `--template` slot's application
+/// identity from: a `--bindings` file, or the `--apps` shorthand's raw
+/// comma-separated value.
+enum BindingsSource<'a> {
+    File(&'a Path),
+    Apps(&'a str),
+}
+
+/// Reads and parses a `--template` file, resolves it against `--bindings`/
+/// `--apps` into ordinary layout steps via `template::resolve()`, then hands
+/// them to `run_steps()` — the same execution path `--layout` uses, since a
+/// resolved template is just a `Vec<layout::LayoutStep>`.
+fn run_template(path: &Path, bindings_source: BindingsSource, args: &Args) -> ! {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) => {
+            eprintln!("{}: {}", path.display(), error);
+            process::exit(1);
+        }
+    };
+
+    let parsed_template = match template::parse(&contents) {
+        Ok(parsed_template) => parsed_template,
+        Err(error) => {
+            eprintln!("{}: {}", path.display(), error);
+            process::exit(1);
+        }
+    };
+
+    let bindings = match bindings_source {
+        BindingsSource::File(bindings_path) => {
+            let contents = match std::fs::read_to_string(bindings_path) {
+                Ok(contents) => contents,
+                Err(error) => {
+                    eprintln!("{}: {}", bindings_path.display(), error);
+                    process::exit(1);
+                }
+            };
+            match template::parse_bindings(&contents) {
+                Ok(bindings) => bindings,
+                Err(error) => {
+                    eprintln!("{}: {}", bindings_path.display(), error);
+                    process::exit(1);
+                }
+            }
+        }
+        BindingsSource::Apps(apps) => match bindings_from_apps(&parsed_template, apps) {
+            Ok(bindings) => bindings,
+            Err(error) => {
+                eprintln!("{}: {}", path.display(), error);
+                process::exit(1);
+            }
+        },
+    };
+
+    let resolved_steps = match template::resolve(&parsed_template, &bindings) {
+        Ok(resolved_steps) => resolved_steps,
+        Err(error) => {
+            eprintln!("{}: {}", path.display(), error);
+            process::exit(1);
+        }
+    };
+
+    run_steps(&resolved_steps, args);
+}
+
+/// Builds `Bindings` from `--apps`' comma-separated command list, mapping
+/// them 1:1 onto the template's distinct `slot` names in first-appearance
+/// order. Each binding launches its command unfiltered (no `app_id`/`class`
+/// match), the same as a plain `sway-launch <command>` with no `-a`/`-c`.
+fn bindings_from_apps(
+    parsed_template: &template::Template,
+    apps: &str,
+) -> Result<template::Bindings, String> {
+    let mut slots = Vec::new();
+    for step in &parsed_template.step {
+        if let Some(slot) = step.slot.as_deref() {
+            if !slots.contains(&slot) {
+                slots.push(slot);
+            }
+        }
+    }
+
+    let apps: Vec<&str> = apps.split(',').map(str::trim).collect();
+    if apps.len() != slots.len() {
+        return Err(format!(
+            "template needs {} application(s) ({}), got {}",
+            slots.len(),
+            slots.join(", "),
+            apps.len()
+        ));
+    }
+
+    let binding = slots
+        .into_iter()
+        .zip(apps)
+        .map(|(slot, command)| template::Binding {
+            slot: slot.to_string(),
+            command: Some(command.to_string()),
+            con_id: None,
+            existing: false,
+            app_id: None,
+            class: None,
+        })
+        .collect();
+
+    Ok(template::Bindings { binding })
+}
+
+/// Runs every step sequentially, in the order they appear, stopping at the
+/// first error — the same `set -eu`-chained behavior as the shell-script
+/// examples `--layout`/`--template` are meant to replace. Exits the process
+/// directly (success or failure) rather than returning, matching the rest
+/// of main()'s error-handling style. Shared by `run_layout()` and
+/// `run_template()`, since a resolved template is just more layout steps.
+fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
     let default_timeout = time::Duration::from_secs(args.timeout);
     let default_wait_time = time::Duration::from_millis(args.wait_time);
     let mut container_ids = Vec::new();
     let mut resolved_ids = HashMap::new();
 
-    for (index, step) in parsed_layout.step.iter().enumerate() {
+    for (index, step) in steps.iter().enumerate() {
         if let Some(id) = step.id.as_deref() {
             if resolved_ids.contains_key(id) {
                 eprintln!(

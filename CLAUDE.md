@@ -39,19 +39,23 @@ See the CI section below for how GitHub Actions runs these same checks.
 
 ## Architecture
 
-The crate is three source files plus four integration test files:
+The crate is four source files plus five integration test files:
 
 - `src/main.rs` — defines the `clap`-derived `Args` struct (CLI flags) and constructs a
   `sway_launch::SwayLaunch` (direct CLI mode) or dispatches to `run_layout()`/`layout.rs`
-  (`--layout` mode). Argument validation itself (e.g. `--height`/`--width` must match
-  `\d+(px|ppt)`) lives in `sway_launch.rs` as `pub fn validate_size_argument`/
-  `validate_position_argument`, referenced from `main.rs`'s `#[clap(value_parser = ...)]`
-  attributes, so both the CLI parser and `layout.rs`'s TOML steps validate the same way without
-  duplicating the regexes.
+  (`--layout` mode) or `run_template()`/`template.rs` (`--template` mode) — both funnel into the
+  shared `run_steps()` (see "`--template`" below). Argument validation itself (e.g.
+  `--height`/`--width` must match `\d+(px|ppt)`) lives in `sway_launch.rs` as
+  `pub fn validate_size_argument`/`validate_position_argument`, referenced from `main.rs`'s
+  `#[clap(value_parser = ...)]` attributes, so both the CLI parser and `layout.rs`'s TOML steps
+  validate the same way without duplicating the regexes.
 - `src/sway_launch.rs` — all the core logic (see below), plus the two shared validators above.
 - `src/layout.rs` — `--layout`'s TOML schema (`Layout`/`LayoutStep`) and
   `LayoutStep::to_sway_launch()`, which converts one step into a `sway_launch::SwayLaunch` (see
   "Layout files" below).
+- `src/template.rs` — `--template`'s TOML schemas (`Template`/`TemplateStep`,
+  `Bindings`/`Binding`) and `resolve()`, which converts a `Template` + `Bindings` into ordinary
+  `layout::LayoutStep`s (see "Templates" below).
 - `tests/completions.rs` — needed because `--completions` calls `process::exit(0)` inside
   `main()`, which a unit test can't call into directly.
 - `tests/json_output.rs` — asserts `main()`'s actual stdout/stderr behavior (`--json` output,
@@ -59,16 +63,19 @@ The crate is three source files plus four integration test files:
   target mode that never touches the Sway socket, so this runs headless in CI.
 - `tests/layout.rs` — asserts `--layout`'s end-to-end behavior (file reading, TOML parsing, step
   iteration, `--json` output, error messages) the same way, using `con_id`-only steps.
+- `tests/template.rs` — the same headless approach applied to `--template`: `con_id`-based
+  `Binding`s exercise resolution, `--apps`/`--bindings`, and error messages end to end without
+  needing a live Sway session.
 - `tests/live_sway.rs` — the odd one out: gated behind the `live-sway-tests` Cargo feature (so a
   plain `cargo test` skips it entirely) and needs a real, reachable Sway compositor, run via
   `scripts/run-live-sway-tests` rather than directly. Drives the compiled binary against real
   windows (`foot`, the only software-rendered — no GPU/EGL needed — client already pulled in as
   sway's own default-terminal dependency; `kitty`, this project's usual example app, needs a real
   GPU and fails headlessly) and asserts on real tree state read back via `swayipc::Connection`,
-  covering the IPC-touching functions the other three test files, and `cargo llvm-cov`, can't
+  covering the IPC-touching functions the other four test files, and `cargo llvm-cov`, can't
   reach headlessly (see the Testing bullet under Rust conventions).
 
-All four integration test files need `CARGO_BIN_EXE_sway-launch` (to invoke the compiled binary as
+All five integration test files need `CARGO_BIN_EXE_sway-launch` (to invoke the compiled binary as
 a subprocess), which is only set for files under `tests/`, not for the bin crate's own unit test
 harness — that's why these live here instead of as `#[cfg(test)]` modules in `src/main.rs`.
 
@@ -162,21 +169,22 @@ a `SwayLaunch` first — it's checked and short-circuits right after `Args::pars
 Another standalone mode, short-circuiting right after `--completions` (before the
 command/`--con-id`/`--existing` validation, since a layout file satisfies that requirement on its
 own). `main.rs`'s `run_layout()` reads the file, parses it via `layout::parse()`
-(`toml::from_str::<layout::Layout>`), then for each `[[step]]` in order: converts it to a
-`sway_launch::SwayLaunch` via `LayoutStep::to_sway_launch()` (reusing
-`sway_launch::validate_size_argument`/`validate_position_argument` — the same validators the CLI's
-`--height`/`--width`/`--position` flags use — plus the same `command`/`con_id`/`existing`
-one-of-four-required rule `main.rs` enforces for the direct-CLI case, `target_id` being the fourth,
-layout-only option) and calls `.run()` on it, stopping at the first error. Prints one container id
-per line as each step completes, or (if `--json` is set) collects them into one
-`{"container_ids": [...]}` array printed at the end instead. Every top-level per-window flag
-`conflicts_with_all`-conflicts with `--layout` in `Args`, since a step's own fields are what apply,
-not a top-level flag with no specific step to attach to.
+(`toml::from_str::<layout::Layout>`), then hands `parsed_layout.step` to `run_steps()` (shared with
+`--template`, see below), which converts each `[[step]]` in order to a `sway_launch::SwayLaunch` via
+`LayoutStep::to_sway_launch()` (reusing `sway_launch::validate_size_argument`/
+`validate_position_argument` — the same validators the CLI's `--height`/`--width`/`--position`
+flags use — plus the same `command`/`con_id`/`existing` one-of-four-required rule `main.rs`
+enforces for the direct-CLI case, `target_id` being the fourth, layout-only option) and calls
+`.run()` on it, stopping at the first error. Prints one container id per line as each step
+completes, or (if `--json` is set) collects them into one `{"container_ids": [...]}` array printed
+at the end instead. Every top-level per-window flag `conflicts_with_all`-conflicts with `--layout`
+in `Args`, since a step's own fields are what apply, not a top-level flag with no specific step to
+attach to.
 
 **Named/aliased steps (`id`/`target_id`)**: a step's `id` names it for later reference; a later
 step's `target_id` resolves to that named step's container id instead of launching/matching its
 own window — the only way to unambiguously retarget one specific earlier step when several share
-the same `app_id`/`class` (`existing = true` would be ambiguous between them). `run_layout()`
+the same `app_id`/`class` (`existing = true` would be ambiguous between them). `run_steps()`
 maintains a `resolved_ids: HashMap<String, i64>` alongside `container_ids: Vec<i64>`: before
 converting a step, errors if its `id` was already used by an earlier step; after a step runs
 successfully, if it has an `id`, inserts `id → container_id`. `to_sway_launch()` takes
@@ -185,12 +193,48 @@ successfully, if it has an `id`, inserts `id → container_id`. `to_sway_launch(
 with no CLI flag equivalent, since a single `sway-launch` invocation only ever has one step to
 name or reference.
 
-**`LayoutStep` mirrors `Args` by design and nothing keeps them in sync automatically** — no
-compiler check, no test. When adding a new flag to `main.rs`'s `Args`, add the matching field to
-`layout.rs`'s `LayoutStep` in the same change, wire it into `to_sway_launch()`, and add it to
-README.md's "Layout files" field list — otherwise `--layout` mode silently lacks that capability
-with no signal to anyone that the two have drifted apart. `id`/`target_id` are the one exception:
-layout-only, so they never get an `Args` field to mirror.
+### `--template`
+
+A layer on top of `--layout`, not a replacement: `--template <FILE>` decouples a layout's shape
+(what to do) from its application identity (which window), so the same template can be reused
+across different applications, or shared/bundled independently of any specific one. `main.rs`'s
+`run_template()` reads and parses the template via `template::parse()`
+(`toml::from_str::<template::Template>`), builds a `template::Bindings` from either `--bindings`
+(reads + `template::parse_bindings()`) or `--apps` (`bindings_from_apps()`: splits the
+comma-separated list, zips it 1:1 onto the template's distinct `slot` names in first-appearance
+order, erroring on a count mismatch), then calls `template::resolve()` and hands the result to the
+same `run_steps()` `--layout` uses — a resolved template is just a `Vec<layout::LayoutStep>`, so
+nothing downstream needs to know a template was involved. `--template` requires exactly one of
+`--bindings`/`--apps` (`requires` on both `clap` fields handles "needs `--template`"; the "exactly
+one of the two" part is a manual check in `main()`, since `clap`'s `requires` can't express it), and
+`conflicts_with_all`-conflicts with `--layout` and every per-window flag, same reasoning as
+`--layout`.
+
+`TemplateStep` has the same action fields `LayoutStep` has, but only two target-selection fields
+instead of `LayoutStep`'s five: `slot` (needs a binding) and `target_id` (retargets an earlier
+step), exactly one required per step. `Binding` has the same target-selection fields `LayoutStep`
+has, minus `target_id` (which only makes sense on a `TemplateStep`, referencing another slot).
+`template::resolve()` turns each `slot` step into a `LayoutStep` with `id` set to the slot name and
+the binding's target fields filled in, and each `target_id` step into a `LayoutStep` with no `id`
+and only `target_id` set — deliberately producing an ordinary `layout::LayoutStep` in both cases, so
+two mechanisms fall out for free without any template-specific code: a `target_id` step can
+reference an earlier `slot` step via the **existing** `id`/`target_id`/`resolved_ids` mechanism
+above (since the slot name *is* the id), and two `TemplateStep`s accidentally sharing a `slot` name
+trip `run_steps()`'s **existing** "id already used by an earlier step" check, rather than needing a
+separate duplicate-slot check in `resolve()` itself.
+
+**`LayoutStep`/`TemplateStep` mirror `Args` by design and nothing keeps any of them in sync
+automatically** — no compiler check, no test. When adding a new flag to `main.rs`'s `Args`, add the
+matching field to `layout.rs`'s `LayoutStep` *and* `template.rs`'s `TemplateStep` in the same
+change, wire it into `to_sway_launch()`/`resolve()`, and add it to README.md's "Layout files" and
+"Templates" field lists — otherwise `--layout`/`--template` mode silently lacks that capability
+with no signal to anyone that they've drifted apart. `id`/`target_id`/`slot` are the one exception:
+layout/template-only, so they never get an `Args` field to mirror. `TemplateStep`'s action fields
+are a plain duplicate of `LayoutStep`'s rather than a shared `#[serde(flatten)]`ed struct — flatten
+has a known history of interacting badly with `#[serde(deny_unknown_fields)]` on the outer struct
+(unknown fields can silently pass through instead of erroring), which isn't worth risking against
+this project's explicit typo-catching regression tests (see `parse_rejects_misspelled_step_field`
+in both `layout.rs` and `template.rs`).
 
 ## Example layout scripts
 
@@ -205,9 +249,11 @@ of these; they are full scripts a user runs directly, so they follow every Scrip
 convention below, including `-h`/`--help`. Keep this set and README's list of them in sync when
 either changes.
 
-`examples/quad-terminals.toml` is the one non-shell-script example — a `--layout` file, run via
-`sway-launch --layout examples/quad-terminals.toml` rather than executed directly, so it's plain
-data (not executable, no `-h`/`--help`) and the Scripts/Shell conventions don't apply to it.
+`examples/quad-terminals.toml`, `examples/retarget-by-id.toml`, and
+`examples/templates/quad-grid.toml` are the non-shell-script examples — a `--layout`/`--template`
+file each, run via `sway-launch --layout <file>`/`sway-launch --template <file> --apps ...` rather
+than executed directly, so they're plain data (not executable, no `-h`/`--help`) and the
+Scripts/Shell conventions don't apply to them.
 
 There is no separate ad-hoc/scratch scripts directory — a prior `layout-tests/` served that
 purpose (untracked, personal iteration history) but was removed once its useful layouts had all
