@@ -1,0 +1,23 @@
+# The TOML equivalent of examples/quad-terminals — four kitty terminals as
+# an equally sized 2x2 grid, two rows of two — run with:
+#   sway-launch --layout examples/quad-terminals.toml
+
+[[step]]
+command = "kitty"
+app_id = "kitty"
+split = "h"
+
+[[step]]
+command = "kitty"
+app_id = "kitty"
+split = "v"
+
+[[step]]
+command = "kitty"
+app_id = "kitty"
+new_row = true
+split = "h"
+
+[[step]]
+command = "kitty"
+app_id = "kitty"

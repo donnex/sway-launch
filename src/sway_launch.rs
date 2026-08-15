@@ -1,9 +1,11 @@
 use clap::ValueEnum;
+use regex::Regex;
 use std::sync::mpsc;
 use std::{fmt, thread, time};
 use swayipc::{Connection, Event, EventStream, EventType, Node, WindowChange, WindowEvent};
 
-#[derive(Copy, Clone, PartialEq, ValueEnum, Debug)]
+#[derive(Copy, Clone, PartialEq, ValueEnum, serde::Deserialize, Debug)]
+#[serde(rename_all = "lowercase")]
 pub enum Split {
     V,
     H,
@@ -606,6 +608,30 @@ fn quote_sway_string(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
+/// Validates a `--height`/`--width` value, or a `LayoutStep`'s `height`/
+/// `width` field — both take the same `\d+(px|ppt)` format.
+pub fn validate_size_argument(value: &str) -> Result<String, String> {
+    let re = Regex::new(r"^\d+(px|ppt)$").unwrap();
+    match re.is_match(value) {
+        true => Ok(value.to_string()),
+        false => {
+            Err("Must be in format <HEIGHT>px|ppt. E.g. 300px/20ppt. ppt = percent".to_string())
+        }
+    }
+}
+
+/// Validates a `--position` value, or a `LayoutStep`'s `position` field —
+/// both take the same `center`/`<x>,<y>` format.
+pub fn validate_position_argument(value: &str) -> Result<String, String> {
+    let re = Regex::new(r"^center$|^\d+,\d+$").unwrap();
+    match re.is_match(value) {
+        true => Ok(value.to_string()),
+        false => {
+            Err("Must be \"center\" or \"<X>,<Y>\" in pixels. E.g. center/100,200".to_string())
+        }
+    }
+}
+
 fn window_app_id_match(node: &Node, app_id_match: &str) -> bool {
     let node_app_id = match node.app_id.as_ref().ok_or(()) {
         Ok(app_id) => app_id,
@@ -993,6 +1019,89 @@ mod tests {
         let quoted = quote_sway_string(injected);
         assert_eq!(quoted, "\"foo, exec malicious-command\"");
         assert!(!quoted.trim_matches('"').contains('"'));
+    }
+
+    // validate_size_argument / validate_position_argument
+
+    #[test]
+    fn validate_size_argument_accepts_px() {
+        assert_eq!(validate_size_argument("300px"), Ok("300px".to_string()));
+    }
+
+    #[test]
+    fn validate_size_argument_accepts_ppt() {
+        assert_eq!(validate_size_argument("20ppt"), Ok("20ppt".to_string()));
+    }
+
+    #[test]
+    fn validate_size_argument_accepts_zero() {
+        assert_eq!(validate_size_argument("0px"), Ok("0px".to_string()));
+    }
+
+    #[test]
+    fn validate_size_argument_rejects_missing_unit() {
+        assert!(validate_size_argument("300").is_err());
+    }
+
+    #[test]
+    fn validate_size_argument_rejects_unknown_unit() {
+        assert!(validate_size_argument("300pixels").is_err());
+    }
+
+    #[test]
+    fn validate_size_argument_rejects_negative() {
+        assert!(validate_size_argument("-5px").is_err());
+    }
+
+    #[test]
+    fn validate_size_argument_rejects_decimal() {
+        assert!(validate_size_argument("3.5px").is_err());
+    }
+
+    #[test]
+    fn validate_size_argument_rejects_empty() {
+        assert!(validate_size_argument("").is_err());
+    }
+
+    #[test]
+    fn validate_size_argument_rejects_trailing_garbage() {
+        assert!(validate_size_argument("300px ").is_err());
+    }
+
+    #[test]
+    fn validate_position_argument_accepts_center() {
+        assert_eq!(
+            validate_position_argument("center"),
+            Ok("center".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_position_argument_accepts_coordinates() {
+        assert_eq!(
+            validate_position_argument("100,200"),
+            Ok("100,200".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_position_argument_rejects_missing_y() {
+        assert!(validate_position_argument("100").is_err());
+    }
+
+    #[test]
+    fn validate_position_argument_rejects_negative() {
+        assert!(validate_position_argument("-1,200").is_err());
+    }
+
+    #[test]
+    fn validate_position_argument_rejects_unknown_word() {
+        assert!(validate_position_argument("middle").is_err());
+    }
+
+    #[test]
+    fn validate_position_argument_rejects_empty() {
+        assert!(validate_position_argument("").is_err());
     }
 
     // Split

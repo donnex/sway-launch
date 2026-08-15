@@ -1,7 +1,8 @@
 use clap::{error::ErrorKind, CommandFactory, Parser};
-use regex::Regex;
+use std::path::PathBuf;
 use std::{io, process, time};
 
+mod layout;
 mod sway_launch;
 
 #[derive(Parser, Debug)]
@@ -48,11 +49,11 @@ struct Args {
     new_column: bool,
 
     /// Set height on new window
-    #[clap(long, value_parser = validate_size_argument)]
+    #[clap(long, value_parser = sway_launch::validate_size_argument)]
     height: Option<String>,
 
     /// Set width on new window
-    #[clap(long, value_parser = validate_size_argument)]
+    #[clap(long, value_parser = sway_launch::validate_size_argument)]
     width: Option<String>,
 
     /// Move window to new row (move down)
@@ -64,7 +65,7 @@ struct Args {
     workspace: Option<String>,
 
     /// Set position on new window. Either "center" or "<x>,<y>" in pixels
-    #[clap(long, value_parser = validate_position_argument)]
+    #[clap(long, value_parser = sway_launch::validate_position_argument)]
     position: Option<String>,
 
     /// Timeout in seconds
@@ -91,6 +92,18 @@ struct Args {
     #[clap(long)]
     json: bool,
 
+    /// Run a declarative TOML layout file instead of a single command; see
+    /// README.md for the schema. Each step is the equivalent of one
+    /// sway-launch invocation's flags, so this conflicts with every
+    /// per-window flag below, which would otherwise apply to no specific
+    /// step
+    #[clap(long, conflicts_with_all = [
+        "command", "con_id", "existing", "app_id", "class", "split",
+        "floating", "fullscreen", "mark", "new_column", "new_row",
+        "workspace", "height", "width", "position", "debug_events",
+    ])]
+    layout: Option<PathBuf>,
+
     /// Command to execute
     command: Option<String>,
 }
@@ -106,6 +119,10 @@ fn main() {
             &mut io::stdout(),
         );
         process::exit(0);
+    }
+
+    if let Some(layout_path) = &args.layout {
+        run_layout(layout_path, &args);
     }
 
     let command = args.command.unwrap_or_default();
@@ -182,110 +199,66 @@ fn main() {
     };
 }
 
-fn validate_size_argument(value: &str) -> Result<String, String> {
-    let re = Regex::new(r"^\d+(px|ppt)$").unwrap();
-    match re.is_match(value) {
-        true => Ok(value.to_string()),
-        false => {
-            Err("Must be in format <HEIGHT>px|ppt. E.g. 300px/20ppt. ppt = percent".to_string())
+/// Runs every step of a `--layout` file sequentially, in the order they
+/// appear, stopping at the first error — the same `set -eu`-chained
+/// behavior as the shell-script examples this mode is meant to replace.
+/// Exits the process directly (success or failure) rather than returning,
+/// matching the rest of main()'s error-handling style.
+fn run_layout(path: &PathBuf, args: &Args) -> ! {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) => {
+            eprintln!("{}: {}", path.display(), error);
+            process::exit(1);
         }
-    }
-}
+    };
 
-fn validate_position_argument(value: &str) -> Result<String, String> {
-    let re = Regex::new(r"^center$|^\d+,\d+$").unwrap();
-    match re.is_match(value) {
-        true => Ok(value.to_string()),
-        false => {
-            Err("Must be \"center\" or \"<X>,<Y>\" in pixels. E.g. center/100,200".to_string())
+    let parsed_layout = match layout::parse(&contents) {
+        Ok(parsed_layout) => parsed_layout,
+        Err(error) => {
+            eprintln!("{}: {}", path.display(), error);
+            process::exit(1);
+        }
+    };
+
+    let default_timeout = time::Duration::from_secs(args.timeout);
+    let default_wait_time = time::Duration::from_millis(args.wait_time);
+    let mut container_ids = Vec::new();
+
+    for (index, step) in parsed_layout.step.iter().enumerate() {
+        let sway_launch =
+            match step.to_sway_launch(default_timeout, default_wait_time, args.verbose) {
+                Ok(sway_launch) => sway_launch,
+                Err(error) => {
+                    eprintln!("step {}: {}", index + 1, error);
+                    process::exit(1);
+                }
+            };
+
+        match sway_launch.run() {
+            Ok(container_id) => {
+                if !args.json {
+                    println!("{}", container_id);
+                }
+                container_ids.push(container_id);
+            }
+            Err(error) => {
+                eprintln!("step {}: {}", index + 1, error);
+                process::exit(1);
+            }
         }
     }
+
+    if args.json {
+        println!("{}", serde_json::json!({ "container_ids": container_ids }));
+    }
+
+    process::exit(0);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn validate_size_argument_accepts_px() {
-        assert_eq!(validate_size_argument("300px"), Ok("300px".to_string()));
-    }
-
-    #[test]
-    fn validate_size_argument_accepts_ppt() {
-        assert_eq!(validate_size_argument("20ppt"), Ok("20ppt".to_string()));
-    }
-
-    #[test]
-    fn validate_size_argument_accepts_zero() {
-        assert_eq!(validate_size_argument("0px"), Ok("0px".to_string()));
-    }
-
-    #[test]
-    fn validate_size_argument_rejects_missing_unit() {
-        assert!(validate_size_argument("300").is_err());
-    }
-
-    #[test]
-    fn validate_size_argument_rejects_unknown_unit() {
-        assert!(validate_size_argument("300pixels").is_err());
-    }
-
-    #[test]
-    fn validate_size_argument_rejects_negative() {
-        assert!(validate_size_argument("-5px").is_err());
-    }
-
-    #[test]
-    fn validate_size_argument_rejects_decimal() {
-        assert!(validate_size_argument("3.5px").is_err());
-    }
-
-    #[test]
-    fn validate_size_argument_rejects_empty() {
-        assert!(validate_size_argument("").is_err());
-    }
-
-    #[test]
-    fn validate_size_argument_rejects_trailing_garbage() {
-        assert!(validate_size_argument("300px ").is_err());
-    }
-
-    #[test]
-    fn validate_position_argument_accepts_center() {
-        assert_eq!(
-            validate_position_argument("center"),
-            Ok("center".to_string())
-        );
-    }
-
-    #[test]
-    fn validate_position_argument_accepts_coordinates() {
-        assert_eq!(
-            validate_position_argument("100,200"),
-            Ok("100,200".to_string())
-        );
-    }
-
-    #[test]
-    fn validate_position_argument_rejects_missing_y() {
-        assert!(validate_position_argument("100").is_err());
-    }
-
-    #[test]
-    fn validate_position_argument_rejects_negative() {
-        assert!(validate_position_argument("-1,200").is_err());
-    }
-
-    #[test]
-    fn validate_position_argument_rejects_unknown_word() {
-        assert!(validate_position_argument("middle").is_err());
-    }
-
-    #[test]
-    fn validate_position_argument_rejects_empty() {
-        assert!(validate_position_argument("").is_err());
-    }
 
     #[test]
     fn args_accepts_valid_workspace_and_position() {
