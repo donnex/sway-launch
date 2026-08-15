@@ -21,6 +21,13 @@ The binary is written to `target/release/sway-launch` — put it somewhere on yo
 Prebuilt Linux x86_64 binaries for tagged releases are also available from the
 [Releases page](https://github.com/donnex/sway-launch/releases).
 
+Shell completions (bash, zsh, fish, elvish, PowerShell) can be generated with `--completions
+<SHELL>`, e.g.:
+
+```shell
+sway-launch --completions bash > /etc/bash_completion.d/sway-launch
+```
+
 ```shell
 Usage: sway-launch [OPTIONS] [COMMAND]
 
@@ -28,26 +35,27 @@ Arguments:
   [COMMAND]  Command to execute
 
 Options:
-  -a, --app-id <APP_ID>        app_id match. With --existing, matches an already-open window instead of the newly launched one
-  -c, --class <CLASS>          class match. With --existing, matches an already-open window instead of the newly launched one
-      --con-id <CON_ID>        Act on an already-open window with this container id, instead of launching a new one
-      --existing               Act on an already-open window found via --app-id/--class, instead of launching a new one
-  -s, --split <SPLIT>          Change split for new window [possible values: v, h]
-  -f, --floating               Make new window floating
-      --fullscreen             Make new window fullscreen
-  -m, --mark <MARK>            Add mark to new window
-  -n, --new-column             Move window to new column (move right)
-      --height <HEIGHT>        Set height on new window
-      --width <WIDTH>          Set width on new window
-  -r, --new-row                Move window to new row (move down)
-      --workspace <WORKSPACE>  Move new window to workspace
-      --position <POSITION>    Set position on new window. Either "center" or "<x>,<y>" in pixels
-  -t, --timeout <TIMEOUT>      Timeout in seconds [default: 5]
-  -w, --wait-time <WAIT_TIME>  Wait time in ms. Used for actions that do not have a corresponding Sway IPC event [default: 20]
-  -d, --debug-events           Debug events. Output all Sway IPC events until stopped
-  -v, --verbose                Verbose output
-  -h, --help                   Print help
-  -V, --version                Print version
+  -a, --app-id <APP_ID>            app_id match. With --existing, matches an already-open window instead of the newly launched one
+  -c, --class <CLASS>              class match. With --existing, matches an already-open window instead of the newly launched one
+      --con-id <CON_ID>            Act on an already-open window with this container id, instead of launching a new one
+      --existing                   Act on an already-open window found via --app-id/--class, instead of launching a new one
+  -s, --split <SPLIT>              Change split for new window [possible values: v, h]
+  -f, --floating                   Make new window floating
+      --fullscreen                 Make new window fullscreen
+  -m, --mark <MARK>                Add mark to new window
+  -n, --new-column                 Move window to new column (move right)
+      --height <HEIGHT>            Set height on new window
+      --width <WIDTH>              Set width on new window
+  -r, --new-row                    Move window to new row (move down)
+      --workspace <WORKSPACE>      Move new window to workspace
+      --position <POSITION>        Set position on new window. Either "center" or "<x>,<y>" in pixels
+  -t, --timeout <TIMEOUT>          Timeout in seconds [default: 5]
+  -w, --wait-time <WAIT_TIME>      Wait time in ms. Used for actions that do not have a corresponding Sway IPC event [default: 20]
+  -d, --debug-events               Debug events. Output all Sway IPC events until stopped
+      --completions <COMPLETIONS>  Generate a shell completion script and print it to stdout [possible values: bash, elvish, fish, powershell, zsh]
+  -v, --verbose                    Verbose output
+  -h, --help                       Print help
+  -V, --version                    Print version
 ```
 
 The most basic use is to just execute the given command; it then waits for a matching Sway IPC
