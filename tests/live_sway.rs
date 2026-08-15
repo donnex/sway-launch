@@ -353,6 +353,50 @@ fn layout_target_id_references_an_earlier_steps_real_window() {
 }
 
 #[test]
+fn template_apps_resolve_to_real_windows() {
+    let mut connection = connect();
+    let path = TempToml::write(
+        "template",
+        "[[step]]\nslot = \"first\"\n\n\
+         [[step]]\nslot = \"second\"\n\n\
+         [[step]]\ntarget_id = \"first\"\nmark = \"live-sway-test-template\"\n",
+    );
+
+    let output = sway_launch_command()
+        .args(["--template", path.to_str().unwrap(), "--apps", "foot,foot"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --template failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    let mut lines = stdout.lines();
+    let first_id: i64 = lines
+        .next()
+        .expect("stdout should have a first line")
+        .parse()
+        .expect("first line should be a container id");
+    let second_id: i64 = lines
+        .next()
+        .expect("stdout should have a second line")
+        .parse()
+        .expect("second line should be a container id");
+    let _first_guard = KillOnDrop(first_id);
+    let _second_guard = KillOnDrop(second_id);
+
+    let first_node = get_node(&mut connection, first_id);
+    assert_eq!(first_node.app_id.as_deref(), Some("foot"));
+    assert!(first_node
+        .marks
+        .contains(&"live-sway-test-template".to_string()));
+    let second_node = get_node(&mut connection, second_id);
+    assert_eq!(second_node.app_id.as_deref(), Some("foot"));
+}
+
+#[test]
 fn new_column_and_new_row_complete_promptly_when_already_at_the_edge() {
     // Regression test for the bug this crate's own README/CLAUDE.md
     // describe: "move right"/"move down" don't fire WindowChange::Move when
