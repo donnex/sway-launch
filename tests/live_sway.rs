@@ -92,6 +92,33 @@ impl Drop for KillOnDrop {
     }
 }
 
+/// A layout file fixture written to the OS temp directory, removed again
+/// when it goes out of scope (even if an assertion panics mid-test) —
+/// mirrors tests/layout.rs's TempToml.
+struct TempToml(std::path::PathBuf);
+
+impl TempToml {
+    fn write(name: &str, contents: &str) -> Self {
+        let path = std::env::temp_dir().join(format!("sway-launch-live-test-{}.toml", name));
+        std::fs::write(&path, contents).expect("failed to write temp layout file");
+        Self(path)
+    }
+}
+
+impl std::ops::Deref for TempToml {
+    type Target = std::path::Path;
+
+    fn deref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for TempToml {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 fn launch_foot(extra_args: &[&str]) -> (i64, KillOnDrop) {
     // A higher --wait-time than the 20ms CLI default: the headless/pixman
     // compositor these tests run against is otherwise flaky on multi-action
@@ -291,6 +318,38 @@ fn con_id_and_existing_target_an_already_open_window() {
     );
     let node = get_node(&mut connection, container_id);
     assert!(node.marks.contains(&"live-sway-test-existing".to_string()));
+}
+
+#[test]
+fn layout_target_id_references_an_earlier_steps_real_window() {
+    let mut connection = connect();
+    let path = TempToml::write(
+        "target-id",
+        "[[step]]\nid = \"first\"\napp_id = \"foot\"\ncommand = \"foot\"\n\n\
+         [[step]]\ntarget_id = \"first\"\nmark = \"live-sway-test-target-id\"\n",
+    );
+
+    let output = sway_launch_command()
+        .args(["--layout", path.to_str().unwrap()])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --layout failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    let container_id: i64 = stdout
+        .lines()
+        .next()
+        .expect("stdout should have a first line")
+        .parse()
+        .expect("first line should be a container id");
+    let _guard = KillOnDrop(container_id);
+
+    let node = get_node(&mut connection, container_id);
+    assert!(node.marks.contains(&"live-sway-test-target-id".to_string()));
 }
 
 #[test]

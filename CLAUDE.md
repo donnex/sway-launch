@@ -166,17 +166,31 @@ own). `main.rs`'s `run_layout()` reads the file, parses it via `layout::parse()`
 `sway_launch::SwayLaunch` via `LayoutStep::to_sway_launch()` (reusing
 `sway_launch::validate_size_argument`/`validate_position_argument` — the same validators the CLI's
 `--height`/`--width`/`--position` flags use — plus the same `command`/`con_id`/`existing`
-one-of-three-required rule `main.rs` enforces for the direct-CLI case) and calls `.run()` on it,
-stopping at the first error. Prints one container id per line as each step completes, or (if
-`--json` is set) collects them into one `{"container_ids": [...]}` array printed at the end
-instead. Every top-level per-window flag `conflicts_with_all`-conflicts with `--layout` in `Args`,
-since a step's own fields are what apply, not a top-level flag with no specific step to attach to.
+one-of-four-required rule `main.rs` enforces for the direct-CLI case, `target_id` being the fourth,
+layout-only option) and calls `.run()` on it, stopping at the first error. Prints one container id
+per line as each step completes, or (if `--json` is set) collects them into one
+`{"container_ids": [...]}` array printed at the end instead. Every top-level per-window flag
+`conflicts_with_all`-conflicts with `--layout` in `Args`, since a step's own fields are what apply,
+not a top-level flag with no specific step to attach to.
+
+**Named/aliased steps (`id`/`target_id`)**: a step's `id` names it for later reference; a later
+step's `target_id` resolves to that named step's container id instead of launching/matching its
+own window — the only way to unambiguously retarget one specific earlier step when several share
+the same `app_id`/`class` (`existing = true` would be ambiguous between them). `run_layout()`
+maintains a `resolved_ids: HashMap<String, i64>` alongside `container_ids: Vec<i64>`: before
+converting a step, errors if its `id` was already used by an earlier step; after a step runs
+successfully, if it has an `id`, inserts `id → container_id`. `to_sway_launch()` takes
+`resolved_ids: &HashMap<String, i64>` and, when `target_id` is set, looks it up
+(`Target::ConId(*id)`) or errors clearly if not found — both `id` and `target_id` are layout-only,
+with no CLI flag equivalent, since a single `sway-launch` invocation only ever has one step to
+name or reference.
 
 **`LayoutStep` mirrors `Args` by design and nothing keeps them in sync automatically** — no
 compiler check, no test. When adding a new flag to `main.rs`'s `Args`, add the matching field to
 `layout.rs`'s `LayoutStep` in the same change, wire it into `to_sway_launch()`, and add it to
 README.md's "Layout files" field list — otherwise `--layout` mode silently lacks that capability
-with no signal to anyone that the two have drifted apart.
+with no signal to anyone that the two have drifted apart. `id`/`target_id` are the one exception:
+layout-only, so they never get an `Args` field to mirror.
 
 ## Example layout scripts
 

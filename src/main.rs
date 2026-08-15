@@ -1,4 +1,5 @@
 use clap::{error::ErrorKind, CommandFactory, Parser};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::{io, process, time};
 
@@ -234,16 +235,32 @@ fn run_layout(path: &Path, args: &Args) -> ! {
     let default_timeout = time::Duration::from_secs(args.timeout);
     let default_wait_time = time::Duration::from_millis(args.wait_time);
     let mut container_ids = Vec::new();
+    let mut resolved_ids = HashMap::new();
 
     for (index, step) in parsed_layout.step.iter().enumerate() {
-        let sway_launch =
-            match step.to_sway_launch(default_timeout, default_wait_time, args.verbose) {
-                Ok(sway_launch) => sway_launch,
-                Err(error) => {
-                    eprintln!("step {}: {}", index + 1, error);
-                    process::exit(1);
-                }
-            };
+        if let Some(id) = step.id.as_deref() {
+            if resolved_ids.contains_key(id) {
+                eprintln!(
+                    "step {}: id {:?} was already used by an earlier step",
+                    index + 1,
+                    id
+                );
+                process::exit(1);
+            }
+        }
+
+        let sway_launch = match step.to_sway_launch(
+            default_timeout,
+            default_wait_time,
+            args.verbose,
+            &resolved_ids,
+        ) {
+            Ok(sway_launch) => sway_launch,
+            Err(error) => {
+                eprintln!("step {}: {}", index + 1, error);
+                process::exit(1);
+            }
+        };
 
         match sway_launch.run() {
             Ok(container_id) => {
@@ -251,6 +268,9 @@ fn run_layout(path: &Path, args: &Args) -> ! {
                     println!("{}", container_id);
                 }
                 container_ids.push(container_id);
+                if let Some(id) = step.id.as_deref() {
+                    resolved_ids.insert(id.to_string(), container_id);
+                }
             }
             Err(error) => {
                 eprintln!("step {}: {}", index + 1, error);

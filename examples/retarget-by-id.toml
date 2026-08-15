@@ -1,0 +1,21 @@
+# Launch two kitty terminals with the same app_id, then retarget specifically
+# the first one by its step id -- something --existing has no way to express,
+# since --existing --app-id kitty would be ambiguous between the two. Run
+# with:
+#   sway-launch --layout examples/retarget-by-id.toml
+
+[[step]]
+id = "first"
+command = "kitty"
+app_id = "kitty"
+
+[[step]]
+command = "kitty"
+app_id = "kitty"
+split = "h"
+
+[[step]]
+target_id = "first"
+floating = true
+width = "800px"
+height = "600px"
