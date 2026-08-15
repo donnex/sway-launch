@@ -1,5 +1,5 @@
 use clap::{error::ErrorKind, CommandFactory, Parser};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::{io, process, time};
 
 mod layout;
@@ -204,7 +204,7 @@ fn main() {
 /// behavior as the shell-script examples this mode is meant to replace.
 /// Exits the process directly (success or failure) rather than returning,
 /// matching the rest of main()'s error-handling style.
-fn run_layout(path: &PathBuf, args: &Args) -> ! {
+fn run_layout(path: &Path, args: &Args) -> ! {
     let contents = match std::fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(error) => {
