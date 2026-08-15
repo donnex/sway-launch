@@ -87,6 +87,10 @@ struct Args {
     #[clap(short, long)]
     verbose: bool,
 
+    /// Print the result as a JSON object instead of a bare container id
+    #[clap(long)]
+    json: bool,
+
     /// Command to execute
     command: Option<String>,
 }
@@ -164,7 +168,13 @@ fn main() {
     }
 
     match sway_launch.run() {
-        Ok(container_id) => println!("{}", container_id),
+        Ok(container_id) => {
+            if args.json {
+                println!("{}", serde_json::json!({ "container_id": container_id }));
+            } else {
+                println!("{}", container_id);
+            }
+        }
         Err(error) => {
             eprint!("{}", error);
             process::exit(1);
@@ -403,5 +413,23 @@ mod tests {
         let args = Args::try_parse_from(["sway-launch", "kitty"]).unwrap();
         assert_eq!(args.timeout, 5);
         assert_eq!(args.wait_time, 20);
+    }
+
+    #[test]
+    fn args_json_defaults_to_false() {
+        let args = Args::try_parse_from(["sway-launch", "kitty"]).unwrap();
+        assert!(!args.json);
+    }
+
+    #[test]
+    fn args_accepts_json_flag() {
+        let args = Args::try_parse_from(["sway-launch", "--json", "kitty"]).unwrap();
+        assert!(args.json);
+    }
+
+    #[test]
+    fn json_result_serializes_container_id() {
+        let value = serde_json::json!({ "container_id": 42 });
+        assert_eq!(value.to_string(), "{\"container_id\":42}");
     }
 }

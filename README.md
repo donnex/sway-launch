@@ -54,6 +54,7 @@ Options:
   -d, --debug-events               Debug events. Output all Sway IPC events until stopped
       --completions <COMPLETIONS>  Generate a shell completion script and print it to stdout [possible values: bash, elvish, fish, powershell, zsh]
   -v, --verbose                    Verbose output
+      --json                       Print the result as a JSON object instead of a bare container id
   -h, --help                       Print help
   -V, --version                    Print version
 ```
@@ -263,7 +264,10 @@ sway-launch --split h kitty
 
 ### Verbose
 
-Show verbose debug information.
+Show verbose debug information. This goes to stderr, not stdout — stdout is always reserved for
+the final result (the bare container id, or the `--json` object below), so
+`container_id="$(sway-launch -v ...)"`-style capture still gets exactly one clean line even with
+`-v` on.
 
 ```shell
 $ sway-launch --split h -v kitty
@@ -271,11 +275,21 @@ Sway action: Exec "kitty" (app_id_match: "") (class_match: "")
 Sway command: exec kitty
 Event mismatch: Title container id 286 (Event does not match action event matches)
 Event match: New container id 437 (New window without app_id or class check)
-New window match container id: 437
+Target container id: 437
 Sway action: Split (container id: 437) (split: Horizontal)
 No matching event types for action. Will run Sway command and wait 20 ms.
 Sway command: [con_id=437] splith
 437
+```
+
+### JSON output
+
+Print the result as a JSON object instead of a bare container id, for scripts that want structured
+output.
+
+```shell
+$ sway-launch --json kitty
+{"container_id":437}
 ```
 
 ### Wait time
