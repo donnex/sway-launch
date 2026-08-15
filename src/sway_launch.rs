@@ -118,6 +118,12 @@ enum SwayAction<'a> {
         verbose: bool,
         timeout: time::Duration,
     },
+    Output {
+        container_id: i64,
+        output: &'a str,
+        verbose: bool,
+        timeout: time::Duration,
+    },
     Mark {
         container_id: i64,
         mark: &'a str,
@@ -194,6 +200,17 @@ impl fmt::Display for SwayAction<'_> {
                     f,
                     "Workspace (container id: {}) (workspace: {})",
                     container_id, workspace
+                )
+            }
+            SwayAction::Output {
+                container_id,
+                output,
+                ..
+            } => {
+                write!(
+                    f,
+                    "Output (container id: {}) (output: {})",
+                    container_id, output
                 )
             }
             SwayAction::Mark {
@@ -281,6 +298,17 @@ impl SwayAction<'_> {
                     quote_sway_string(workspace)
                 )
             }
+            SwayAction::Output {
+                container_id,
+                output,
+                ..
+            } => {
+                format!(
+                    "[con_id={}] move container to output {}",
+                    container_id,
+                    quote_sway_string(output)
+                )
+            }
             SwayAction::Height {
                 container_id,
                 height,
@@ -322,6 +350,7 @@ impl SwayAction<'_> {
             | SwayAction::NewColumn { verbose, .. }
             | SwayAction::NewRow { verbose, .. }
             | SwayAction::Workspace { verbose, .. }
+            | SwayAction::Output { verbose, .. }
             | SwayAction::Mark { verbose, .. }
             | SwayAction::Height { verbose, .. }
             | SwayAction::Width { verbose, .. }
@@ -338,6 +367,7 @@ impl SwayAction<'_> {
             | SwayAction::Fullscreen { timeout, .. }
             | SwayAction::Focus { timeout, .. }
             | SwayAction::Workspace { timeout, .. }
+            | SwayAction::Output { timeout, .. }
             | SwayAction::Mark { timeout, .. } => timeout,
             SwayAction::Split { wait_time, .. }
             | SwayAction::NewColumn { wait_time, .. }
@@ -357,6 +387,7 @@ impl SwayAction<'_> {
             | SwayAction::NewColumn { container_id, .. }
             | SwayAction::NewRow { container_id, .. }
             | SwayAction::Workspace { container_id, .. }
+            | SwayAction::Output { container_id, .. }
             | SwayAction::Mark { container_id, .. }
             | SwayAction::Height { container_id, .. }
             | SwayAction::Width { container_id, .. }
@@ -376,7 +407,15 @@ impl SwayAction<'_> {
             SwayAction::Floating { .. } => Some(vec![WindowChange::Floating]),
             SwayAction::Fullscreen { .. } => Some(vec![WindowChange::FullscreenMode]),
             SwayAction::Focus { .. } => Some(vec![WindowChange::Focus]),
-            SwayAction::Workspace { .. } => Some(vec![WindowChange::Move]),
+            // Confirmed against live Sway (tests/live_sway.rs's
+            // output_moves_window_to_named_output) that, unlike
+            // NewColumn/NewRow's "move right"/"move down" below,
+            // "move container to output" always reparents the container —
+            // there's no "already there" no-op case, since a window is
+            // always in exactly one output's tree.
+            SwayAction::Workspace { .. } | SwayAction::Output { .. } => {
+                Some(vec![WindowChange::Move])
+            }
             SwayAction::Mark { .. } => Some(vec![WindowChange::Mark]),
             // NewColumn/NewRow ("move right"/"move down") were event-based
             // via WindowChange::Move too, until live-Sway testing showed
@@ -750,6 +789,7 @@ pub struct SwayLaunch<'a> {
     pub new_column: bool,
     pub new_row: bool,
     pub workspace: Option<&'a str>,
+    pub output: Option<&'a str>,
     pub height: Option<&'a str>,
     pub width: Option<&'a str>,
     pub position: Option<&'a str>,
@@ -830,6 +870,15 @@ impl SwayLaunch<'_> {
             SwayAction::Workspace {
                 container_id,
                 workspace,
+                verbose: self.verbose,
+                timeout: self.timeout,
+            }
+            .run()?;
+        }
+        if let Some(output) = self.output {
+            SwayAction::Output {
+                container_id,
+                output,
                 verbose: self.verbose,
                 timeout: self.timeout,
             }
@@ -1239,6 +1288,20 @@ mod tests {
     }
 
     #[test]
+    fn sway_command_output_quotes_the_output() {
+        let action = SwayAction::Output {
+            container_id: 42,
+            output: "HDMI-A-1, exec evil",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(
+            action.sway_command(),
+            "[con_id=42] move container to output \"HDMI-A-1, exec evil\""
+        );
+    }
+
+    #[test]
     fn sway_command_height() {
         let action = SwayAction::Height {
             container_id: 42,
@@ -1374,6 +1437,20 @@ mod tests {
         assert_eq!(
             action.to_string(),
             "Workspace (container id: 42) (workspace: web)"
+        );
+    }
+
+    #[test]
+    fn display_output() {
+        let action = SwayAction::Output {
+            container_id: 42,
+            output: "HDMI-A-1",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(
+            action.to_string(),
+            "Output (container id: 42) (output: HDMI-A-1)"
         );
     }
 
@@ -1549,6 +1626,20 @@ mod tests {
         let action = SwayAction::Workspace {
             container_id: 42,
             workspace: "web",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(
+            action.matching_window_change_events(),
+            Some(vec![WindowChange::Move])
+        );
+    }
+
+    #[test]
+    fn output_matches_move_window_change() {
+        let action = SwayAction::Output {
+            container_id: 42,
+            output: "HDMI-A-1",
             verbose: false,
             timeout: time::Duration::from_secs(5),
         };
