@@ -20,8 +20,10 @@ manual `sleep`s. See `README.md` for full CLI usage and layout-building examples
 - Lint: `cargo clippy`
 - Test: `cargo test` — runs the unit tests in `src/sway_launch.rs` and `src/main.rs` (covering all
   pure/logic functions; see the Testing bullet under Rust conventions for what's exempted and why)
-  plus the one integration test in `tests/`. The IPC-touching functions that can't run headless are
-  exercised manually by running the scripts in `examples/` (see below) against a live Sway session.
+  plus the integration tests in `tests/` (driving the compiled binary directly, for the couple of
+  things that need a real subprocess — see Architecture below). The IPC-touching functions that
+  can't run headless are exercised manually by running the scripts in `examples/` (see below)
+  against a live Sway session.
   - Run a single test: `cargo test <test_name>`
   - Run with debug output: `cargo test -- --nocapture`
 
@@ -29,15 +31,20 @@ See the CI section below for how GitHub Actions runs these same checks.
 
 ## Architecture
 
-The crate is two files plus one integration test:
+The crate is two files plus two integration test files:
 
 - `src/main.rs` — defines the `clap`-derived `Args` struct (CLI flags), validates them (e.g.
   `--height`/`--width` must match `\d+(px|ppt)`), and constructs a `sway_launch::SwayLaunch`.
 - `src/sway_launch.rs` — all the actual logic.
-- `tests/completions.rs` — the one integration test in the crate, needed because `--completions`
-  calls `process::exit(0)` inside `main()`; `CARGO_BIN_EXE_sway-launch` (used to invoke the
-  compiled binary as a subprocess) is only set for files under `tests/`, not for the bin crate's
-  own unit test harness.
+- `tests/completions.rs` — needed because `--completions` calls `process::exit(0)` inside
+  `main()`, which a unit test can't call into directly.
+- `tests/json_output.rs` — asserts `main()`'s actual stdout/stderr behavior (`--json` output,
+  `--verbose` diagnostics going to stderr) by driving the compiled binary with `--con-id`, the one
+  target mode that never touches the Sway socket, so this runs headless in CI.
+
+Both integration test files need `CARGO_BIN_EXE_sway-launch` (to invoke the compiled binary as a
+subprocess), which is only set for files under `tests/`, not for the bin crate's own unit test
+harness — that's why these live here instead of as `#[cfg(test)]` modules in `src/main.rs`.
 
 ### Core model: `SwayAction`
 
@@ -87,10 +94,20 @@ to:
 `run()` then conditionally runs the other actions in a fixed order (`NewColumn` → `NewRow` →
 `Workspace` → `Split` → `Floating` → `Fullscreen` → `Height` → `Width` → `Position` → `Mark`)
 based on which CLI flags were set, each against that same `container_id`. The final container id
-is printed to stdout — this is what makes commands chainable/scriptable (see README examples).
+is printed to stdout (`main.rs`, as a bare integer, or as `{"container_id": N}` under `--json`) —
+this is what makes commands chainable/scriptable (see README examples).
 
 Each Sway IPC call opens its own fresh `Connection` (`new_connection()` in `sway_launch.rs`) — there
 is no persistent/shared connection across actions.
+
+### Output streams
+
+stdout is reserved for that one result value (bare id or the `--json` object) and nothing else, so
+`container_id="$(sway-launch ...)"`-style capture always gets exactly one clean line. Every
+diagnostic/debug `println!` behind `if self.verbose()` in `sway_launch.rs` is `eprintln!`, not
+`println!`, for this reason — `--verbose` output goes to stderr. The one exception is
+`SwayLaunch::debug_events()`: its event dump *is* the command's actual output in that mode, so it
+stays on stdout.
 
 ### `--debug-events`
 
@@ -151,13 +168,15 @@ unpolished.
     dispatch tables, window-match logic, CLI argument validation/parsing). The functions that
     open, read, or write the Sway IPC socket directly (`new_connection`, `event_loop`,
     `run_sway_command`'s connection call, `run_wait_time`, `run_wait_matching_events`,
-    `find_existing_container_id`'s connection call, `SwayAction::run`,
-    `SwayLaunch::resolve_container_id`, `SwayLaunch::run`, `SwayLaunch::debug_events`) are
-    exempted — they require a live Sway compositor, can't run headless in GitHub Actions CI, and
-    are exercised manually by running `examples/` scripts instead. No mocking layer has been
-    introduced for these on the judgment that a trait-based abstraction purely to unit-test thin
-    IPC wiring isn't worth the added indirection for a tool this size; revisit if the
-    IPC-touching logic grows more complex than it is today.
+    `find_existing_container_id`'s connection call, `SwayAction::run`, `SwayLaunch::run`,
+    `SwayLaunch::debug_events`) are exempted — they require a live Sway compositor, can't run
+    headless in GitHub Actions CI, and are exercised manually by running `examples/` scripts
+    instead. No mocking layer has been introduced for these on the judgment that a trait-based
+    abstraction purely to unit-test thin IPC wiring isn't worth the added indirection for a tool
+    this size; revisit if the IPC-touching logic grows more complex than it is today.
+    `SwayLaunch::resolve_container_id`'s `Target::ConId` branch is the one exception — it never
+    touches the socket, so it's covered headlessly by `tests/json_output.rs` driving the compiled
+    binary with `--con-id` instead.
 - Measure coverage with `cargo llvm-cov` (requires the `cargo-llvm-cov` subcommand and the
   `llvm-tools-preview` rustup component):
   - `cargo llvm-cov --summary-only --ignore-filename-regex 'main\.rs'` — summary

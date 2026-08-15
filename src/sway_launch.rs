@@ -393,7 +393,7 @@ impl SwayAction<'_> {
 
     fn run(&self) -> Result<i64, String> {
         if self.verbose() {
-            println!("Sway action: {}", self);
+            eprintln!("Sway action: {}", self);
         }
 
         match self.matching_window_change_events() {
@@ -406,7 +406,7 @@ impl SwayAction<'_> {
         let wait_time = self.wait_time();
 
         if self.verbose() {
-            println!(
+            eprintln!(
                 "No matching event types for action. Will run Sway command and wait {} ms.",
                 wait_time.as_millis()
             );
@@ -419,7 +419,7 @@ impl SwayAction<'_> {
 
         let sway_command = self.sway_command();
         if self.verbose() {
-            println!("Sway command: {}", sway_command);
+            eprintln!("Sway command: {}", sway_command);
         }
 
         run_sway_command(&sway_command)?;
@@ -434,7 +434,7 @@ impl SwayAction<'_> {
 
         let sway_command = self.sway_command();
         if self.verbose() {
-            println!("Sway command: {}", sway_command);
+            eprintln!("Sway command: {}", sway_command);
         }
         run_sway_command(&sway_command)?;
 
@@ -490,7 +490,7 @@ impl SwayAction<'_> {
             match self.matches_window_event(&window) {
                 Ok(result) => {
                     if self.verbose() {
-                        println!(
+                        eprintln!(
                             "Event match: {:?} container id {} ({})",
                             window.change, window.container.id, result
                         );
@@ -500,7 +500,7 @@ impl SwayAction<'_> {
                 }
                 Err(error_result) => {
                     if self.verbose() {
-                        println!(
+                        eprintln!(
                             "Event mismatch: {:?} container id {} ({})",
                             window.change, window.container.id, error_result
                         );
@@ -778,7 +778,7 @@ impl SwayLaunch<'_> {
         let container_id = self.resolve_container_id()?;
 
         if self.verbose {
-            println!("Target container id: {}", container_id);
+            eprintln!("Target container id: {}", container_id);
         }
 
         if self.new_column {
