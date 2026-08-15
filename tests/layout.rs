@@ -4,17 +4,39 @@
 // session.
 
 use std::fs;
+use std::ops::Deref;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn write_temp_toml(name: &str, contents: &str) -> std::path::PathBuf {
-    let path = std::env::temp_dir().join(format!("sway-launch-test-{}.toml", name));
-    fs::write(&path, contents).expect("failed to write temp layout file");
-    path
+/// A layout file fixture written to the OS temp directory, removed again
+/// when it goes out of scope (even if an assertion panics mid-test).
+struct TempToml(PathBuf);
+
+impl TempToml {
+    fn write(name: &str, contents: &str) -> Self {
+        let path = std::env::temp_dir().join(format!("sway-launch-test-{}.toml", name));
+        fs::write(&path, contents).expect("failed to write temp layout file");
+        Self(path)
+    }
+}
+
+impl Deref for TempToml {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempToml {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
 }
 
 #[test]
 fn layout_plain_output_prints_one_container_id_per_step() {
-    let path = write_temp_toml(
+    let path = TempToml::write(
         "plain-output",
         "[[step]]\ncon_id = 42\n\n[[step]]\ncon_id = 91\n",
     );
@@ -31,7 +53,7 @@ fn layout_plain_output_prints_one_container_id_per_step() {
 
 #[test]
 fn layout_json_output_is_a_single_array() {
-    let path = write_temp_toml(
+    let path = TempToml::write(
         "json-output",
         "[[step]]\ncon_id = 42\n\n[[step]]\ncon_id = 91\n",
     );
@@ -48,7 +70,7 @@ fn layout_json_output_is_a_single_array() {
 
 #[test]
 fn layout_conflicts_with_a_per_window_flag() {
-    let path = write_temp_toml("conflicts", "[[step]]\ncon_id = 42\n");
+    let path = TempToml::write("conflicts", "[[step]]\ncon_id = 42\n");
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
         .args(["--layout", path.to_str().unwrap(), "--floating"])
@@ -72,7 +94,7 @@ fn layout_missing_file_errors() {
 
 #[test]
 fn layout_malformed_toml_errors() {
-    let path = write_temp_toml("malformed", "this is not toml [[[");
+    let path = TempToml::write("malformed", "this is not toml [[[");
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
         .args(["--layout", path.to_str().unwrap()])
@@ -84,7 +106,39 @@ fn layout_malformed_toml_errors() {
 
 #[test]
 fn layout_step_without_a_target_errors_naming_the_step() {
-    let path = write_temp_toml("no-target", "[[step]]\n");
+    let path = TempToml::write("no-target", "[[step]]\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap()])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("step 1"));
+}
+
+#[test]
+fn layout_rejects_misspelled_field() {
+    let path = TempToml::write(
+        "misspelled-field",
+        "[[step]]\ncon_id = 42\nflaoting = true\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap()])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+}
+
+#[test]
+fn layout_rejects_command_and_con_id_together() {
+    let path = TempToml::write(
+        "command-and-con-id",
+        "[[step]]\ncommand = \"kitty\"\ncon_id = 42\n",
+    );
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
         .args(["--layout", path.to_str().unwrap()])

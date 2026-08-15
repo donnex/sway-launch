@@ -99,7 +99,10 @@ to:
 - `Existing` — `get_tree()` + `matching_container_ids()` (a recursive walk over `Node::nodes`/
   `Node::floating_nodes`, reusing `window_app_id_match`/`window_class_match` — refactored to take
   `&Node` instead of `&WindowEvent`, since `WindowEvent.container` already *is* a `Node`) +
-  `resolve_matches()`, which errors on zero or more than one match rather than guessing.
+  `resolve_matches()`, which errors on zero or more than one match rather than guessing. The walk
+  covers the entire tree returned by `get_tree()`, which includes the `__i3_scratch` scratchpad
+  workspace — a hidden scratchpad window matching the criteria is just as eligible as a visible
+  one (documented for the user in README.md's "Target an existing window" section).
 
 `run()` then conditionally runs the other actions in a fixed order (`NewColumn` → `NewRow` →
 `Workspace` → `Split` → `Floating` → `Fullscreen` → `Height` → `Width` → `Position` → `Mark`)
@@ -145,6 +148,12 @@ stopping at the first error. Prints one container id per line as each step compl
 `--json` is set) collects them into one `{"container_ids": [...]}` array printed at the end
 instead. Every top-level per-window flag `conflicts_with_all`-conflicts with `--layout` in `Args`,
 since a step's own fields are what apply, not a top-level flag with no specific step to attach to.
+
+**`LayoutStep` mirrors `Args` by design and nothing keeps them in sync automatically** — no
+compiler check, no test. When adding a new flag to `main.rs`'s `Args`, add the matching field to
+`layout.rs`'s `LayoutStep` in the same change, wire it into `to_sway_launch()`, and add it to
+README.md's "Layout files" field list — otherwise `--layout` mode silently lacks that capability
+with no signal to anyone that the two have drifted apart.
 
 ## Example layout scripts
 

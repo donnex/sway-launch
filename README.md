@@ -226,7 +226,9 @@ sway-launch --existing -a kitty --fullscreen
 ```
 
 `--existing` requires `--app-id` or `--class`, and errors if that doesn't match exactly one
-window — it won't guess which one you meant.
+window — it won't guess which one you meant. The search includes windows in Sway's scratchpad
+(hidden/stashed windows), not just visible ones — if you have both a visible and a scratchpad
+window with the same `app_id`/`class`, retarget with `--con-id` instead to be unambiguous.
 
 ### Floating
 

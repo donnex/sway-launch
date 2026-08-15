@@ -6,12 +6,14 @@ use std::time;
 /// equivalent of one `sway-launch` CLI invocation's flags. TOML's
 /// array-of-tables syntax (`[[step]]`) maps directly onto `step: Vec<...>`.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Layout {
     #[serde(default)]
     pub step: Vec<LayoutStep>,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LayoutStep {
     pub command: Option<String>,
     pub con_id: Option<i64>,
@@ -48,7 +50,9 @@ pub fn parse(contents: &str) -> Result<Layout, String> {
 }
 
 impl LayoutStep {
-    /// Converts this step into a `SwayLaunch`, validating the same
+    /// Converts this step into a `SwayLaunch`, enforcing that exactly one of
+    /// `command`/`con_id`/`existing` is set (mirroring the CLI's
+    /// `conflicts_with` on the same three) and validating the same
     /// height/width/position formats the CLI flags enforce. Steps without
     /// their own `timeout`/`wait_time` inherit the caller's defaults
     /// (typically the top-level `--timeout`/`--wait-time` CLI values).
@@ -60,6 +64,14 @@ impl LayoutStep {
     ) -> Result<sway_launch::SwayLaunch<'_>, String> {
         let app_id_match = self.app_id.as_deref().unwrap_or_default();
         let class_match = self.class.as_deref().unwrap_or_default();
+
+        let target_fields_set = [self.command.is_some(), self.con_id.is_some(), self.existing]
+            .into_iter()
+            .filter(|&set| set)
+            .count();
+        if target_fields_set > 1 {
+            return Err("step must set only one of: command, con_id, existing".to_string());
+        }
 
         let target = if let Some(con_id) = self.con_id {
             sway_launch::Target::ConId(con_id)
@@ -145,6 +157,29 @@ mod tests {
     #[test]
     fn parse_rejects_malformed_toml() {
         assert!(parse("this is not toml [[[").is_err());
+    }
+
+    #[test]
+    fn parse_rejects_misspelled_step_field() {
+        // Regression test: a prior version silently dropped unknown
+        // fields, so a typo like "flaoting" for "floating" did nothing
+        // instead of erroring.
+        let result = parse(
+            r#"
+            [[step]]
+            con_id = 42
+            flaoting = true
+            "#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_rejects_wrong_table_name() {
+        // Regression test: a prior version silently parsed [[steps]]
+        // (plural, wrong) as a completely empty, successfully-parsed
+        // layout instead of erroring.
+        assert!(parse("[[steps]]\ncon_id = 42\n").is_err());
     }
 
     #[test]
@@ -250,9 +285,67 @@ mod tests {
     }
 
     #[test]
+    fn to_sway_launch_rejects_command_and_con_id_together() {
+        // Regression test: a prior version silently preferred con_id over
+        // command instead of erroring, unlike the CLI's conflicts_with.
+        let mut step = minimal_step();
+        step.con_id = Some(42);
+        assert!(step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_command_and_existing_together() {
+        let mut step = minimal_step();
+        step.existing = true;
+        step.app_id = Some("kitty".to_string());
+        assert!(step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_con_id_and_existing_together() {
+        let mut step = minimal_step();
+        step.command = None;
+        step.con_id = Some(42);
+        step.existing = true;
+        step.app_id = Some("kitty".to_string());
+        assert!(step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false
+            )
+            .is_err());
+    }
+
+    #[test]
     fn to_sway_launch_rejects_invalid_height() {
         let mut step = minimal_step();
         step.height = Some("notasize".to_string());
+        assert!(step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_invalid_width() {
+        let mut step = minimal_step();
+        step.width = Some("notasize".to_string());
         assert!(step
             .to_sway_launch(
                 time::Duration::from_secs(5),
