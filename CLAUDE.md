@@ -86,7 +86,8 @@ to:
   form into Sway's space-separated `move position <x> <y>` syntax), and `Exec`'s command is passed
   through unquoted by design (the tool's whole job is to run it)
 - declare which `WindowChange` event(s) would confirm it completed (`matching_window_change_events()`)
-- declare its IPC event subscription (`event_subscription()`)
+- report its `--timeout`/`--wait-time` value, whichever field the variant actually has
+  (`duration()`)
 
 `SwayAction::run()` dispatches based on whether the action has a corresponding IPC event:
 
