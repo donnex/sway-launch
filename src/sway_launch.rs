@@ -100,12 +100,12 @@ enum SwayAction<'a> {
     NewColumn {
         container_id: i64,
         verbose: bool,
-        timeout: time::Duration,
+        wait_time: time::Duration,
     },
     NewRow {
         container_id: i64,
         verbose: bool,
-        timeout: time::Duration,
+        wait_time: time::Duration,
     },
     Workspace {
         container_id: i64,
@@ -322,8 +322,6 @@ impl SwayAction<'_> {
             SwayAction::Exec { timeout, .. }
             | SwayAction::Floating { timeout, .. }
             | SwayAction::Fullscreen { timeout, .. }
-            | SwayAction::NewColumn { timeout, .. }
-            | SwayAction::NewRow { timeout, .. }
             | SwayAction::Workspace { timeout, .. }
             | SwayAction::Mark { timeout, .. } => timeout,
             _ => unreachable!(),
@@ -333,6 +331,8 @@ impl SwayAction<'_> {
     fn wait_time(self) -> time::Duration {
         match self {
             SwayAction::Split { wait_time, .. }
+            | SwayAction::NewColumn { wait_time, .. }
+            | SwayAction::NewRow { wait_time, .. }
             | SwayAction::Height { wait_time, .. }
             | SwayAction::Width { wait_time, .. }
             | SwayAction::Position { wait_time, .. } => wait_time,
@@ -366,11 +366,20 @@ impl SwayAction<'_> {
             SwayAction::Exec { .. } => Some(vec![WindowChange::New]),
             SwayAction::Floating { .. } => Some(vec![WindowChange::Floating]),
             SwayAction::Fullscreen { .. } => Some(vec![WindowChange::FullscreenMode]),
-            SwayAction::NewColumn { .. }
-            | SwayAction::NewRow { .. }
-            | SwayAction::Workspace { .. } => Some(vec![WindowChange::Move]),
+            SwayAction::Workspace { .. } => Some(vec![WindowChange::Move]),
             SwayAction::Mark { .. } => Some(vec![WindowChange::Mark]),
+            // NewColumn/NewRow ("move right"/"move down") were event-based
+            // via WindowChange::Move too, until live-Sway testing showed
+            // "move right" doesn't fire it when the window is already at
+            // the tree's rightmost position (the ordinary two-window case)
+            // — it silently no-ops instead, hanging until --timeout.
+            // "move down" happened to work in that same test, but relies on
+            // the identical unverified assumption for a different tree
+            // shape, so both moved to the same wait-time pattern as
+            // Split/Height/Width/Position rather than leaving one exposed.
             SwayAction::Split { .. }
+            | SwayAction::NewColumn { .. }
+            | SwayAction::NewRow { .. }
             | SwayAction::Height { .. }
             | SwayAction::Width { .. }
             | SwayAction::Position { .. } => None,
@@ -382,11 +391,11 @@ impl SwayAction<'_> {
             SwayAction::Exec { .. }
             | SwayAction::Floating { .. }
             | SwayAction::Fullscreen { .. }
-            | SwayAction::NewColumn { .. }
-            | SwayAction::NewRow { .. }
             | SwayAction::Workspace { .. }
             | SwayAction::Mark { .. } => Some(EventType::Window),
             SwayAction::Split { .. }
+            | SwayAction::NewColumn { .. }
+            | SwayAction::NewRow { .. }
             | SwayAction::Height { .. }
             | SwayAction::Width { .. }
             | SwayAction::Position { .. } => None,
@@ -811,7 +820,7 @@ impl SwayLaunch<'_> {
             SwayAction::NewColumn {
                 container_id,
                 verbose: self.verbose,
-                timeout: self.timeout,
+                wait_time: self.wait_time,
             }
             .run()?;
         }
@@ -819,7 +828,7 @@ impl SwayLaunch<'_> {
             SwayAction::NewRow {
                 container_id,
                 verbose: self.verbose,
-                timeout: self.timeout,
+                wait_time: self.wait_time,
             }
             .run()?;
         }
@@ -1188,7 +1197,7 @@ mod tests {
         let action = SwayAction::NewColumn {
             container_id: 42,
             verbose: false,
-            timeout: time::Duration::from_secs(5),
+            wait_time: time::Duration::from_millis(20),
         };
         assert_eq!(action.sway_command(), "[con_id=42] move right");
     }
@@ -1198,7 +1207,7 @@ mod tests {
         let action = SwayAction::NewRow {
             container_id: 42,
             verbose: false,
-            timeout: time::Duration::from_secs(5),
+            wait_time: time::Duration::from_millis(20),
         };
         assert_eq!(action.sway_command(), "[con_id=42] move down");
     }
@@ -1317,7 +1326,7 @@ mod tests {
         let action = SwayAction::NewColumn {
             container_id: 42,
             verbose: false,
-            timeout: time::Duration::from_secs(5),
+            wait_time: time::Duration::from_millis(20),
         };
         assert_eq!(action.to_string(), "New column (container_id: 42)");
     }
@@ -1327,7 +1336,7 @@ mod tests {
         let action = SwayAction::NewRow {
             container_id: 42,
             verbose: false,
-            timeout: time::Duration::from_secs(5),
+            wait_time: time::Duration::from_millis(20),
         };
         assert_eq!(action.to_string(), "New row (container_id: 42)");
     }
@@ -1524,28 +1533,6 @@ mod tests {
     }
 
     #[test]
-    fn new_column_and_new_row_match_move_window_change() {
-        let new_column = SwayAction::NewColumn {
-            container_id: 42,
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
-        let new_row = SwayAction::NewRow {
-            container_id: 42,
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
-        assert_eq!(
-            new_column.matching_window_change_events(),
-            Some(vec![WindowChange::Move])
-        );
-        assert_eq!(
-            new_row.matching_window_change_events(),
-            Some(vec![WindowChange::Move])
-        );
-    }
-
-    #[test]
     fn workspace_matches_move_window_change() {
         let action = SwayAction::Workspace {
             container_id: 42,
@@ -1581,6 +1568,16 @@ mod tests {
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
+        let new_column = SwayAction::NewColumn {
+            container_id: 42,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        let new_row = SwayAction::NewRow {
+            container_id: 42,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
         let height = SwayAction::Height {
             container_id: 42,
             height: "300px",
@@ -1600,6 +1597,8 @@ mod tests {
             wait_time: time::Duration::from_millis(20),
         };
         assert_eq!(split.matching_window_change_events(), None);
+        assert_eq!(new_column.matching_window_change_events(), None);
+        assert_eq!(new_row.matching_window_change_events(), None);
         assert_eq!(height.matching_window_change_events(), None);
         assert_eq!(width.matching_window_change_events(), None);
         assert_eq!(position.matching_window_change_events(), None);
