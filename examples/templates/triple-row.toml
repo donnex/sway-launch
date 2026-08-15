@@ -1,0 +1,16 @@
+# Three windows side by side in a single row.
+# Run with, e.g.:
+#   sway-launch --template examples/templates/triple-row.toml --apps kitty,firefox,code
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+
+[[step]]
+slot = "left"
+split = "h"
+
+[[step]]
+slot = "middle"
+split = "h"
+
+[[step]]
+slot = "right"

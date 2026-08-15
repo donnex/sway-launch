@@ -1,0 +1,18 @@
+# A narrow sidebar on the left, a wide main window on the right.
+# Run with, e.g.:
+#   sway-launch --template examples/templates/sidebar-left.toml --apps thunar,code
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+#
+# The width is set on main rather than sidebar: resizing a window is a
+# no-op while it's still the workspace's only window, so the first-launched
+# slot (sidebar) can't be resized directly — sizing the second slot instead
+# reshapes both, since sway redistributes the space between them.
+
+[[step]]
+slot = "sidebar"
+split = "h"
+
+[[step]]
+slot = "main"
+width = "75ppt"

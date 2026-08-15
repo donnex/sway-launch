@@ -1,0 +1,25 @@
+# One large main window on the left, two smaller windows stacked in a
+# column on the right — the general shape behind dev-workspace.
+# Run with, e.g.:
+#   sway-launch --template examples/templates/master-dual-stack.toml --apps code,kitty,kitty
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+#
+# The stack's width is set on stack-top rather than main: resizing a
+# window is a no-op while it's still the workspace's only window, so the
+# first-launched slot (main) can't be resized directly — sizing the second
+# slot instead reshapes both, since sway redistributes the space between
+# them.
+
+[[step]]
+slot = "main"
+split = "h"
+
+[[step]]
+slot = "stack-top"
+new_column = true
+split = "v"
+width = "35ppt"
+
+[[step]]
+slot = "stack-bottom"

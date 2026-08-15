@@ -285,6 +285,23 @@ resolved `id` is always its slot name). `--template` requires exactly one of `--
 and conflicts with `--layout` and every per-window flag, same reasoning as `--layout`. See
 [`examples/templates/quad-grid.toml`](examples/templates/quad-grid.toml).
 
+[`examples/templates/`](examples/templates) has a small library of other app-agnostic shapes ready
+to apply to any application via `--apps`/`--bindings`: even splits/grids
+([`dual-row`](examples/templates/dual-row.toml), [`dual-column`](examples/templates/dual-column.toml),
+[`triple-row`](examples/templates/triple-row.toml),
+[`triple-column`](examples/templates/triple-column.toml), `quad-grid` above,
+[`six-grid`](examples/templates/six-grid.toml), [`nine-grid`](examples/templates/nine-grid.toml)),
+master/stack layouts ([`master-dual-stack`](examples/templates/master-dual-stack.toml),
+[`master-triple-stack`](examples/templates/master-triple-stack.toml)), asymmetric two-pane layouts
+([`sidebar-left`](examples/templates/sidebar-left.toml),
+[`sidebar-right`](examples/templates/sidebar-right.toml)), floating windows
+([`floating-overlay`](examples/templates/floating-overlay.toml),
+[`floating-centered`](examples/templates/floating-centered.toml)), multi-workspace/output spreads
+([`workspace-spread`](examples/templates/workspace-spread.toml),
+[`dual-output`](examples/templates/dual-output.toml)), and retargeting
+([`retarget-by-slot`](examples/templates/retarget-by-slot.toml)). Each file's own header comment
+has a ready-to-run `--apps` example.
+
 ## In depth
 
 It's possible to run additional actions on the new window. Each action waits for its

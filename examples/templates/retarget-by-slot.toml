@@ -1,0 +1,20 @@
+# Launch two windows side by side, then retarget the first one specifically
+# by its slot name — the template version of
+# examples/layouts/retarget-by-id.toml.
+# Run with, e.g.:
+#   sway-launch --template examples/templates/retarget-by-slot.toml --apps kitty,firefox
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+
+[[step]]
+slot = "first"
+split = "h"
+
+[[step]]
+slot = "second"
+
+[[step]]
+target_id = "first"
+floating = true
+width = "800px"
+height = "600px"

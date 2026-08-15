@@ -1,0 +1,17 @@
+# Three windows, each moved to its own named workspace.
+# Run with, e.g.:
+#   sway-launch --template examples/templates/workspace-spread.toml --apps kitty,firefox,code
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+
+[[step]]
+slot = "first"
+workspace = "1"
+
+[[step]]
+slot = "second"
+workspace = "2"
+
+[[step]]
+slot = "third"
+workspace = "3"

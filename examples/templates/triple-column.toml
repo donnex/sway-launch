@@ -1,0 +1,16 @@
+# Three windows stacked in a single column.
+# Run with, e.g.:
+#   sway-launch --template examples/templates/triple-column.toml --apps kitty,firefox,code
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+
+[[step]]
+slot = "top"
+split = "v"
+
+[[step]]
+slot = "middle"
+split = "v"
+
+[[step]]
+slot = "bottom"
