@@ -127,50 +127,59 @@ few combine several different applications to show off more advanced layouts.
 
 ### Examples
 
-Runnable example scripts live in [`examples/`](examples/) — each one is a small, standalone shell
-script built entirely out of `sway-launch` calls; run any of them directly (e.g.
-`examples/quad-terminals`) against a live Sway session to see the layout it builds. The advanced
-examples expect Firefox, Chromium, Thunar, and VS Code (the `code` command) to be installed and on
-`PATH`, in addition to `kitty`.
+Runnable example scripts live in [`examples/scripts/`](examples/scripts/) — each one is a small,
+standalone shell script built entirely out of `sway-launch` calls; run any of them directly (e.g.
+`examples/scripts/quad-terminals`) against a live Sway session to see the layout it builds. The
+advanced examples expect Firefox, Chromium, Thunar, and VS Code (the `code` command) to be
+installed and on `PATH`, in addition to `kitty`. Declarative `--layout`/`--template` example files
+live alongside them in [`examples/layouts/`](examples/layouts/) and
+[`examples/templates/`](examples/templates/) respectively.
 
 Basic (all `kitty`):
 
-- [`examples/dual-terminals`](examples/dual-terminals) — two terminals side by side, one row.
-- [`examples/triple-row`](examples/triple-row) — three terminals side by side, one row.
-- [`examples/column-split`](examples/column-split) — two terminals stacked in one column.
-- [`examples/quad-terminals`](examples/quad-terminals) — four terminals as a 2x2 grid, two rows.
-- [`examples/workspace-and-position`](examples/workspace-and-position) — a floating terminal moved
-  to workspace 2 and centered. Demonstrates `--workspace` and `--position` together.
-- [`examples/retarget-floating`](examples/retarget-floating) — a terminal adjusted twice after
-  launch, without relaunching it: once via `--con-id` with a captured container id, once via
-  `--existing` matching `--app-id`.
-- [`examples/quad-terminals.toml`](examples/quad-terminals.toml) — the same layout as
-  `examples/quad-terminals`, as a declarative `--layout` file instead of a shell script; run with
-  `sway-launch --layout examples/quad-terminals.toml`. See Layout files below.
-- [`examples/retarget-by-id.toml`](examples/retarget-by-id.toml) — two terminals sharing an
-  `app_id`, then a third step that retargets specifically the first one by its step `id` —
-  something `--existing` can't express, since it'd be ambiguous between the two. Demonstrates
-  `id`/`target_id`. Run with `sway-launch --layout examples/retarget-by-id.toml`.
+- [`examples/scripts/dual-terminals`](examples/scripts/dual-terminals) — two terminals side by
+  side, one row.
+- [`examples/scripts/triple-row`](examples/scripts/triple-row) — three terminals side by side, one
+  row.
+- [`examples/scripts/column-split`](examples/scripts/column-split) — two terminals stacked in one
+  column.
+- [`examples/scripts/quad-terminals`](examples/scripts/quad-terminals) — four terminals as a 2x2
+  grid, two rows.
+- [`examples/scripts/workspace-and-position`](examples/scripts/workspace-and-position) — a
+  floating terminal moved to workspace 2 and centered. Demonstrates `--workspace` and `--position`
+  together.
+- [`examples/scripts/retarget-floating`](examples/scripts/retarget-floating) — a terminal adjusted
+  twice after launch, without relaunching it: once via `--con-id` with a captured container id,
+  once via `--existing` matching `--app-id`.
+- [`examples/layouts/quad-terminals.toml`](examples/layouts/quad-terminals.toml) — the same layout
+  as `examples/scripts/quad-terminals`, as a declarative `--layout` file instead of a shell
+  script; run with `sway-launch --layout examples/layouts/quad-terminals.toml`. See Layout files
+  below.
+- [`examples/layouts/retarget-by-id.toml`](examples/layouts/retarget-by-id.toml) — two terminals
+  sharing an `app_id`, then a third step that retargets specifically the first one by its step
+  `id` — something `--existing` can't express, since it'd be ambiguous between the two.
+  Demonstrates `id`/`target_id`. Run with `sway-launch --layout
+  examples/layouts/retarget-by-id.toml`.
 - [`examples/templates/quad-grid.toml`](examples/templates/quad-grid.toml) — the app-agnostic
-  version of `examples/quad-terminals.toml`'s shape: the same 2x2 grid, but with no application
-  baked in. Run with `sway-launch --template examples/templates/quad-grid.toml --apps
+  version of `examples/layouts/quad-terminals.toml`'s shape: the same 2x2 grid, but with no
+  application baked in. Run with `sway-launch --template examples/templates/quad-grid.toml --apps
   kitty,firefox,code,thunar` (or any four commands). See Templates below.
 
 Advanced (multiple applications):
 
-- [`examples/dev-workspace`](examples/dev-workspace) — VS Code taking most of the width, with two
-  terminals stacked in a column beside it. Demonstrates `--class` matching (`-c Code`) alongside
-  `--app-id`, plus `--width` and `--new-column`.
-- [`examples/floating-file-manager`](examples/floating-file-manager) — Thunar as a floating,
-  fixed-size window with a mark set, ready for a `for_window` rule to reposition it (see the Mark
-  section above). Demonstrates combining `--floating`, `--width`/`--height`, and `--mark`.
-- [`examples/browser-comparison`](examples/browser-comparison) — Firefox and Chromium side by
-  side on the same page, for comparing how each renders it.
-- [`examples/quad-mixed-apps`](examples/quad-mixed-apps) — a 2x2 grid like
-  `examples/quad-terminals`, but with four different applications (kitty, Firefox, Thunar, VS
-  Code) instead of four terminals.
-- [`examples/editor-with-floating-terminal`](examples/editor-with-floating-terminal) — VS Code
-  full-width, with a small floating terminal on top for quick one-off commands.
+- [`examples/scripts/dev-workspace`](examples/scripts/dev-workspace) — VS Code taking most of the
+  width, with two terminals stacked in a column beside it. Demonstrates `--class` matching
+  (`-c Code`) alongside `--app-id`, plus `--width` and `--new-column`.
+- [`examples/scripts/floating-file-manager`](examples/scripts/floating-file-manager) — Thunar as a
+  floating, fixed-size window with a mark set, ready for a `for_window` rule to reposition it (see
+  the Mark section above). Demonstrates combining `--floating`, `--width`/`--height`, and `--mark`.
+- [`examples/scripts/browser-comparison`](examples/scripts/browser-comparison) — Firefox and
+  Chromium side by side on the same page, for comparing how each renders it.
+- [`examples/scripts/quad-mixed-apps`](examples/scripts/quad-mixed-apps) — a 2x2 grid like
+  `examples/scripts/quad-terminals`, but with four different applications (kitty, Firefox, Thunar,
+  VS Code) instead of four terminals.
+- [`examples/scripts/editor-with-floating-terminal`](examples/scripts/editor-with-floating-terminal)
+  — VS Code full-width, with a small floating terminal on top for quick one-off commands.
 
 More advanced layouts should be possible by focusing earlier windows between launches.
 
@@ -207,7 +216,7 @@ command/`--con-id`/`--existing` mutual exclusivity plus one layout-only addition
 - `id` names a step, so a later step can target its window specifically via `target_id` — useful
   when several steps share the same `app_id`/`class`, where `existing = true` would be ambiguous
   about which one it means. See
-  [`examples/retarget-by-id.toml`](examples/retarget-by-id.toml).
+  [`examples/layouts/retarget-by-id.toml`](examples/layouts/retarget-by-id.toml).
 - `target_id` targets an earlier step's window by that name, instead of `command`/`con_id`/
   `existing`. Errors if the named `id` doesn't exist, or was used by more than one step.
 
