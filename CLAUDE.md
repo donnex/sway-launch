@@ -31,20 +31,30 @@ See the CI section below for how GitHub Actions runs these same checks.
 
 ## Architecture
 
-The crate is two files plus two integration test files:
+The crate is three source files plus three integration test files:
 
-- `src/main.rs` — defines the `clap`-derived `Args` struct (CLI flags), validates them (e.g.
-  `--height`/`--width` must match `\d+(px|ppt)`), and constructs a `sway_launch::SwayLaunch`.
-- `src/sway_launch.rs` — all the actual logic.
+- `src/main.rs` — defines the `clap`-derived `Args` struct (CLI flags) and constructs a
+  `sway_launch::SwayLaunch` (direct CLI mode) or dispatches to `run_layout()`/`layout.rs`
+  (`--layout` mode). Argument validation itself (e.g. `--height`/`--width` must match
+  `\d+(px|ppt)`) lives in `sway_launch.rs` as `pub fn validate_size_argument`/
+  `validate_position_argument`, referenced from `main.rs`'s `#[clap(value_parser = ...)]`
+  attributes, so both the CLI parser and `layout.rs`'s TOML steps validate the same way without
+  duplicating the regexes.
+- `src/sway_launch.rs` — all the core logic (see below), plus the two shared validators above.
+- `src/layout.rs` — `--layout`'s TOML schema (`Layout`/`LayoutStep`) and
+  `LayoutStep::to_sway_launch()`, which converts one step into a `sway_launch::SwayLaunch` (see
+  "Layout files" below).
 - `tests/completions.rs` — needed because `--completions` calls `process::exit(0)` inside
   `main()`, which a unit test can't call into directly.
 - `tests/json_output.rs` — asserts `main()`'s actual stdout/stderr behavior (`--json` output,
   `--verbose` diagnostics going to stderr) by driving the compiled binary with `--con-id`, the one
   target mode that never touches the Sway socket, so this runs headless in CI.
+- `tests/layout.rs` — asserts `--layout`'s end-to-end behavior (file reading, TOML parsing, step
+  iteration, `--json` output, error messages) the same way, using `con_id`-only steps.
 
-Both integration test files need `CARGO_BIN_EXE_sway-launch` (to invoke the compiled binary as a
-subprocess), which is only set for files under `tests/`, not for the bin crate's own unit test
-harness — that's why these live here instead of as `#[cfg(test)]` modules in `src/main.rs`.
+All three integration test files need `CARGO_BIN_EXE_sway-launch` (to invoke the compiled binary
+as a subprocess), which is only set for files under `tests/`, not for the bin crate's own unit
+test harness — that's why these live here instead of as `#[cfg(test)]` modules in `src/main.rs`.
 
 ### Core model: `SwayAction`
 
@@ -121,6 +131,21 @@ Standalone mode handled entirely in `main.rs`, before any of the `SwayLaunch`/`T
 stdout and exits 0. Doesn't touch Sway IPC at all, so — unlike `--debug-events`, which still builds
 a `SwayLaunch` first — it's checked and short-circuits right after `Args::parse()`.
 
+### `--layout`
+
+Another standalone mode, short-circuiting right after `--completions` (before the
+command/`--con-id`/`--existing` validation, since a layout file satisfies that requirement on its
+own). `main.rs`'s `run_layout()` reads the file, parses it via `layout::parse()`
+(`toml::from_str::<layout::Layout>`), then for each `[[step]]` in order: converts it to a
+`sway_launch::SwayLaunch` via `LayoutStep::to_sway_launch()` (reusing
+`sway_launch::validate_size_argument`/`validate_position_argument` — the same validators the CLI's
+`--height`/`--width`/`--position` flags use — plus the same `command`/`con_id`/`existing`
+one-of-three-required rule `main.rs` enforces for the direct-CLI case) and calls `.run()` on it,
+stopping at the first error. Prints one container id per line as each step completes, or (if
+`--json` is set) collects them into one `{"container_ids": [...]}` array printed at the end
+instead. Every top-level per-window flag `conflicts_with_all`-conflicts with `--layout` in `Args`,
+since a step's own fields are what apply, not a top-level flag with no specific step to attach to.
+
 ## Example layout scripts
 
 `examples/` holds tracked, user-facing example scripts, each a small standalone shell script built
@@ -133,6 +158,10 @@ Chromium, Thunar, VS Code) and exercise more of the CLI surface (`--class` match
 of these; they are full scripts a user runs directly, so they follow every Scripts/Shell
 convention below, including `-h`/`--help`. Keep this set and README's list of them in sync when
 either changes.
+
+`examples/quad-terminals.toml` is the one non-shell-script example — a `--layout` file, run via
+`sway-launch --layout examples/quad-terminals.toml` rather than executed directly, so it's plain
+data (not executable, no `-h`/`--help`) and the Scripts/Shell conventions don't apply to it.
 
 There is no separate ad-hoc/scratch scripts directory — a prior `layout-tests/` served that
 purpose (untracked, personal iteration history) but was removed once its useful layouts had all

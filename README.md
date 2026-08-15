@@ -55,6 +55,7 @@ Options:
       --completions <COMPLETIONS>  Generate a shell completion script and print it to stdout [possible values: bash, elvish, fish, powershell, zsh]
   -v, --verbose                    Verbose output
       --json                       Print the result as a JSON object instead of a bare container id
+      --layout <LAYOUT>            Run a declarative TOML layout file instead of a single command; see README.md for the schema. Each step is the equivalent of one sway-launch invocation's flags, so this conflicts with every per-window flag below, which would otherwise apply to no specific step
   -h, --help                       Print help
   -V, --version                    Print version
 ```
@@ -138,6 +139,9 @@ Basic (all `kitty`):
 - [`examples/retarget-floating`](examples/retarget-floating) — a terminal adjusted twice after
   launch, without relaunching it: once via `--con-id` with a captured container id, once via
   `--existing` matching `--app-id`.
+- [`examples/quad-terminals.toml`](examples/quad-terminals.toml) — the same layout as
+  `examples/quad-terminals`, as a declarative `--layout` file instead of a shell script; run with
+  `sway-launch --layout examples/quad-terminals.toml`. See Layout files below.
 
 Advanced (multiple applications):
 
@@ -156,6 +160,39 @@ Advanced (multiple applications):
   full-width, with a small floating terminal on top for quick one-off commands.
 
 More advanced layouts should be possible by focusing earlier windows between launches.
+
+### Layout files
+
+Chaining several `sway-launch` calls in a shell script (as every example above does) works well,
+but each call is a separate process. `--layout <FILE>` runs a whole layout from one TOML file and
+one invocation instead — each `[[step]]` is the equivalent of one CLI call's flags, run in order,
+stopping at the first error.
+
+```toml
+[[step]]
+command = "kitty"
+app_id = "kitty"
+split = "h"
+
+[[step]]
+command = "kitty"
+app_id = "kitty"
+```
+
+```shell
+sway-launch --layout layout.toml
+```
+
+A step's keys mirror the CLI flags of the same name (`app_id`, `class`, `con_id`, `existing`,
+`split`, `floating`, `fullscreen`, `mark`, `new_column`, `new_row`, `workspace`, `height`, `width`,
+`position`, `timeout`, `wait_time`) — `height`/`width`/`position` are validated the same way their
+CLI equivalents are, and a step without its own `timeout`/`wait_time` inherits the top-level
+`--timeout`/`--wait-time` values. Exactly one of `command`, `con_id`, or `existing = true` is
+required per step, matching the CLI's own command/`--con-id`/`--existing` mutual exclusivity.
+Every top-level per-window flag (`--split`, `--floating`, etc.) conflicts with `--layout`, since it
+would otherwise be unclear which step it applied to — `--timeout`, `--wait-time`, `--verbose`, and
+`--json` still apply, the latter printing one `{"container_ids": [...]}` array at the end instead
+of a line per step.
 
 ## In depth
 
