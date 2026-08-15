@@ -42,6 +42,7 @@ Options:
   -s, --split <SPLIT>              Change split for new window [possible values: v, h]
   -f, --floating                   Make new window floating
       --fullscreen                 Make new window fullscreen
+      --focus                      Focus new window
   -m, --mark <MARK>                Add mark to new window
   -n, --new-column                 Move window to new column (move right)
       --height <HEIGHT>            Set height on new window
@@ -184,10 +185,10 @@ sway-launch --layout layout.toml
 ```
 
 A step's keys mirror the CLI flags of the same name (`app_id`, `class`, `con_id`, `existing`,
-`split`, `floating`, `fullscreen`, `mark`, `new_column`, `new_row`, `workspace`, `height`, `width`,
-`position`, `timeout`, `wait_time`) — `height`/`width`/`position` are validated the same way their
-CLI equivalents are, and a step without its own `timeout`/`wait_time` inherits the top-level
-`--timeout`/`--wait-time` values. Exactly one of `command`, `con_id`, or `existing = true` is
+`split`, `floating`, `fullscreen`, `focus`, `mark`, `new_column`, `new_row`, `workspace`, `height`,
+`width`, `position`, `timeout`, `wait_time`) — `height`/`width`/`position` are validated the same
+way their CLI equivalents are, and a step without its own `timeout`/`wait_time` inherits the
+top-level `--timeout`/`--wait-time` values. Exactly one of `command`, `con_id`, or `existing = true` is
 required per step, matching the CLI's own command/`--con-id`/`--existing` mutual exclusivity.
 Every top-level per-window flag (`--split`, `--floating`, etc.) conflicts with `--layout`, since it
 would otherwise be unclear which step it applied to — `--timeout`, `--wait-time`, `--verbose`, and
@@ -245,6 +246,16 @@ Makes the window fullscreen.
 
 ```shell
 sway-launch --fullscreen kitty
+```
+
+### Focus
+
+Focuses the window. Useful when a later step in a layout would otherwise leave a different window
+focused — for example, focusing the first terminal after building a layout that ends by launching
+a background app.
+
+```shell
+sway-launch --focus kitty
 ```
 
 ### Mark

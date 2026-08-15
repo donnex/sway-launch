@@ -75,8 +75,8 @@ harness — that's why these live here instead of as `#[cfg(test)]` modules in `
 ### Core model: `SwayAction`
 
 Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`, `Fullscreen`,
-`NewColumn`, `NewRow`, `Workspace`, `Mark`, `Height`, `Width`, `Position`). Each variant knows how
-to:
+`Focus`, `NewColumn`, `NewRow`, `Workspace`, `Mark`, `Height`, `Width`, `Position`). Each variant
+knows how to:
 
 - render itself as a `swaymsg` command string (`sway_command()`) — `Mark`'s and `Workspace`'s
   values are wrapped through `quote_sway_string()` before interpolation, since Sway's command
@@ -91,13 +91,15 @@ to:
 
 `SwayAction::run()` dispatches based on whether the action has a corresponding IPC event:
 
-- **Has an event** (`Exec`, `Floating`, `Fullscreen`, `Workspace`, `Mark`) →
+- **Has an event** (`Exec`, `Floating`, `Fullscreen`, `Focus`, `Workspace`, `Mark`) →
   `run_wait_matching_events()`:
   connects to Sway, sends the command, then reads the event stream until a `Window` event matches
   (checked via `matches_window_event()`, e.g. app_id/class for `Exec`, container id for others), or
   the `--timeout` is hit. `Workspace` uses `WindowChange::Move`, since moving to a different
   workspace also reparents the container in Sway's tree — confirmed reliable against a live Sway
-  session by `tests/live_sway.rs`'s `workspace_moves_window_to_named_workspace`.
+  session by `tests/live_sway.rs`'s `workspace_moves_window_to_named_workspace`. `Focus` uses
+  `WindowChange::Focus`, confirmed reliable the same way by
+  `focus_focuses_a_previously_unfocused_window`.
 - **No event exists in Sway IPC for it** (`Split`, `NewColumn`, `NewRow`, `Height`, `Width`,
   `Position`) → `run_wait_time()`: sends the command and sleeps for `--wait-time` before and after,
   since Sway doesn't emit an event to confirm these. `Position` has no dedicated event because
@@ -124,10 +126,10 @@ to:
   one (documented for the user in README.md's "Target an existing window" section).
 
 `run()` then conditionally runs the other actions in a fixed order (`NewColumn` → `NewRow` →
-`Workspace` → `Split` → `Floating` → `Fullscreen` → `Height` → `Width` → `Position` → `Mark`)
-based on which CLI flags were set, each against that same `container_id`. The final container id
-is printed to stdout (`main.rs`, as a bare integer, or as `{"container_id": N}` under `--json`) —
-this is what makes commands chainable/scriptable (see README examples).
+`Workspace` → `Split` → `Floating` → `Fullscreen` → `Focus` → `Height` → `Width` → `Position` →
+`Mark`) based on which CLI flags were set, each against that same `container_id`. The final
+container id is printed to stdout (`main.rs`, as a bare integer, or as `{"container_id": N}` under
+`--json`) — this is what makes commands chainable/scriptable (see README examples).
 
 Each Sway IPC call opens its own fresh `Connection` (`new_connection()` in `sway_launch.rs`) — there
 is no persistent/shared connection across actions.

@@ -97,6 +97,11 @@ enum SwayAction<'a> {
         verbose: bool,
         timeout: time::Duration,
     },
+    Focus {
+        container_id: i64,
+        verbose: bool,
+        timeout: time::Duration,
+    },
     NewColumn {
         container_id: i64,
         verbose: bool,
@@ -171,6 +176,9 @@ impl fmt::Display for SwayAction<'_> {
             SwayAction::Fullscreen { container_id, .. } => {
                 write!(f, "Fullscreen (container_id: {})", container_id)
             }
+            SwayAction::Focus { container_id, .. } => {
+                write!(f, "Focus (container_id: {})", container_id)
+            }
             SwayAction::NewColumn { container_id, .. } => {
                 write!(f, "New column (container_id: {})", container_id)
             }
@@ -240,6 +248,9 @@ impl SwayAction<'_> {
             SwayAction::Fullscreen { container_id, .. } => {
                 format!("[con_id={}] fullscreen enable", container_id)
             }
+            SwayAction::Focus { container_id, .. } => {
+                format!("[con_id={}] focus", container_id)
+            }
             SwayAction::Split {
                 container_id,
                 split,
@@ -307,6 +318,7 @@ impl SwayAction<'_> {
             | SwayAction::Split { verbose, .. }
             | SwayAction::Floating { verbose, .. }
             | SwayAction::Fullscreen { verbose, .. }
+            | SwayAction::Focus { verbose, .. }
             | SwayAction::NewColumn { verbose, .. }
             | SwayAction::NewRow { verbose, .. }
             | SwayAction::Workspace { verbose, .. }
@@ -324,6 +336,7 @@ impl SwayAction<'_> {
             SwayAction::Exec { timeout, .. }
             | SwayAction::Floating { timeout, .. }
             | SwayAction::Fullscreen { timeout, .. }
+            | SwayAction::Focus { timeout, .. }
             | SwayAction::Workspace { timeout, .. }
             | SwayAction::Mark { timeout, .. } => timeout,
             SwayAction::Split { wait_time, .. }
@@ -340,6 +353,7 @@ impl SwayAction<'_> {
             SwayAction::Split { container_id, .. }
             | SwayAction::Floating { container_id, .. }
             | SwayAction::Fullscreen { container_id, .. }
+            | SwayAction::Focus { container_id, .. }
             | SwayAction::NewColumn { container_id, .. }
             | SwayAction::NewRow { container_id, .. }
             | SwayAction::Workspace { container_id, .. }
@@ -361,6 +375,7 @@ impl SwayAction<'_> {
             SwayAction::Exec { .. } => Some(vec![WindowChange::New]),
             SwayAction::Floating { .. } => Some(vec![WindowChange::Floating]),
             SwayAction::Fullscreen { .. } => Some(vec![WindowChange::FullscreenMode]),
+            SwayAction::Focus { .. } => Some(vec![WindowChange::Focus]),
             SwayAction::Workspace { .. } => Some(vec![WindowChange::Move]),
             SwayAction::Mark { .. } => Some(vec![WindowChange::Mark]),
             // NewColumn/NewRow ("move right"/"move down") were event-based
@@ -730,6 +745,7 @@ pub struct SwayLaunch<'a> {
     pub split: Option<Split>,
     pub floating: bool,
     pub fullscreen: bool,
+    pub focus: bool,
     pub mark: &'a str,
     pub new_column: bool,
     pub new_row: bool,
@@ -838,6 +854,14 @@ impl SwayLaunch<'_> {
         }
         if self.fullscreen {
             SwayAction::Fullscreen {
+                container_id,
+                verbose: self.verbose,
+                timeout: self.timeout,
+            }
+            .run()?;
+        }
+        if self.focus {
+            SwayAction::Focus {
                 container_id,
                 verbose: self.verbose,
                 timeout: self.timeout,
@@ -1138,6 +1162,16 @@ mod tests {
     }
 
     #[test]
+    fn sway_command_focus() {
+        let action = SwayAction::Focus {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(action.sway_command(), "[con_id=42] focus");
+    }
+
+    #[test]
     fn sway_command_split_v() {
         let action = SwayAction::Split {
             container_id: 42,
@@ -1297,6 +1331,16 @@ mod tests {
             timeout: time::Duration::from_secs(5),
         };
         assert_eq!(action.to_string(), "Fullscreen (container_id: 42)");
+    }
+
+    #[test]
+    fn display_focus() {
+        let action = SwayAction::Focus {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(action.to_string(), "Focus (container_id: 42)");
     }
 
     #[test]
@@ -1484,6 +1528,19 @@ mod tests {
         assert_eq!(
             action.matching_window_change_events(),
             Some(vec![WindowChange::FullscreenMode])
+        );
+    }
+
+    #[test]
+    fn focus_matches_focus_window_change() {
+        let action = SwayAction::Focus {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(
+            action.matching_window_change_events(),
+            Some(vec![WindowChange::Focus])
         );
     }
 

@@ -40,6 +40,10 @@ struct Args {
     #[clap(long)]
     fullscreen: bool,
 
+    /// Focus new window
+    #[clap(long)]
+    focus: bool,
+
     /// Add mark to new window
     #[clap(short, long)]
     mark: Option<String>,
@@ -99,7 +103,7 @@ struct Args {
     /// step
     #[clap(long, conflicts_with_all = [
         "command", "con_id", "existing", "app_id", "class", "split",
-        "floating", "fullscreen", "mark", "new_column", "new_row",
+        "floating", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "height", "width", "position", "debug_events",
     ])]
     layout: Option<PathBuf>,
@@ -162,6 +166,7 @@ fn main() {
         split: args.split,
         floating: args.floating,
         fullscreen: args.fullscreen,
+        focus: args.focus,
         mark: &args.mark.unwrap_or_default(),
         new_column: args.new_column,
         new_row: args.new_row,
