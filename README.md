@@ -211,6 +211,9 @@ command/`--con-id`/`--existing` mutual exclusivity plus one layout-only addition
 - `target_id` targets an earlier step's window by that name, instead of `command`/`con_id`/
   `existing`. Errors if the named `id` doesn't exist, or was used by more than one step.
 
+As with the CLI's `--app-id`/`--class`, a step can't set both `app_id` and `class` — pick
+whichever matches the application.
+
 Neither has a CLI equivalent — a single `sway-launch` invocation only ever has one step, so
 there's nothing to name or reference.
 
@@ -264,7 +267,8 @@ sway-launch --template template.toml --bindings bindings.toml
 
 A `Binding`'s keys are the same target-selection subset a layout step has (`command`, `con_id`,
 `existing`, `app_id`, `class`) — exactly one of `command`/`con_id`/`existing = true` is required, same
-rule as `--layout`. A template step's action keys (`split`, `floating`, `height`, etc.) are the same
+rule as `--layout`, and `app_id`/`class` are mutually exclusive the same way too. A template step's
+action keys (`split`, `floating`, `height`, etc.) are the same
 ones `--layout` has; `slot` and `target_id` are its only two target-selection keys, and exactly one
 is required per step — a `slot` step resolves its window via a binding, a `target_id` step
 retargets an earlier `slot`'s resolved window (see `id`/`target_id` above; a template step's

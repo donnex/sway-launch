@@ -204,6 +204,65 @@ fn template_rejects_misspelled_step_field() {
 }
 
 #[test]
+fn template_requires_bindings_or_apps() {
+    let template = TempToml::write("requires-binding-source", "[[step]]\nslot = \"editor\"\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--template", template.to_str().unwrap()])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("--bindings"));
+    assert!(stderr.contains("--apps"));
+}
+
+#[test]
+fn template_apps_rejects_an_empty_entry() {
+    let template = TempToml::write(
+        "apps-empty-entry-template",
+        "[[step]]\nslot = \"editor\"\n\n[[step]]\nslot = \"terminal\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--template", template.to_str().unwrap(), "--apps", "kitty,"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("terminal"));
+}
+
+#[test]
+fn template_rejects_binding_with_app_id_and_class_together() {
+    let template = TempToml::write(
+        "binding-app-id-and-class-template",
+        "[[step]]\nslot = \"editor\"\n",
+    );
+    let bindings = TempToml::write(
+        "binding-app-id-and-class-bindings",
+        "[[binding]]\nslot = \"editor\"\ncommand = \"kitty\"\napp_id = \"kitty\"\nclass = \"Kitty\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            template.to_str().unwrap(),
+            "--bindings",
+            bindings.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("app_id"));
+    assert!(stderr.contains("class"));
+}
+
+#[test]
 fn template_conflicts_with_layout() {
     let template = TempToml::write("conflicts-template", "[[step]]\nslot = \"editor\"\n");
 

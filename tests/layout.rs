@@ -151,6 +151,23 @@ fn layout_rejects_command_and_con_id_together() {
 }
 
 #[test]
+fn layout_rejects_app_id_and_class_together() {
+    let path = TempToml::write(
+        "app-id-and-class",
+        "[[step]]\ncon_id = 42\napp_id = \"kitty\"\nclass = \"Kitty\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap()])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("step 1"));
+}
+
+#[test]
 fn layout_target_id_resolves_to_an_earlier_steps_container_id() {
     let path = TempToml::write(
         "target-id",

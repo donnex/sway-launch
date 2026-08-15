@@ -242,7 +242,7 @@ fn main() {
             }
         }
         Err(error) => {
-            eprint!("{}", error);
+            eprintln!("{}", error);
             process::exit(1);
         }
     };
@@ -359,6 +359,18 @@ fn bindings_from_apps(
             slots.len(),
             slots.join(", "),
             apps.len()
+        ));
+    }
+
+    if let Some(empty_slot) = slots
+        .iter()
+        .zip(&apps)
+        .find(|(_, app)| app.is_empty())
+        .map(|(slot, _)| slot)
+    {
+        return Err(format!(
+            "--apps: empty application for slot {:?}",
+            empty_slot
         ));
     }
 
