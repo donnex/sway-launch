@@ -1,6 +1,6 @@
 use clap::{error::ErrorKind, CommandFactory, Parser};
 use regex::Regex;
-use std::{process, time};
+use std::{io, process, time};
 
 mod sway_launch;
 
@@ -79,6 +79,10 @@ struct Args {
     #[clap(short, long)]
     debug_events: bool,
 
+    /// Generate a shell completion script and print it to stdout
+    #[clap(long, value_enum)]
+    completions: Option<clap_complete::Shell>,
+
     /// Verbose output
     #[clap(short, long)]
     verbose: bool,
@@ -89,6 +93,16 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
+
+    if let Some(shell) = args.completions {
+        clap_complete::generate(
+            shell,
+            &mut Args::command(),
+            "sway-launch",
+            &mut io::stdout(),
+        );
+        process::exit(0);
+    }
 
     let command = args.command.unwrap_or_default();
     let app_id_match = args.app_id.unwrap_or_default();

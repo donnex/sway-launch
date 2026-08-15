@@ -18,10 +18,10 @@ manual `sleep`s. See `README.md` for full CLI usage and layout-building examples
 - Run: `cargo run -- [OPTIONS] [COMMAND]` (e.g. `cargo run -- -a kitty kitty`)
 - Format: `cargo fmt`
 - Lint: `cargo clippy`
-- Test: `cargo test` — runs the unit tests in `src/sway_launch.rs` and `src/main.rs`, covering all
-  pure/logic functions (see the Testing bullet under Rust conventions for what's exempted and
-  why). The IPC-touching functions that can't run headless are exercised manually by running the
-  scripts in `examples/` (see below) against a live Sway session.
+- Test: `cargo test` — runs the unit tests in `src/sway_launch.rs` and `src/main.rs` (covering all
+  pure/logic functions; see the Testing bullet under Rust conventions for what's exempted and why)
+  plus the one integration test in `tests/`. The IPC-touching functions that can't run headless are
+  exercised manually by running the scripts in `examples/` (see below) against a live Sway session.
   - Run a single test: `cargo test <test_name>`
   - Run with debug output: `cargo test -- --nocapture`
 
@@ -29,11 +29,15 @@ See the CI section below for how GitHub Actions runs these same checks.
 
 ## Architecture
 
-The crate is two files:
+The crate is two files plus one integration test:
 
 - `src/main.rs` — defines the `clap`-derived `Args` struct (CLI flags), validates them (e.g.
   `--height`/`--width` must match `\d+(px|ppt)`), and constructs a `sway_launch::SwayLaunch`.
 - `src/sway_launch.rs` — all the actual logic.
+- `tests/completions.rs` — the one integration test in the crate, needed because `--completions`
+  calls `process::exit(0)` inside `main()`; `CARGO_BIN_EXE_sway-launch` (used to invoke the
+  compiled binary as a subprocess) is only set for files under `tests/`, not for the bin crate's
+  own unit test harness.
 
 ### Core model: `SwayAction`
 
@@ -92,6 +96,13 @@ is no persistent/shared connection across actions.
 
 `SwayLaunch::debug_events()` subscribes to all Sway IPC event types and prints every event until
 killed. Useful for discovering event shapes when adding a new action.
+
+### `--completions`
+
+Standalone mode handled entirely in `main.rs`, before any of the `SwayLaunch`/`Target` logic:
+`clap_complete::generate()` writes the completion script for the given `clap_complete::Shell` to
+stdout and exits 0. Doesn't touch Sway IPC at all, so — unlike `--debug-events`, which still builds
+a `SwayLaunch` first — it's checked and short-circuits right after `Args::parse()`.
 
 ## Example layout scripts
 
