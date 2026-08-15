@@ -1,5 +1,6 @@
 use crate::sway_launch::{self, Split};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::time;
 
 /// A declarative layout file: a sequence of steps, each the moral
@@ -19,6 +20,12 @@ pub struct LayoutStep {
     pub con_id: Option<i64>,
     #[serde(default)]
     pub existing: bool,
+    pub target_id: Option<String>,
+
+    /// Names this step, so a later step can target its window via
+    /// `target_id`. Layout-only — there's no CLI equivalent, since a single
+    /// `sway-launch` invocation only ever has one step to reference.
+    pub id: Option<String>,
 
     pub app_id: Option<String>,
     pub class: Option<String>,
@@ -54,40 +61,58 @@ pub fn parse(contents: &str) -> Result<Layout, String> {
 
 impl LayoutStep {
     /// Converts this step into a `SwayLaunch`, enforcing that exactly one of
-    /// `command`/`con_id`/`existing` is set (mirroring the CLI's
-    /// `conflicts_with` on the same three) and validating the same
+    /// `command`/`con_id`/`existing`/`target_id` is set (mirroring the
+    /// CLI's `conflicts_with` on the first three, plus `target_id` as a
+    /// fourth, layout-only target selector) and validating the same
     /// height/width/position formats the CLI flags enforce. Steps without
     /// their own `timeout`/`wait_time` inherit the caller's defaults
     /// (typically the top-level `--timeout`/`--wait-time` CLI values).
-    pub fn to_sway_launch(
-        &self,
+    /// `resolved_ids` maps every earlier step's `id` to the container id it
+    /// resolved to, for `target_id` lookups.
+    pub fn to_sway_launch<'a>(
+        &'a self,
         default_timeout: time::Duration,
         default_wait_time: time::Duration,
         verbose: bool,
-    ) -> Result<sway_launch::SwayLaunch<'_>, String> {
+        resolved_ids: &HashMap<String, i64>,
+    ) -> Result<sway_launch::SwayLaunch<'a>, String> {
         let app_id_match = self.app_id.as_deref().unwrap_or_default();
         let class_match = self.class.as_deref().unwrap_or_default();
 
-        let target_fields_set = [self.command.is_some(), self.con_id.is_some(), self.existing]
-            .into_iter()
-            .filter(|&set| set)
-            .count();
+        let target_fields_set = [
+            self.command.is_some(),
+            self.con_id.is_some(),
+            self.existing,
+            self.target_id.is_some(),
+        ]
+        .into_iter()
+        .filter(|&set| set)
+        .count();
         if target_fields_set > 1 {
-            return Err("step must set only one of: command, con_id, existing".to_string());
+            return Err(
+                "step must set only one of: command, con_id, existing, target_id".to_string(),
+            );
         }
 
         let target = if let Some(con_id) = self.con_id {
             sway_launch::Target::ConId(con_id)
+        } else if let Some(target_id) = self.target_id.as_deref() {
+            let con_id = resolved_ids.get(target_id).ok_or_else(|| {
+                format!(
+                    "target_id {:?} not found — must reference an earlier step's id",
+                    target_id
+                )
+            })?;
+            sway_launch::Target::ConId(*con_id)
         } else if self.existing {
             if app_id_match.is_empty() && class_match.is_empty() {
                 return Err("existing = true requires app_id or class".to_string());
             }
             sway_launch::Target::Existing
         } else {
-            let command = self
-                .command
-                .as_deref()
-                .ok_or_else(|| "step needs one of: command, con_id, existing".to_string())?;
+            let command = self.command.as_deref().ok_or_else(|| {
+                "step needs one of: command, con_id, existing, target_id".to_string()
+            })?;
             sway_launch::Target::Exec { command }
         };
 
@@ -198,6 +223,8 @@ mod tests {
             command: Some("kitty".to_string()),
             con_id: None,
             existing: false,
+            target_id: None,
+            id: None,
             app_id: None,
             class: None,
             split: None,
@@ -225,6 +252,7 @@ mod tests {
                 time::Duration::from_secs(5),
                 time::Duration::from_millis(20),
                 false,
+                &HashMap::new(),
             )
             .expect("valid step should convert");
         assert!(matches!(
@@ -243,6 +271,7 @@ mod tests {
                 time::Duration::from_secs(5),
                 time::Duration::from_millis(20),
                 false,
+                &HashMap::new(),
             )
             .expect("valid step should convert");
         assert!(matches!(sway_launch.target, sway_launch::Target::ConId(42)));
@@ -257,7 +286,8 @@ mod tests {
             .to_sway_launch(
                 time::Duration::from_secs(5),
                 time::Duration::from_millis(20),
-                false
+                false,
+                &HashMap::new()
             )
             .is_err());
     }
@@ -273,6 +303,7 @@ mod tests {
                 time::Duration::from_secs(5),
                 time::Duration::from_millis(20),
                 false,
+                &HashMap::new(),
             )
             .expect("existing step with app_id should convert");
         assert!(matches!(sway_launch.target, sway_launch::Target::Existing));
@@ -286,7 +317,8 @@ mod tests {
             .to_sway_launch(
                 time::Duration::from_secs(5),
                 time::Duration::from_millis(20),
-                false
+                false,
+                &HashMap::new()
             )
             .is_err());
     }
@@ -301,7 +333,8 @@ mod tests {
             .to_sway_launch(
                 time::Duration::from_secs(5),
                 time::Duration::from_millis(20),
-                false
+                false,
+                &HashMap::new()
             )
             .is_err());
     }
@@ -315,7 +348,8 @@ mod tests {
             .to_sway_launch(
                 time::Duration::from_secs(5),
                 time::Duration::from_millis(20),
-                false
+                false,
+                &HashMap::new()
             )
             .is_err());
     }
@@ -331,9 +365,59 @@ mod tests {
             .to_sway_launch(
                 time::Duration::from_secs(5),
                 time::Duration::from_millis(20),
-                false
+                false,
+                &HashMap::new()
             )
             .is_err());
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_command_and_target_id_together() {
+        let mut step = minimal_step();
+        step.target_id = Some("first".to_string());
+        assert!(step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &HashMap::new()
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn to_sway_launch_target_id_resolves_via_resolved_ids() {
+        let mut step = minimal_step();
+        step.command = None;
+        step.target_id = Some("first".to_string());
+        let mut resolved_ids = HashMap::new();
+        resolved_ids.insert("first".to_string(), 42);
+        let sway_launch = step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &resolved_ids,
+            )
+            .expect("target_id present in resolved_ids should convert");
+        assert!(matches!(sway_launch.target, sway_launch::Target::ConId(42)));
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_unresolved_target_id() {
+        let mut step = minimal_step();
+        step.command = None;
+        step.target_id = Some("missing".to_string());
+        let error = step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &HashMap::new(),
+            )
+            .err()
+            .expect("unresolved target_id should error");
+        assert!(error.contains("missing"));
     }
 
     #[test]
@@ -344,7 +428,8 @@ mod tests {
             .to_sway_launch(
                 time::Duration::from_secs(5),
                 time::Duration::from_millis(20),
-                false
+                false,
+                &HashMap::new()
             )
             .is_err());
     }
@@ -357,7 +442,8 @@ mod tests {
             .to_sway_launch(
                 time::Duration::from_secs(5),
                 time::Duration::from_millis(20),
-                false
+                false,
+                &HashMap::new()
             )
             .is_err());
     }
@@ -370,7 +456,8 @@ mod tests {
             .to_sway_launch(
                 time::Duration::from_secs(5),
                 time::Duration::from_millis(20),
-                false
+                false,
+                &HashMap::new()
             )
             .is_err());
     }
@@ -384,6 +471,7 @@ mod tests {
                 time::Duration::from_secs(5),
                 time::Duration::from_millis(20),
                 false,
+                &HashMap::new(),
             )
             .expect("valid step should convert");
         assert_eq!(sway_launch.timeout, time::Duration::from_secs(7));
@@ -397,6 +485,7 @@ mod tests {
                 time::Duration::from_secs(5),
                 time::Duration::from_millis(20),
                 false,
+                &HashMap::new(),
             )
             .expect("valid step should convert");
         assert_eq!(sway_launch.timeout, time::Duration::from_secs(5));

@@ -144,6 +144,10 @@ Basic (all `kitty`):
 - [`examples/quad-terminals.toml`](examples/quad-terminals.toml) — the same layout as
   `examples/quad-terminals`, as a declarative `--layout` file instead of a shell script; run with
   `sway-launch --layout examples/quad-terminals.toml`. See Layout files below.
+- [`examples/retarget-by-id.toml`](examples/retarget-by-id.toml) — two terminals sharing an
+  `app_id`, then a third step that retargets specifically the first one by its step `id` —
+  something `--existing` can't express, since it'd be ambiguous between the two. Demonstrates
+  `id`/`target_id`. Run with `sway-launch --layout examples/retarget-by-id.toml`.
 
 Advanced (multiple applications):
 
@@ -189,9 +193,20 @@ A step's keys mirror the CLI flags of the same name (`app_id`, `class`, `con_id`
 `split`, `floating`, `fullscreen`, `focus`, `mark`, `new_column`, `new_row`, `workspace`, `output`,
 `height`, `width`, `position`, `timeout`, `wait_time`) — `height`/`width`/`position` are validated
 the same way their CLI equivalents are, and a step without its own `timeout`/`wait_time` inherits
-the top-level `--timeout`/`--wait-time` values. Exactly one of `command`, `con_id`, or
-`existing = true` is required per step, matching the CLI's own command/`--con-id`/`--existing`
-mutual exclusivity.
+the top-level `--timeout`/`--wait-time` values. Exactly one of `command`, `con_id`,
+`existing = true`, or `target_id` is required per step, matching the CLI's own
+command/`--con-id`/`--existing` mutual exclusivity plus one layout-only addition:
+
+- `id` names a step, so a later step can target its window specifically via `target_id` — useful
+  when several steps share the same `app_id`/`class`, where `existing = true` would be ambiguous
+  about which one it means. See
+  [`examples/retarget-by-id.toml`](examples/retarget-by-id.toml).
+- `target_id` targets an earlier step's window by that name, instead of `command`/`con_id`/
+  `existing`. Errors if the named `id` doesn't exist, or was used by more than one step.
+
+Neither has a CLI equivalent — a single `sway-launch` invocation only ever has one step, so
+there's nothing to name or reference.
+
 Every top-level per-window flag (`--split`, `--floating`, etc.) conflicts with `--layout`, since it
 would otherwise be unclear which step it applied to — `--timeout`, `--wait-time`, `--verbose`, and
 `--json` still apply, the latter printing one `{"container_ids": [...]}` array at the end instead

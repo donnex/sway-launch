@@ -149,3 +149,59 @@ fn layout_rejects_command_and_con_id_together() {
     let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
     assert!(stderr.contains("step 1"));
 }
+
+#[test]
+fn layout_target_id_resolves_to_an_earlier_steps_container_id() {
+    let path = TempToml::write(
+        "target-id",
+        "[[step]]\nid = \"first\"\ncon_id = 42\n\n[[step]]\ntarget_id = \"first\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap()])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(stdout, "42\n42\n");
+}
+
+#[test]
+fn layout_rejects_unresolved_target_id() {
+    let path = TempToml::write(
+        "unresolved-target-id",
+        "[[step]]\ntarget_id = \"missing\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap()])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("missing"));
+}
+
+#[test]
+fn layout_rejects_duplicate_step_ids() {
+    let path = TempToml::write(
+        "duplicate-id",
+        "[[step]]\nid = \"first\"\ncon_id = 42\n\n[[step]]\nid = \"first\"\ncon_id = 91\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap()])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("step 2"));
+    assert!(stderr.contains("first"));
+}
