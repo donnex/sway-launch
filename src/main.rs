@@ -68,6 +68,10 @@ struct Args {
     #[clap(long)]
     workspace: Option<String>,
 
+    /// Move new window to output (monitor)
+    #[clap(long)]
+    output: Option<String>,
+
     /// Set position on new window. Either "center" or "<x>,<y>" in pixels
     #[clap(long, value_parser = sway_launch::validate_position_argument)]
     position: Option<String>,
@@ -104,7 +108,7 @@ struct Args {
     #[clap(long, conflicts_with_all = [
         "command", "con_id", "existing", "app_id", "class", "split",
         "floating", "fullscreen", "focus", "mark", "new_column", "new_row",
-        "workspace", "height", "width", "position", "debug_events",
+        "workspace", "output", "height", "width", "position", "debug_events",
     ])]
     layout: Option<PathBuf>,
 
@@ -171,6 +175,7 @@ fn main() {
         new_column: args.new_column,
         new_row: args.new_row,
         workspace: args.workspace.as_deref(),
+        output: args.output.as_deref(),
         height: args.height.as_deref(),
         width: args.width.as_deref(),
         position: args.position.as_deref(),

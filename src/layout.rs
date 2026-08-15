@@ -36,6 +36,7 @@ pub struct LayoutStep {
     #[serde(default)]
     pub new_row: bool,
     pub workspace: Option<String>,
+    pub output: Option<String>,
     pub height: Option<String>,
     pub width: Option<String>,
     pub position: Option<String>,
@@ -115,6 +116,7 @@ impl LayoutStep {
             new_column: self.new_column,
             new_row: self.new_row,
             workspace: self.workspace.as_deref(),
+            output: self.output.as_deref(),
             height: self.height.as_deref(),
             width: self.width.as_deref(),
             position: self.position.as_deref(),
@@ -206,6 +208,7 @@ mod tests {
             new_column: false,
             new_row: false,
             workspace: None,
+            output: None,
             height: None,
             width: None,
             position: None,

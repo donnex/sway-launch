@@ -49,6 +49,7 @@ Options:
       --width <WIDTH>              Set width on new window
   -r, --new-row                    Move window to new row (move down)
       --workspace <WORKSPACE>      Move new window to workspace
+      --output <OUTPUT>            Move new window to output (monitor)
       --position <POSITION>        Set position on new window. Either "center" or "<x>,<y>" in pixels
   -t, --timeout <TIMEOUT>          Timeout in seconds [default: 5]
   -w, --wait-time <WAIT_TIME>      Wait time in ms. Used for actions that do not have a corresponding Sway IPC event [default: 20]
@@ -185,11 +186,12 @@ sway-launch --layout layout.toml
 ```
 
 A step's keys mirror the CLI flags of the same name (`app_id`, `class`, `con_id`, `existing`,
-`split`, `floating`, `fullscreen`, `focus`, `mark`, `new_column`, `new_row`, `workspace`, `height`,
-`width`, `position`, `timeout`, `wait_time`) — `height`/`width`/`position` are validated the same
-way their CLI equivalents are, and a step without its own `timeout`/`wait_time` inherits the
-top-level `--timeout`/`--wait-time` values. Exactly one of `command`, `con_id`, or `existing = true` is
-required per step, matching the CLI's own command/`--con-id`/`--existing` mutual exclusivity.
+`split`, `floating`, `fullscreen`, `focus`, `mark`, `new_column`, `new_row`, `workspace`, `output`,
+`height`, `width`, `position`, `timeout`, `wait_time`) — `height`/`width`/`position` are validated
+the same way their CLI equivalents are, and a step without its own `timeout`/`wait_time` inherits
+the top-level `--timeout`/`--wait-time` values. Exactly one of `command`, `con_id`, or
+`existing = true` is required per step, matching the CLI's own command/`--con-id`/`--existing`
+mutual exclusivity.
 Every top-level per-window flag (`--split`, `--floating`, etc.) conflicts with `--layout`, since it
 would otherwise be unclear which step it applied to — `--timeout`, `--wait-time`, `--verbose`, and
 `--json` still apply, the latter printing one `{"container_ids": [...]}` array at the end instead
@@ -279,6 +281,14 @@ Move the new window to a workspace.
 
 ```shell
 sway-launch --workspace 2 kitty
+```
+
+### Output
+
+Move the new window to a specific output (monitor).
+
+```shell
+sway-launch --output HDMI-A-1 kitty
 ```
 
 ### Height and width

@@ -65,6 +65,21 @@ fn workspace_containing<'a>(
         .find_map(|child| workspace_containing(child, con_id, current))
 }
 
+fn output_containing<'a>(node: &'a Node, con_id: i64, current: Option<&'a str>) -> Option<&'a str> {
+    let current = if node.node_type == NodeType::Output {
+        node.name.as_deref()
+    } else {
+        current
+    };
+    if node.id == con_id {
+        return current;
+    }
+    node.nodes
+        .iter()
+        .chain(node.floating_nodes.iter())
+        .find_map(|child| output_containing(child, con_id, current))
+}
+
 /// Kills its container id when dropped, via a fresh IPC connection, so a
 /// test's windows never leak into the next one — even on assertion panic.
 struct KillOnDrop(i64);
@@ -158,6 +173,41 @@ fn workspace_moves_window_to_named_workspace() {
     let tree = connection.get_tree().expect("get_tree should succeed");
     let workspace = workspace_containing(&tree, container_id, None);
     assert_eq!(workspace, Some("live-sway-test-workspace"));
+}
+
+#[test]
+fn output_moves_window_to_named_output() {
+    // Proves the WindowChange::Move assumption documented for --output:
+    // unlike NewColumn/NewRow's "move right"/"move down", "move container
+    // to output" has no "already there" no-op case (a window is always in
+    // exactly one output's tree), confirmed by this actually completing
+    // promptly with the window moved rather than hanging until --timeout.
+    let mut connection = connect();
+    let outputs_before: Vec<String> = connection
+        .get_outputs()
+        .expect("get_outputs should succeed")
+        .into_iter()
+        .map(|output| output.name)
+        .collect();
+    connection
+        .run_command("create_output")
+        .expect("create_output should succeed")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("create_output should succeed");
+    let new_output = connection
+        .get_outputs()
+        .expect("get_outputs should succeed")
+        .into_iter()
+        .map(|output| output.name)
+        .find(|name| !outputs_before.contains(name))
+        .expect("create_output should have added a new output");
+
+    let (container_id, _guard) = launch_foot(&["--output", &new_output]);
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let output = output_containing(&tree, container_id, None);
+    assert_eq!(output, Some(new_output.as_str()));
 }
 
 #[test]
