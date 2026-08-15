@@ -1,0 +1,44 @@
+# An equally sized 3x3 grid, three rows of three, with no application baked
+# in — the same shape-extension idea as quad-grid.toml, one row taller.
+# Run with, e.g.:
+#   sway-launch --template examples/templates/nine-grid.toml \
+#     --apps kitty,firefox,code,thunar,chromium,kitty,kitty,kitty,kitty
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+
+[[step]]
+slot = "top-left"
+split = "h"
+
+[[step]]
+slot = "top-middle"
+split = "h"
+
+[[step]]
+slot = "top-right"
+split = "v"
+
+[[step]]
+slot = "middle-left"
+new_row = true
+split = "h"
+
+[[step]]
+slot = "middle-middle"
+split = "h"
+
+[[step]]
+slot = "middle-right"
+split = "v"
+
+[[step]]
+slot = "bottom-left"
+new_row = true
+split = "h"
+
+[[step]]
+slot = "bottom-middle"
+split = "h"
+
+[[step]]
+slot = "bottom-right"

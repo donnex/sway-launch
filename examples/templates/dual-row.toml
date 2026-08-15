@@ -1,0 +1,12 @@
+# Two windows side by side in a single row.
+# Run with, e.g.:
+#   sway-launch --template examples/templates/dual-row.toml --apps kitty,firefox
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+
+[[step]]
+slot = "left"
+split = "h"
+
+[[step]]
+slot = "right"
