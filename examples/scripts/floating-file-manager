@@ -21,6 +21,12 @@ usage() {
   exit "${1:-0}"
 }
 
+# snippet: die
+die() {
+  printf '%s✗ %s%s\n' "${COLOR_RED:-}" "$*" "${COLOR_RESET:-}" >&2
+  exit 1
+}
+
 case "${1:-}" in
 -h | --help)
   usage 0
@@ -30,5 +36,7 @@ case "${1:-}" in
   usage 1
   ;;
 esac
+
+command -v thunar >/dev/null 2>&1 || die "thunar not found on PATH. Install Thunar first."
 
 sway-launch -a thunar --floating --width 900px --height 600px --mark file-manager thunar

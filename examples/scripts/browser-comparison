@@ -20,6 +20,12 @@ usage() {
   exit "${1:-0}"
 }
 
+# snippet: die
+die() {
+  printf '%s✗ %s%s\n' "${COLOR_RED:-}" "$*" "${COLOR_RESET:-}" >&2
+  exit 1
+}
+
 case "${1:-}" in
 -h | --help)
   usage 0
@@ -29,6 +35,11 @@ case "${1:-}" in
   usage 1
   ;;
 esac
+
+for required_command in firefox chromium; do
+  command -v "$required_command" >/dev/null 2>&1 ||
+    die "$required_command not found on PATH. Install Firefox and Chromium first."
+done
 
 sway-launch -a firefox --split h 'firefox --new-window https://example.com'
 sway-launch -a chromium 'chromium --new-window https://example.com'
