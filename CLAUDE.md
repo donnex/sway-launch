@@ -99,20 +99,46 @@ variant knows how to:
 `SwayAction::run()` dispatches based on whether the action has a corresponding IPC event:
 
 - **Has an event** (`Exec`, `Floating`, `Fullscreen`, `Focus`, `Workspace`, `Output`, `Mark`) →
-  `run_wait_matching_events()`:
-  connects to Sway, sends the command, then reads the event stream until a `Window` event matches
-  (checked via `matches_window_event()`, e.g. app_id/class for `Exec`, container id for others), or
-  the `--timeout` is hit. `Workspace` and `Output` both use `WindowChange::Move`, since moving to a
-  different workspace/output reparents the container in Sway's tree — confirmed reliable against a
-  live Sway session by `tests/live_sway.rs`'s `workspace_moves_window_to_named_workspace` and
-  `output_moves_window_to_named_output` respectively. They *do* have an "already there" no-op case,
-  though (moving to the workspace/output the window is already on doesn't reparent anything, so no
-  `Move` event fires): `SwayAction::run()` calls `already_at_target()` first, which checks the
-  container's current workspace/output via a fresh `get_tree()` call and short-circuits with
-  immediate success rather than waiting on an event Sway will never send — confirmed by
-  `tests/live_sway.rs`'s `workspace_is_a_no_op_when_already_on_the_target_workspace` and
+  `run_wait_matching_events()` for every variant except `Exec` (which gets its own
+  `run_wait_matching_exec_event()`, below): connects to Sway, sends the command, then reads the
+  event stream until a `Window` event matches (checked via `matches_window_event()`, container id
+  for every one of these variants), or the `--timeout` is hit. `Workspace` and `Output` both use
+  `WindowChange::Move`, since moving to a different workspace/output reparents the container in
+  Sway's tree — confirmed reliable against a live Sway session by `tests/live_sway.rs`'s
+  `workspace_moves_window_to_named_workspace` and `output_moves_window_to_named_output`
+  respectively. They *do* have an "already there" no-op case, though (moving to the
+  workspace/output the window is already on doesn't reparent anything, so no `Move` event fires):
+  `SwayAction::run()` calls `already_at_target()` first, which checks the container's current
+  workspace/output via a fresh `get_tree()` call and short-circuits with immediate success rather
+  than waiting on an event Sway will never send — confirmed by `tests/live_sway.rs`'s
+  `workspace_is_a_no_op_when_already_on_the_target_workspace` and
   `output_is_a_no_op_when_already_on_the_target_output`. `Focus` uses `WindowChange::Focus`,
   confirmed reliable the same way by `focus_focuses_a_previously_unfocused_window`.
+- **`Exec`** → `run_wait_matching_exec_event()`. Matching purely on event content (app_id/class, or
+  nothing at all with no filter) is ambiguous whenever more than one qualifying `New` window can
+  appear around the same time — Sway broadcasts window events to every IPC connection, so a second,
+  concurrently-running `sway-launch` process (or any other coincidentally-timed window) can be
+  mistaken for the one this invocation itself launched, silently returning the wrong container id.
+  To close this, the launched command's environment is tagged with a random, per-invocation marker
+  (`exec env SWAY_LAUNCH_PID_MARKER=<token> <command>`, prepended without otherwise touching the
+  user's command — sending the marker and command as raw, unquoted text like this, rather than
+  wrapped in `quote_sway_string()`, was deliberate: Sway's own variable-substitution syntax
+  (`$var`) mangles a literal `$` inside a quoted argument, which broke an earlier design that tried
+  to capture the spawned shell's own pid via `echo "$$"`), and a content-matching event is only
+  accepted outright once `process_has_env_var()` confirms that marker via
+  `/proc/<event's pid>/environ`. A content-matching event whose marker doesn't confirm isn't
+  rejected outright, though: some applications (browsers, editors) are single-instance and forward
+  a second invocation's request to an already-running process before exiting, so the window that
+  eventually appears is legitimately the right one, owned by a pid that was never given the marker.
+  The first such event is kept as a fallback candidate, used once either `any_process_has_env_var()`
+  shows the marked process (or a marked descendant) is no longer running — nothing marker-confirmed
+  is coming — or `PID_MARKER_FALLBACK_GRACE` (2s; live testing under concurrent load showed a
+  shorter 500ms cap occasionally forced a fallback before the real match — still coming, just
+  slightly delayed by system load — arrived) elapses, whichever comes first, so a genuinely
+  ambiguous case adds a bounded delay rather than the full `--timeout`. Confirmed live by
+  `tests/live_sway.rs`'s `concurrent_exec_invocations_do_not_collide_on_the_same_container_id`
+  (0 collisions across 90 manual trials during development, versus every trial colliding before
+  this) and `exec_falls_back_to_a_content_match_when_its_own_process_already_exited`.
 - **No event exists in Sway IPC for it** (`Split`, `NewColumn`, `NewRow`, `Height`, `Width`,
   `Position`) → `run_wait_time()`: sends the command and sleeps for `--wait-time` before and after,
   since Sway doesn't emit an event to confirm these. `Position` has no dedicated event because
@@ -313,7 +339,8 @@ unpolished.
     dispatch tables, window-match logic, CLI argument validation/parsing) via `cargo test`. The
     functions that open, read, or write the Sway IPC socket directly (`new_connection`,
     `event_loop`, `run_sway_command`'s connection call, `run_wait_time`,
-    `run_wait_matching_events`, `find_existing_container_id`'s connection call, `SwayAction::run`,
+    `run_wait_matching_events`, `run_wait_matching_exec_event`,
+    `find_existing_container_id`'s connection call, `SwayAction::run`,
     `SwayAction::already_at_target`, `current_workspace`, `current_output`,
     `containing_node_name`, `relocates_to_another_output`, `SwayLaunch::run`,
     `SwayLaunch::debug_events`) are exempted from the `cargo llvm-cov` line-
