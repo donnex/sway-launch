@@ -5,15 +5,28 @@
 #
 set -eu
 
-usage() {
+print_usage() {
   printf 'Usage: %s\n' "$(basename "$0")"
   printf 'Launch Firefox and Chromium side by side on example.com.\n'
 }
 
+# snippet: usage
+usage() {
+  if [ "${1:-0}" -ne 0 ]; then
+    print_usage >&2
+  else
+    print_usage
+  fi
+  exit "${1:-0}"
+}
+
 case "${1:-}" in
 -h | --help)
-  usage
-  exit 0
+  usage 0
+  ;;
+'') ;;
+*)
+  usage 1
   ;;
 esac
 
