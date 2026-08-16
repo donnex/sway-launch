@@ -6,6 +6,27 @@ use swayipc::{
     Connection, Event, EventStream, EventType, Node, NodeType, WindowChange, WindowEvent,
 };
 
+/// Environment variable name `run_wait_matching_exec_event()` tags a
+/// launched command's environment with, to correlate a matching `New`
+/// window event back to the specific process this invocation spawned. See
+/// that function's doc comment for the full mechanism.
+const PID_MARKER_VAR: &str = "SWAY_LAUNCH_PID_MARKER";
+
+/// How long `run_wait_matching_exec_event()` waits for a PID-marker-
+/// confirmed match after seeing a content-matching-but-unconfirmed one,
+/// before giving up and using that fallback candidate — independent of the
+/// overall `--timeout` (though still capped by it, via `deadline.min(...)`,
+/// for a short `--timeout`), so a genuinely ambiguous case adds a bounded
+/// delay rather than the full timeout. Live testing under concurrent load
+/// showed a shorter cap (500ms) occasionally forces a fallback before the
+/// real PID-marker-confirmed match — which is still coming, just slightly
+/// delayed by system load — arrives, causing exactly the wrong-container-id
+/// collision this mechanism exists to prevent; 2s comfortably clears that
+/// without meaningfully slowing the genuinely-ambiguous (single-instance
+/// application) case, which resolves via `any_process_has_env_var()`
+/// well before this cap in practice.
+const PID_MARKER_FALLBACK_GRACE: time::Duration = time::Duration::from_millis(2000);
+
 #[derive(Copy, Clone, PartialEq, ValueEnum, serde::Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum Split {
@@ -468,9 +489,12 @@ impl SwayAction<'_> {
             return Ok(container_id);
         }
 
-        match self.matching_window_change_events() {
-            Some(_) => self.run_wait_matching_events(),
-            None => self.run_wait_time(),
+        match self {
+            SwayAction::Exec { .. } => self.run_wait_matching_exec_event(),
+            _ => match self.matching_window_change_events() {
+                Some(_) => self.run_wait_matching_events(),
+                None => self.run_wait_time(),
+            },
         }
     }
 
@@ -528,6 +552,151 @@ impl SwayAction<'_> {
         thread::sleep(wait_time);
 
         Ok(self.container_id().unwrap())
+    }
+
+    /// `Exec`-only variant of `run_wait_matching_events()`: matching purely
+    /// on event content (app_id/class, or nothing at all with no filter) is
+    /// ambiguous when more than one qualifying `New` window can appear
+    /// around the same time — a concurrently-running second `sway-launch`
+    /// process, or any other coincidentally-timed window — since Sway
+    /// broadcasts window events to every IPC connection. To disambiguate,
+    /// the launched command's environment is tagged with a random,
+    /// per-invocation marker (`env <PID_MARKER_VAR>=<token> <command>`,
+    /// prepended without otherwise touching the user's command), and a
+    /// content-matching event is only accepted outright once
+    /// `/proc/<event pid>/environ` confirms that marker.
+    ///
+    /// A content-matching event whose marker doesn't confirm isn't rejected
+    /// outright, though: some applications (browsers, editors) are
+    /// single-instance and forward a second invocation's request to an
+    /// already-running process before exiting, so the window that
+    /// eventually appears is legitimately the right one, owned by a PID
+    /// that was never given our marker. The first such event is kept as a
+    /// fallback candidate, used once either `any_process_has_env_var()`
+    /// shows the marked process (or a marked descendant) is no longer
+    /// running — nothing marker-confirmed is coming — or
+    /// `PID_MARKER_FALLBACK_GRACE` elapses, whichever comes first, bounding
+    /// how long a genuinely ambiguous case can add to the wait.
+    fn run_wait_matching_exec_event(&self) -> Result<i64, String> {
+        let SwayAction::Exec {
+            command,
+            verbose,
+            timeout,
+            ..
+        } = *self
+        else {
+            unreachable!("run_wait_matching_exec_event is only called for SwayAction::Exec");
+        };
+
+        let event_loop = self::event_loop(&[EventType::Window])?;
+
+        let token = self::generate_pid_marker_token();
+        let sway_command = format!("exec env {}={} {}", PID_MARKER_VAR, token, command);
+        if verbose {
+            eprintln!("Sway command: {}", sway_command);
+        }
+        run_sway_command(&sway_command)?;
+
+        let (event_sender, event_receiver) = mpsc::channel();
+        thread::spawn(move || {
+            for event in event_loop {
+                if event_sender.send(event).is_err() {
+                    break;
+                }
+            }
+        });
+
+        let deadline = match time::Instant::now().checked_add(timeout) {
+            Some(deadline) => deadline,
+            None => return Err(format!("{} sec timeout reached", timeout.as_secs())),
+        };
+
+        // The first content-matching-but-unconfirmed event seen, and when —
+        // used both to cap how long the grace period below can run and as
+        // the value returned once it's used.
+        let mut fallback: Option<(i64, time::Instant)> = None;
+
+        loop {
+            let effective_deadline = match fallback {
+                Some((_, first_seen)) => first_seen
+                    .checked_add(PID_MARKER_FALLBACK_GRACE)
+                    .map_or(deadline, |capped| deadline.min(capped)),
+                None => deadline,
+            };
+            let remaining = effective_deadline.saturating_duration_since(time::Instant::now());
+            if remaining.is_zero() {
+                if let Some((container_id, _)) = fallback {
+                    if verbose {
+                        eprintln!(
+                            "No PID-marker-confirmed match arrived; using earlier \
+                             content-matched container id {}",
+                            container_id
+                        );
+                    }
+                    return Ok(container_id);
+                }
+                return Err(format!("{} sec timeout reached", timeout.as_secs()));
+            }
+
+            let event = match event_receiver.recv_timeout(remaining) {
+                Ok(event) => event,
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err("Event stream closed unexpectedly".to_string());
+                }
+            };
+
+            let event = match event {
+                Ok(event) => event,
+                Err(error) => return Err(error.to_string()),
+            };
+
+            let window = match event {
+                Event::Window(window) => window,
+                _ => continue,
+            };
+
+            if self.matches_window_event(&window).is_err() {
+                continue;
+            }
+
+            let pid_confirmed = window
+                .container
+                .pid
+                .is_some_and(|pid| self::process_has_env_var(pid, PID_MARKER_VAR, &token));
+
+            if pid_confirmed {
+                if verbose {
+                    eprintln!(
+                        "Event match: {:?} container id {} (PID-marker-confirmed)",
+                        window.change, window.container.id
+                    );
+                }
+                return Ok(window.container.id);
+            }
+
+            if fallback.is_none() {
+                if verbose {
+                    eprintln!(
+                        "Event content-matches but PID marker unconfirmed (container id {}) \
+                         — keeping as a fallback candidate",
+                        window.container.id
+                    );
+                }
+                fallback = Some((window.container.id, time::Instant::now()));
+            }
+
+            if !self::any_process_has_env_var(PID_MARKER_VAR, &token) {
+                let (container_id, _) = fallback.expect("just set above if it wasn't already");
+                if verbose {
+                    eprintln!(
+                        "Marked process no longer running; using fallback container id {}",
+                        container_id
+                    );
+                }
+                return Ok(container_id);
+            }
+        }
     }
 
     fn run_wait_matching_events(&self) -> Result<i64, String> {
@@ -696,6 +865,51 @@ fn first_outcome_error<E: fmt::Display>(
     }
 
     Ok(())
+}
+
+/// A random-enough per-invocation token for `PID_MARKER_VAR`: this process's
+/// own pid (unique across concurrently-running `sway-launch` invocations,
+/// which is all that actually matters here) plus a nanosecond timestamp (so
+/// a single process running several `Exec` actions in sequence — e.g. a
+/// multi-step `--layout` — doesn't reuse the same token for each).
+fn generate_pid_marker_token() -> String {
+    let nanos = time::SystemTime::now()
+        .duration_since(time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("{}-{}", std::process::id(), nanos)
+}
+
+/// Whether `/proc/<pid>/environ` contains exactly `<var_name>=<expected_value>`
+/// as one of its NUL-separated entries. Returns `false` for any I/O error
+/// (pid already gone, no permission, `/proc` unavailable) rather than
+/// erroring — this is a best-effort correlation signal for
+/// `run_wait_matching_exec_event()`, never a hard requirement.
+fn process_has_env_var(pid: i32, var_name: &str, expected_value: &str) -> bool {
+    let Ok(environ) = std::fs::read(format!("/proc/{}/environ", pid)) else {
+        return false;
+    };
+    let needle = format!("{}={}", var_name, expected_value);
+    environ
+        .split(|&byte| byte == 0)
+        .any(|entry| entry == needle.as_bytes())
+}
+
+/// Whether any currently-running process still carries `<var_name>=<expected_value>`
+/// in its environment. Used by `run_wait_matching_exec_event()` to tell
+/// whether the command it spawned (or a descendant that inherited the
+/// marker) might still be about to create the matching window, versus
+/// having already exited — e.g. a single-instance application that forwards
+/// a request to an already-running instance and exits immediately, with no
+/// further marker-confirmed match ever coming.
+fn any_process_has_env_var(var_name: &str, expected_value: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return false;
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<i32>().ok())
+        .any(|pid| self::process_has_env_var(pid, var_name, expected_value))
 }
 
 /// Quotes a value for safe interpolation into a Sway IPC command string.
@@ -1266,6 +1480,56 @@ mod tests {
         value["type"] = serde_json::json!("workspace");
         value["name"] = serde_json::json!(name);
         serde_json::from_value(value).expect("valid Node test fixture")
+    }
+
+    // generate_pid_marker_token / process_has_env_var / any_process_has_env_var
+
+    #[test]
+    fn generate_pid_marker_token_starts_with_this_processes_id() {
+        let token = generate_pid_marker_token();
+        let expected_prefix = format!("{}-", std::process::id());
+        assert!(
+            token.starts_with(&expected_prefix),
+            "token {:?} should start with {:?}",
+            token,
+            expected_prefix
+        );
+    }
+
+    #[test]
+    fn process_has_env_var_true_for_this_processes_own_environment() {
+        let pid = std::process::id() as i32;
+        let path = std::env::var("PATH").expect("PATH should be set in the test environment");
+        assert!(process_has_env_var(pid, "PATH", &path));
+    }
+
+    #[test]
+    fn process_has_env_var_false_for_wrong_value() {
+        let pid = std::process::id() as i32;
+        assert!(!process_has_env_var(
+            pid,
+            "PATH",
+            "definitely-not-the-real-path-value"
+        ));
+    }
+
+    #[test]
+    fn process_has_env_var_false_for_nonexistent_pid() {
+        assert!(!process_has_env_var(i32::MAX, "PATH", "anything"));
+    }
+
+    #[test]
+    fn any_process_has_env_var_true_when_this_process_has_it() {
+        let path = std::env::var("PATH").expect("PATH should be set in the test environment");
+        assert!(any_process_has_env_var("PATH", &path));
+    }
+
+    #[test]
+    fn any_process_has_env_var_false_for_a_value_nothing_has() {
+        assert!(!any_process_has_env_var(
+            "SWAY_LAUNCH_DEFINITELY_UNUSED_TEST_VAR_XYZ",
+            "nope"
+        ));
     }
 
     // quote_sway_string

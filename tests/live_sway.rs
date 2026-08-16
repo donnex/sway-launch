@@ -569,3 +569,108 @@ fn new_column_and_new_row_complete_promptly_when_already_at_the_edge() {
         started.elapsed()
     );
 }
+
+#[test]
+fn concurrent_exec_invocations_do_not_collide_on_the_same_container_id() {
+    // Regression test for the critical concurrent-invocation bug this
+    // crate's README warns about: two sway-launch processes launching
+    // matching windows at the same time used to be able to both match the
+    // same New event and return the identical container id, silently
+    // orphaning the other process's real window.
+    // run_wait_matching_exec_event()'s PID-marker correlation is what
+    // closes this for the common case (an app that isn't single-instance),
+    // and this test is exactly that case. Inherently timing-based, but
+    // reliable in practice — 0 collisions across 90 manual trials during
+    // development, versus every trial colliding before the fix.
+    let child_a = sway_launch_command()
+        .args(["--app-id", "foot", "--timeout", "10", "foot"])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn sway-launch (process A)");
+    let child_b = sway_launch_command()
+        .args(["--app-id", "foot", "--timeout", "10", "foot"])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn sway-launch (process B)");
+
+    let output_a = child_a.wait_with_output().expect("process A should exit");
+    let output_b = child_b.wait_with_output().expect("process B should exit");
+
+    assert!(
+        output_a.status.success(),
+        "process A failed: {}",
+        String::from_utf8_lossy(&output_a.stderr)
+    );
+    assert!(
+        output_b.status.success(),
+        "process B failed: {}",
+        String::from_utf8_lossy(&output_b.stderr)
+    );
+
+    let id_a: i64 = String::from_utf8_lossy(&output_a.stdout)
+        .trim()
+        .parse()
+        .expect("process A's stdout should be a container id");
+    let id_b: i64 = String::from_utf8_lossy(&output_b.stdout)
+        .trim()
+        .parse()
+        .expect("process B's stdout should be a container id");
+    let _guard_a = KillOnDrop(id_a);
+    let _guard_b = KillOnDrop(id_b);
+
+    assert_ne!(
+        id_a, id_b,
+        "two concurrent invocations returned the same container id — the other \
+         process's real window was silently orphaned"
+    );
+}
+
+#[test]
+fn exec_falls_back_to_a_content_match_when_its_own_process_already_exited() {
+    // Regression test for the other half of run_wait_matching_exec_event():
+    // some applications (browsers, editors) are single-instance and forward
+    // a second invocation's request to an already-running process before
+    // exiting, so the window that eventually appears is legitimately the
+    // right one, but owned by a PID that was never given sway-launch's PID
+    // marker. Simulated deterministically here — no need for a real
+    // single-instance app — via a delayed, unmarked "foot" launched
+    // directly (standing in for the pre-existing instance's new window)
+    // while sway-launch's own command is `true`, which exits immediately
+    // without ever creating a window, exactly like a forwarding process
+    // would.
+    let mut connection = connect();
+    connection
+        .run_command("exec sh -c 'sleep 1; exec foot'")
+        .expect("exec should succeed")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("exec should succeed");
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args(["--app-id", "foot", "--timeout", "10", "true"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let container_id: i64 = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .expect("stdout should be a container id");
+    let _guard = KillOnDrop(container_id);
+
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "took {:?} — should have fallen back once its own process (already \
+         exited, since `true` exits immediately) was found not running, well \
+         before --timeout",
+        started.elapsed()
+    );
+
+    let node = get_node(&mut connection, container_id);
+    assert_eq!(node.app_id.as_deref(), Some("foot"));
+}

@@ -112,14 +112,18 @@ sway-launch -c Code code
 `--app-id` and `--class` can't be combined — pick whichever matches the application (native
 Wayland apps expose `app_id`; XWayland apps expose `class`).
 
-**Run `sway-launch` calls one at a time, never concurrently.** Every example in this README —
-and `--layout`/`--template`'s own step-by-step execution — relies on each `sway-launch` call
-finishing (its window matched and confirmed) before the next one starts. Running two or more
-`sway-launch` processes at the same time (e.g. backgrounded with `&`, or from separate scripts
-launched together) is not safe, even with different `--app-id`/`--class` values: Sway broadcasts
-window events to every IPC connection, so two concurrent invocations can each match the other's
-newly launched window and silently return the same, wrong container id to both callers. There is
-currently no protection against this — always chain calls sequentially.
+**Prefer running `sway-launch` calls one at a time over backgrounding them.** Every example in
+this README — and `--layout`/`--template`'s own step-by-step execution — chains calls
+sequentially, each one finishing (its window matched and confirmed) before the next starts, and
+that's still the recommended, fully reliable way to use it. Launching a new window (no
+`--con-id`/`--existing`) correlates the window it matches back to the specific process it spawned,
+so two `sway-launch` processes launching ordinary applications at the same time (e.g. backgrounded
+with `&`) no longer collide on each other's windows. That correlation can't help for a
+single-instance application (a browser, an editor) that's already running, though: invoking it
+again typically just forwards the request to the existing instance and exits immediately, so the
+new window is legitimately owned by a process `sway-launch` never spawned — nothing to correlate
+against. Two concurrent invocations both targeting a single-instance application can still
+collide in that specific case. When in doubt, chain calls sequentially.
 
 ## Recreatable layouts
 
