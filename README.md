@@ -477,6 +477,11 @@ Some actions, like split and move, do not have a corresponding Sway IPC event. F
 static sleep time is used instead. Depending on the machine or setup, the wait time may need to
 be set higher or lower than the default.
 
+The wait is applied both before and after the underlying Sway command — before, to let other
+running IPC clients finish their own commands; after, to let this command finish before the next
+action runs — so the effective delay added per action is roughly double the configured
+`--wait-time`.
+
 ```shell
 ...
 Sway action: Split (container id: 439) (split: Horizontal)
