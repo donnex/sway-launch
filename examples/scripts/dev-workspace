@@ -20,6 +20,12 @@ usage() {
   exit "${1:-0}"
 }
 
+# snippet: die
+die() {
+  printf '%s✗ %s%s\n' "${COLOR_RED:-}" "$*" "${COLOR_RESET:-}" >&2
+  exit 1
+}
+
 case "${1:-}" in
 -h | --help)
   usage 0
@@ -29,6 +35,8 @@ case "${1:-}" in
   usage 1
   ;;
 esac
+
+command -v code >/dev/null 2>&1 || die "code not found on PATH. Install VS Code first."
 
 sway-launch -c Code --split h --width 65ppt code
 sway-launch --new-column -a kitty --split v kitty
