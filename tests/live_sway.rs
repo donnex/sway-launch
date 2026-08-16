@@ -11,7 +11,9 @@
 // clean for the next test.
 #![cfg(feature = "live-sway-tests")]
 
+use std::io::BufRead;
 use std::process::Command;
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use swayipc::{Connection, Node, NodeType};
 
@@ -89,6 +91,17 @@ impl Drop for KillOnDrop {
         if let Ok(mut connection) = Connection::new() {
             let _ = connection.run_command(format!("[con_id={}] kill", self.0));
         }
+    }
+}
+
+/// Kills and reaps a long-running child process (e.g. `--debug-events`,
+/// which runs until killed) when dropped, even on assertion panic.
+struct KillChildOnDrop(std::process::Child);
+
+impl Drop for KillChildOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
     }
 }
 
@@ -1239,5 +1252,163 @@ fn mark_with_special_characters_is_stored_literally_not_executed() {
     assert!(
         !std::path::Path::new("/tmp/sway-launch-live-test-pwned").exists(),
         "mark should be stored literally, not executed as a separate command"
+    );
+}
+
+#[test]
+fn verbose_prints_real_diagnostics_to_stderr_for_a_live_action() {
+    // con_id_verbose_diagnostics_go_to_stderr_not_stdout in
+    // tests/json_output.rs covers --verbose's stream separation via
+    // --con-id, which never touches the socket — this covers the same
+    // separation for a real exec+match against a live compositor, and
+    // checks the diagnostic content itself, not just which stream it's on.
+    let output = sway_launch_command()
+        .args(["--app-id", "foot", "--timeout", "10", "--verbose", "foot"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    let container_id: i64 = stdout
+        .trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("stdout should be a container id, got {:?}", stdout));
+    let _guard = KillOnDrop(container_id);
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(
+        stderr.contains("Sway action: Exec"),
+        "stderr should describe the action: {stderr:?}"
+    );
+    assert!(
+        stderr.contains("Sway command: exec"),
+        "stderr should show the actual Sway command: {stderr:?}"
+    );
+    assert!(
+        stderr.contains("Event match:"),
+        "stderr should confirm the matched event: {stderr:?}"
+    );
+    assert!(
+        stderr.contains(&format!("Target container id: {container_id}")),
+        "stderr should name the same container id printed to stdout: {stderr:?}"
+    );
+}
+
+#[test]
+fn bindings_file_resolves_existing_and_command_slots_to_real_windows() {
+    // tests/template.rs exercises --bindings headlessly with con_id-only
+    // bindings; this drives the same flag against real windows, covering
+    // both a Binding's `existing = true` and `command` forms (mirroring
+    // README.md's own Templates example) in one template.
+    let mut connection = connect();
+    let (existing_id, _existing_guard) = launch_foot(&[]);
+
+    let template_path = TempToml::write(
+        "bindings-template",
+        "[[step]]\nslot = \"existing_window\"\nmark = \"live-sway-test-bindings-existing\"\n\n\
+         [[step]]\nslot = \"primary\"\nmark = \"live-sway-test-bindings-primary\"\n",
+    );
+    let bindings_path = TempToml::write(
+        "bindings-bindings",
+        "[[binding]]\nslot = \"existing_window\"\nexisting = true\napp_id = \"foot\"\n\n\
+         [[binding]]\nslot = \"primary\"\ncommand = \"foot\"\napp_id = \"foot\"\n",
+    );
+
+    let output = sway_launch_command()
+        .args([
+            "--template",
+            template_path.to_str().unwrap(),
+            "--bindings",
+            bindings_path.to_str().unwrap(),
+            "--wait-time",
+            "100",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --template --bindings failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let ids: Vec<i64> = stdout
+        .lines()
+        .map(|line| line.parse().expect("each line should be a container id"))
+        .collect();
+    assert_eq!(ids.len(), 2, "should print one id per step");
+    assert_eq!(
+        ids[0], existing_id,
+        "the existing_window slot should resolve to the already-open window"
+    );
+    let _primary_guard = KillOnDrop(ids[1]);
+
+    let existing_node = get_node(&mut connection, ids[0]);
+    assert!(existing_node
+        .marks
+        .contains(&"live-sway-test-bindings-existing".to_string()));
+    let primary_node = get_node(&mut connection, ids[1]);
+    assert_eq!(primary_node.app_id.as_deref(), Some("foot"));
+    assert!(primary_node
+        .marks
+        .contains(&"live-sway-test-bindings-primary".to_string()));
+}
+
+#[test]
+fn debug_events_prints_a_real_window_event() {
+    // --debug-events runs until killed, so it doesn't fit this file's usual
+    // spawn-and-wait-for-exit pattern — spawns it as a background child with
+    // its stdout read on a separate thread and forwarded through a channel,
+    // the same shape sway_launch.rs's own event loop uses internally.
+    let mut child = sway_launch_command()
+        .arg("--debug-events")
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn sway-launch --debug-events");
+    let stdout = child.stdout.take().expect("child should have piped stdout");
+    let _child_guard = KillChildOnDrop(child);
+
+    let (line_sender, line_receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stdout).lines() {
+            match line {
+                Ok(line) => {
+                    if line_sender.send(line).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Give the event subscription time to establish before triggering the
+    // window it needs to see — otherwise the New event could fire before
+    // --debug-events is actually subscribed.
+    std::thread::sleep(Duration::from_millis(300));
+    let (_container_id, _guard) = launch_foot(&[]);
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut found = false;
+    while !found {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match line_receiver.recv_timeout(remaining) {
+            Ok(line) => {
+                found = line.contains("WindowEvent") && line.contains("change: New");
+            }
+            Err(_) => break,
+        }
+    }
+
+    assert!(
+        found,
+        "expected --debug-events to print a New WindowEvent within 10s"
     );
 }
