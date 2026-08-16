@@ -100,8 +100,9 @@ sway-launch 'firefox --new-window https://example.com'
 ```
 
 It is possible to add additional checks against the new window, to make sure it matches a given
-`app_id` or `class`. This is useful when multiple commands run at the same time and you need to
-make sure each one matches the correct window.
+`app_id` or `class`. This is useful when several windows end up open around the same time (e.g.
+later in a layout script) and you need to make sure each `sway-launch` call matches the correct
+one.
 
 ```shell
 sway-launch -a kitty kitty
@@ -110,6 +111,15 @@ sway-launch -c Code code
 
 `--app-id` and `--class` can't be combined — pick whichever matches the application (native
 Wayland apps expose `app_id`; XWayland apps expose `class`).
+
+**Run `sway-launch` calls one at a time, never concurrently.** Every example in this README —
+and `--layout`/`--template`'s own step-by-step execution — relies on each `sway-launch` call
+finishing (its window matched and confirmed) before the next one starts. Running two or more
+`sway-launch` processes at the same time (e.g. backgrounded with `&`, or from separate scripts
+launched together) is not safe, even with different `--app-id`/`--class` values: Sway broadcasts
+window events to every IPC connection, so two concurrent invocations can each match the other's
+newly launched window and silently return the same, wrong container id to both callers. There is
+currently no protection against this — always chain calls sequentially.
 
 ## Recreatable layouts
 
