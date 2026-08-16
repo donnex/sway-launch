@@ -85,6 +85,17 @@ The crate is four source files plus five integration test files:
   compositor/workspace, and several call `create_output`, never removed — the last window's
   geometry can still be settling for a short while after the process itself has already exited.
 
+  **This file's coverage must stay complete, not just present.** It's the one place anything
+  IPC-touching actually gets exercised against real Sway, and — same as `.github/workflows/`'s
+  live-sway-tests job, which just runs it — it isn't something that self-maintains: nothing forces
+  it to keep tracking the application as flags, actions, and shipped examples are added. Whenever a
+  change adds or changes a CLI flag/action, an example script, a `--layout` file, or a
+  `--template` file, add or update a `tests/live_sway.rs` case for it in the *same* change — driving
+  the actual shipped file/flag against a real compositor, not a hand-written stand-in, per the
+  precedent above. Treat a gap here exactly like CLAUDE.md drifting from the implementation or a CI
+  workflow drifting from the tooling (see "Keeping a workflow up to date" under CI below): a bug to
+  fix immediately, not a follow-up.
+
 All five integration test files need `CARGO_BIN_EXE_sway-launch` (to invoke the compiled binary as
 a subprocess), which is only set for files under `tests/`, not for the bin crate's own unit test
 harness — that's why these live here instead of as `#[cfg(test)]` modules in `src/main.rs`.
@@ -390,6 +401,11 @@ unpolished.
 - When making an architectural or behavioral change (new module, new data flow, changed data
   types, new dependency, new major UI/output element), update this file's Architecture section in
   the same piece of work. Don't let it drift out of sync with the implementation.
+- When adding or changing a CLI flag/action, an example script, or a `--layout`/`--template` file,
+  add or update the matching `tests/live_sway.rs` case in the same piece of work, run it via
+  `scripts/run-live-sway-tests`, and confirm it passes before considering the change done — see the
+  "This file's coverage must stay complete" note under `tests/live_sway.rs` in the Architecture
+  section above.
 
 ## Scripts
 
@@ -732,7 +748,11 @@ A CI workflow is a second copy of "what needs to pass before this is clean" — 
 mode as any other duplicated logic applies: whenever the project's tools or checks change (a new
 linter, a new required check, a build step added or removed), the workflow file(s) must change
 with it, in the same change that changed the tooling. Don't let this slip to a follow-up — treat an
-out-of-date workflow as a bug, the same way a stale doc would be.
+out-of-date workflow as a bug, the same way a stale doc would be. This applies to what the
+`live-sway-tests` job actually *runs*, not just its own YAML: that job is only as good as
+`tests/live_sway.rs`'s coverage, so an application feature, flag, or shipped example with no
+live-Sway case is exactly as much a bug as a missing lint step — see the coverage note under
+`tests/live_sway.rs` in the Architecture section and the matching Rust workflow bullet above.
 
 GitHub Actions is set up: `.github/workflows/check.yml` runs `cargo fmt --check`, `cargo clippy`,
 `cargo build`, and `cargo test` on every push and pull request, a separate `live-sway-tests` job
