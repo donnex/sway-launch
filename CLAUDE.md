@@ -105,10 +105,14 @@ variant knows how to:
   the `--timeout` is hit. `Workspace` and `Output` both use `WindowChange::Move`, since moving to a
   different workspace/output reparents the container in Sway's tree — confirmed reliable against a
   live Sway session by `tests/live_sway.rs`'s `workspace_moves_window_to_named_workspace` and
-  `output_moves_window_to_named_output` respectively; unlike `NewColumn`/`NewRow` below, neither has
-  an "already there" no-op case, since a window is always in exactly one workspace/output. `Focus`
-  uses `WindowChange::Focus`, confirmed reliable the same way by
-  `focus_focuses_a_previously_unfocused_window`.
+  `output_moves_window_to_named_output` respectively. They *do* have an "already there" no-op case,
+  though (moving to the workspace/output the window is already on doesn't reparent anything, so no
+  `Move` event fires): `SwayAction::run()` calls `already_at_target()` first, which checks the
+  container's current workspace/output via a fresh `get_tree()` call and short-circuits with
+  immediate success rather than waiting on an event Sway will never send — confirmed by
+  `tests/live_sway.rs`'s `workspace_is_a_no_op_when_already_on_the_target_workspace` and
+  `output_is_a_no_op_when_already_on_the_target_output`. `Focus` uses `WindowChange::Focus`,
+  confirmed reliable the same way by `focus_focuses_a_previously_unfocused_window`.
 - **No event exists in Sway IPC for it** (`Split`, `NewColumn`, `NewRow`, `Height`, `Width`,
   `Position`) → `run_wait_time()`: sends the command and sleeps for `--wait-time` before and after,
   since Sway doesn't emit an event to confirm these. `Position` has no dedicated event because
@@ -116,7 +120,11 @@ variant knows how to:
   right`/`move down`) used to be event-confirmed via `WindowChange::Move`, but live-Sway testing
   showed `move right` doesn't fire that event when the window is already at the tree's rightmost
   position — the ordinary two-window case — so it hung until `--timeout` every time; both moved to
-  this wait-time pattern instead.
+  this wait-time pattern instead. On a multi-monitor setup, "move right"/"move down" on a window
+  with no sibling to move past within its workspace don't always no-op the way they do with a
+  single output — Sway's own move-direction semantics can instead escalate and relocate the whole
+  workspace to the next output in that direction. `SwayLaunch::run()` guards against this (see
+  below) rather than silently moving the window to a different monitor.
 
 ### Orchestration: `SwayLaunch::run()`
 
@@ -139,6 +147,15 @@ variant knows how to:
 `Position` → `Mark`) based on which CLI flags were set, each against that same `container_id`. The
 final container id is printed to stdout (`main.rs`, as a bare integer, or as `{"container_id": N}`
 under `--json`) — this is what makes commands chainable/scriptable (see README examples).
+
+Before running `NewColumn`/`NewRow`, `run()` calls `relocates_to_another_output(container_id)`,
+which checks `get_outputs()` (skipping the guard entirely when there's only one output) and, if
+more than one exists, `get_tree()` to see whether `container_id` is the only window in its
+workspace — the exact condition under which "move right"/"move down" can relocate the whole
+workspace to a different output instead of no-oping (see above). When both are true, the action is
+skipped (logged under `--verbose`) rather than run, trading a silent cross-monitor relocation for a
+silent no-op — confirmed by `tests/live_sway.rs`'s
+`new_column_does_not_relocate_a_solo_window_to_a_different_output`.
 
 Each Sway IPC call opens its own fresh `Connection` (`new_connection()` in `sway_launch.rs`) — there
 is no persistent/shared connection across actions.
@@ -297,7 +314,9 @@ unpolished.
     functions that open, read, or write the Sway IPC socket directly (`new_connection`,
     `event_loop`, `run_sway_command`'s connection call, `run_wait_time`,
     `run_wait_matching_events`, `find_existing_container_id`'s connection call, `SwayAction::run`,
-    `SwayLaunch::run`, `SwayLaunch::debug_events`) are exempted from the `cargo llvm-cov` line-
+    `SwayAction::already_at_target`, `current_workspace`, `current_output`,
+    `containing_node_name`, `relocates_to_another_output`, `SwayLaunch::run`,
+    `SwayLaunch::debug_events`) are exempted from the `cargo llvm-cov` line-
     coverage measurement — they require a live Sway compositor, so `cargo test`/`cargo llvm-cov`
     (which run headlessly, without one) never execute them. They're no longer *unverifiable*,
     though: `tests/live_sway.rs` (see the Testing section below) exercises them for real against a
