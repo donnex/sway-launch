@@ -708,3 +708,536 @@ fn wait_time_action_errors_clearly_when_its_container_already_closed() {
         "error should name the container id: {stderr:?}"
     );
 }
+
+/// The repo-root-relative directory a shipped example file lives under,
+/// resolved via CARGO_MANIFEST_DIR rather than a relative path, so these
+/// tests work regardless of the working directory `cargo test` is invoked
+/// from.
+fn examples_dir(subdir: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join(subdir)
+}
+
+#[test]
+fn every_shipped_template_resolves_and_launches_successfully() {
+    // Unlike template_apps_resolve_to_real_windows above (a hand-written,
+    // minimal template), this drives the actual files under
+    // examples/templates/ — nothing else in the test suite would catch a
+    // shipped template that's silently broken. dual-output.toml is excluded
+    // here since it needs a second output and real (non-placeholder) output
+    // names to run at all; see dual_output_template_moves_windows_to_separate_outputs.
+    let mut connection = connect();
+    let mut paths: Vec<_> = std::fs::read_dir(examples_dir("templates"))
+        .expect("examples/templates should be readable")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+        .filter(|path| path.file_name().and_then(|name| name.to_str()) != Some("dual-output.toml"))
+        .collect();
+    paths.sort();
+    assert!(
+        paths.len() >= 15,
+        "expected at least 15 non-dual-output template files, found {}: {:?}",
+        paths.len(),
+        paths
+    );
+
+    for path in paths {
+        connection
+            .run_command("[app_id=foot] kill")
+            .expect("kill should succeed");
+
+        let contents = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read {path:?}: {error}"));
+        let slot_count = contents
+            .lines()
+            .filter(|line| line.starts_with("slot = "))
+            .count();
+        assert!(slot_count > 0, "{path:?} should declare at least one slot");
+        let apps = vec!["foot"; slot_count].join(",");
+        // Total step count (slot steps + target_id steps, e.g.
+        // retarget-by-slot.toml's retarget step) is how many container id
+        // lines --apps actually prints — --apps only sizes the *slot* count.
+        let step_count = contents.matches("[[step]]").count();
+
+        let output = sway_launch_command()
+            .args([
+                "--template",
+                path.to_str().unwrap(),
+                "--apps",
+                &apps,
+                "--timeout",
+                "10",
+            ])
+            .output()
+            .unwrap_or_else(|error| panic!("failed to run sway-launch for {path:?}: {error}"));
+        assert!(
+            output.status.success(),
+            "{path:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let ids: Vec<&str> = stdout.lines().collect();
+        assert_eq!(
+            ids.len(),
+            step_count,
+            "{path:?} should print one container id per step, got {stdout:?}"
+        );
+        for id in ids {
+            id.parse::<i64>()
+                .unwrap_or_else(|_| panic!("{path:?} printed a non-id line: {id:?}"));
+        }
+    }
+
+    connection
+        .run_command("[app_id=foot] kill")
+        .expect("kill should succeed");
+}
+
+#[test]
+fn dual_output_template_moves_windows_to_separate_outputs() {
+    // dual-output.toml ships with HDMI-A-1/DP-1 as placeholder output names
+    // (documented in the file's own header comment) — a real user swaps
+    // those for their own setup's names, so this test does the equivalent:
+    // create a second headless output and substitute its real name in.
+    let mut connection = connect();
+    let outputs_before: Vec<String> = connection
+        .get_outputs()
+        .expect("get_outputs should succeed")
+        .into_iter()
+        .map(|output| output.name)
+        .collect();
+    connection
+        .run_command("create_output")
+        .expect("create_output should succeed")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("create_output should succeed");
+    let new_output = connection
+        .get_outputs()
+        .expect("get_outputs should succeed")
+        .into_iter()
+        .map(|output| output.name)
+        .find(|name| !outputs_before.contains(name))
+        .expect("create_output should have added a new output");
+    let first_output = outputs_before
+        .first()
+        .expect("at least one output should already exist")
+        .clone();
+
+    let contents = std::fs::read_to_string(examples_dir("templates").join("dual-output.toml"))
+        .expect("dual-output.toml should be readable");
+    let contents = contents
+        .replace("HDMI-A-1", &first_output)
+        .replace("DP-1", &new_output);
+    let path = TempToml::write("dual-output", &contents);
+
+    let output = sway_launch_command()
+        .args([
+            "--template",
+            path.to_str().unwrap(),
+            "--apps",
+            "foot,foot",
+            "--timeout",
+            "10",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "dual-output.toml failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let mut lines = stdout.lines();
+    let first_id: i64 = lines
+        .next()
+        .expect("stdout should have a first line")
+        .parse()
+        .expect("first line should be a container id");
+    let second_id: i64 = lines
+        .next()
+        .expect("stdout should have a second line")
+        .parse()
+        .expect("second line should be a container id");
+    let _first_guard = KillOnDrop(first_id);
+    let _second_guard = KillOnDrop(second_id);
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        output_containing(&tree, first_id, None),
+        Some(first_output.as_str())
+    );
+    assert_eq!(
+        output_containing(&tree, second_id, None),
+        Some(new_output.as_str())
+    );
+}
+
+#[test]
+fn quad_terminals_layout_launches_four_windows_in_a_grid() {
+    // Drives the actual examples/layouts/quad-terminals.toml file (kitty
+    // substituted for foot, which can't launch headlessly — see CLAUDE.md's
+    // Testing section), rather than a hand-written stand-in.
+    //
+    // Unlike every other test in this file, this one asserts on *relative*
+    // multi-window grid geometry rather than a single freshly launched
+    // window's own state, so it switches to a workspace of its own rather
+    // than relying on killing leftover windows in the shared one. It also
+    // sleeps briefly after the layout command completes, before querying
+    // tree state: under this suite's cumulative load (several earlier tests
+    // create extra outputs via create_output, never removed), the last
+    // window's surface can still be settling into its final geometry for a
+    // short while after sway-launch's own process has already exited —
+    // --wait-time alone (which only sleeps *between* sway-launch's own
+    // actions) isn't enough to cover that.
+    let mut connection = connect();
+    connection
+        .run_command("workspace live-sway-test-quad-terminals")
+        .expect("workspace switch should succeed");
+
+    let contents = std::fs::read_to_string(examples_dir("layouts").join("quad-terminals.toml"))
+        .expect("quad-terminals.toml should be readable");
+    let contents = contents.replace("kitty", "foot");
+    let path = TempToml::write("quad-terminals", &contents);
+
+    let output = sway_launch_command()
+        .args(["--layout", path.to_str().unwrap(), "--wait-time", "100"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "quad-terminals.toml failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::thread::sleep(Duration::from_millis(300));
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let ids: Vec<i64> = stdout
+        .lines()
+        .map(|line| line.parse().expect("each line should be a container id"))
+        .collect();
+    assert_eq!(ids.len(), 4, "should launch exactly 4 windows");
+    let guards: Vec<_> = ids.iter().map(|&id| KillOnDrop(id)).collect();
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let rects: Vec<_> = ids
+        .iter()
+        .map(|&id| {
+            find_node(&tree, id)
+                .expect("container should be in the tree")
+                .rect
+        })
+        .collect();
+    // A 2x2 grid should have exactly 2 distinct x positions and 2 distinct
+    // y positions among the four windows.
+    let mut xs: Vec<i32> = rects.iter().map(|rect| rect.x).collect();
+    let mut ys: Vec<i32> = rects.iter().map(|rect| rect.y).collect();
+    xs.sort_unstable();
+    xs.dedup();
+    ys.sort_unstable();
+    ys.dedup();
+    assert_eq!(xs.len(), 2, "expected 2 distinct columns, got {:?}", xs);
+    assert_eq!(ys.len(), 2, "expected 2 distinct rows, got {:?}", ys);
+
+    drop(guards);
+}
+
+#[test]
+fn retarget_by_id_layout_floats_the_first_step_by_name() {
+    // Drives the actual examples/layouts/retarget-by-id.toml file, proving
+    // the shipped file (not just the concept, already covered by
+    // layout_target_id_references_an_earlier_steps_real_window's inline
+    // fixture) resolves an earlier step's id and applies floating+size to
+    // the right window.
+    let mut connection = connect();
+    connection
+        .run_command("[app_id=foot] kill")
+        .expect("kill should succeed");
+
+    let contents = std::fs::read_to_string(examples_dir("layouts").join("retarget-by-id.toml"))
+        .expect("retarget-by-id.toml should be readable");
+    let contents = contents.replace("kitty", "foot");
+    let path = TempToml::write("retarget-by-id", &contents);
+
+    let output = sway_launch_command()
+        .args(["--layout", path.to_str().unwrap(), "--wait-time", "100"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "retarget-by-id.toml failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let ids: Vec<i64> = stdout
+        .lines()
+        .map(|line| line.parse().expect("each line should be a container id"))
+        .collect();
+    assert_eq!(
+        ids.len(),
+        3,
+        "should print one id per step, including the retarget step"
+    );
+    assert_eq!(
+        ids[0], ids[2],
+        "the retarget step's id should be the first step's container id"
+    );
+    let guards: Vec<_> = [ids[0], ids[1]].iter().map(|&id| KillOnDrop(id)).collect();
+
+    let node = get_node(&mut connection, ids[0]);
+    assert!(
+        matches!(
+            node.floating,
+            Some(swayipc::Floating::UserOn) | Some(swayipc::Floating::AutoOn)
+        ),
+        "the first step's window should end up floating, got {:?}",
+        node.floating
+    );
+    // "resize set width" targets the border-inclusive outer width, same as
+    // floating_with_width_and_height_applies_all_three's height adjustment —
+    // rect.width alone is 2*current_border_width short of the requested
+    // value (2px on each side with the default border style).
+    assert_eq!(node.rect.width + 2 * node.current_border_width, 800);
+
+    drop(guards);
+}
+
+#[test]
+fn split_h_places_windows_side_by_side() {
+    let mut connection = connect();
+    let (first_id, _first_guard) = launch_foot(&["--split", "h"]);
+    let (second_id, _second_guard) = launch_foot(&[]);
+    // See quad_terminals_layout_launches_four_windows_in_a_grid's comment —
+    // the last window's geometry can still be settling briefly after
+    // sway-launch's own process exits.
+    std::thread::sleep(Duration::from_millis(300));
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let first_rect = find_node(&tree, first_id)
+        .expect("first window should be in the tree")
+        .rect;
+    let second_rect = find_node(&tree, second_id)
+        .expect("second window should be in the tree")
+        .rect;
+
+    assert_eq!(
+        first_rect.y, second_rect.y,
+        "side-by-side windows should share the same y"
+    );
+    assert_ne!(
+        first_rect.x, second_rect.x,
+        "side-by-side windows should have different x"
+    );
+}
+
+#[test]
+fn split_v_stacks_windows() {
+    let mut connection = connect();
+    let (first_id, _first_guard) = launch_foot(&["--split", "v"]);
+    let (second_id, _second_guard) = launch_foot(&[]);
+    std::thread::sleep(Duration::from_millis(300));
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let first_rect = find_node(&tree, first_id)
+        .expect("first window should be in the tree")
+        .rect;
+    let second_rect = find_node(&tree, second_id)
+        .expect("second window should be in the tree")
+        .rect;
+
+    assert_eq!(
+        first_rect.x, second_rect.x,
+        "stacked windows should share the same x"
+    );
+    assert_ne!(
+        first_rect.y, second_rect.y,
+        "stacked windows should have different y"
+    );
+}
+
+#[test]
+fn new_row_places_window_below_the_first() {
+    let mut connection = connect();
+    let (first_id, _first_guard) = launch_foot(&[]);
+    let (second_id, _second_guard) = launch_foot(&["--new-row"]);
+    std::thread::sleep(Duration::from_millis(300));
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let first_rect = find_node(&tree, first_id)
+        .expect("first window should be in the tree")
+        .rect;
+    let second_rect = find_node(&tree, second_id)
+        .expect("second window should be in the tree")
+        .rect;
+
+    assert_eq!(
+        first_rect.x, second_rect.x,
+        "new-row should keep the same column"
+    );
+    assert!(
+        second_rect.y > first_rect.y,
+        "new-row window ({:?}) should be below the first ({:?})",
+        second_rect,
+        first_rect
+    );
+}
+
+#[test]
+fn height_alone_resizes_a_non_solo_window() {
+    // Resizing a window is a no-op while it's still the workspace's only
+    // occupant (see examples/templates/master-dual-stack.toml's header
+    // comment) — this needs a sibling present for --height to take effect
+    // at all, which also makes it a live check that --height works on its
+    // own, not just combined with --floating/--width like
+    // floating_with_width_and_height_applies_all_three.
+    let mut connection = connect();
+    let (_first_id, _first_guard) = launch_foot(&["--split", "v"]);
+    let (second_id, _second_guard) = launch_foot(&["--height", "200px"]);
+    std::thread::sleep(Duration::from_millis(300));
+
+    let node = get_node(&mut connection, second_id);
+    // "resize set height" targets the decoration-inclusive frame, same as
+    // floating_with_width_and_height_applies_all_three.
+    assert_eq!(node.rect.height + node.deco_rect.height, 200);
+}
+
+#[test]
+fn position_center_centers_a_floating_window() {
+    // Determines which output the window actually landed on (rather than
+    // assuming get_outputs()'s first entry, which isn't necessarily where
+    // the current workspace lives — several earlier tests in this suite
+    // call create_output, and cumulative extra outputs can shift which one
+    // a new workspace defaults to) and centers against that output's own
+    // dimensions.
+    let mut connection = connect();
+
+    let (container_id, _guard) = launch_foot(&[
+        "--floating",
+        "--width",
+        "400px",
+        "--height",
+        "300px",
+        "--position",
+        "center",
+    ]);
+    std::thread::sleep(Duration::from_millis(300));
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let output_name = output_containing(&tree, container_id, None)
+        .expect("window should be found in the tree")
+        .to_string();
+    let outputs = connection
+        .get_outputs()
+        .expect("get_outputs should succeed");
+    let output = outputs
+        .iter()
+        .find(|output| output.name == output_name)
+        .expect("the window's own output should be in get_outputs()");
+    // rect/deco_rect coordinates are global, not output-relative, so the
+    // expected center must account for the output's own position too — only
+    // matters once a second output exists to its left/above, but do it
+    // unconditionally rather than assuming this is the primary output.
+    let expected_x = output.rect.x + (output.rect.width - 400) / 2;
+    let expected_y = output.rect.y + (output.rect.height - 300) / 2;
+
+    let node = get_node(&mut connection, container_id);
+    assert_eq!(node.rect.width, 400);
+    assert_eq!(node.rect.x, expected_x);
+    // deco_rect.y (not rect.y) is the decoration-inclusive top edge "move
+    // position"/centering actually targets — see
+    // position_moves_a_floating_window_to_given_coordinates.
+    assert_eq!(node.deco_rect.y, expected_y);
+}
+
+#[test]
+fn json_output_for_a_real_exec_is_a_clean_container_id_object() {
+    // con_id_json_output_is_a_clean_json_object in tests/json_output.rs
+    // covers --json's formatting for --con-id, which never touches the
+    // socket; this covers the same formatting for a real exec+match.
+    let output = sway_launch_command()
+        .args(["--app-id", "foot", "--timeout", "10", "--json", "foot"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    let trimmed = stdout.trim();
+    let container_id: i64 = trimmed
+        .strip_prefix("{\"container_id\":")
+        .and_then(|rest| rest.strip_suffix('}'))
+        .unwrap_or_else(|| panic!("unexpected --json output: {trimmed:?}"))
+        .parse()
+        .unwrap_or_else(|_| panic!("--json container_id should be an integer: {trimmed:?}"));
+    let _guard = KillOnDrop(container_id);
+}
+
+#[test]
+fn existing_errors_with_zero_matches() {
+    let output = sway_launch_command()
+        .args([
+            "--existing",
+            "--app-id",
+            "live-sway-test-nonexistent-app-id",
+            "--floating",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No existing window matches"),
+        "unexpected stderr: {stderr:?}"
+    );
+}
+
+#[test]
+fn existing_errors_listing_ids_with_multiple_matches() {
+    let mut connection = connect();
+    connection
+        .run_command("[app_id=foot] kill")
+        .expect("kill should succeed");
+
+    let (first_id, _first_guard) = launch_foot(&[]);
+    let (second_id, _second_guard) = launch_foot(&[]);
+
+    let output = sway_launch_command()
+        .args(["--existing", "--app-id", "foot", "--floating"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&first_id.to_string()) && stderr.contains(&second_id.to_string()),
+        "error should list both matching ids: {stderr:?}"
+    );
+}
+
+#[test]
+fn mark_with_special_characters_is_stored_literally_not_executed() {
+    // Live version of quote_sway_string's unit tests (sway_launch.rs):
+    // proves the injection-style mark actually ends up stored as one
+    // literal mark against a real compositor, rather than being split into
+    // multiple Sway commands.
+    let mut connection = connect();
+    let malicious_mark =
+        "live-sway-test-injection, exec touch /tmp/sway-launch-live-test-pwned; echo bar";
+    let _ = std::fs::remove_file("/tmp/sway-launch-live-test-pwned");
+
+    let (container_id, _guard) = launch_foot(&["--mark", malicious_mark]);
+
+    let node = get_node(&mut connection, container_id);
+    assert!(node.marks.contains(&malicious_mark.to_string()));
+    assert!(
+        !std::path::Path::new("/tmp/sway-launch-live-test-pwned").exists(),
+        "mark should be stored literally, not executed as a separate command"
+    );
+}
