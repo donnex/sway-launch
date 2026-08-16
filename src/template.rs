@@ -119,6 +119,22 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
                 let binding = bindings_by_slot
                     .get(slot)
                     .ok_or_else(|| format!("no binding for slot {:?}", slot))?;
+
+                let target_fields_set = [
+                    binding.command.is_some(),
+                    binding.con_id.is_some(),
+                    binding.existing,
+                ]
+                .into_iter()
+                .filter(|&set| set)
+                .count();
+                if target_fields_set != 1 {
+                    return Err(format!(
+                        "binding for slot {:?} must set exactly one of: command, con_id, existing",
+                        slot
+                    ));
+                }
+
                 used_slots.insert(slot);
                 (
                     Some(slot.to_string()),
@@ -258,6 +274,57 @@ mod tests {
         let error = resolve(&template, &bindings)
             .err()
             .expect("missing binding should error");
+        assert!(error.contains("editor"));
+    }
+
+    #[test]
+    fn resolve_errors_on_binding_with_no_target_field_naming_the_slot() {
+        let template = Template {
+            step: vec![minimal_step()],
+        };
+        let bindings = Bindings {
+            binding: vec![Binding {
+                slot: "editor".to_string(),
+                command: None,
+                con_id: None,
+                existing: false,
+                app_id: None,
+                class: None,
+            }],
+        };
+        let error = resolve(&template, &bindings)
+            .err()
+            .expect("binding with no target field should error");
+        assert!(
+            error.contains("editor"),
+            "error should name the offending slot: {:?}",
+            error
+        );
+        assert!(
+            error.contains("binding"),
+            "error should be worded in terms of the binding, not a layout step: {:?}",
+            error
+        );
+    }
+
+    #[test]
+    fn resolve_errors_on_binding_with_command_and_con_id_together() {
+        let template = Template {
+            step: vec![minimal_step()],
+        };
+        let bindings = Bindings {
+            binding: vec![Binding {
+                slot: "editor".to_string(),
+                command: Some("kitty".to_string()),
+                con_id: Some(42),
+                existing: false,
+                app_id: None,
+                class: None,
+            }],
+        };
+        let error = resolve(&template, &bindings)
+            .err()
+            .expect("binding with command and con_id together should error");
         assert!(error.contains("editor"));
     }
 
