@@ -73,7 +73,17 @@ The crate is four source files plus five integration test files:
   sway's own default-terminal dependency; `kitty`, this project's usual example app, needs a real
   GPU and fails headlessly) and asserts on real tree state read back via `swayipc::Connection`,
   covering the IPC-touching functions the other four test files, and `cargo llvm-cov`, can't
-  reach headlessly (see the Testing bullet under Rust conventions).
+  reach headlessly (see the Testing bullet under Rust conventions). Beyond the individual
+  action/flag tests, `every_shipped_template_resolves_and_launches_successfully` and
+  `dual_output_template_moves_windows_to_separate_outputs` drive every file under
+  `examples/templates/` directly (not a hand-written stand-in), and
+  `quad_terminals_layout_launches_four_windows_in_a_grid`/
+  `retarget_by_id_layout_floats_the_first_step_by_name` do the same for `examples/layouts/` — a
+  broken shipped example is a live-Sway test failure, not just a manual-testing gap. Several tests
+  sleep briefly after their `sway-launch` invocation completes before asserting on tree state, on
+  top of `--wait-time`: under this suite's cumulative load — many tests run in one shared
+  compositor/workspace, and several call `create_output`, never removed — the last window's
+  geometry can still be settling for a short while after the process itself has already exited.
 
 All five integration test files need `CARGO_BIN_EXE_sway-launch` (to invoke the compiled binary as
 a subprocess), which is only set for files under `tests/`, not for the bin crate's own unit test
