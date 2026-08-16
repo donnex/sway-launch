@@ -205,10 +205,11 @@ fn workspace_moves_window_to_named_workspace() {
 #[test]
 fn output_moves_window_to_named_output() {
     // Proves the WindowChange::Move assumption documented for --output:
-    // unlike NewColumn/NewRow's "move right"/"move down", "move container
-    // to output" has no "already there" no-op case (a window is always in
-    // exactly one output's tree), confirmed by this actually completing
-    // promptly with the window moved rather than hanging until --timeout.
+    // moving to a *different* output reliably fires the event, confirmed by
+    // this actually completing promptly with the window moved rather than
+    // hanging until --timeout. Moving to the output the window is already
+    // on is a separate, already-there no-op case — see
+    // output_is_a_no_op_when_already_on_the_target_output below.
     let mut connection = connect();
     let outputs_before: Vec<String> = connection
         .get_outputs()
@@ -235,6 +236,122 @@ fn output_moves_window_to_named_output() {
     let tree = connection.get_tree().expect("get_tree should succeed");
     let output = output_containing(&tree, container_id, None);
     assert_eq!(output, Some(new_output.as_str()));
+}
+
+#[test]
+fn workspace_is_a_no_op_when_already_on_the_target_workspace() {
+    // Regression test: Sway doesn't fire WindowChange::Move for a "move
+    // workspace" that doesn't actually change anything, so without
+    // SwayAction::already_at_target()'s short-circuit this would hang until
+    // --timeout instead of completing immediately.
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&[]);
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let workspace = workspace_containing(&tree, container_id, None)
+        .expect("launched window should be found in the tree")
+        .to_string();
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--workspace",
+            &workspace,
+            "--timeout",
+            "5",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --workspace failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "--workspace to the already-current workspace took {:?}, suggesting it \
+         hung waiting for an event Sway doesn't fire for a no-op move",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn output_is_a_no_op_when_already_on_the_target_output() {
+    // Same as workspace_is_a_no_op_when_already_on_the_target_workspace,
+    // for --output.
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&[]);
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let output_name = output_containing(&tree, container_id, None)
+        .expect("launched window should be found in the tree")
+        .to_string();
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--output",
+            &output_name,
+            "--timeout",
+            "5",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --output failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "--output to the already-current output took {:?}, suggesting it hung \
+         waiting for an event Sway doesn't fire for a no-op move",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn new_column_does_not_relocate_a_solo_window_to_a_different_output() {
+    // Regression test for the multi-monitor NewColumn/NewRow escalation
+    // documented in SwayAction::matching_window_change_events()'s reasoning
+    // comment: "move right" on a window with no sibling to move past within
+    // its workspace can otherwise relocate the whole workspace to the next
+    // output in that direction, rather than a same-workspace no-op.
+    // SwayLaunch::run() guards against this via relocates_to_another_output();
+    // this proves the guard actually prevents the relocation.
+    let mut connection = connect();
+    connection
+        .run_command("create_output")
+        .expect("create_output should succeed")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("create_output should succeed");
+
+    let (container_id, _guard) = launch_foot(&[]);
+    let tree_before = connection.get_tree().expect("get_tree should succeed");
+    let output_before = output_containing(&tree_before, container_id, None)
+        .expect("launched window should be found in the tree")
+        .to_string();
+
+    let output = sway_launch_command()
+        .args(["--con-id", &container_id.to_string(), "--new-column"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --new-column failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let tree_after = connection.get_tree().expect("get_tree should succeed");
+    let output_after = output_containing(&tree_after, container_id, None);
+    assert_eq!(
+        output_after,
+        Some(output_before.as_str()),
+        "a solo window's --new-column should not relocate it to a different output"
+    );
 }
 
 #[test]

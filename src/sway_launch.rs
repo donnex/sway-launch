@@ -2,7 +2,9 @@ use clap::ValueEnum;
 use regex::Regex;
 use std::sync::mpsc;
 use std::{fmt, thread, time};
-use swayipc::{Connection, Event, EventStream, EventType, Node, WindowChange, WindowEvent};
+use swayipc::{
+    Connection, Event, EventStream, EventType, Node, NodeType, WindowChange, WindowEvent,
+};
 
 #[derive(Copy, Clone, PartialEq, ValueEnum, serde::Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
@@ -407,12 +409,18 @@ impl SwayAction<'_> {
             SwayAction::Floating { .. } => Some(vec![WindowChange::Floating]),
             SwayAction::Fullscreen { .. } => Some(vec![WindowChange::FullscreenMode]),
             SwayAction::Focus { .. } => Some(vec![WindowChange::Focus]),
-            // Confirmed against live Sway (tests/live_sway.rs's
-            // output_moves_window_to_named_output) that, unlike
-            // NewColumn/NewRow's "move right"/"move down" below,
-            // "move container to output" always reparents the container —
-            // there's no "already there" no-op case, since a window is
-            // always in exactly one output's tree.
+            // Unlike NewColumn/NewRow's "move right"/"move down" below,
+            // "move workspace"/"move container to output" reliably fire
+            // WindowChange::Move for an actual move (tests/live_sway.rs's
+            // workspace_moves_window_to_named_workspace/
+            // output_moves_window_to_named_output) — but live testing also
+            // showed they *do* have an "already there" no-op case after
+            // all (moving to the workspace/output the window is already
+            // on doesn't reparent anything, so no Move event fires either):
+            // `already_at_target()` below checks for and short-circuits
+            // that case before this event wait ever starts, rather than
+            // hanging until --timeout for a move that was never going to
+            // happen.
             SwayAction::Workspace { .. } | SwayAction::Output { .. } => {
                 Some(vec![WindowChange::Move])
             }
@@ -426,6 +434,16 @@ impl SwayAction<'_> {
             // the identical unverified assumption for a different tree
             // shape, so both moved to the same wait-time pattern as
             // Split/Height/Width/Position rather than leaving one exposed.
+            //
+            // On a multi-monitor setup, "move right"/"move down" on a
+            // window with no sibling to move past within its own workspace
+            // don't always no-op the way they do with a single output —
+            // Sway's own move-direction semantics can instead escalate and
+            // relocate the whole workspace to the next output in that
+            // direction. `SwayLaunch::run()` guards against this (see
+            // `relocates_to_another_output()`) by skipping NewColumn/
+            // NewRow rather than silently moving the window to a
+            // different monitor when that's the situation.
             SwayAction::Split { .. }
             | SwayAction::NewColumn { .. }
             | SwayAction::NewRow { .. }
@@ -440,9 +458,49 @@ impl SwayAction<'_> {
             eprintln!("Sway action: {}", self);
         }
 
+        if let Some(container_id) = self.already_at_target()? {
+            if self.verbose() {
+                eprintln!(
+                    "Already at target, nothing to move (container id: {})",
+                    container_id
+                );
+            }
+            return Ok(container_id);
+        }
+
         match self.matching_window_change_events() {
             Some(_) => self.run_wait_matching_events(),
             None => self.run_wait_time(),
+        }
+    }
+
+    /// For `Workspace`/`Output`, checks whether the container is already on
+    /// the target workspace/output — Sway's `move workspace`/`move
+    /// container to output` is a no-op in that case and doesn't fire
+    /// `WindowChange::Move`, so `run_wait_matching_events()` would otherwise
+    /// hang until `--timeout` waiting for an event that was never coming.
+    /// Returns `Some(container_id)` to short-circuit `run()` with success,
+    /// or `None` to proceed normally — including for every action other
+    /// than Workspace/Output, which this never touches.
+    fn already_at_target(&self) -> Result<Option<i64>, String> {
+        match self {
+            SwayAction::Workspace {
+                container_id,
+                workspace,
+                ..
+            } => match self::current_workspace(*container_id)? {
+                Some(current) if current == *workspace => Ok(Some(*container_id)),
+                _ => Ok(None),
+            },
+            SwayAction::Output {
+                container_id,
+                output,
+                ..
+            } => match self::current_output(*container_id)? {
+                Some(current) if current == *output => Ok(Some(*container_id)),
+                _ => Ok(None),
+            },
+            _ => Ok(None),
         }
     }
 
@@ -765,6 +823,128 @@ fn resolve_matches(matches: Vec<i64>, criteria: &str) -> Result<i64, String> {
     }
 }
 
+/// The name of the workspace currently containing `con_id`, or `None` if
+/// `con_id` isn't found in the tree at all. Used by
+/// `SwayAction::already_at_target()` to detect a no-op `--workspace` move
+/// before waiting on an event Sway won't fire for it.
+fn current_workspace(con_id: i64) -> Result<Option<String>, String> {
+    self::containing_node_name(con_id, NodeType::Workspace)
+}
+
+/// The name of the output currently containing `con_id`, or `None` if
+/// `con_id` isn't found in the tree at all. Used by
+/// `SwayAction::already_at_target()` to detect a no-op `--output` move
+/// before waiting on an event Sway won't fire for it.
+fn current_output(con_id: i64) -> Result<Option<String>, String> {
+    self::containing_node_name(con_id, NodeType::Output)
+}
+
+fn containing_node_name(con_id: i64, kind: NodeType) -> Result<Option<String>, String> {
+    let tree = match self::new_connection()?.get_tree() {
+        Ok(tree) => tree,
+        Err(error) => return Err(error.to_string()),
+    };
+
+    Ok(self::find_containing_name(&tree, con_id, kind, None))
+}
+
+/// Recursively walks `node` tracking the name of the nearest ancestor whose
+/// `node_type` matches `kind`, returning that name once `con_id` is found —
+/// e.g. with `kind: NodeType::Workspace`, the name of the workspace
+/// containing `con_id`.
+fn find_containing_name(
+    node: &Node,
+    con_id: i64,
+    kind: NodeType,
+    current: Option<&str>,
+) -> Option<String> {
+    let current = if node.node_type == kind {
+        node.name.as_deref()
+    } else {
+        current
+    };
+    if node.id == con_id {
+        return current.map(String::from);
+    }
+    node.nodes
+        .iter()
+        .chain(node.floating_nodes.iter())
+        .find_map(|child| self::find_containing_name(child, con_id, kind, current))
+}
+
+/// Whether running NewColumn/NewRow on `container_id` right now would risk
+/// Sway relocating it (and its whole workspace) to a different output
+/// rather than moving it within the workspace or no-oping. Confirmed live
+/// to happen specifically when `container_id` is the only window in its
+/// workspace and more than one output exists: Sway's `move <direction>`
+/// escalates to the adjacent output when there's no sibling to move past
+/// within the container (see the NewColumn/NewRow reasoning comment in
+/// `SwayAction::matching_window_change_events()`). Returns `false` (safe to
+/// proceed) if outputs/tree can't be read or `container_id` isn't found,
+/// rather than blocking the action on an inconclusive check.
+fn relocates_to_another_output(container_id: i64) -> Result<bool, String> {
+    let outputs = match self::new_connection()?.get_outputs() {
+        Ok(outputs) => outputs,
+        Err(error) => return Err(error.to_string()),
+    };
+    if outputs.len() < 2 {
+        return Ok(false);
+    }
+
+    let tree = match self::new_connection()?.get_tree() {
+        Ok(tree) => tree,
+        Err(error) => return Err(error.to_string()),
+    };
+
+    Ok(self::is_only_window_in_its_workspace(&tree, container_id))
+}
+
+/// Whether `container_id` is the only window (tiled or floating) in the
+/// workspace containing it. `container_id` not being found in `tree` at all
+/// counts as "not alone" (`false`), so a stale/unknown id never triggers
+/// the `relocates_to_another_output()` guard.
+fn is_only_window_in_its_workspace(tree: &Node, container_id: i64) -> bool {
+    match self::find_workspace_node(tree, container_id) {
+        Some(workspace) => self::window_count(workspace) <= 1,
+        None => false,
+    }
+}
+
+fn find_workspace_node(node: &Node, container_id: i64) -> Option<&Node> {
+    if node.node_type == NodeType::Workspace {
+        return if self::contains_id(node, container_id) {
+            Some(node)
+        } else {
+            None
+        };
+    }
+    node.nodes
+        .iter()
+        .chain(node.floating_nodes.iter())
+        .find_map(|child| self::find_workspace_node(child, container_id))
+}
+
+fn contains_id(node: &Node, container_id: i64) -> bool {
+    node.id == container_id
+        || node
+            .nodes
+            .iter()
+            .chain(node.floating_nodes.iter())
+            .any(|child| self::contains_id(child, container_id))
+}
+
+/// A node counts as a window (rather than a split/container node) if it
+/// carries an `app_id` (native Wayland) or `window_properties` (XWayland) —
+/// the same presence checks `window_app_id_match`/`window_class_match` use
+/// to identify a real window elsewhere in this file.
+fn window_count(node: &Node) -> usize {
+    let mut count = usize::from(node.app_id.is_some() || node.window_properties.is_some());
+    for child in node.nodes.iter().chain(node.floating_nodes.iter()) {
+        count += self::window_count(child);
+    }
+    count
+}
+
 /// What `SwayLaunch::run()` should act on: launch a new window (the
 /// original, still-default behavior), a specific already-open window by
 /// container id, or an already-open window found by matching
@@ -851,20 +1031,42 @@ impl SwayLaunch<'_> {
         }
 
         if self.new_column {
-            SwayAction::NewColumn {
-                container_id,
-                verbose: self.verbose,
-                wait_time: self.wait_time,
+            if self::relocates_to_another_output(container_id)? {
+                if self.verbose {
+                    eprintln!(
+                        "Skipping new-column: container id {} is the only window in its \
+                         workspace and more than one output exists — \"move right\" would \
+                         relocate it to a different output instead of no-oping",
+                        container_id
+                    );
+                }
+            } else {
+                SwayAction::NewColumn {
+                    container_id,
+                    verbose: self.verbose,
+                    wait_time: self.wait_time,
+                }
+                .run()?;
             }
-            .run()?;
         }
         if self.new_row {
-            SwayAction::NewRow {
-                container_id,
-                verbose: self.verbose,
-                wait_time: self.wait_time,
+            if self::relocates_to_another_output(container_id)? {
+                if self.verbose {
+                    eprintln!(
+                        "Skipping new-row: container id {} is the only window in its \
+                         workspace and more than one output exists — \"move down\" would \
+                         relocate it to a different output instead of no-oping",
+                        container_id
+                    );
+                }
+            } else {
+                SwayAction::NewRow {
+                    container_id,
+                    verbose: self.verbose,
+                    wait_time: self.wait_time,
+                }
+                .run()?;
             }
-            .run()?;
         }
         if let Some(workspace) = self.workspace {
             SwayAction::Workspace {
@@ -1052,6 +1254,18 @@ mod tests {
     ) -> Node {
         serde_json::from_value(container_node_value(container_id, nodes, floating_nodes))
             .expect("valid Node test fixture")
+    }
+
+    fn workspace_node_tree(
+        container_id: i64,
+        name: &str,
+        nodes: Vec<serde_json::Value>,
+        floating_nodes: Vec<serde_json::Value>,
+    ) -> Node {
+        let mut value = container_node_value(container_id, nodes, floating_nodes);
+        value["type"] = serde_json::json!("workspace");
+        value["name"] = serde_json::json!(name);
+        serde_json::from_value(value).expect("valid Node test fixture")
     }
 
     // quote_sway_string
@@ -2048,6 +2262,101 @@ mod tests {
             resolve_matches(vec![42, 91], "app_id \"kitty\""),
             Err("2 windows match app_id \"kitty\": 42, 91 — retarget with --con-id".to_string())
         );
+    }
+
+    // find_containing_name / find_workspace_node / contains_id / window_count /
+    // is_only_window_in_its_workspace
+
+    #[test]
+    fn find_containing_name_finds_the_nearest_ancestor_of_kind() {
+        let leaf = leaf_node_value(10, Some("kitty"), None);
+        let workspace = workspace_node_tree(2, "main", vec![leaf], vec![]);
+        assert_eq!(
+            find_containing_name(&workspace, 10, NodeType::Workspace, None),
+            Some("main".to_string())
+        );
+    }
+
+    #[test]
+    fn find_containing_name_returns_none_when_id_not_found() {
+        let tree = node_tree(1, vec![], vec![]);
+        assert_eq!(
+            find_containing_name(&tree, 999, NodeType::Workspace, None),
+            None
+        );
+    }
+
+    #[test]
+    fn find_workspace_node_locates_the_workspace_containing_the_id() {
+        let leaf = leaf_node_value(10, Some("kitty"), None);
+        let workspace = workspace_node_tree(2, "main", vec![leaf], vec![]);
+        let found = find_workspace_node(&workspace, 10).expect("should find workspace");
+        assert_eq!(found.name.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn find_workspace_node_returns_none_when_id_not_found() {
+        let leaf = leaf_node_value(10, Some("kitty"), None);
+        let workspace = workspace_node_tree(2, "main", vec![leaf], vec![]);
+        assert!(find_workspace_node(&workspace, 999).is_none());
+    }
+
+    #[test]
+    fn contains_id_true_for_self_and_descendants() {
+        let leaf = leaf_node_value(10, Some("kitty"), None);
+        let tree = node_tree(1, vec![leaf], vec![]);
+        assert!(contains_id(&tree, 1));
+        assert!(contains_id(&tree, 10));
+    }
+
+    #[test]
+    fn contains_id_false_when_absent() {
+        let tree = node_tree(1, vec![], vec![]);
+        assert!(!contains_id(&tree, 42));
+    }
+
+    #[test]
+    fn window_count_counts_only_window_nodes() {
+        let leaf1 = leaf_node_value(10, Some("kitty"), None);
+        let leaf2 = leaf_node_value(11, None, Some("Firefox"));
+        let tree = node_tree(1, vec![leaf1, leaf2], vec![]);
+        assert_eq!(window_count(&tree), 2);
+    }
+
+    #[test]
+    fn window_count_ignores_pure_split_containers() {
+        let leaf = leaf_node_value(10, Some("kitty"), None);
+        let inner = container_node_value(2, vec![leaf], vec![]);
+        let tree = node_tree(1, vec![inner], vec![]);
+        assert_eq!(window_count(&tree), 1);
+    }
+
+    #[test]
+    fn window_count_includes_floating_windows() {
+        let floating = leaf_node_value(20, Some("kitty"), None);
+        let tree = node_tree(1, vec![], vec![floating]);
+        assert_eq!(window_count(&tree), 1);
+    }
+
+    #[test]
+    fn is_only_window_in_its_workspace_true_for_a_solo_window() {
+        let leaf = leaf_node_value(10, Some("kitty"), None);
+        let workspace = workspace_node_tree(2, "main", vec![leaf], vec![]);
+        assert!(is_only_window_in_its_workspace(&workspace, 10));
+    }
+
+    #[test]
+    fn is_only_window_in_its_workspace_false_with_a_sibling() {
+        let leaf1 = leaf_node_value(10, Some("kitty"), None);
+        let leaf2 = leaf_node_value(11, Some("kitty"), None);
+        let workspace = workspace_node_tree(2, "main", vec![leaf1, leaf2], vec![]);
+        assert!(!is_only_window_in_its_workspace(&workspace, 10));
+    }
+
+    #[test]
+    fn is_only_window_in_its_workspace_false_when_id_not_found() {
+        let tree = node_tree(1, vec![], vec![]);
+        assert!(!is_only_window_in_its_workspace(&tree, 999));
     }
 
     // first_outcome_error
