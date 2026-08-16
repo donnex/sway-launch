@@ -674,3 +674,37 @@ fn exec_falls_back_to_a_content_match_when_its_own_process_already_exited() {
     let node = get_node(&mut connection, container_id);
     assert_eq!(node.app_id.as_deref(), Some("foot"));
 }
+
+#[test]
+fn wait_time_action_errors_clearly_when_its_container_already_closed() {
+    // Regression test: Sway treats a [con_id=N] criteria matching zero
+    // containers as success, not an error, so a wait-time action
+    // (Split/NewColumn/NewRow/Height/Width/Position) used to silently no-op
+    // instead of erroring if the container closed between an earlier action
+    // resolving it and this one running. run_wait_time()'s container_exists()
+    // check is what's under test here.
+    let mut connection = connect();
+    let (container_id, guard) = launch_foot(&[]);
+    connection
+        .run_command(format!("[con_id={container_id}] kill"))
+        .expect("kill should succeed")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("kill should succeed");
+    std::mem::forget(guard); // already closed — nothing left for KillOnDrop to clean up
+
+    let output = sway_launch_command()
+        .args(["--con-id", &container_id.to_string(), "--split", "h"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        !output.status.success(),
+        "--split against an already-closed container should fail, not silently no-op"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&container_id.to_string()),
+        "error should name the container id: {stderr:?}"
+    );
+}

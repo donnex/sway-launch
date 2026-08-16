@@ -150,7 +150,13 @@ variant knows how to:
   with no sibling to move past within its workspace don't always no-op the way they do with a
   single output — Sway's own move-direction semantics can instead escalate and relocate the whole
   workspace to the next output in that direction. `SwayLaunch::run()` guards against this (see
-  below) rather than silently moving the window to a different monitor.
+  below) rather than silently moving the window to a different monitor. Before actually running its
+  command, `run_wait_time()` also calls `container_exists()` (a `get_tree()` lookup) and errors
+  clearly if the container is gone — without this, a `[con_id=N]` criteria matching zero containers
+  is treated by Sway as success rather than a failure, so a container that closed between an
+  earlier action resolving it and this one running used to silently no-op instead of erroring;
+  confirmed by `tests/live_sway.rs`'s
+  `wait_time_action_errors_clearly_when_its_container_already_closed`.
 
 ### Orchestration: `SwayLaunch::run()`
 
@@ -339,7 +345,7 @@ unpolished.
     dispatch tables, window-match logic, CLI argument validation/parsing) via `cargo test`. The
     functions that open, read, or write the Sway IPC socket directly (`new_connection`,
     `event_loop`, `run_sway_command`'s connection call, `run_wait_time`,
-    `run_wait_matching_events`, `run_wait_matching_exec_event`,
+    `run_wait_matching_events`, `run_wait_matching_exec_event`, `container_exists`,
     `find_existing_container_id`'s connection call, `SwayAction::run`,
     `SwayAction::already_at_target`, `current_workspace`, `current_output`,
     `containing_node_name`, `relocates_to_another_output`, `SwayLaunch::run`,

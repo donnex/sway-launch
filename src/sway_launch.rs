@@ -543,6 +543,21 @@ impl SwayAction<'_> {
         // let this command finish before the next action runs.
         thread::sleep(wait_time);
 
+        let container_id = self.container_id().unwrap();
+
+        // A wait-time action's [con_id=N] criteria matching zero containers
+        // is "success" as far as Sway's concerned (there's simply nothing to
+        // apply the command to) — unlike an event-confirmed action, which
+        // would visibly hang until --timeout instead. Without this check, a
+        // container that closed between an earlier action resolving it and
+        // this one running would silently no-op rather than error.
+        if !self::container_exists(container_id)? {
+            return Err(format!(
+                "container id {} no longer exists — window may have closed",
+                container_id
+            ));
+        }
+
         let sway_command = self.sway_command();
         if self.verbose() {
             eprintln!("Sway command: {}", sway_command);
@@ -551,7 +566,7 @@ impl SwayAction<'_> {
         run_sway_command(&sway_command)?;
         thread::sleep(wait_time);
 
-        Ok(self.container_id().unwrap())
+        Ok(container_id)
     }
 
     /// `Exec`-only variant of `run_wait_matching_events()`: matching purely
@@ -1136,6 +1151,19 @@ fn find_workspace_node(node: &Node, container_id: i64) -> Option<&Node> {
         .iter()
         .chain(node.floating_nodes.iter())
         .find_map(|child| self::find_workspace_node(child, container_id))
+}
+
+/// Whether `container_id` is still present anywhere in the current tree —
+/// used by `run_wait_time()` to catch a container that closed between an
+/// earlier action resolving it and this one about to run its command
+/// against it, since Sway treats a `[con_id=N]` criteria matching zero
+/// containers as success rather than an error.
+fn container_exists(container_id: i64) -> Result<bool, String> {
+    let tree = match self::new_connection()?.get_tree() {
+        Ok(tree) => tree,
+        Err(error) => return Err(error.to_string()),
+    };
+    Ok(self::contains_id(&tree, container_id))
 }
 
 fn contains_id(node: &Node, container_id: i64) -> bool {
