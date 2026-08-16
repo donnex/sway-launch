@@ -84,6 +84,15 @@ The crate is four source files plus five integration test files:
   top of `--wait-time`: under this suite's cumulative load — many tests run in one shared
   compositor/workspace, and several call `create_output`, never removed — the last window's
   geometry can still be settling for a short while after the process itself has already exited.
+  Every CLI flag is covered here against real Sway with one exception: `--class`/`-c` needs an
+  XWayland/X11 client (a real window's `WM_CLASS`) to match against, and no such client (e.g.
+  `xterm`) has been available in this project's dev/CI environments so far — `--class` stays
+  unit-test-only (`window_class_match`, `matches_window_event`'s class arm) until one is.
+  `--debug-events` (which runs until killed, unlike everything else here) is covered by
+  `debug_events_prints_a_real_window_event`, spawned as a background child via the `KillChildOnDrop`
+  guard (mirrors `KillOnDrop`, but for a `Child` rather than a container id) with its stdout read on
+  a separate thread and forwarded through a channel — the same shape `sway_launch.rs`'s own event
+  loop uses internally.
 
   **This file's coverage must stay complete, not just present.** It's the one place anything
   IPC-touching actually gets exercised against real Sway, and — same as `.github/workflows/`'s
