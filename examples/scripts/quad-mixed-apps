@@ -10,7 +10,6 @@ print_usage() {
   printf 'Launch a 2x2 grid: foot, Firefox, Thunar, and VS Code.\n'
 }
 
-# snippet: usage
 usage() {
   if [ "${1:-0}" -ne 0 ]; then
     print_usage >&2
@@ -20,7 +19,6 @@ usage() {
   exit "${1:-0}"
 }
 
-# snippet: die
 die() {
   printf '%s✗ %s%s\n' "${COLOR_RED:-}" "$*" "${COLOR_RESET:-}" >&2
   exit 1

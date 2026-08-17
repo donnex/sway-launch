@@ -13,7 +13,6 @@ print_usage() {
   printf 'Requires sway, swaymsg, foot, and cargo on PATH.\n'
 }
 
-# snippet: setup_colors
 # shellcheck disable=SC2034
 setup_colors() {
   if [ -t 1 ]; then
@@ -37,13 +36,11 @@ setup_colors() {
   fi
 }
 
-# snippet: die
 die() {
   printf '%s✗ %s%s\n' "${COLOR_RED:-}" "$*" "${COLOR_RESET:-}" >&2
   exit 1
 }
 
-# snippet: usage
 usage() {
   if [ "${1:-0}" -ne 0 ]; then
     print_usage >&2
@@ -53,7 +50,6 @@ usage() {
   exit "${1:-0}"
 }
 
-# snippet: poll
 poll() {
   poll_max_attempts="$1"
   poll_delay_seconds="$2"

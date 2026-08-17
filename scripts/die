@@ -1,8 +1,0 @@
-# die <message>
-# Prints <message> to stderr prefixed with a colored ✗, then exits 1.
-# Degrades gracefully (no color) if COLOR_RED/COLOR_RESET are unset, i.e.
-# the script hasn't called setup_colors.
-die() {
-  printf '%s✗ %s%s\n' "${COLOR_RED:-}" "$*" "${COLOR_RESET:-}" >&2
-  exit 1
-}
