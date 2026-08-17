@@ -1,6 +1,6 @@
 # Three windows, each moved to its own named workspace.
 # Run with, e.g.:
-#   sway-launch --template templates/workspace-spread.toml --apps foot,firefox,code
+#   sway-launch --template workspace-spread --apps foot,firefox,code
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
 
