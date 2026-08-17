@@ -1,6 +1,6 @@
 # A tiled main window, with a small floating window on top of it.
 # Run with, e.g.:
-#   sway-launch --template templates/floating-overlay.toml --apps code,foot
+#   sway-launch --template floating-overlay --apps code,foot
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
 

@@ -2,8 +2,7 @@
 # A wide main window on the right — sidebar-left.toml's shape, with the
 # sidebar split into two windows instead of one.
 # Run with, e.g.:
-#   sway-launch --template templates/sidebar-left-dual-stack.toml \
-#     --apps foot,foot,code
+#   sway-launch --template sidebar-left-dual-stack --apps foot,foot,code
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
 #
