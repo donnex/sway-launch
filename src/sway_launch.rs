@@ -563,14 +563,7 @@ impl SwayAction<'_> {
             },
             SwayAction::Floating { container_id, .. } => {
                 match self::find_container_node(*container_id)? {
-                    Some(node)
-                        if matches!(
-                            node.floating,
-                            Some(swayipc::Floating::UserOn) | Some(swayipc::Floating::AutoOn)
-                        ) =>
-                    {
-                        Ok(Some(*container_id))
-                    }
+                    Some(node) if self::node_is_floating(&node) => Ok(Some(*container_id)),
                     _ => Ok(None),
                 }
             }
@@ -1318,6 +1311,22 @@ fn find_container_node(container_id: i64) -> Result<Option<Node>, String> {
         Err(error) => return Err(error.to_string()),
     };
     Ok(self::find_node(&tree, container_id).cloned())
+}
+
+/// Whether `node` is currently floating. Sway 1.9 (still what `apt` installs
+/// on Ubuntu 24.04, confirmed live against a headless compositor during a
+/// CI-failure investigation) never populates a floating container's own
+/// `floating` field — it stays `null` even though the container's `type` is
+/// correctly `floating_con` — while Sway 1.11 populates both. Checking
+/// `node_type` alone therefore covers both versions; the `floating` field is
+/// checked too only so a version that reverses this (populates `floating`
+/// but not `node_type`, unconfirmed but not ruled out) still works.
+fn node_is_floating(node: &Node) -> bool {
+    node.node_type == NodeType::FloatingCon
+        || matches!(
+            node.floating,
+            Some(swayipc::Floating::UserOn) | Some(swayipc::Floating::AutoOn)
+        )
 }
 
 /// Recursively walks `node` tracking the name of the nearest ancestor whose
@@ -3350,6 +3359,39 @@ mod tests {
     fn height_matches_false_when_short_of_the_expected_value() {
         let node = node_with_geometry(400, 300, 2, 25);
         assert!(!height_matches(&node, 300));
+    }
+
+    // node_is_floating
+
+    fn node_with_floating_state(node_type: &str, floating: Option<&str>) -> Node {
+        let mut value = leaf_node_value(10, Some("kitty"), None);
+        value["type"] = serde_json::json!(node_type);
+        if let Some(floating) = floating {
+            value["floating"] = serde_json::json!(floating);
+        }
+        serde_json::from_value(value).expect("valid Node test fixture")
+    }
+
+    #[test]
+    fn node_is_floating_true_for_floating_con_type_even_without_a_floating_field() {
+        // Sway 1.9 (confirmed live against a headless compositor) leaves a
+        // floating container's own `floating` field null and only reports
+        // its state via `type: floating_con` — node_is_floating() must not
+        // rely on the `floating` field alone.
+        let node = node_with_floating_state("floating_con", None);
+        assert!(node_is_floating(&node));
+    }
+
+    #[test]
+    fn node_is_floating_true_when_the_floating_field_is_set() {
+        let node = node_with_floating_state("con", Some("user_on"));
+        assert!(node_is_floating(&node));
+    }
+
+    #[test]
+    fn node_is_floating_false_for_a_plain_tiled_node() {
+        let node = node_with_floating_state("con", None);
+        assert!(!node_is_floating(&node));
     }
 
     // compute_center_position

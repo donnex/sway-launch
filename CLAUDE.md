@@ -161,8 +161,17 @@ variant knows how to:
   `current_workspace()`/`current_output()`); `Floating`/`Fullscreen`/`Focus` were found live to have
   the identical failure mode later — re-running `--floating`/`--fullscreen`/`--focus` on a window
   already in that state hung the full `--timeout` and then errored, before this was added (checked
-  via `find_container_node()`'s `floating`/`fullscreen_mode`/`focused` fields). `Mark` was checked
-  live too and found *not* to need this — re-applying a mark the container already has still fires
+  via `find_container_node()`'s `floating`/`fullscreen_mode`/`focused` fields). `Floating`'s own
+  check is `node_is_floating()`, not `node.floating` alone: a CI-failure investigation found Sway
+  1.9 (still what `apt` installs on Ubuntu 24.04/`ubuntu-latest`, confirmed live against a headless
+  compositor) never populates a floating container's own `floating` field — it stays `null` even
+  though `floating enable` correctly changes the node's `type` to `floating_con` — while Sway 1.11
+  populates both, so `node_is_floating()` checks `node_type == FloatingCon` first and falls back to
+  the `floating` field. Without this, `already_at_target()` never short-circuited on Sway 1.9,
+  reproducing the exact pre-fix hang/error this paragraph describes; confirmed live in both
+  directions (broken on 1.9, fixed on both 1.9 and 1.11) during that investigation. `Mark` was
+  checked live too and found *not* to need this — re-applying a mark the container already has
+  still fires
   `WindowChange::Mark`. Confirmed by `tests/live_sway.rs`'s
   `workspace_is_a_no_op_when_already_on_the_target_workspace`,
   `output_is_a_no_op_when_already_on_the_target_output`,

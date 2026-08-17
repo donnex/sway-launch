@@ -68,6 +68,20 @@ fn get_node(connection: &mut Connection, con_id: i64) -> Node {
         .clone()
 }
 
+/// Mirrors `sway_launch.rs`'s private `node_is_floating()`. Sway 1.9 (still
+/// what `apt` installs on the `ubuntu-latest` CI runner) never populates a
+/// floating container's own `floating` field — confirmed live against a
+/// headless compositor, `floating enable` correctly changes `node_type` to
+/// `FloatingCon` but leaves `floating` at `None` — while Sway 1.11
+/// populates both, so `node_type` is the version-portable check.
+fn node_is_floating(node: &Node) -> bool {
+    node.node_type == NodeType::FloatingCon
+        || matches!(
+            node.floating,
+            Some(swayipc::Floating::UserOn) | Some(swayipc::Floating::AutoOn)
+        )
+}
+
 fn workspace_containing<'a>(
     node: &'a Node,
     con_id: i64,
@@ -198,11 +212,9 @@ fn floating_with_width_and_height_applies_all_three() {
 
     let node = get_node(&mut connection, container_id);
     assert!(
-        matches!(
-            node.floating,
-            Some(swayipc::Floating::UserOn) | Some(swayipc::Floating::AutoOn)
-        ),
-        "expected the window to be floating, got {:?}",
+        node_is_floating(&node),
+        "expected the window to be floating, got node_type {:?}, floating {:?}",
+        node.node_type,
         node.floating
     );
     // "resize set height" targets the decoration-inclusive frame, same as
@@ -1531,18 +1543,25 @@ fn retarget_by_id_layout_floats_the_first_step_by_name() {
 
     let node = get_node(&mut connection, ids[0]);
     assert!(
-        matches!(
-            node.floating,
-            Some(swayipc::Floating::UserOn) | Some(swayipc::Floating::AutoOn)
-        ),
-        "the first step's window should end up floating, got {:?}",
+        node_is_floating(&node),
+        "the first step's window should end up floating, got node_type {:?}, floating {:?}",
+        node.node_type,
         node.floating
     );
-    // "resize set width" targets the border-inclusive outer width, same as
-    // floating_with_width_and_height_applies_all_three's height adjustment —
-    // rect.width alone is 2*current_border_width short of the requested
-    // value (2px on each side with the default border style).
-    assert_eq!(node.rect.width + 2 * node.current_border_width, 800);
+    // Mirrors src/sway_launch.rs's width_matches(): a window that had
+    // already been tiled with a sibling for a while before being floated
+    // and resized can come out short by 2*current_border_width on
+    // rect.width alone (confirmed live on Sway 1.11) — but confirmed live
+    // on Sway 1.9 (still what `apt` installs on the `ubuntu-latest` CI
+    // runner) that the exact rect.width match applies instead in this same
+    // scenario, so — same as width_matches() itself — accept either rather
+    // than hardcoding one specific formula.
+    assert!(
+        node.rect.width == 800 || node.rect.width + 2 * node.current_border_width == 800,
+        "expected rect.width 800 (or {} short of it accounting for the border), got {}",
+        2 * node.current_border_width,
+        node.rect.width
+    );
 
     drop(guards);
 }
