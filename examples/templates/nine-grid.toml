@@ -1,5 +1,11 @@
 # An equally sized 3x3 grid, three rows of three, with no application baked
-# in — the same shape-extension idea as quad-grid.toml, one row taller.
+# in — the same shape-extension idea as quad-grid.toml, one row taller. Only
+# the first window of each row gets an explicit split="h" — giving every
+# column its own split call instead nests each new window inside the
+# previous one's half rather than joining a single flat row, producing an
+# uneven 640/320/320-style split instead of three equal columns (confirmed
+# live — this file previously did exactly that, despite the "equally
+# sized" claim above).
 # Run with, e.g.:
 #   sway-launch --template examples/templates/nine-grid.toml \
 #     --apps kitty,firefox,code,thunar,chromium,kitty,kitty,kitty,kitty
@@ -12,11 +18,9 @@ split = "h"
 
 [[step]]
 slot = "top-middle"
-split = "h"
 
 [[step]]
 slot = "top-right"
-split = "v"
 
 [[step]]
 slot = "middle-left"
@@ -25,11 +29,9 @@ split = "h"
 
 [[step]]
 slot = "middle-middle"
-split = "h"
 
 [[step]]
 slot = "middle-right"
-split = "v"
 
 [[step]]
 slot = "bottom-left"
@@ -38,7 +40,6 @@ split = "h"
 
 [[step]]
 slot = "bottom-middle"
-split = "h"
 
 [[step]]
 slot = "bottom-right"
