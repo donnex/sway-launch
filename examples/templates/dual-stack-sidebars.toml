@@ -2,7 +2,7 @@
 # Two master-dual-stack.toml-style stacks flanking a single main column.
 # Run with, e.g.:
 #   sway-launch --template examples/templates/dual-stack-sidebars.toml \
-#     --apps kitty,kitty,code,kitty,kitty
+#     --apps foot,foot,code,foot,foot
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
 

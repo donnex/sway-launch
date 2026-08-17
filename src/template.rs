@@ -256,7 +256,7 @@ mod tests {
     fn minimal_binding() -> Binding {
         Binding {
             slot: "editor".to_string(),
-            command: Some("kitty".to_string()),
+            command: Some("foot".to_string()),
             con_id: None,
             existing: false,
             app_id: None,
@@ -297,7 +297,7 @@ mod tests {
         let resolved = resolve(&template, &bindings).expect("valid template should resolve");
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].id, Some("editor".to_string()));
-        assert_eq!(resolved[0].command, Some("kitty".to_string()));
+        assert_eq!(resolved[0].command, Some("foot".to_string()));
         assert!(resolved[0].floating);
         assert_eq!(resolved[0].mark, Some("pinned".to_string()));
     }
@@ -352,7 +352,7 @@ mod tests {
         let bindings = Bindings {
             binding: vec![Binding {
                 slot: "editor".to_string(),
-                command: Some("kitty".to_string()),
+                command: Some("foot".to_string()),
                 con_id: Some(42),
                 existing: false,
                 app_id: None,
@@ -442,7 +442,7 @@ mod tests {
             r#"
             [[binding]]
             slot = "editor"
-            command = "kitty"
+            command = "foot"
             "#,
         )
         .expect("valid bindings should parse");
@@ -456,7 +456,7 @@ mod tests {
             r#"
             [[binding]]
             slot = "editor"
-            comand = "kitty"
+            comand = "foot"
             "#,
         );
         assert!(result.is_err());

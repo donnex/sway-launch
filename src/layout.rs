@@ -182,19 +182,19 @@ mod tests {
         let layout = parse(
             r#"
             [[step]]
-            command = "kitty"
-            app_id = "kitty"
+            command = "foot"
+            app_id = "foot"
             split = "h"
 
             [[step]]
-            command = "kitty"
-            app_id = "kitty"
+            command = "foot"
+            app_id = "foot"
             "#,
         )
         .expect("valid layout should parse");
 
         assert_eq!(layout.step.len(), 2);
-        assert_eq!(layout.step[0].command, Some("kitty".to_string()));
+        assert_eq!(layout.step[0].command, Some("foot".to_string()));
         assert!(matches!(layout.step[0].split, Some(Split::H)));
         assert_eq!(layout.step[1].split, None);
     }
@@ -235,7 +235,7 @@ mod tests {
 
     fn minimal_step() -> LayoutStep {
         LayoutStep {
-            command: Some("kitty".to_string()),
+            command: Some("foot".to_string()),
             con_id: None,
             existing: false,
             target_id: None,
@@ -272,7 +272,7 @@ mod tests {
             .expect("valid step should convert");
         assert!(matches!(
             sway_launch.target,
-            sway_launch::Target::Exec { command: "kitty" }
+            sway_launch::Target::Exec { command: "foot" }
         ));
     }
 
@@ -312,7 +312,7 @@ mod tests {
         let mut step = minimal_step();
         step.command = None;
         step.existing = true;
-        step.app_id = Some("kitty".to_string());
+        step.app_id = Some("foot".to_string());
         let sway_launch = step
             .to_sway_launch(
                 time::Duration::from_secs(5),
@@ -341,8 +341,8 @@ mod tests {
     #[test]
     fn to_sway_launch_rejects_app_id_and_class_together() {
         let mut step = minimal_step();
-        step.app_id = Some("kitty".to_string());
-        step.class = Some("Kitty".to_string());
+        step.app_id = Some("foot".to_string());
+        step.class = Some("Foot".to_string());
         assert!(step
             .to_sway_launch(
                 time::Duration::from_secs(5),
@@ -388,7 +388,7 @@ mod tests {
         let mut step = minimal_step();
         step.command = None;
         step.con_id = Some(42);
-        step.app_id = Some("kitty".to_string());
+        step.app_id = Some("foot".to_string());
         assert!(step
             .to_sway_launch(
                 time::Duration::from_secs(5),
@@ -404,7 +404,7 @@ mod tests {
         let mut step = minimal_step();
         step.command = None;
         step.con_id = Some(42);
-        step.class = Some("Kitty".to_string());
+        step.class = Some("Foot".to_string());
         assert!(step
             .to_sway_launch(
                 time::Duration::from_secs(5),
@@ -419,7 +419,7 @@ mod tests {
     fn to_sway_launch_rejects_command_and_existing_together() {
         let mut step = minimal_step();
         step.existing = true;
-        step.app_id = Some("kitty".to_string());
+        step.app_id = Some("foot".to_string());
         assert!(step
             .to_sway_launch(
                 time::Duration::from_secs(5),
@@ -436,7 +436,7 @@ mod tests {
         step.command = None;
         step.con_id = Some(42);
         step.existing = true;
-        step.app_id = Some("kitty".to_string());
+        step.app_id = Some("foot".to_string());
         assert!(step
             .to_sway_launch(
                 time::Duration::from_secs(5),

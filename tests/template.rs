@@ -104,7 +104,7 @@ fn template_apps_count_mismatch_names_the_missing_slots() {
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
-        .args(["--template", template.to_str().unwrap(), "--apps", "kitty"])
+        .args(["--template", template.to_str().unwrap(), "--apps", "foot"])
         .output()
         .expect("failed to run sway-launch binary");
 
@@ -196,7 +196,7 @@ fn template_rejects_misspelled_step_field() {
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
-        .args(["--template", template.to_str().unwrap(), "--apps", "kitty"])
+        .args(["--template", template.to_str().unwrap(), "--apps", "foot"])
         .output()
         .expect("failed to run sway-launch binary");
 
@@ -226,7 +226,7 @@ fn template_apps_rejects_an_empty_entry() {
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
-        .args(["--template", template.to_str().unwrap(), "--apps", "kitty,"])
+        .args(["--template", template.to_str().unwrap(), "--apps", "foot,"])
         .output()
         .expect("failed to run sway-launch binary");
 
@@ -243,7 +243,7 @@ fn template_rejects_binding_with_app_id_and_class_together() {
     );
     let bindings = TempToml::write(
         "binding-app-id-and-class-bindings",
-        "[[binding]]\nslot = \"editor\"\ncommand = \"kitty\"\napp_id = \"kitty\"\nclass = \"Kitty\"\n",
+        "[[binding]]\nslot = \"editor\"\ncommand = \"foot\"\napp_id = \"foot\"\nclass = \"Foot\"\n",
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
@@ -272,7 +272,7 @@ fn template_builtin_name_is_found_and_parsed_without_a_toml_extension() {
     // name, proving the lookup itself works, while staying headless-safe:
     // bindings_from_apps() fails before run_steps() ever touches IPC.
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
-        .args(["--template", "quad-grid", "--apps", "kitty,kitty"])
+        .args(["--template", "quad-grid", "--apps", "foot,foot"])
         .output()
         .expect("failed to run sway-launch binary");
 
@@ -289,7 +289,7 @@ fn template_builtin_name_is_found_and_parsed_without_a_toml_extension() {
 #[test]
 fn template_unknown_builtin_name_errors_clearly() {
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
-        .args(["--template", "not-a-real-template", "--apps", "kitty"])
+        .args(["--template", "not-a-real-template", "--apps", "foot"])
         .output()
         .expect("failed to run sway-launch binary");
 
@@ -307,7 +307,7 @@ fn template_toml_suffixed_name_is_never_treated_as_a_builtin() {
     // read, not silently fall back to a built-in lookup, even though
     // "quad-grid" itself is a real built-in name.
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
-        .args(["--template", "quad-grid.toml", "--apps", "kitty"])
+        .args(["--template", "quad-grid.toml", "--apps", "foot"])
         .output()
         .expect("failed to run sway-launch binary");
 
@@ -364,7 +364,7 @@ fn template_conflicts_with_layout() {
             "--template",
             template.to_str().unwrap(),
             "--apps",
-            "kitty",
+            "foot",
             "--layout",
             template.to_str().unwrap(),
         ])

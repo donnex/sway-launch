@@ -1,7 +1,7 @@
 # One large main window on the left, three smaller windows stacked in a column on the right.
 # Run with, e.g.:
 #   sway-launch --template examples/templates/master-triple-stack.toml \
-#     --apps code,kitty,kitty,kitty
+#     --apps code,foot,foot,foot
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
 #

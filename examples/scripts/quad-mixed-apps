@@ -1,13 +1,13 @@
 #!/bin/sh
 #
-# Launch a 2x2 grid of four different applications: a kitty terminal,
+# Launch a 2x2 grid of four different applications: a foot terminal,
 # Firefox, Thunar, and VS Code.
 #
 set -eu
 
 print_usage() {
   printf 'Usage: %s\n' "$(basename "$0")"
-  printf 'Launch a 2x2 grid: kitty, Firefox, Thunar, and VS Code.\n'
+  printf 'Launch a 2x2 grid: foot, Firefox, Thunar, and VS Code.\n'
 }
 
 # snippet: usage
@@ -41,7 +41,7 @@ for required_command in firefox thunar code; do
     die "$required_command not found on PATH. Install Firefox, Thunar, and VS Code first."
 done
 
-sway-launch -a kitty --split h kitty
+sway-launch -a foot --split h foot
 sway-launch -a firefox --split v 'firefox --new-window https://example.com'
 
 sway-launch --new-row -a thunar --split h thunar

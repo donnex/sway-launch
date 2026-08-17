@@ -1,12 +1,12 @@
 #!/bin/sh
 #
-# Launch two kitty terminals stacked in a single column (one above the other).
+# Launch two foot terminals stacked in a single column (one above the other).
 #
 set -eu
 
 print_usage() {
   printf 'Usage: %s\n' "$(basename "$0")"
-  printf 'Launch two kitty terminals stacked in a single column.\n'
+  printf 'Launch two foot terminals stacked in a single column.\n'
 }
 
 # snippet: usage
@@ -29,5 +29,5 @@ case "${1:-}" in
   ;;
 esac
 
-sway-launch -a kitty --split v kitty
-sway-launch -a kitty kitty
+sway-launch -a foot --split v foot
+sway-launch -a foot foot

@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Launch a kitty terminal, then retarget it two ways without relaunching:
+# Launch a foot terminal, then retarget it two ways without relaunching:
 # first via --con-id using the captured container id, then via --existing
 # matching --app-id against the already-open window.
 #
@@ -31,6 +31,6 @@ case "${1:-}" in
   ;;
 esac
 
-container_id="$(sway-launch -a kitty kitty)"
+container_id="$(sway-launch -a foot foot)"
 sway-launch --con-id "$container_id" --floating --width 800px --height 600px
-sway-launch --existing -a kitty --mark retargeted
+sway-launch --existing -a foot --mark retargeted
