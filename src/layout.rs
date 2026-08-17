@@ -81,6 +81,14 @@ impl LayoutStep {
         if !app_id_match.is_empty() && !class_match.is_empty() {
             return Err("step must set only one of: app_id, class".to_string());
         }
+        // Mirrors the CLI's `conflicts_with_all` on `--app-id`/`--class`
+        // against `--con-id`: a con_id target already names an exact
+        // container, so an app_id/class match criteria alongside it can
+        // only be silently ignored, not honored — better to reject it than
+        // let a step look like it's matching on identity when it isn't.
+        if self.con_id.is_some() && (!app_id_match.is_empty() || !class_match.is_empty()) {
+            return Err("step must not combine con_id with app_id/class".to_string());
+        }
 
         let target_fields_set = [
             self.command.is_some(),
@@ -365,6 +373,38 @@ mod tests {
         // command instead of erroring, unlike the CLI's conflicts_with.
         let mut step = minimal_step();
         step.con_id = Some(42);
+        assert!(step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &HashMap::new()
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_con_id_and_app_id_together() {
+        let mut step = minimal_step();
+        step.command = None;
+        step.con_id = Some(42);
+        step.app_id = Some("kitty".to_string());
+        assert!(step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &HashMap::new()
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_con_id_and_class_together() {
+        let mut step = minimal_step();
+        step.command = None;
+        step.con_id = Some(42);
+        step.class = Some("Kitty".to_string());
         assert!(step
             .to_sway_launch(
                 time::Duration::from_secs(5),
