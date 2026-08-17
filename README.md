@@ -1,12 +1,42 @@
 # sway-launch
 
-`sway-launch` is a [Sway](https://swaywm.org/) tool for launching applications and running
-additional actions against the new window they create. This solves problems like *creating a new
-floating Firefox window* or *launching an application and waiting for its window before exiting*.
-In turn, this can be used to build scripts that set up a workspace with a basic saved layout.
+`sway-launch` is a CLI for the [Sway](https://swaywm.org/) window manager. It launches an
+application, waits for its window to appear via Sway's IPC event stream, then optionally runs
+follow-up actions against that window — floating, fullscreen, resizing, moving to a
+workspace/output, splitting, marking, and more (see [Actions reference](#actions-reference)). It
+can act on an already-open window the same way, via `--con-id`/`--existing`, instead of always
+launching a new one.
+
+Because it blocks until the window exists — and until each follow-up action is actually confirmed
+— it's built to be chained: run several `sway-launch` calls in a row in a shell script, and each
+one starts only once the previous window is ready, with no manual `sleep`s. That covers everything
+from a single one-off action (*open a new floating, centered Firefox window*) to a full startup
+script that recreates a saved workspace layout every time Sway starts (see
+[Recreatable layouts](#recreatable-layouts)).
+
+For a layout you'll reuse, `--layout` runs a whole sequence of steps from one TOML file instead of
+a shell script, and `--template` goes one step further: an app-agnostic layout — a grid, a
+master/stack arrangement, a sidebar — that applies to any set of applications via
+`--apps`/`--bindings`, so the same shape is reusable across different setups.
 
 Requires a running Sway session — `sway-launch` talks to Sway over its IPC socket (the same one
 `swaymsg` uses), so it won't do anything useful outside of one.
+
+## Table of contents
+
+- [Installation](#installation)
+- [Basic usage](#basic-usage)
+- [Recreatable layouts](#recreatable-layouts)
+  - [Examples](#examples)
+  - [Layout files](#layout-files)
+  - [Templates](#templates)
+- [Actions reference](#actions-reference)
+  - [Target an existing window](#target-an-existing-window)
+  - [Floating](#floating) · [Fullscreen](#fullscreen) · [Focus](#focus) · [Mark](#mark)
+  - [Workspace](#workspace) · [Output](#output) · [Height and width](#height-and-width) ·
+    [Position](#position) · [Split](#split)
+  - [Verbose](#verbose) · [JSON output](#json-output) · [Wait time](#wait-time) ·
+    [Debug events](#debug-events)
 
 ## Installation
 
@@ -64,6 +94,8 @@ Options:
   -h, --help                       Print help
   -V, --version                    Print version
 ```
+
+## Basic usage
 
 The most basic use is to just execute the given command; it then waits for a matching Sway IPC
 new-window event before returning the window's unique container id.
@@ -167,8 +199,8 @@ Basic (all `kitty`):
   once via `--existing` matching `--app-id`.
 - [`examples/layouts/quad-terminals.toml`](examples/layouts/quad-terminals.toml) — the same layout
   as `examples/scripts/quad-terminals`, as a declarative `--layout` file instead of a shell
-  script; run with `sway-launch --layout examples/layouts/quad-terminals.toml`. See Layout files
-  below.
+  script; run with `sway-launch --layout examples/layouts/quad-terminals.toml`. See
+  [Layout files](#layout-files) below.
 - [`examples/layouts/retarget-by-id.toml`](examples/layouts/retarget-by-id.toml) — two terminals
   sharing an `app_id`, then a third step that retargets specifically the first one by its step
   `id` — something `--existing` can't express, since it'd be ambiguous between the two.
@@ -177,7 +209,7 @@ Basic (all `kitty`):
 - [`examples/templates/quad-grid.toml`](examples/templates/quad-grid.toml) — the app-agnostic
   version of `examples/layouts/quad-terminals.toml`'s shape: the same 2x2 grid, but with no
   application baked in. Run with `sway-launch --template examples/templates/quad-grid.toml --apps
-  kitty,firefox,code,thunar` (or any four commands). See Templates below.
+  kitty,firefox,code,thunar` (or any four commands). See [Templates](#templates) below.
 
 Advanced (multiple applications):
 
@@ -186,7 +218,7 @@ Advanced (multiple applications):
   (`-c Code`) alongside `--app-id`, plus `--width` and `--new-column`.
 - [`examples/scripts/floating-file-manager`](examples/scripts/floating-file-manager) — Thunar as a
   floating, fixed-size window with a mark set, ready for a `for_window` rule to reposition it (see
-  the Mark section above). Demonstrates combining `--floating`, `--width`/`--height`, and `--mark`.
+  [Mark](#mark) below). Demonstrates combining `--floating`, `--width`/`--height`, and `--mark`.
 - [`examples/scripts/browser-comparison`](examples/scripts/browser-comparison) — Firefox and
   Chromium side by side on the same page, for comparing how each renders it.
 - [`examples/scripts/quad-mixed-apps`](examples/scripts/quad-mixed-apps) — a 2x2 grid like
@@ -307,25 +339,31 @@ and conflicts with `--layout` and every per-window flag, same reasoning as `--la
 [`examples/templates/quad-grid.toml`](examples/templates/quad-grid.toml).
 
 [`examples/templates/`](examples/templates) has a small library of other app-agnostic shapes ready
-to apply to any application via `--apps`/`--bindings`: even splits/grids
-([`dual-row`](examples/templates/dual-row.toml), [`dual-column`](examples/templates/dual-column.toml),
-[`triple-row`](examples/templates/triple-row.toml),
-[`triple-column`](examples/templates/triple-column.toml), `quad-grid` above,
-[`six-grid`](examples/templates/six-grid.toml), [`eight-grid`](examples/templates/eight-grid.toml),
-[`nine-grid`](examples/templates/nine-grid.toml)), master/stack layouts
-([`master-dual-stack`](examples/templates/master-dual-stack.toml),
-[`master-triple-stack`](examples/templates/master-triple-stack.toml),
-[`dual-stack-sidebars`](examples/templates/dual-stack-sidebars.toml)), asymmetric two-pane layouts
-([`sidebar-left`](examples/templates/sidebar-left.toml),
-[`sidebar-right`](examples/templates/sidebar-right.toml)), floating windows
-([`floating-overlay`](examples/templates/floating-overlay.toml),
-[`floating-centered`](examples/templates/floating-centered.toml)), multi-workspace/output spreads
-([`workspace-spread`](examples/templates/workspace-spread.toml),
-[`dual-output`](examples/templates/dual-output.toml)), and retargeting
-([`retarget-by-slot`](examples/templates/retarget-by-slot.toml)). Each file's own header comment
-has a ready-to-run `--apps` example.
+to apply to any application via `--apps`/`--bindings`. Each file's own header comment has a
+ready-to-run `--apps` example.
 
-## In depth
+| Category | Template | Shape | Slots |
+| --- | --- | --- | --- |
+| Grid | [`dual-row`](examples/templates/dual-row.toml) | Two windows side by side, one row | 2 |
+| Grid | [`dual-column`](examples/templates/dual-column.toml) | Two windows stacked, one column | 2 |
+| Grid | [`triple-row`](examples/templates/triple-row.toml) | Three windows side by side, one row | 3 |
+| Grid | [`triple-column`](examples/templates/triple-column.toml) | Three windows stacked, one column | 3 |
+| Grid | [`quad-grid`](examples/templates/quad-grid.toml) | Equal 2×2 grid | 4 |
+| Grid | [`six-grid`](examples/templates/six-grid.toml) | Equal grid, two rows of three | 6 |
+| Grid | [`eight-grid`](examples/templates/eight-grid.toml) | Equal grid, two rows of four | 8 |
+| Grid | [`nine-grid`](examples/templates/nine-grid.toml) | Equal 3×3 grid | 9 |
+| Master/stack | [`master-dual-stack`](examples/templates/master-dual-stack.toml) | One main window, a 2-window stack beside it | 3 |
+| Master/stack | [`master-triple-stack`](examples/templates/master-triple-stack.toml) | One main window, a 3-window stack beside it | 4 |
+| Master/stack | [`dual-stack-sidebars`](examples/templates/dual-stack-sidebars.toml) | One main window, a 2-window stack flanking each side | 5 |
+| Sidebar | [`sidebar-left`](examples/templates/sidebar-left.toml) | Narrow sidebar on the left, wide main window on the right | 2 |
+| Sidebar | [`sidebar-right`](examples/templates/sidebar-right.toml) | Wide main window on the left, narrow sidebar on the right | 2 |
+| Floating | [`floating-overlay`](examples/templates/floating-overlay.toml) | A tiled main window, with a small floating window on top | 2 |
+| Floating | [`floating-centered`](examples/templates/floating-centered.toml) | A single floating window, centered | 1 |
+| Multi-workspace/output | [`workspace-spread`](examples/templates/workspace-spread.toml) | Each window moved to its own named workspace | 3 |
+| Multi-workspace/output | [`dual-output`](examples/templates/dual-output.toml) | Each window moved to a different output (monitor) | 2 |
+| Retargeting | [`retarget-by-slot`](examples/templates/retarget-by-slot.toml) | Two windows side by side, then the first one retargeted by slot name | 2 |
+
+## Actions reference
 
 It's possible to run additional actions on the new window. Each action waits for its
 corresponding Sway IPC event, or for a static `--wait-time` ms if the action doesn't have one.
@@ -503,4 +541,14 @@ Sway action: Split (container id: 439) (split: Horizontal)
 No matching event types for action. Will run Sway command and wait 100 ms.
 Sway command: [con_id=439] splith
 439
+```
+
+### Debug events
+
+Prints every Sway IPC event to stdout, until stopped (`Ctrl-C`). Not part of everyday use — it's a
+diagnostic tool for seeing what Sway actually sends: useful when a `sway-launch` action doesn't
+behave as expected and you want to see the raw event stream Sway produces around it.
+
+```shell
+sway-launch --debug-events
 ```
