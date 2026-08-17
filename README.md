@@ -424,8 +424,9 @@ sway-launch --floating --width 1200px --height 80ppt kitty
 ### Position
 
 Set the position of the new window. Only makes sense for a floating window — a tiled window's
-position is determined by the layout, not by coordinates. Either `center`, or `<x>,<y>` in pixels
-from the top-left corner.
+position is determined by the layout, not by coordinates, and Sway rejects the command outright
+(rather than silently ignoring it) if the window isn't floating, so pair this with `--floating`.
+Either `center`, or `<x>,<y>` in pixels from the top-left corner.
 
 ```shell
 sway-launch --floating --position center kitty
@@ -477,10 +478,15 @@ Some actions, like split and move, do not have a corresponding Sway IPC event. F
 static sleep time is used instead. Depending on the machine or setup, the wait time may need to
 be set higher or lower than the default.
 
-The wait is applied both before and after the underlying Sway command — before, to let other
-running IPC clients finish their own commands; after, to let this command finish before the next
-action runs — so the effective delay added per action is roughly double the configured
-`--wait-time`.
+The wait is always applied *before* the underlying Sway command, unconditionally — to let other
+running IPC clients finish their own commands. *After* the command, every action in this category
+now briefly polls Sway's tree instead of unconditionally sleeping the full `--wait-time` again,
+returning as soon as the change is confirmed — so the actual delay is often just the one
+before-command wait, not double `--wait-time`. A few cases have no way to confirm via polling
+(e.g. resizing a window that's the sole occupant of its workspace is silently clamped by Sway, or
+moving a tiled window that's already at the edge of its workspace), in which case the action falls
+back to sleeping the full `--wait-time` again, same as before this fast path existed — so the
+"roughly double `--wait-time`" figure is still the worst case, just no longer the typical one.
 
 ```shell
 ...

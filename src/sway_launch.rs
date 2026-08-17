@@ -3,7 +3,8 @@ use regex::Regex;
 use std::sync::mpsc;
 use std::{fmt, thread, time};
 use swayipc::{
-    Connection, Event, EventStream, EventType, Node, NodeType, WindowChange, WindowEvent,
+    Connection, Event, EventStream, EventType, Node, NodeLayout, NodeType, WindowChange,
+    WindowEvent,
 };
 
 /// Environment variable name `run_wait_matching_exec_event()` tags a
@@ -26,6 +27,32 @@ const PID_MARKER_VAR: &str = "SWAY_LAUNCH_PID_MARKER";
 /// application) case, which resolves via `any_process_has_env_var()`
 /// well before this cap in practice.
 const PID_MARKER_FALLBACK_GRACE: time::Duration = time::Duration::from_millis(2000);
+
+/// The upper bound `run_poll_then_fallback()` polls `get_tree()` for a
+/// wait-time action's own confirmation before giving up and falling back to
+/// the original blind sleep-the-rest-of-`--wait-time` behavior — capped at
+/// the actual `--wait-time` in play (`run_poll_then_fallback()` computes
+/// `WAIT_TIME_POLL_GRACE.min(wait_time)`), not used directly. Several of
+/// these actions have legitimate no-op outcomes (e.g. resizing a solo
+/// window, per docs/plan-poll-based-wait-time-actions.md) where the
+/// expected tree state never arrives at all, so — like
+/// `PID_MARKER_FALLBACK_GRACE` — this must stay well short of `--timeout`
+/// rather than growing into a second hang. The `.min(wait_time)` cap exists
+/// because this constant alone isn't: it's 10x the CLI's own 20ms
+/// `--wait-time` default, and an earlier version of this code used it
+/// unconditionally, so any fallback case at default settings cost ~220ms
+/// instead of the ~40ms (`2 * wait_time`) it cost before this feature
+/// existed — confirmed live before the cap was added. 200ms comfortably
+/// covers every matcher this project has shipped (`Split`, `Height`,
+/// `Width`, `Position`, `NewColumn`, `NewRow`), all confirmed live to
+/// converge in a handful of milliseconds when they converge at all.
+const WAIT_TIME_POLL_GRACE: time::Duration = time::Duration::from_millis(200);
+
+/// How often `run_wait_time()`'s poll loop re-queries `get_tree()` while
+/// inside `WAIT_TIME_POLL_GRACE`. Cheap enough on a local Unix socket to run
+/// this often without meaningfully loading the compositor, while still
+/// avoiding a zero-sleep busy loop.
+const WAIT_TIME_POLL_INTERVAL: time::Duration = time::Duration::from_millis(10);
 
 #[derive(Copy, Clone, PartialEq, ValueEnum, serde::Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
@@ -498,14 +525,24 @@ impl SwayAction<'_> {
         }
     }
 
-    /// For `Workspace`/`Output`, checks whether the container is already on
-    /// the target workspace/output — Sway's `move workspace`/`move
-    /// container to output` is a no-op in that case and doesn't fire
-    /// `WindowChange::Move`, so `run_wait_matching_events()` would otherwise
-    /// hang until `--timeout` waiting for an event that was never coming.
-    /// Returns `Some(container_id)` to short-circuit `run()` with success,
-    /// or `None` to proceed normally — including for every action other
-    /// than Workspace/Output, which this never touches.
+    /// Checks whether the container is already where/how a given action
+    /// would put it — Sway doesn't fire the event each of these actions
+    /// waits on when the command turns out to be a no-op, so
+    /// `run_wait_matching_events()` would otherwise hang until `--timeout`
+    /// for an event that was never coming. Returns `Some(container_id)` to
+    /// short-circuit `run()` with success, or `None` to proceed normally.
+    ///
+    /// `Workspace`/`Output` were the first two found needing this (checked
+    /// via `current_workspace()`/`current_output()`). `Floating`/
+    /// `Fullscreen`/`Focus` were found to have the identical failure mode —
+    /// confirmed live: re-running `--floating`/`--fullscreen`/`--focus` on
+    /// a window already in that state hangs 5s and then errors out, rather
+    /// than completing promptly — so they're checked the same way, via
+    /// `find_container_node()`'s own `floating`/`fullscreen_mode`/`focused`
+    /// fields. `Mark` was checked live too and found *not* to need this:
+    /// re-applying a mark the container already has still fires
+    /// `WindowChange::Mark`, unlike these three. Every other action falls
+    /// through to `None` unconditionally, which this never touches.
     fn already_at_target(&self) -> Result<Option<i64>, String> {
         match self {
             SwayAction::Workspace {
@@ -524,8 +561,182 @@ impl SwayAction<'_> {
                 Some(current) if current == *output => Ok(Some(*container_id)),
                 _ => Ok(None),
             },
+            SwayAction::Floating { container_id, .. } => {
+                match self::find_container_node(*container_id)? {
+                    Some(node)
+                        if matches!(
+                            node.floating,
+                            Some(swayipc::Floating::UserOn) | Some(swayipc::Floating::AutoOn)
+                        ) =>
+                    {
+                        Ok(Some(*container_id))
+                    }
+                    _ => Ok(None),
+                }
+            }
+            SwayAction::Fullscreen { container_id, .. } => {
+                match self::find_container_node(*container_id)? {
+                    Some(node) if node.fullscreen_mode.is_some_and(|mode| mode != 0) => {
+                        Ok(Some(*container_id))
+                    }
+                    _ => Ok(None),
+                }
+            }
+            SwayAction::Focus { container_id, .. } => {
+                match self::find_container_node(*container_id)? {
+                    Some(node) if node.focused => Ok(Some(*container_id)),
+                    _ => Ok(None),
+                }
+            }
             _ => Ok(None),
         }
+    }
+
+    /// Whether this variant has a poll-based way to confirm its own command
+    /// took effect (see docs/plan-poll-based-wait-time-actions.md) — `Some`
+    /// with the current match state, or `None` if this variant has no poll
+    /// matcher yet (only `Split` does today; `run_wait_time()` falls back to
+    /// its original blind-sleep behavior for every other `None` variant).
+    /// Errors reading the tree (transient IPC hiccup, container gone) are
+    /// folded into "not confirmed yet" rather than propagated — this is only
+    /// ever used to try to return *faster* than the unconditional sleep
+    /// already does, never to turn success into failure.
+    /// `baseline` is only used by `NewColumn`/`NewRow` (see
+    /// `poll_baseline()`'s doc comment) — every other variant ignores it and
+    /// checks against a fixed target derived from its own fields instead.
+    fn poll_matches(&self, container_id: i64, baseline: Option<swayipc::Rect>) -> Option<bool> {
+        match self {
+            SwayAction::Split { split, .. } => {
+                let expected = match split {
+                    Split::V => NodeLayout::SplitV,
+                    Split::H => NodeLayout::SplitH,
+                };
+                Some(self::parent_node_layout(container_id) == Some(expected))
+            }
+            // `parse_pixel_value()` is deliberately checked before any IPC
+            // call — a `ppt` (percent) value has no pixel figure to poll
+            // for without also resolving the reference dimension it's a
+            // percentage of, so those opt out of polling entirely (`None`)
+            // rather than resolving to `Some(false)` that could never
+            // become true. `px` values do have a formula (`width_matches`/
+            // `height_matches`), so they opt in unconditionally — a
+            // transient tree-read failure inside `node_by_id()` folds into
+            // `Some(false)` ("not confirmed yet"), not `None`, so a
+            // one-off hiccup doesn't skip the whole poll grace period the
+            // way returning `None` here would.
+            SwayAction::Height { height, .. } => {
+                let expected_px = self::parse_pixel_value(height)?;
+                Some(
+                    self::node_by_id(container_id)
+                        .is_some_and(|node| self::height_matches(&node, expected_px)),
+                )
+            }
+            SwayAction::Width { width, .. } => {
+                let expected_px = self::parse_pixel_value(width)?;
+                Some(
+                    self::node_by_id(container_id)
+                        .is_some_and(|node| self::width_matches(&node, expected_px)),
+                )
+            }
+            SwayAction::Position { position, .. } => {
+                Some(self::position_matches(container_id, position))
+            }
+            // No fixed target exists for "move right"/"move down" — a
+            // successful move can land the window almost anywhere in the
+            // tree. Instead, `poll_baseline()` snapshots the window's own
+            // `rect` just before the command runs, and this compares the
+            // current `rect` against it: any real move changes it (a
+            // sibling swap shifts x/y, a row/column change shifts
+            // width/height too), confirmed live across both an ordinary
+            // sibling swap and a row-changing move that also rewrites the
+            // surrounding split structure. Critically, this does *not*
+            // compare parent/sibling structure directly — live testing
+            // (see docs/plan-poll-based-wait-time-actions.md) found that
+            // the documented "already at the edge" no-op still incidentally
+            // restructures the tree around *other* siblings (Sway wraps
+            // one in a new split container) even though the target window's
+            // own `rect` never changes, which made an earlier
+            // parent/sibling-list comparison here false-positive on
+            // exactly the no-op case this whole mechanism exists to fall
+            // back gracefully on.
+            SwayAction::NewColumn { .. } | SwayAction::NewRow { .. } => {
+                let baseline = baseline?;
+                Some(self::node_by_id(container_id).is_some_and(|node| node.rect != baseline))
+            }
+            _ => None,
+        }
+    }
+
+    /// Snapshots whatever state a wait-time action's `poll_matches()` needs
+    /// to compare against *after* the command runs — captured *before* it
+    /// runs. Only `NewColumn`/`NewRow` need one (their own current `rect`);
+    /// every other action checks against a fixed target derived from its
+    /// own fields, with no prior snapshot needed. Returns `None` if the
+    /// tree can't be read, which `poll_matches()` treats as "no matcher
+    /// applies" for these two variants — without a baseline there's nothing
+    /// to compare against, so falling back to the original unconditional
+    /// sleep is the only sound choice.
+    fn poll_baseline(&self, container_id: i64) -> Option<swayipc::Rect> {
+        match self {
+            SwayAction::NewColumn { .. } | SwayAction::NewRow { .. } => {
+                self::node_by_id(container_id).map(|node| node.rect)
+            }
+            _ => None,
+        }
+    }
+
+    /// Polls for up to `WAIT_TIME_POLL_GRACE` for `poll_matches()` to confirm
+    /// the command `run_wait_time()` just sent took effect, returning as
+    /// soon as it does (the fast path). Several wait-time actions have
+    /// legitimate no-op outcomes where confirmation never arrives (see
+    /// docs/plan-poll-based-wait-time-actions.md) — telling that apart from
+    /// "hasn't happened yet" is impossible from tree state alone, so once
+    /// the grace period elapses this falls back to today's original
+    /// behavior: assume success and sleep out the rest of `wait_time`,
+    /// mirroring `run_wait_matching_exec_event()`'s
+    /// `PID_MARKER_FALLBACK_GRACE` fallback.
+    fn run_poll_then_fallback(
+        &self,
+        container_id: i64,
+        wait_time: time::Duration,
+        baseline: Option<swayipc::Rect>,
+    ) -> i64 {
+        // Capped at `wait_time`: `WAIT_TIME_POLL_GRACE` (200ms) is only a
+        // sound upper bound when `--wait-time` is at least that — at the
+        // CLI's own 20ms default, polling for the full 200ms before
+        // falling back would make the fallback path (a legitimate, common
+        // case — a solo-window resize clamp, a tiled NewColumn/NewRow
+        // already at the edge) take ~220ms total instead of the ~40ms it
+        // cost before this feature existed, a regression this constant's
+        // own original design was supposed to rule out. Confirmed live
+        // this fix restores that bound: with the cap, the fallback path
+        // costs `wait_time` (pre-sleep) + at most `wait_time` (grace, now
+        // capped, plus whatever's left of the sleep) — back to roughly
+        // `2 * wait_time`, same worst case as before polling existed.
+        let grace = WAIT_TIME_POLL_GRACE.min(wait_time);
+        let poll_started = time::Instant::now();
+        loop {
+            if self.poll_matches(container_id, baseline).unwrap_or(false) {
+                if self.verbose() {
+                    eprintln!("Confirmed via poll (container id: {})", container_id);
+                }
+                return container_id;
+            }
+            if poll_started.elapsed() >= grace {
+                break;
+            }
+            thread::sleep(WAIT_TIME_POLL_INTERVAL);
+        }
+
+        if self.verbose() {
+            eprintln!(
+                "Poll grace period elapsed without confirmation, falling back to wait-time \
+                 (container id: {})",
+                container_id
+            );
+        }
+        thread::sleep(wait_time.saturating_sub(poll_started.elapsed()));
+        container_id
     }
 
     fn run_wait_time(&self) -> Result<i64, String> {
@@ -558,12 +769,22 @@ impl SwayAction<'_> {
             ));
         }
 
+        // Captured before the command runs, not after — see
+        // poll_baseline()'s doc comment for why NewColumn/NewRow need a
+        // "before" snapshot while every other poll-matched action doesn't.
+        let baseline = self.poll_baseline(container_id);
+
         let sway_command = self.sway_command();
         if self.verbose() {
             eprintln!("Sway command: {}", sway_command);
         }
 
         run_sway_command(&sway_command)?;
+
+        if self.poll_matches(container_id, baseline).is_some() {
+            return Ok(self.run_poll_then_fallback(container_id, wait_time, baseline));
+        }
+
         thread::sleep(wait_time);
 
         Ok(container_id)
@@ -1082,6 +1303,23 @@ fn containing_node_name(con_id: i64, kind: NodeType) -> Result<Option<String>, S
     Ok(self::find_containing_name(&tree, con_id, kind, None))
 }
 
+/// `container_id`'s own tree node, or `None` if it isn't found. Unlike
+/// `node_by_id()` (used by the poll-then-fallback machinery, where a
+/// transient IPC failure is deliberately swallowed into "not confirmed
+/// yet"), this propagates a genuine connection/`get_tree()` failure as an
+/// error — matching `containing_node_name()`'s contract, since both are
+/// used by `SwayAction::already_at_target()` to check state *before*
+/// deciding whether to act, where silently treating a real IPC failure as
+/// "not already there" would let a later step fail with a confusing
+/// timeout instead of surfacing the actual problem immediately.
+fn find_container_node(container_id: i64) -> Result<Option<Node>, String> {
+    let tree = match self::new_connection()?.get_tree() {
+        Ok(tree) => tree,
+        Err(error) => return Err(error.to_string()),
+    };
+    Ok(self::find_node(&tree, container_id).cloned())
+}
+
 /// Recursively walks `node` tracking the name of the nearest ancestor whose
 /// `node_type` matches `kind`, returning that name once `con_id` is found —
 /// e.g. with `kind: NodeType::Workspace`, the name of the workspace
@@ -1106,17 +1344,49 @@ fn find_containing_name(
         .find_map(|child| self::find_containing_name(child, con_id, kind, current))
 }
 
+/// The direction `NewColumn` ("move right") / `NewRow` ("move down") moves
+/// in — used only by `relocates_to_another_output()` to know which of the
+/// workspace's own axes/layout to check.
+#[derive(Copy, Clone)]
+enum MoveDirection {
+    Right,
+    Down,
+}
+
 /// Whether running NewColumn/NewRow on `container_id` right now would risk
 /// Sway relocating it (and its whole workspace) to a different output
-/// rather than moving it within the workspace or no-oping. Confirmed live
-/// to happen specifically when `container_id` is the only window in its
-/// workspace and more than one output exists: Sway's `move <direction>`
-/// escalates to the adjacent output when there's no sibling to move past
-/// within the container (see the NewColumn/NewRow reasoning comment in
-/// `SwayAction::matching_window_change_events()`). Returns `false` (safe to
-/// proceed) if outputs/tree can't be read or `container_id` isn't found,
-/// rather than blocking the action on an inconclusive check.
-fn relocates_to_another_output(container_id: i64) -> Result<bool, String> {
+/// rather than moving it within the workspace or no-oping.
+///
+/// This originally checked only "is `container_id` the only window in its
+/// workspace" — live testing during this feature's development found that
+/// too narrow: a *non-solo* workspace can escalate too, whenever
+/// `container_id` is already the trailing child of a workspace whose own
+/// layout already matches the move's axis (confirmed live: two windows
+/// side by side, `[con_id=<rightmost>] move right` relocated it to another
+/// output, not a same-workspace no-op, even with a sibling to its left).
+/// Conversely, a solo window whose workspace layout *doesn't* match the
+/// axis (e.g. stacked vertically via `splitv`, then moved right) was
+/// confirmed live to restructure in place rather than escalate — so
+/// checking layout, not just child count, also avoids skipping a move that
+/// would actually have been safe. The current check: `container_id` is a
+/// *direct* child of its workspace (not nested in a sub-container), the
+/// workspace's own `layout` matches the axis (`SplitH` for `NewColumn`,
+/// `SplitV` for `NewRow`), and `container_id` is the last child in that
+/// list — this subsumes the original solo-window case (trivially both
+/// direct- and last-child of its workspace) while also catching the
+/// multi-window case that check alone missed. A window nested inside a
+/// sub-container is conservatively never flagged — that case wasn't
+/// confirmed live either way, so this only guards the confirmed risk
+/// rather than guessing at an unconfirmed one; a false negative here just
+/// means `SwayLaunch::run()` doesn't skip an action Sway would have
+/// silently no-oped or handled in place anyway, per the cases actually
+/// tested. Returns `false` (safe to proceed) if outputs/tree can't be read
+/// or `container_id`/its workspace can't be found, rather than blocking
+/// the action on an inconclusive check.
+fn relocates_to_another_output(
+    container_id: i64,
+    direction: MoveDirection,
+) -> Result<bool, String> {
     let outputs = match self::new_connection()?.get_outputs() {
         Ok(outputs) => outputs,
         Err(error) => return Err(error.to_string()),
@@ -1130,18 +1400,32 @@ fn relocates_to_another_output(container_id: i64) -> Result<bool, String> {
         Err(error) => return Err(error.to_string()),
     };
 
-    Ok(self::is_only_window_in_its_workspace(&tree, container_id))
+    Ok(self::is_at_the_trailing_workspace_edge(
+        &tree,
+        container_id,
+        direction,
+    ))
 }
 
-/// Whether `container_id` is the only window (tiled or floating) in the
-/// workspace containing it. `container_id` not being found in `tree` at all
-/// counts as "not alone" (`false`), so a stale/unknown id never triggers
-/// the `relocates_to_another_output()` guard.
-fn is_only_window_in_its_workspace(tree: &Node, container_id: i64) -> bool {
-    match self::find_workspace_node(tree, container_id) {
-        Some(workspace) => self::window_count(workspace) <= 1,
-        None => false,
+fn is_at_the_trailing_workspace_edge(
+    tree: &Node,
+    container_id: i64,
+    direction: MoveDirection,
+) -> bool {
+    let Some(workspace) = self::find_workspace_node(tree, container_id) else {
+        return false;
+    };
+    let expected_layout = match direction {
+        MoveDirection::Right => NodeLayout::SplitH,
+        MoveDirection::Down => NodeLayout::SplitV,
+    };
+    if workspace.layout != expected_layout {
+        return false;
     }
+    workspace
+        .nodes
+        .last()
+        .is_some_and(|last| last.id == container_id)
 }
 
 fn find_workspace_node(node: &Node, container_id: i64) -> Option<&Node> {
@@ -1180,16 +1464,193 @@ fn contains_id(node: &Node, container_id: i64) -> bool {
             .any(|child| self::contains_id(child, container_id))
 }
 
-/// A node counts as a window (rather than a split/container node) if it
-/// carries an `app_id` (native Wayland) or `window_properties` (XWayland) —
-/// the same presence checks `window_app_id_match`/`window_class_match` use
-/// to identify a real window elsewhere in this file.
-fn window_count(node: &Node) -> usize {
-    let mut count = usize::from(node.app_id.is_some() || node.window_properties.is_some());
-    for child in node.nodes.iter().chain(node.floating_nodes.iter()) {
-        count += self::window_count(child);
+/// The `layout` field of `container_id`'s *parent* node, or `None` if the
+/// container/tree can't be read, or `container_id` has no parent in the
+/// tree (e.g. it's the root). `container_id`'s own node never carries its
+/// own split direction — confirmed against a live Sway compositor,
+/// splitting a window with siblings wraps it in a new split container
+/// (whose `layout` is the requested direction) one level up, and splitting
+/// a solo window instead sets the `layout` of the workspace it's already
+/// the sole child of; the leaf window node's own `layout` field is always
+/// `None`/unset either way. Used by `SwayAction::poll_matches()` to confirm
+/// a `Split` action actually applied before its `run_poll_then_fallback()`
+/// grace period falls back to sleeping the rest of `--wait-time`.
+fn parent_node_layout(container_id: i64) -> Option<NodeLayout> {
+    let tree = self::new_connection().ok()?.get_tree().ok()?;
+    self::find_parent_layout(&tree, container_id)
+}
+
+fn find_parent_layout(node: &Node, container_id: i64) -> Option<NodeLayout> {
+    if node
+        .nodes
+        .iter()
+        .chain(node.floating_nodes.iter())
+        .any(|child| child.id == container_id)
+    {
+        return Some(node.layout);
     }
-    count
+    node.nodes
+        .iter()
+        .chain(node.floating_nodes.iter())
+        .find_map(|child| self::find_parent_layout(child, container_id))
+}
+
+/// A `\d+px` value's numeric part, or `None` for anything else (notably a
+/// `\d+ppt` percentage, which has no pixel figure to poll for without also
+/// resolving the reference dimension it's a percentage of — see
+/// `SwayAction::poll_matches()`'s `Height`/`Width` arms). Both are already
+/// validated by `validate_size_argument`'s regex by the time this runs, so
+/// a non-`px` value reaching here is always `ppt`, never malformed.
+fn parse_pixel_value(value: &str) -> Option<i32> {
+    value.strip_suffix("px")?.parse().ok()
+}
+
+/// The tree node with id `container_id`, or `None` if it can't be read
+/// (transient IPC error, or the container's gone) — used by
+/// `SwayAction::poll_matches()`'s `Height`/`Width`/`Position` arms to read
+/// a window's own current geometry, as opposed to `parent_node_layout()`,
+/// which reads its *parent's* state for `Split`.
+fn node_by_id(container_id: i64) -> Option<Node> {
+    let tree = self::new_connection().ok()?.get_tree().ok()?;
+    self::find_node(&tree, container_id).cloned()
+}
+
+fn find_node(node: &Node, container_id: i64) -> Option<&Node> {
+    if node.id == container_id {
+        return Some(node);
+    }
+    node.nodes
+        .iter()
+        .chain(node.floating_nodes.iter())
+        .find_map(|child| self::find_node(child, container_id))
+}
+
+/// Whether `node`'s current width matches a `resize set width <expected_px>px`
+/// command. Confirmed against a live Sway compositor that this needs two
+/// candidate formulas, not one fixed offset: a window resized while it's
+/// been floating since the very command that floated it matches
+/// `rect.width` exactly, but a window that had already been tiled for a
+/// while before being floated and resized comes out `2 *
+/// current_border_width` short on `rect.width` alone (see
+/// `retarget_by_id_layout_floats_the_first_step_by_name` in
+/// `tests/live_sway.rs`, and this project's own prior investigation notes
+/// in `docs/plan-poll-based-wait-time-actions.md`) — border accounting
+/// this project hasn't found a single deterministic rule for, so both
+/// candidates are accepted rather than picking one and risking a resize
+/// that's actually done never being recognized as such.
+///
+/// Accepted residual risk: `run_poll_then_fallback()`'s very first poll
+/// runs immediately after the command is sent, with no minimum settle
+/// time, so if the window's *pre-resize* width already happens to satisfy
+/// either formula for the *newly requested* width (the old and new widths
+/// would need to coincide, accounting for a possible border offset), this
+/// would report "confirmed" on that first poll before Sway has actually
+/// processed the new command — indistinguishable from a legitimate
+/// already-there match (the same case `Split`'s idempotent re-application
+/// relies on confirming instantly). Judged low-risk enough not to warrant
+/// the added latency/complexity of requiring a genuine change (like
+/// `NewColumn`/`NewRow`'s `poll_baseline()` snapshot) purely for this;
+/// revisit if it ever proves problematic in practice.
+fn width_matches(node: &Node, expected_px: i32) -> bool {
+    node.rect.width == expected_px || node.rect.width + 2 * node.current_border_width == expected_px
+}
+
+/// Whether `node`'s current height matches a `resize set height
+/// <expected_px>px` command. Unlike `width_matches()`, live testing found
+/// only one formula for height across both the freshly-floating and
+/// tiled cases: the decoration (title bar) is always excluded from
+/// `rect.height`, so the outer, decoration-inclusive height is
+/// `rect.height + deco_rect.height`.
+fn height_matches(node: &Node, expected_px: i32) -> bool {
+    node.rect.height + node.deco_rect.height == expected_px
+}
+
+/// Whether `container_id`'s window is currently positioned where `position`
+/// (`"center"` or `"<x>,<y>"`) requests. Never propagates a `None`/error —
+/// any failure to read the tree/outputs, or to resolve an expected
+/// position at all (e.g. `container_id` not found, or not on a known
+/// output), folds into `false` ("not confirmed yet"), consistent with
+/// `SwayAction::poll_matches()`'s other arms.
+fn position_matches(container_id: i64, position: &str) -> bool {
+    let Some((node, output_name)) = self::node_and_output_name(container_id) else {
+        return false;
+    };
+    let Some((expected_x, expected_y)) =
+        self::expected_position(position, &node, output_name.as_deref())
+    else {
+        return false;
+    };
+    node.deco_rect.x == expected_x && node.deco_rect.y == expected_y
+}
+
+/// `container_id`'s tree node together with the name of the output
+/// containing it (`None` if it isn't on any output, e.g. the scratchpad),
+/// read via a single `get_tree()` call — used by `position_matches()`
+/// rather than combining `node_by_id()` with the existing `current_output()`
+/// helper, which would cost a second, redundant tree fetch per poll
+/// iteration.
+fn node_and_output_name(container_id: i64) -> Option<(Node, Option<String>)> {
+    let tree = self::new_connection().ok()?.get_tree().ok()?;
+    let node = self::find_node(&tree, container_id)?.clone();
+    let output_name = self::find_containing_name(&tree, container_id, NodeType::Output, None);
+    Some((node, output_name))
+}
+
+/// The geometry of the output named `output_name`, or `None` if it can't be
+/// read or no output has that name.
+fn output_rect(output_name: &str) -> Option<swayipc::Rect> {
+    let outputs = self::new_connection().ok()?.get_outputs().ok()?;
+    outputs
+        .into_iter()
+        .find(|output| output.name == output_name)
+        .map(|output| output.rect)
+}
+
+/// The `(x, y)` `position_matches()` expects `node` to be at, for `"center"`
+/// or a validated `"<x>,<y>"` string (`validate_position_argument`'s regex
+/// guarantees the latter parses cleanly by the time this runs) — matches
+/// `deco_rect.x`/`deco_rect.y`, the decoration-inclusive frame `move
+/// position` actually targets, confirmed live by
+/// `position_moves_a_floating_window_to_given_coordinates`/
+/// `position_center_centers_a_floating_window` in `tests/live_sway.rs`
+/// (`deco_rect.x` and `rect.x` were confirmed equal there too, so using
+/// `deco_rect.x` uniformly for both the coordinate and center cases, rather
+/// than `rect.x` for one and `deco_rect.x` for the other, doesn't change
+/// which value is being compared). `output_name` is only consulted for
+/// `"center"`, so a window not on any output (e.g. the scratchpad) can
+/// still match a plain `"<x>,<y>"` position.
+fn expected_position(position: &str, node: &Node, output_name: Option<&str>) -> Option<(i32, i32)> {
+    match position {
+        "center" => {
+            let rect = self::output_rect(output_name?)?;
+            Some(self::compute_center_position(
+                rect,
+                node.rect.width,
+                node.rect.height + node.deco_rect.height,
+            ))
+        }
+        coords => {
+            let (x, y) = coords.split_once(',')?;
+            Some((x.parse().ok()?, y.parse().ok()?))
+        }
+    }
+}
+
+/// The top-left `(x, y)` that centers a `window_width` x `window_height`
+/// window (its decoration-inclusive outer footprint) within `output_rect`.
+/// `output_rect`'s own `x`/`y` are added in since tree/output coordinates
+/// are global, not output-relative — only visibly matters once a second
+/// output exists to the left of or above this one, but correct
+/// unconditionally rather than assuming this is the primary output.
+fn compute_center_position(
+    output_rect: swayipc::Rect,
+    window_width: i32,
+    window_height: i32,
+) -> (i32, i32) {
+    (
+        output_rect.x + (output_rect.width - window_width) / 2,
+        output_rect.y + (output_rect.height - window_height) / 2,
+    )
 }
 
 /// What `SwayLaunch::run()` should act on: launch a new window (the
@@ -1278,12 +1739,13 @@ impl SwayLaunch<'_> {
         }
 
         if self.new_column {
-            if self::relocates_to_another_output(container_id)? {
+            if self::relocates_to_another_output(container_id, MoveDirection::Right)? {
                 if self.verbose {
                     eprintln!(
-                        "Skipping new-column: container id {} is the only window in its \
-                         workspace and more than one output exists — \"move right\" would \
-                         relocate it to a different output instead of no-oping",
+                        "Skipping new-column: container id {} is at the trailing edge of a \
+                         workspace already laid out along that axis, and more than one output \
+                         exists — \"move right\" would relocate it to a different output \
+                         instead of no-oping",
                         container_id
                     );
                 }
@@ -1297,12 +1759,13 @@ impl SwayLaunch<'_> {
             }
         }
         if self.new_row {
-            if self::relocates_to_another_output(container_id)? {
+            if self::relocates_to_another_output(container_id, MoveDirection::Down)? {
                 if self.verbose {
                     eprintln!(
-                        "Skipping new-row: container id {} is the only window in its \
-                         workspace and more than one output exists — \"move down\" would \
-                         relocate it to a different output instead of no-oping",
+                        "Skipping new-row: container id {} is at the trailing edge of a \
+                         workspace already laid out along that axis, and more than one output \
+                         exists — \"move down\" would relocate it to a different output \
+                         instead of no-oping",
                         container_id
                     );
                 }
@@ -2218,6 +2681,171 @@ mod tests {
         assert_eq!(position.matching_window_change_events(), None);
     }
 
+    // SwayAction::poll_matches
+
+    #[test]
+    fn split_has_a_poll_matcher() {
+        // container_id 999999 is never in the tree read back by
+        // parent_node_layout()'s IPC call in this headless test environment,
+        // so the Some(bool) returned is always Some(false) here — this test
+        // only asserts Split opts into polling at all, not the match outcome
+        // itself (that needs a live Sway tree, covered by
+        // tests/live_sway.rs).
+        let action = SwayAction::Split {
+            container_id: 999999,
+            split: Split::H,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(action.poll_matches(999999, None), Some(false));
+    }
+
+    #[test]
+    fn new_column_and_new_row_have_no_poll_matcher_without_a_baseline() {
+        // Unlike Split/Height/Width/Position, NewColumn/NewRow have no
+        // fixed target to check against — without a poll_baseline()
+        // snapshot to compare the current rect to, there's nothing to poll
+        // for, so these opt out entirely (None) rather than resolving to
+        // Some(false) that could never become true.
+        let new_column = SwayAction::NewColumn {
+            container_id: 42,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        let new_row = SwayAction::NewRow {
+            container_id: 42,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(new_column.poll_matches(42, None), None);
+        assert_eq!(new_row.poll_matches(42, None), None);
+    }
+
+    #[test]
+    fn new_column_and_new_row_have_a_poll_matcher_given_a_baseline() {
+        // container_id 999999 is never in the tree read back by
+        // node_by_id()'s IPC call in this headless test environment, so
+        // node_by_id(999999) is always None and node.rect != baseline can
+        // never be observed true here — this test only asserts NewColumn/
+        // NewRow opt into polling once a baseline exists, not the match
+        // outcome itself (that needs a live Sway tree, covered by
+        // tests/live_sway.rs).
+        let new_column = SwayAction::NewColumn {
+            container_id: 999999,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        let new_row = SwayAction::NewRow {
+            container_id: 999999,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        let baseline = Some(rect(0, 0, 640, 720));
+        assert_eq!(new_column.poll_matches(999999, baseline), Some(false));
+        assert_eq!(new_row.poll_matches(999999, baseline), Some(false));
+    }
+
+    #[test]
+    fn only_new_column_and_new_row_have_a_poll_baseline_at_all() {
+        // Every other wait-time variant's poll_baseline() arm is `_ =>
+        // None` with no IPC call at all — a deterministic "not applicable"
+        // answer, unlike NewColumn/NewRow's (which calls node_by_id() and
+        // is exempted from headless coverage per CLAUDE.md, since it needs
+        // a live tree to return Some).
+        let split = SwayAction::Split {
+            container_id: 42,
+            split: Split::H,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        let height = SwayAction::Height {
+            container_id: 42,
+            height: "300px",
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        let width = SwayAction::Width {
+            container_id: 42,
+            width: "300px",
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        let position = SwayAction::Position {
+            container_id: 42,
+            position: "center",
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(split.poll_baseline(42), None);
+        assert_eq!(height.poll_baseline(42), None);
+        assert_eq!(width.poll_baseline(42), None);
+        assert_eq!(position.poll_baseline(42), None);
+    }
+
+    #[test]
+    fn height_and_width_in_pixels_have_a_poll_matcher() {
+        // container_id 999999 is never in the tree read back by
+        // node_by_id()'s IPC call in this headless test environment, so the
+        // Some(bool) returned is always Some(false) here — this test only
+        // asserts Height/Width in px opt into polling at all, not the match
+        // outcome itself (that needs a live Sway tree, covered by
+        // tests/live_sway.rs).
+        let height = SwayAction::Height {
+            container_id: 999999,
+            height: "300px",
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        let width = SwayAction::Width {
+            container_id: 999999,
+            width: "400px",
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(height.poll_matches(999999, None), Some(false));
+        assert_eq!(width.poll_matches(999999, None), Some(false));
+    }
+
+    #[test]
+    fn height_and_width_in_percent_have_no_poll_matcher() {
+        // A `ppt` value has no pixel figure to poll for without also
+        // resolving the reference dimension it's a percentage of (see
+        // parse_pixel_value()'s doc comment), so these opt out entirely
+        // rather than polling for something that could never match.
+        let height = SwayAction::Height {
+            container_id: 42,
+            height: "20ppt",
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        let width = SwayAction::Width {
+            container_id: 42,
+            width: "20ppt",
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(height.poll_matches(42, None), None);
+        assert_eq!(width.poll_matches(42, None), None);
+    }
+
+    #[test]
+    fn position_has_a_poll_matcher() {
+        let center = SwayAction::Position {
+            container_id: 999999,
+            position: "center",
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        let coords = SwayAction::Position {
+            container_id: 999999,
+            position: "100,200",
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(center.poll_matches(999999, None), Some(false));
+        assert_eq!(coords.poll_matches(999999, None), Some(false));
+    }
+
     // SwayAction::matches_window_event
 
     #[test]
@@ -2561,8 +3189,8 @@ mod tests {
         );
     }
 
-    // find_containing_name / find_workspace_node / contains_id / window_count /
-    // is_only_window_in_its_workspace
+    // find_containing_name / find_workspace_node / contains_id /
+    // is_at_the_trailing_workspace_edge
 
     #[test]
     fn find_containing_name_finds_the_nearest_ancestor_of_kind() {
@@ -2613,47 +3241,260 @@ mod tests {
     }
 
     #[test]
-    fn window_count_counts_only_window_nodes() {
-        let leaf1 = leaf_node_value(10, Some("kitty"), None);
-        let leaf2 = leaf_node_value(11, None, Some("Firefox"));
-        let tree = node_tree(1, vec![leaf1, leaf2], vec![]);
-        assert_eq!(window_count(&tree), 2);
+    fn find_parent_layout_returns_the_direct_parents_layout() {
+        let leaf = leaf_node_value(10, Some("kitty"), None);
+        let mut parent_value = container_node_value(2, vec![leaf], vec![]);
+        parent_value["layout"] = serde_json::json!("splitv");
+        let parent: Node = serde_json::from_value(parent_value).expect("valid Node test fixture");
+        assert_eq!(find_parent_layout(&parent, 10), Some(NodeLayout::SplitV));
     }
 
     #[test]
-    fn window_count_ignores_pure_split_containers() {
+    fn find_parent_layout_finds_the_nearest_ancestor_when_nested() {
+        let leaf = leaf_node_value(10, Some("kitty"), None);
+        let mut inner_value = container_node_value(2, vec![leaf], vec![]);
+        inner_value["layout"] = serde_json::json!("splith");
+        let tree = node_tree(1, vec![inner_value], vec![]);
+        assert_eq!(find_parent_layout(&tree, 10), Some(NodeLayout::SplitH));
+    }
+
+    #[test]
+    fn find_parent_layout_checks_floating_children_too() {
+        let floating = leaf_node_value(20, Some("kitty"), None);
+        let mut value = container_node_value(1, vec![], vec![floating]);
+        value["layout"] = serde_json::json!("splitv");
+        let tree: Node = serde_json::from_value(value).expect("valid Node test fixture");
+        assert_eq!(find_parent_layout(&tree, 20), Some(NodeLayout::SplitV));
+    }
+
+    #[test]
+    fn find_parent_layout_returns_none_when_id_not_found() {
+        let tree = node_tree(1, vec![], vec![]);
+        assert!(find_parent_layout(&tree, 42).is_none());
+    }
+
+    // find_node
+
+    #[test]
+    fn find_node_finds_self_and_nested_children() {
         let leaf = leaf_node_value(10, Some("kitty"), None);
         let inner = container_node_value(2, vec![leaf], vec![]);
         let tree = node_tree(1, vec![inner], vec![]);
-        assert_eq!(window_count(&tree), 1);
+        assert_eq!(find_node(&tree, 1).map(|node| node.id), Some(1));
+        assert_eq!(find_node(&tree, 2).map(|node| node.id), Some(2));
+        assert_eq!(find_node(&tree, 10).map(|node| node.id), Some(10));
     }
 
     #[test]
-    fn window_count_includes_floating_windows() {
+    fn find_node_finds_floating_children() {
         let floating = leaf_node_value(20, Some("kitty"), None);
         let tree = node_tree(1, vec![], vec![floating]);
-        assert_eq!(window_count(&tree), 1);
+        assert_eq!(find_node(&tree, 20).map(|node| node.id), Some(20));
     }
 
     #[test]
-    fn is_only_window_in_its_workspace_true_for_a_solo_window() {
+    fn find_node_returns_none_when_id_not_found() {
+        let tree = node_tree(1, vec![], vec![]);
+        assert!(find_node(&tree, 42).is_none());
+    }
+
+    // parse_pixel_value
+
+    #[test]
+    fn parse_pixel_value_parses_a_pixel_value() {
+        assert_eq!(parse_pixel_value("300px"), Some(300));
+        assert_eq!(parse_pixel_value("0px"), Some(0));
+    }
+
+    #[test]
+    fn parse_pixel_value_returns_none_for_percent() {
+        assert_eq!(parse_pixel_value("20ppt"), None);
+    }
+
+    // width_matches / height_matches
+
+    fn node_with_geometry(width: i32, height: i32, border_width: i32, deco_height: i32) -> Node {
+        let mut value = leaf_node_value(10, Some("kitty"), None);
+        value["rect"] = serde_json::json!({"x": 0, "y": 0, "width": width, "height": height});
+        value["deco_rect"] =
+            serde_json::json!({"x": 0, "y": 0, "width": width, "height": deco_height});
+        value["current_border_width"] = serde_json::json!(border_width);
+        serde_json::from_value(value).expect("valid Node test fixture")
+    }
+
+    #[test]
+    fn width_matches_exact_rect_width() {
+        let node = node_with_geometry(400, 300, 2, 25);
+        assert!(width_matches(&node, 400));
+    }
+
+    #[test]
+    fn width_matches_border_adjusted_width() {
+        let node = node_with_geometry(396, 300, 2, 25);
+        assert!(width_matches(&node, 400));
+    }
+
+    #[test]
+    fn width_matches_false_when_neither_formula_fits() {
+        let node = node_with_geometry(350, 300, 2, 25);
+        assert!(!width_matches(&node, 400));
+    }
+
+    #[test]
+    fn height_matches_decoration_inclusive_height() {
+        let node = node_with_geometry(400, 275, 2, 25);
+        assert!(height_matches(&node, 300));
+    }
+
+    #[test]
+    fn height_matches_false_when_short_of_the_expected_value() {
+        let node = node_with_geometry(400, 300, 2, 25);
+        assert!(!height_matches(&node, 300));
+    }
+
+    // compute_center_position
+
+    fn rect(x: i32, y: i32, width: i32, height: i32) -> swayipc::Rect {
+        serde_json::from_value(
+            serde_json::json!({"x": x, "y": y, "width": width, "height": height}),
+        )
+        .expect("valid Rect test fixture")
+    }
+
+    #[test]
+    fn compute_center_position_centers_within_a_primary_output() {
+        let output_rect = rect(0, 0, 1280, 720);
+        assert_eq!(compute_center_position(output_rect, 400, 300), (440, 210));
+    }
+
+    #[test]
+    fn compute_center_position_accounts_for_a_non_origin_output() {
+        let output_rect = rect(1920, 100, 1280, 720);
+        assert_eq!(compute_center_position(output_rect, 400, 300), (2360, 310));
+    }
+
+    // expected_position
+
+    #[test]
+    fn expected_position_parses_explicit_coordinates() {
+        let node = node_with_geometry(400, 300, 2, 25);
+        assert_eq!(expected_position("100,200", &node, None), Some((100, 200)));
+    }
+
+    #[test]
+    fn expected_position_center_without_an_output_name_is_none() {
+        let node = node_with_geometry(400, 300, 2, 25);
+        assert_eq!(expected_position("center", &node, None), None);
+    }
+
+    #[test]
+    fn expected_position_center_with_an_output_name_is_none_without_a_live_socket() {
+        // Exercises the "center" branch's output_rect() call (unreachable
+        // from the None-output_name test above) — output_rect() degrades
+        // to None when no Sway socket is reachable, which is exactly this
+        // headless test environment, so this is testable without live
+        // Sway: it confirms the whole chain still resolves to None rather
+        // than panicking when IPC is unavailable.
+        let node = node_with_geometry(400, 300, 2, 25);
+        assert_eq!(
+            expected_position("center", &node, Some("some-output")),
+            None
+        );
+    }
+
+    // is_at_the_trailing_workspace_edge
+
+    fn workspace_node_tree_with_layout(
+        container_id: i64,
+        name: &str,
+        layout: &str,
+        nodes: Vec<serde_json::Value>,
+    ) -> Node {
+        let mut value = container_node_value(container_id, nodes, vec![]);
+        value["type"] = serde_json::json!("workspace");
+        value["name"] = serde_json::json!(name);
+        value["layout"] = serde_json::json!(layout);
+        serde_json::from_value(value).expect("valid Node test fixture")
+    }
+
+    #[test]
+    fn is_at_the_trailing_workspace_edge_true_for_a_solo_window() {
         let leaf = leaf_node_value(10, Some("kitty"), None);
-        let workspace = workspace_node_tree(2, "main", vec![leaf], vec![]);
-        assert!(is_only_window_in_its_workspace(&workspace, 10));
+        let workspace = workspace_node_tree_with_layout(2, "main", "splith", vec![leaf]);
+        assert!(is_at_the_trailing_workspace_edge(
+            &workspace,
+            10,
+            MoveDirection::Right
+        ));
     }
 
     #[test]
-    fn is_only_window_in_its_workspace_false_with_a_sibling() {
+    fn is_at_the_trailing_workspace_edge_true_for_the_last_of_several_siblings() {
+        // The case the old solo-window-only check missed: container_id has
+        // a sibling, but is still the trailing (rightmost) child of a
+        // workspace whose own layout already matches the move axis.
         let leaf1 = leaf_node_value(10, Some("kitty"), None);
         let leaf2 = leaf_node_value(11, Some("kitty"), None);
-        let workspace = workspace_node_tree(2, "main", vec![leaf1, leaf2], vec![]);
-        assert!(!is_only_window_in_its_workspace(&workspace, 10));
+        let workspace = workspace_node_tree_with_layout(2, "main", "splith", vec![leaf1, leaf2]);
+        assert!(is_at_the_trailing_workspace_edge(
+            &workspace,
+            11,
+            MoveDirection::Right
+        ));
     }
 
     #[test]
-    fn is_only_window_in_its_workspace_false_when_id_not_found() {
+    fn is_at_the_trailing_workspace_edge_false_for_a_leading_sibling() {
+        let leaf1 = leaf_node_value(10, Some("kitty"), None);
+        let leaf2 = leaf_node_value(11, Some("kitty"), None);
+        let workspace = workspace_node_tree_with_layout(2, "main", "splith", vec![leaf1, leaf2]);
+        assert!(!is_at_the_trailing_workspace_edge(
+            &workspace,
+            10,
+            MoveDirection::Right
+        ));
+    }
+
+    #[test]
+    fn is_at_the_trailing_workspace_edge_false_when_the_workspace_layout_does_not_match_the_axis() {
+        // Confirmed live: a solo window stacked via splitv, then moved
+        // right, restructures in place rather than escalating — the
+        // workspace's own layout has to match the move's axis too, not
+        // just "container_id is the trailing child".
+        let leaf = leaf_node_value(10, Some("kitty"), None);
+        let workspace = workspace_node_tree_with_layout(2, "main", "splitv", vec![leaf]);
+        assert!(!is_at_the_trailing_workspace_edge(
+            &workspace,
+            10,
+            MoveDirection::Right
+        ));
+    }
+
+    #[test]
+    fn is_at_the_trailing_workspace_edge_checks_the_down_axis_for_new_row() {
+        let leaf1 = leaf_node_value(10, Some("kitty"), None);
+        let leaf2 = leaf_node_value(11, Some("kitty"), None);
+        let workspace = workspace_node_tree_with_layout(2, "main", "splitv", vec![leaf1, leaf2]);
+        assert!(is_at_the_trailing_workspace_edge(
+            &workspace,
+            11,
+            MoveDirection::Down
+        ));
+        assert!(!is_at_the_trailing_workspace_edge(
+            &workspace,
+            10,
+            MoveDirection::Down
+        ));
+    }
+
+    #[test]
+    fn is_at_the_trailing_workspace_edge_false_when_id_not_found() {
         let tree = node_tree(1, vec![], vec![]);
-        assert!(!is_only_window_in_its_workspace(&tree, 999));
+        assert!(!is_at_the_trailing_workspace_edge(
+            &tree,
+            999,
+            MoveDirection::Right
+        ));
     }
 
     // first_outcome_error
