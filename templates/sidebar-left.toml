@@ -1,6 +1,6 @@
 # A narrow sidebar on the left, a wide main window on the right.
 # Run with, e.g.:
-#   sway-launch --template examples/templates/sidebar-left.toml --apps thunar,code
+#   sway-launch --template templates/sidebar-left.toml --apps thunar,code
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
 #

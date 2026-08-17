@@ -1,7 +1,7 @@
 # A narrow stack of two windows on each side of one wide main window.
 # Two master-dual-stack.toml-style stacks flanking a single main column.
 # Run with, e.g.:
-#   sway-launch --template examples/templates/dual-stack-sidebars.toml \
+#   sway-launch --template templates/dual-stack-sidebars.toml \
 #     --apps foot,foot,code,foot,foot
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.

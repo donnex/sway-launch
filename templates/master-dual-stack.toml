@@ -1,7 +1,7 @@
 # One large main window on the left, two smaller windows stacked in a column on the right.
 # The general shape behind dev-workspace.
 # Run with, e.g.:
-#   sway-launch --template examples/templates/master-dual-stack.toml --apps code,foot,foot
+#   sway-launch --template templates/master-dual-stack.toml --apps code,foot,foot
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
 #

@@ -7,7 +7,7 @@
 # live — this file previously did exactly that, despite the "equally
 # sized" claim above).
 # Run with, e.g.:
-#   sway-launch --template examples/templates/six-grid.toml \
+#   sway-launch --template templates/six-grid.toml \
 #     --apps foot,firefox,code,thunar,chromium,foot
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.

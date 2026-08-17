@@ -76,7 +76,7 @@ The crate is four source files plus five integration test files:
   `cargo llvm-cov`, can't reach headlessly (see the Testing bullet under Rust conventions). Beyond
   the individual action/flag tests, `every_shipped_template_resolves_and_launches_successfully` and
   `dual_output_template_moves_windows_to_separate_outputs` drive every file under
-  `examples/templates/` directly (not a hand-written stand-in), and
+  `templates/` directly (not a hand-written stand-in), and
   `quad_terminals_layout_launches_four_windows_in_a_grid`/
   `retarget_by_id_layout_floats_the_first_step_by_name` do the same for `examples/layouts/` — a
   broken shipped example is a live-Sway test failure, not just a manual-testing gap.
@@ -429,11 +429,12 @@ in both `layout.rs` and `template.rs`).
 
 `--template`'s argument can be either a path to a template file ending in `.toml` (the original
 behavior above) or a bare name with no extension, resolved against a built-in copy of every file
-under `examples/templates/` embedded directly into the binary at compile time via the
+under `templates/` (at the repo root, not under `examples/` — see "Example layout scripts" below
+for why) embedded directly into the binary at compile time via the
 `include_dir` crate (`template.rs`'s `BUILTIN_TEMPLATES:
-Dir<'_>`, `static`, built from `include_dir!("$CARGO_MANIFEST_DIR/examples/templates")`) — the
+Dir<'_>`, `static`, built from `include_dir!("$CARGO_MANIFEST_DIR/templates")`) — the
 single source of truth for both the shipped example files and the built-ins, so there's nothing to
-keep in sync between the two: a new file under `examples/templates/` becomes a built-in
+keep in sync between the two: a new file under `templates/` becomes a built-in
 automatically, with no code change. `main.rs`'s `resolve_template_contents()` is the dispatch
 point, checked before `run_template()` reads anything: a `.toml`-suffixed value is read from disk
 exactly as before this existed; anything else is looked up via `template::builtin()`
@@ -467,7 +468,9 @@ name resolves to is the genuine, working template content, not just that the loo
 
 ## Example layout scripts
 
-`examples/` splits into three subdirectories by what each file actually is, not just topic:
+`examples/` splits into two subdirectories by what each file actually is, not just topic; a third
+kind of shipped layout file, `--template` files, lives at the repo root instead, in `templates/`
+(see below for why):
 
 - `examples/scripts/` — tracked, user-facing example scripts, each a small standalone shell script
   built out of `sway-launch` calls that demonstrates one layout. Basic examples (`dual-terminals`,
@@ -481,16 +484,20 @@ name resolves to is the genuine, working template content, not just that the loo
   README's list of them in sync when either changes.
 - `examples/layouts/` (`quad-terminals.toml`, `retarget-by-id.toml`) — `--layout` files, run via
   `sway-launch --layout <file>` rather than executed directly.
-- `examples/templates/` (`quad-grid.toml` and a wider library of other app-agnostic shapes — see
-  README.md's "Templates" section for the full, grouped list) — `--template` files, run via
-  `sway-launch --template <file> --apps ...`/`--bindings <file>`. Named for the shape alone, never
-  an application: spelled-out count words for even splits/grids (`dual-row.toml`,
-  `triple-column.toml`, `six-grid.toml`, ...) and descriptive compound names for special-purpose
-  shapes (`master-dual-stack.toml`, `sidebar-left.toml`, `floating-overlay.toml`, ...). Every file
-  here is also embedded into the binary as a built-in `--template <name>` — see "Built-in templates
-  (`--template <name>`, `--list-templates`)" under "`--template`" above for how.
 
-The files under `examples/layouts/` and `examples/templates/` are plain data (not executable, no
+`templates/` (`quad-grid.toml` and a wider library of other app-agnostic shapes — see README.md's
+"Templates" section for the full, grouped list) holds `--template` files, run via
+`sway-launch --template <file> --apps ...`/`--bindings <file>`. Named for the shape alone, never
+an application: spelled-out count words for even splits/grids (`dual-row.toml`,
+`triple-column.toml`, `six-grid.toml`, ...) and descriptive compound names for special-purpose
+shapes (`master-dual-stack.toml`, `sidebar-left.toml`, `floating-overlay.toml`, ...). Every file
+here is also embedded into the binary as a built-in `--template <name>` — see "Built-in templates
+(`--template <name>`, `--list-templates`)" under "`--template`" above for how. It lives at the repo
+root rather than under `examples/` precisely because of that: once a directory's contents are
+compiled into the shipped binary, calling it merely an "example" undersells it — unlike
+`examples/layouts/` and `examples/scripts/`, which really are just illustrative and never embedded.
+
+The files under `examples/layouts/` and `templates/` are plain data (not executable, no
 `-h`/`--help`), so the Scripts/Shell conventions don't apply to them.
 
 There is no separate ad-hoc/scratch scripts directory — a prior `layout-tests/` served that

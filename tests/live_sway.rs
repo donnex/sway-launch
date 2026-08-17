@@ -1150,17 +1150,24 @@ fn examples_dir(subdir: &str) -> std::path::PathBuf {
         .join(subdir)
 }
 
+/// `templates/` lives at the repo root, not under `examples/`, since its
+/// contents are embedded into the binary as built-ins rather than being
+/// purely illustrative — see "Built-in templates" in CLAUDE.md.
+fn templates_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")
+}
+
 #[test]
 fn every_shipped_template_resolves_and_launches_successfully() {
     // Unlike template_apps_resolve_to_real_windows above (a hand-written,
     // minimal template), this drives the actual files under
-    // examples/templates/ — nothing else in the test suite would catch a
+    // templates/ — nothing else in the test suite would catch a
     // shipped template that's silently broken. dual-output.toml is excluded
     // here since it needs a second output and real (non-placeholder) output
     // names to run at all; see dual_output_template_moves_windows_to_separate_outputs.
     let mut connection = connect();
-    let mut paths: Vec<_> = std::fs::read_dir(examples_dir("templates"))
-        .expect("examples/templates should be readable")
+    let mut paths: Vec<_> = std::fs::read_dir(templates_dir())
+        .expect("templates/ should be readable")
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
@@ -1384,7 +1391,7 @@ fn dual_output_template_moves_windows_to_separate_outputs() {
         .expect("at least one output should already exist")
         .clone();
 
-    let contents = std::fs::read_to_string(examples_dir("templates").join("dual-output.toml"))
+    let contents = std::fs::read_to_string(templates_dir().join("dual-output.toml"))
         .expect("dual-output.toml should be readable");
     let contents = contents
         .replace("HDMI-A-1", &first_output)
@@ -1738,7 +1745,7 @@ fn new_row_places_window_below_the_first() {
 #[test]
 fn height_alone_resizes_a_non_solo_window() {
     // Resizing a window is a no-op while it's still the workspace's only
-    // occupant (see examples/templates/master-dual-stack.toml's header
+    // occupant (see templates/master-dual-stack.toml's header
     // comment) — this needs a sibling present for --height to take effect
     // at all, which also makes it a live check that --height works on its
     // own, not just combined with --floating/--width like
@@ -1845,7 +1852,7 @@ fn width_confirms_via_poll_when_resized_with_a_sibling() {
 #[test]
 fn height_and_width_fall_back_gracefully_when_solo_window_clamps_the_resize() {
     // Resizing a window that's the sole occupant of its workspace is
-    // silently clamped by Sway (see examples/templates/master-dual-stack.toml's
+    // silently clamped by Sway (see templates/master-dual-stack.toml's
     // header comment) — height_matches()/width_matches() can never confirm
     // this, so the grace period must elapse and fall back to the original
     // wait-time behavior (succeed, don't hang or error) rather than the

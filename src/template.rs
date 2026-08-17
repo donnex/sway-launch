@@ -4,11 +4,11 @@ use include_dir::{include_dir, Dir};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 
-/// The contents of `examples/templates/` at compile time — the single
-/// source of truth for both the shipped example files and the built-in
-/// templates `--template <name>` (no `.toml` extension) resolves against,
-/// so there's nothing to keep in sync between the two.
-static BUILTIN_TEMPLATES: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/examples/templates");
+/// The contents of `templates/` at compile time — the single source of
+/// truth for both the shipped example files and the built-in templates
+/// `--template <name>` (no `.toml` extension) resolves against, so there's
+/// nothing to keep in sync between the two.
+static BUILTIN_TEMPLATES: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/templates");
 
 /// A built-in template's name and one-line description (its file's first
 /// header comment line), as listed by `--list-templates`.

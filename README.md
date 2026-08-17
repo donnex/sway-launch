@@ -178,9 +178,9 @@ Runnable example scripts live in [`examples/scripts/`](examples/scripts/) — ea
 standalone shell script built entirely out of `sway-launch` calls; run any of them directly (e.g.
 `examples/scripts/quad-terminals`) against a live Sway session to see the layout it builds. The
 advanced examples expect Firefox, Chromium, Thunar, and VS Code (the `code` command) to be
-installed and on `PATH`, in addition to `foot`. Declarative `--layout`/`--template` example files
-live alongside them in [`examples/layouts/`](examples/layouts/) and
-[`examples/templates/`](examples/templates/) respectively.
+installed and on `PATH`, in addition to `foot`. Declarative `--layout` example files live alongside
+them in [`examples/layouts/`](examples/layouts/); `--template` files live in
+[`templates/`](templates/) at the repo root instead — see [Templates](#templates) below for why.
 
 Basic (all `foot`):
 
@@ -207,9 +207,9 @@ Basic (all `foot`):
   `id` — something `--existing` can't express, since it'd be ambiguous between the two.
   Demonstrates `id`/`target_id`. Run with `sway-launch --layout
   examples/layouts/retarget-by-id.toml`.
-- [`examples/templates/quad-grid.toml`](examples/templates/quad-grid.toml) — the app-agnostic
+- [`templates/quad-grid.toml`](templates/quad-grid.toml) — the app-agnostic
   version of `examples/layouts/quad-terminals.toml`'s shape: the same 2x2 grid, but with no
-  application baked in. Run with `sway-launch --template examples/templates/quad-grid.toml --apps
+  application baked in. Run with `sway-launch --template templates/quad-grid.toml --apps
   foot,firefox,code,thunar` (or any four commands). See [Templates](#templates) below.
 
 Advanced (multiple applications):
@@ -337,9 +337,9 @@ is required per step — a `slot` step resolves its window via a binding, a `tar
 retargets an earlier `slot`'s resolved window (see `id`/`target_id` above; a template step's
 resolved `id` is always its slot name). `--template` requires exactly one of `--bindings`/`--apps`,
 and conflicts with `--layout` and every per-window flag, same reasoning as `--layout`. See
-[`examples/templates/quad-grid.toml`](examples/templates/quad-grid.toml).
+[`templates/quad-grid.toml`](templates/quad-grid.toml).
 
-Every file under [`examples/templates/`](examples/templates) is also built into the `sway-launch`
+Every file under [`templates/`](templates/) is also built into the `sway-launch`
 binary itself as a *built-in template* — `--template <name>` (no `.toml` extension, e.g.
 `--template quad-grid`) resolves that name against the embedded copy, so using one doesn't require
 cloning this repo or downloading anything. A value ending in `.toml` is always read from disk
@@ -356,25 +356,25 @@ via `--apps`/`--bindings`. Each file's own header comment has a ready-to-run `--
 
 | Category | Template | Shape | Slots |
 | --- | --- | --- | --- |
-| Grid | [`dual-row`](examples/templates/dual-row.toml) | Two windows side by side, one row | 2 |
-| Grid | [`dual-column`](examples/templates/dual-column.toml) | Two windows stacked, one column | 2 |
-| Grid | [`triple-row`](examples/templates/triple-row.toml) | Three windows side by side, one row | 3 |
-| Grid | [`triple-column`](examples/templates/triple-column.toml) | Three windows stacked, one column | 3 |
-| Grid | [`quad-grid`](examples/templates/quad-grid.toml) | Equal 2×2 grid | 4 |
-| Grid | [`six-grid`](examples/templates/six-grid.toml) | Equal grid, two rows of three | 6 |
-| Grid | [`eight-grid`](examples/templates/eight-grid.toml) | Equal grid, two rows of four | 8 |
-| Grid | [`nine-grid`](examples/templates/nine-grid.toml) | Equal 3×3 grid | 9 |
-| Master/stack | [`master-dual-stack`](examples/templates/master-dual-stack.toml) | One main window, a 2-window stack beside it | 3 |
-| Master/stack | [`master-triple-stack`](examples/templates/master-triple-stack.toml) | One main window, a 3-window stack beside it | 4 |
-| Master/stack | [`dual-stack-sidebars`](examples/templates/dual-stack-sidebars.toml) | One main window, a 2-window stack flanking each side | 5 |
-| Sidebar | [`sidebar-left`](examples/templates/sidebar-left.toml) | Narrow sidebar on the left, wide main window on the right | 2 |
-| Sidebar | [`sidebar-right`](examples/templates/sidebar-right.toml) | Wide main window on the left, narrow sidebar on the right | 2 |
-| Sidebar | [`sidebar-left-dual-stack`](examples/templates/sidebar-left-dual-stack.toml) | Sidebar on the left split into two windows (75%/25% height), wide main window on the right | 3 |
-| Floating | [`floating-overlay`](examples/templates/floating-overlay.toml) | A tiled main window, with a small floating window on top | 2 |
-| Floating | [`floating-centered`](examples/templates/floating-centered.toml) | A single floating window, centered | 1 |
-| Multi-workspace/output | [`workspace-spread`](examples/templates/workspace-spread.toml) | Each window moved to its own named workspace | 3 |
-| Multi-workspace/output | [`dual-output`](examples/templates/dual-output.toml) | Each window moved to a different output (monitor) | 2 |
-| Retargeting | [`retarget-by-slot`](examples/templates/retarget-by-slot.toml) | Two windows side by side, then the first one retargeted by slot name | 2 |
+| Grid | [`dual-row`](templates/dual-row.toml) | Two windows side by side, one row | 2 |
+| Grid | [`dual-column`](templates/dual-column.toml) | Two windows stacked, one column | 2 |
+| Grid | [`triple-row`](templates/triple-row.toml) | Three windows side by side, one row | 3 |
+| Grid | [`triple-column`](templates/triple-column.toml) | Three windows stacked, one column | 3 |
+| Grid | [`quad-grid`](templates/quad-grid.toml) | Equal 2×2 grid | 4 |
+| Grid | [`six-grid`](templates/six-grid.toml) | Equal grid, two rows of three | 6 |
+| Grid | [`eight-grid`](templates/eight-grid.toml) | Equal grid, two rows of four | 8 |
+| Grid | [`nine-grid`](templates/nine-grid.toml) | Equal 3×3 grid | 9 |
+| Master/stack | [`master-dual-stack`](templates/master-dual-stack.toml) | One main window, a 2-window stack beside it | 3 |
+| Master/stack | [`master-triple-stack`](templates/master-triple-stack.toml) | One main window, a 3-window stack beside it | 4 |
+| Master/stack | [`dual-stack-sidebars`](templates/dual-stack-sidebars.toml) | One main window, a 2-window stack flanking each side | 5 |
+| Sidebar | [`sidebar-left`](templates/sidebar-left.toml) | Narrow sidebar on the left, wide main window on the right | 2 |
+| Sidebar | [`sidebar-right`](templates/sidebar-right.toml) | Wide main window on the left, narrow sidebar on the right | 2 |
+| Sidebar | [`sidebar-left-dual-stack`](templates/sidebar-left-dual-stack.toml) | Sidebar on the left split into two windows (75%/25% height), wide main window on the right | 3 |
+| Floating | [`floating-overlay`](templates/floating-overlay.toml) | A tiled main window, with a small floating window on top | 2 |
+| Floating | [`floating-centered`](templates/floating-centered.toml) | A single floating window, centered | 1 |
+| Multi-workspace/output | [`workspace-spread`](templates/workspace-spread.toml) | Each window moved to its own named workspace | 3 |
+| Multi-workspace/output | [`dual-output`](templates/dual-output.toml) | Each window moved to a different output (monitor) | 2 |
+| Retargeting | [`retarget-by-slot`](templates/retarget-by-slot.toml) | Two windows side by side, then the first one retargeted by slot name | 2 |
 
 ## Actions reference
 
