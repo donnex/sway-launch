@@ -9,7 +9,6 @@ print_usage() {
   printf 'Launch two foot terminals stacked in a single column.\n'
 }
 
-# snippet: usage
 usage() {
   if [ "${1:-0}" -ne 0 ]; then
     print_usage >&2
