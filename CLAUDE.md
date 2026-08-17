@@ -676,67 +676,25 @@ Run a script directly with `sh <script>`; make it executable first with `chmod +
 - Do not cram multiple statements into a one-line `{ }` block (e.g. `foo() { cmd1; cmd2; cmd3;
   }`) — it hurts readability. Keep one-liner `{ }` blocks to a single statement in regular script
   code; once a function needs more than one statement, write it as a normal multi-line function.
-  Snippet functions are the exception — see Reusable snippets below, they're never one-liners
-  regardless of statement count.
-- Aim for reusable building blocks, but never as standalone scripts other scripts call out to at
-  runtime — see Reusable snippets below. Before implementing any non-trivial functionality, check
-  this repo's `scripts/` directory for a snippet source file (if one exists yet) that already does
-  it and copy it in. If something you're implementing feels reusable, extract it into a
-  single-function snippet and add it to the snippet index below.
-- Use a shared `retry` snippet for retry logic instead of a bespoke loop — extract one into
-  `scripts/` if one doesn't exist yet.
+- This project does not use a reusable-snippet-file convention (a shared helper copied verbatim
+  into each script that needs it) — with as few scripts as this repo has, the overhead of a
+  separate snippet source file plus sync-auditing isn't worth it. Write each script's helpers
+  (error reporting, usage, retry/poll loops, color setup, etc.) inline in the script itself. If
+  this repo's script count grows enough that duplication across them becomes a real maintenance
+  burden, revisit this and reintroduce a snippet convention rather than letting copies silently
+  drift apart.
 - Before a script comes to depend on a new external command not already used elsewhere in the
   project, confirm the choice with the user first. This excludes standard POSIX/base-OS utilities
   guaranteed present on the target system (e.g. `sort`, `cut`, `awk`); confirmation is for
   genuinely new tooling (e.g. `jq`, `httpie`, `fzf`), not coreutils.
 - Do not use a `.sh` file extension
 - Name scripts in lowercase. Use `-` as word separator for scripts run directly by the user (e.g.
-  `run-commands`). No separator for scripts called from other scripts (e.g. `runcommands`). If
-  unsure, ask. Snippet files are named after the function they contain (function names can't
-  contain `-`, so this is never ambiguous).
-
-### Reusable snippets
-
-Reusable code lives directly in `scripts/`, alongside the repo's real, directly-run scripts (e.g.
-`scripts/run-live-sway-tests`) — not in a separate directory, and not as standalone scripts other
-scripts call out to at runtime. A snippet source file (e.g. `scripts/die`) is told apart from a
-real script by its shape: it contains exactly one shell function — a short usage comment above it,
-and nothing else: no shebang, no `set -eu`, no CLI wrapper (`-h`/`--help`, its own `usage()`,
-etc.). A snippet is copied and pasted verbatim into the script that needs it; it is never executed
-or sourced at runtime. This keeps every script self-contained (no dependency on other scripts
-being on `PATH`) while keeping the *implementation* in one canonical place.
-
-Snippet functions are always written in full multi-line form — never a single-line `{ ...; }`
-block, even when the body is a single statement. This keeps every snippet visually consistent and
-easy to diff, independent of how simple the function happens to be.
-
-**Workflow**:
-
-- Before implementing non-trivial functionality, check `scripts/` for a snippet source file that
-  already does it, and paste it in.
-- When something you're implementing feels reusable, extract it into `scripts/<name>` as a single
-  function, note it in this file's snippet index (add one if this is the first snippet), then
-  paste it into the script(s) that need it.
-- Mark every pasted-in snippet function with a `# snippet: <name>` comment directly above its
-  definition. This makes sync audits trivial: `grep -rn '# snippet:' .`.
-- A pasted copy must match its snippet file exactly. If a script seems to need different behavior
-  from a snippet it already uses, that means the *snippet* should change — update `scripts/<name>`
-  first, then re-copy it into every script that uses it, so implementations never drift apart.
-  Don't let a local copy silently diverge.
-- Whenever you edit a snippet source file under `scripts/`, for any reason, immediately find every
-  script with a matching `# snippet: <name>` comment (`grep -rln '# snippet: <name>' .`) and
-  update each copy to match. A snippet change is not done until every consumer is resynced in the
-  same change.
-- When creating a new script or editing an existing one, check that any `# snippet: <name>`-marked
-  function in it still matches the current `scripts/<name>` — resync if not.
+  `run-commands`). No separator for scripts called from other scripts (e.g. `runcommands`).
 
 ### Shell workflow
 
 - After making changes to a script, always review the summary comment below the shebang and update
   it if it no longer accurately describes what the script does.
-- After making changes to a script, check every `# snippet: <name>`-marked function against its
-  source in `scripts/<name>` — if you changed one, update the snippet and resync every other
-  script that copies it.
 - Run `shellcheck --shell=sh <script>` after making changes and fix any findings before committing.
 - Run `shfmt -i 2 -w <script>` after making changes to format the script.
 - Neither tool is guaranteed to be present in a fresh environment. Install them via the OS's
