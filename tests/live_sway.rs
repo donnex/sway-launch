@@ -41,6 +41,26 @@ fn find_node(node: &Node, con_id: i64) -> Option<&Node> {
         .find_map(|child| find_node(child, con_id))
 }
 
+/// The `layout` of `con_id`'s direct parent node — mirrors
+/// `sway_launch.rs`'s private `find_parent_layout()`, which
+/// `SwayAction::poll_matches()` uses to confirm a `Split` action, since a
+/// window's own `layout` field never carries its split direction (see that
+/// function's doc comment).
+fn parent_layout(node: &Node, con_id: i64) -> Option<swayipc::NodeLayout> {
+    if node
+        .nodes
+        .iter()
+        .chain(node.floating_nodes.iter())
+        .any(|child| child.id == con_id)
+    {
+        return Some(node.layout);
+    }
+    node.nodes
+        .iter()
+        .chain(node.floating_nodes.iter())
+        .find_map(|child| parent_layout(child, con_id))
+}
+
 fn get_node(connection: &mut Connection, con_id: i64) -> Node {
     let tree = connection.get_tree().expect("get_tree should succeed");
     find_node(&tree, con_id)
@@ -326,6 +346,105 @@ fn output_is_a_no_op_when_already_on_the_target_output() {
 }
 
 #[test]
+fn floating_is_a_no_op_when_already_floating() {
+    // Regression test found during a bug hunt prompted by this crate's own
+    // pattern: Workspace/Output/NewColumn/NewRow all turned out to have a
+    // no-op case Sway doesn't fire an event for, so the same was checked
+    // for Floating/Fullscreen/Focus too — confirmed live (manual testing
+    // during development: re-running --floating on an already-floating
+    // window hung the full 5s --timeout and then errored, before
+    // SwayAction::already_at_target()'s Floating arm was added). Without
+    // that short-circuit, this would fail this assertion or the process
+    // would exit non-zero.
+    let (container_id, _guard) = launch_foot(&["--floating"]);
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--floating",
+            "--timeout",
+            "5",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --floating (already floating) failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "--floating on an already-floating window took {:?}, suggesting it hung \
+         waiting for an event Sway doesn't fire for a no-op",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn fullscreen_is_a_no_op_when_already_fullscreen() {
+    // Same as floating_is_a_no_op_when_already_floating, for --fullscreen.
+    let (container_id, _guard) = launch_foot(&["--fullscreen"]);
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--fullscreen",
+            "--timeout",
+            "5",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --fullscreen (already fullscreen) failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "--fullscreen on an already-fullscreen window took {:?}, suggesting it hung \
+         waiting for an event Sway doesn't fire for a no-op",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn focus_is_a_no_op_when_already_focused() {
+    // Same as floating_is_a_no_op_when_already_floating, for --focus.
+    // Explicitly focuses first rather than relying on a freshly-launched
+    // window already being focused by default, to guarantee the
+    // "already there" state regardless of ambient focus left behind by
+    // other tests in this shared compositor.
+    let (container_id, _guard) = launch_foot(&["--focus"]);
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--focus",
+            "--timeout",
+            "5",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --focus (already focused) failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "--focus on an already-focused window took {:?}, suggesting it hung \
+         waiting for an event Sway doesn't fire for a no-op",
+        started.elapsed()
+    );
+}
+
+#[test]
 fn new_column_does_not_relocate_a_solo_window_to_a_different_output() {
     // Regression test for the multi-monitor NewColumn/NewRow escalation
     // documented in SwayAction::matching_window_change_events()'s reasoning
@@ -364,6 +483,58 @@ fn new_column_does_not_relocate_a_solo_window_to_a_different_output() {
         output_after,
         Some(output_before.as_str()),
         "a solo window's --new-column should not relocate it to a different output"
+    );
+}
+
+#[test]
+fn new_column_does_not_relocate_a_non_solo_window_at_the_trailing_edge() {
+    // Regression test for a gap found in relocates_to_another_output()
+    // while developing docs/plan-poll-based-wait-time-actions.md's
+    // NewColumn/NewRow poll matcher: the original guard only checked "is
+    // container_id the *only* window in its workspace" — manual swaymsg
+    // probing against a live multi-output compositor found that a
+    // *non-solo* workspace can escalate too, whenever container_id is
+    // already the trailing child of a workspace already laid out along
+    // that axis (two windows side by side, "move right" on the rightmost
+    // relocated it to a different output despite having a sibling to its
+    // left). is_at_the_trailing_workspace_edge() closes this by checking
+    // the workspace's own layout plus trailing-child position, not just
+    // child count.
+    let mut connection = connect();
+    connection
+        .run_command("create_output")
+        .expect("create_output should succeed")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("create_output should succeed");
+
+    let (_first_id, _first_guard) =
+        launch_foot(&["--workspace", "live-sway-test-new-column-non-solo-edge"]);
+    let (second_id, _second_guard) =
+        launch_foot(&["--workspace", "live-sway-test-new-column-non-solo-edge"]);
+
+    let tree_before = connection.get_tree().expect("get_tree should succeed");
+    let output_before = output_containing(&tree_before, second_id, None)
+        .expect("launched window should be found in the tree")
+        .to_string();
+
+    let output = sway_launch_command()
+        .args(["--con-id", &second_id.to_string(), "--new-column"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --new-column failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let tree_after = connection.get_tree().expect("get_tree should succeed");
+    let output_after = output_containing(&tree_after, second_id, None);
+    assert_eq!(
+        output_after,
+        Some(output_before.as_str()),
+        "the trailing window of a non-solo workspace should not be relocated to a different \
+         output by --new-column either"
     );
 }
 
@@ -411,6 +582,90 @@ fn position_moves_a_floating_window_to_given_coordinates() {
     let node = get_node(&mut connection, container_id);
     assert_eq!(node.deco_rect.x, 100);
     assert_eq!(node.deco_rect.y, 200);
+}
+
+#[test]
+fn position_confirms_via_poll_for_a_floating_window() {
+    // Regression test for docs/plan-poll-based-wait-time-actions.md's
+    // poll-then-fallback mechanism reaching Position: confirms via
+    // SwayAction::poll_matches()'s position_matches() (a get_tree() +
+    // get_outputs() poll for deco_rect.x/deco_rect.y) rather than always
+    // sleeping the full --wait-time after the command too.
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&["--floating"]);
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--position",
+            "300,400",
+            "--wait-time",
+            "2000",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --position failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(2500),
+        "--position took {:?} against a 2000ms --wait-time (fallback would take ~4000ms), \
+         suggesting it fell back to sleeping instead of confirming via poll",
+        started.elapsed()
+    );
+
+    let node = get_node(&mut connection, container_id);
+    assert_eq!(node.deco_rect.x, 300);
+    assert_eq!(node.deco_rect.y, 400);
+}
+
+#[test]
+fn position_errors_clearly_for_a_tiled_window() {
+    // Corrects an assumption docs/plan-poll-based-wait-time-actions.md
+    // carried over from earlier conversation exploration: a tiled window
+    // isn't a silent "move position" no-op the way Height/Width's
+    // solo-window clamp is — Sway rejects the command outright ("Only
+    // floating containers can be moved to an absolute position"), which
+    // run_sway_command()'s `?` propagates as an error *before*
+    // poll_matches()/poll_baseline() are ever reached. So there's no
+    // "poll can never confirm this, fall back gracefully" case to test
+    // here after all — this instead confirms that existing, pre-poll
+    // error path is unaffected by this feature: it still fails fast and
+    // clearly, not silently, and not by hanging through the poll grace
+    // period first.
+    let (container_id, _guard) = launch_foot(&[]);
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--position",
+            "300,400",
+            "--wait-time",
+            "300",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        !output.status.success(),
+        "sway-launch --position on a tiled window should fail, not silently succeed"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "--position on a tiled window took {:?}, suggesting it hung instead of erroring \
+         immediately",
+        started.elapsed()
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Only floating containers can be moved to an absolute position"),
+        "unexpected stderr: {stderr:?}"
+    );
 }
 
 #[test]
@@ -580,6 +835,157 @@ fn new_column_and_new_row_complete_promptly_when_already_at_the_edge() {
         started.elapsed() < Duration::from_secs(2),
         "--new-row took {:?}, suggesting it hung waiting for an event",
         started.elapsed()
+    );
+}
+
+#[test]
+fn new_column_confirms_via_poll_when_swapping_past_a_sibling() {
+    // Regression test for docs/plan-poll-based-wait-time-actions.md's
+    // poll-then-fallback mechanism reaching NewColumn: confirms via
+    // SwayAction::poll_matches()'s rect-snapshot comparison (see
+    // poll_baseline()'s doc comment) rather than always sleeping the full
+    // --wait-time after the command too. Needs a third window so the first
+    // one has a real sibling to swap past, unlike the ordinary two-window
+    // edge case in new_column_and_new_row_complete_promptly_when_already_at_the_edge.
+    // Isolated via --workspace (needed on every launch, not just the
+    // first — --workspace doesn't switch the current focused workspace,
+    // confirmed during this feature's development) so this test's "just
+    // these three windows" assumption holds regardless of ambient state
+    // left behind by other tests in this shared compositor.
+    let mut connection = connect();
+    let (first_id, _first_guard) = launch_foot(&["--workspace", "live-sway-test-new-column-swap"]);
+    let (_second_id, _second_guard) =
+        launch_foot(&["--workspace", "live-sway-test-new-column-swap"]);
+    let (_third_id, _third_guard) = launch_foot(&["--workspace", "live-sway-test-new-column-swap"]);
+
+    let before = get_node(&mut connection, first_id).rect;
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &first_id.to_string(),
+            "--new-column",
+            "--wait-time",
+            "2000",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --new-column failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(2500),
+        "--new-column took {:?} against a 2000ms --wait-time (fallback would take ~4000ms), \
+         suggesting it fell back to sleeping instead of confirming via poll",
+        started.elapsed()
+    );
+
+    let after = get_node(&mut connection, first_id).rect;
+    assert_ne!(
+        before, after,
+        "the leftmost window should have swapped position with its sibling"
+    );
+}
+
+#[test]
+fn new_row_confirms_via_poll_when_swapping_past_a_sibling() {
+    // Same as new_column_confirms_via_poll_when_swapping_past_a_sibling,
+    // for NewRow — needs a vertically-arranged sibling to swap past, same
+    // as new_row_places_window_below_the_first. Isolated via --workspace
+    // for the same reason as that test.
+    let mut connection = connect();
+    let (first_id, _first_guard) =
+        launch_foot(&["--workspace", "live-sway-test-new-row-swap", "--split", "v"]);
+    let (_second_id, _second_guard) = launch_foot(&["--workspace", "live-sway-test-new-row-swap"]);
+    let (_third_id, _third_guard) = launch_foot(&["--workspace", "live-sway-test-new-row-swap"]);
+
+    let before = get_node(&mut connection, first_id).rect;
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &first_id.to_string(),
+            "--new-row",
+            "--wait-time",
+            "2000",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --new-row failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(2500),
+        "--new-row took {:?} against a 2000ms --wait-time (fallback would take ~4000ms), \
+         suggesting it fell back to sleeping instead of confirming via poll",
+        started.elapsed()
+    );
+
+    let after = get_node(&mut connection, first_id).rect;
+    assert_ne!(
+        before, after,
+        "the topmost window should have swapped position with its sibling"
+    );
+}
+
+#[test]
+fn new_column_falls_back_gracefully_at_the_edge_with_a_large_wait_time() {
+    // The documented "already at the edge" no-op (see
+    // matching_window_change_events()'s comment in src/sway_launch.rs) —
+    // confirmed during this feature's development that Sway can still
+    // incidentally restructure *other* siblings in this case (wrapping one
+    // in a new split container) even though this window's own rect never
+    // changes, which is exactly why poll_matches() compares the target
+    // window's own rect rather than its parent's children list. Uses a
+    // --wait-time much larger than
+    // new_column_and_new_row_complete_promptly_when_already_at_the_edge's
+    // 50ms, so a false-positive "confirmed" would be caught by the rect
+    // assertion below even if the timing alone looked fine. Isolated via
+    // --workspace so this window is genuinely at the tree's edge,
+    // regardless of ambient state left behind by other tests in this
+    // shared compositor — this is exactly the kind of test where ambient
+    // extra windows/outputs (e.g. from tests that call create_output)
+    // would otherwise produce a misleading rect delta unrelated to
+    // --new-column itself, confirmed while chasing down this test's own
+    // first failed run during development.
+    let mut connection = connect();
+    let (_first_id, _first_guard) = launch_foot(&["--workspace", "live-sway-test-new-column-edge"]);
+    let (second_id, _second_guard) =
+        launch_foot(&["--workspace", "live-sway-test-new-column-edge"]);
+    // See quad_terminals_layout_launches_four_windows_in_a_grid's comment —
+    // the second window's geometry (specifically its decoration) can still
+    // be settling briefly right after launch_foot's own process exits, so
+    // capturing "before" too early can itself look like a spurious change.
+    std::thread::sleep(Duration::from_millis(300));
+
+    let before = get_node(&mut connection, second_id).rect;
+
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &second_id.to_string(),
+            "--new-column",
+            "--wait-time",
+            "300",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --new-column (at the edge) failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let after = get_node(&mut connection, second_id).rect;
+    assert_eq!(
+        before, after,
+        "the rightmost window's own rect should be unaffected by a no-op move"
     );
 }
 
@@ -1074,6 +1480,97 @@ fn split_v_stacks_windows() {
 }
 
 #[test]
+fn split_confirms_via_poll_well_under_a_large_wait_time() {
+    // Regression test for docs/plan-poll-based-wait-time-actions.md's
+    // poll-then-fallback mechanism: Split now confirms via
+    // SwayAction::poll_matches() (a get_tree() poll of the container's
+    // *parent* layout field — see parent_node_layout()'s doc comment for
+    // why it's the parent, not the container's own node) rather than always
+    // sleeping the full --wait-time after the command too. run_wait_time()
+    // still sleeps the full --wait-time *before* sending the command
+    // unconditionally (unrelated to this feature), so the total can never
+    // go below that — a --wait-time well above the poll grace period, with
+    // an assertion comfortably under 2 * --wait-time, is what makes "did it
+    // actually confirm via poll rather than falling back to a second full
+    // sleep" observable. --split v (the workspace's non-default direction,
+    // confirmed via split_v_stacks_windows/manual testing) forces a real
+    // parent-layout change, unlike --split h against a freshly-launched
+    // window, whose workspace is already splith by default.
+    let mut connection = connect();
+    let (first_id, _first_guard) = launch_foot(&[]);
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &first_id.to_string(),
+            "--split",
+            "v",
+            "--wait-time",
+            "2000",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --split v failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(2500),
+        "--split v took {:?} against a 2000ms --wait-time (fallback would take ~4000ms: \
+         --wait-time before the command, plus --wait-time again after), suggesting it fell \
+         back to sleeping instead of confirming via poll",
+        started.elapsed()
+    );
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        parent_layout(&tree, first_id),
+        Some(swayipc::NodeLayout::SplitV),
+        "the window's parent (its workspace, since it's solo) should now be splitv"
+    );
+}
+
+#[test]
+fn split_is_idempotent_and_still_confirms_promptly_when_already_set() {
+    // Split has no genuine no-op ambiguity (unlike Height/Width's
+    // solo-window clamp or NewColumn/NewRow's edge-of-tree case, per
+    // docs/plan-poll-based-wait-time-actions.md): re-applying the split
+    // direction a container's parent already has still matches on the very
+    // first poll, so this should complete just as promptly as the
+    // fresh-change case above rather than needing the grace-period
+    // fallback. --split h here matches the workspace's own default layout
+    // even before launch_foot's own --split h runs, so this is confirmed
+    // true from the very first poll of the very first command.
+    let (first_id, _first_guard) = launch_foot(&["--split", "h"]);
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &first_id.to_string(),
+            "--split",
+            "h",
+            "--wait-time",
+            "2000",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --split h (already splith) failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(2500),
+        "re-applying an already-set split took {:?} against a 2000ms --wait-time (fallback \
+         would take ~4000ms), suggesting it fell back to sleeping instead of confirming via poll",
+        started.elapsed()
+    );
+}
+
+#[test]
 fn new_row_places_window_below_the_first() {
     let mut connection = connect();
     let (first_id, _first_guard) = launch_foot(&[]);
@@ -1117,6 +1614,196 @@ fn height_alone_resizes_a_non_solo_window() {
     // "resize set height" targets the decoration-inclusive frame, same as
     // floating_with_width_and_height_applies_all_three.
     assert_eq!(node.rect.height + node.deco_rect.height, 200);
+}
+
+#[test]
+fn height_confirms_via_poll_when_resized_with_a_sibling() {
+    // Regression test for docs/plan-poll-based-wait-time-actions.md's
+    // poll-then-fallback mechanism reaching Height: confirms via
+    // SwayAction::poll_matches()'s height_matches() (a get_tree() poll for
+    // the decoration-inclusive rect.height + deco_rect.height) rather than
+    // always sleeping the full --wait-time after the command too. Needs a
+    // vertically-arranged sibling for the resize to take effect at all —
+    // see height_alone_resizes_a_non_solo_window. Both windows use an
+    // explicit --workspace (rather than whatever's currently focused) so
+    // this test's "just these two windows" assumption holds regardless of
+    // ambient state left behind by other tests in this shared compositor
+    // (e.g. accumulated outputs from tests that call create_output) —
+    // confirmed during this feature's development that --workspace doesn't
+    // switch the *current* focused workspace, so every launch in an
+    // isolated test needs it, not just the first.
+    let mut connection = connect();
+    let (_first_id, _first_guard) =
+        launch_foot(&["--workspace", "live-sway-test-height-poll", "--split", "v"]);
+    let (second_id, _second_guard) = launch_foot(&["--workspace", "live-sway-test-height-poll"]);
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &second_id.to_string(),
+            "--height",
+            "200px",
+            "--wait-time",
+            "2000",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --height failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(2500),
+        "--height took {:?} against a 2000ms --wait-time (fallback would take ~4000ms), \
+         suggesting it fell back to sleeping instead of confirming via poll",
+        started.elapsed()
+    );
+
+    let node = get_node(&mut connection, second_id);
+    assert_eq!(node.rect.height + node.deco_rect.height, 200);
+}
+
+#[test]
+fn width_confirms_via_poll_when_resized_with_a_sibling() {
+    // Same as height_confirms_via_poll_when_resized_with_a_sibling, for
+    // Width — a freshly-tiled window's width_matches() formula is an exact
+    // rect.width match (no border adjustment), confirmed live earlier in
+    // this suite by plain swaymsg probing during development. Isolated via
+    // --workspace for the same reason as that test.
+    let mut connection = connect();
+    let (_first_id, _first_guard) = launch_foot(&["--workspace", "live-sway-test-width-poll"]);
+    let (second_id, _second_guard) = launch_foot(&["--workspace", "live-sway-test-width-poll"]);
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &second_id.to_string(),
+            "--width",
+            "300px",
+            "--wait-time",
+            "2000",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --width failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(2500),
+        "--width took {:?} against a 2000ms --wait-time (fallback would take ~4000ms), \
+         suggesting it fell back to sleeping instead of confirming via poll",
+        started.elapsed()
+    );
+
+    let node = get_node(&mut connection, second_id);
+    assert_eq!(node.rect.width, 300);
+}
+
+#[test]
+fn height_and_width_fall_back_gracefully_when_solo_window_clamps_the_resize() {
+    // Resizing a window that's the sole occupant of its workspace is
+    // silently clamped by Sway (see examples/templates/master-dual-stack.toml's
+    // header comment) — height_matches()/width_matches() can never confirm
+    // this, so the grace period must elapse and fall back to the original
+    // wait-time behavior (succeed, don't hang or error) rather than the
+    // poll turning a legitimate no-op into an indefinite wait. Isolated via
+    // --workspace so this window is genuinely solo, regardless of ambient
+    // state left behind by other tests in this shared compositor.
+    let mut connection = connect();
+    let (first_id, _first_guard) =
+        launch_foot(&["--workspace", "live-sway-test-height-width-clamp"]);
+
+    let height_output = sway_launch_command()
+        .args([
+            "--con-id",
+            &first_id.to_string(),
+            "--height",
+            "200px",
+            "--wait-time",
+            "300",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        height_output.status.success(),
+        "sway-launch --height (solo window) failed: {}",
+        String::from_utf8_lossy(&height_output.stderr)
+    );
+
+    let width_output = sway_launch_command()
+        .args([
+            "--con-id",
+            &first_id.to_string(),
+            "--width",
+            "200px",
+            "--wait-time",
+            "300",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        width_output.status.success(),
+        "sway-launch --width (solo window) failed: {}",
+        String::from_utf8_lossy(&width_output.stderr)
+    );
+
+    let node = get_node(&mut connection, first_id);
+    assert_ne!(
+        node.rect.height + node.deco_rect.height,
+        200,
+        "a solo window's height should stay clamped to 100%, not the requested value"
+    );
+    assert_ne!(
+        node.rect.width, 200,
+        "a solo window's width should stay clamped to 100%, not the requested value"
+    );
+}
+
+#[test]
+fn fallback_path_stays_bounded_at_the_default_wait_time() {
+    // Regression test found during a code-review bug hunt: WAIT_TIME_POLL_GRACE
+    // (200ms) is 10x the CLI's own --wait-time default (20ms), so before
+    // run_poll_then_fallback() capped its grace period at
+    // WAIT_TIME_POLL_GRACE.min(wait_time), any fallback case at default
+    // settings (confirmed live: this exact scenario) took ~220ms instead of
+    // the ~40ms (2 * wait_time) it cost before polling existed at all —
+    // this asserts that regression stays fixed. Omits --wait-time entirely
+    // to exercise the actual CLI default, not just a manually-chosen small
+    // value.
+    let mut connection = connect();
+    let (first_id, _first_guard) =
+        launch_foot(&["--workspace", "live-sway-test-fallback-default-wait-time"]);
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args(["--con-id", &first_id.to_string(), "--height", "200px"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --height (solo window, default --wait-time) failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(150),
+        "--height on a solo window at the default --wait-time took {:?} — the \
+         uncapped grace period regression took ~220ms, so this bound catches it \
+         reappearing without being so tight it flakes on ordinary system load",
+        started.elapsed()
+    );
+
+    let node = get_node(&mut connection, first_id);
+    assert_ne!(
+        node.rect.height + node.deco_rect.height,
+        200,
+        "a solo window's height should stay clamped to 100%, confirming this actually \
+         exercised the fallback path rather than a lucky fast-path match"
+    );
 }
 
 #[test]

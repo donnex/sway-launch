@@ -136,14 +136,28 @@ variant knows how to:
   `WindowChange::Move`, since moving to a different workspace/output reparents the container in
   Sway's tree — confirmed reliable against a live Sway session by `tests/live_sway.rs`'s
   `workspace_moves_window_to_named_workspace` and `output_moves_window_to_named_output`
-  respectively. They *do* have an "already there" no-op case, though (moving to the
-  workspace/output the window is already on doesn't reparent anything, so no `Move` event fires):
-  `SwayAction::run()` calls `already_at_target()` first, which checks the container's current
-  workspace/output via a fresh `get_tree()` call and short-circuits with immediate success rather
-  than waiting on an event Sway will never send — confirmed by `tests/live_sway.rs`'s
-  `workspace_is_a_no_op_when_already_on_the_target_workspace` and
-  `output_is_a_no_op_when_already_on_the_target_output`. `Focus` uses `WindowChange::Focus`,
-  confirmed reliable the same way by `focus_focuses_a_previously_unfocused_window`.
+  respectively. `Focus` uses `WindowChange::Focus`, `Floating`/`Fullscreen` use
+  `WindowChange::Floating`/`FullscreenMode`, confirmed reliable the same way by
+  `focus_focuses_a_previously_unfocused_window`/`fullscreen_enables_fullscreen_mode` and
+  `floating_with_width_and_height_applies_all_three`.
+
+  Five of these seven — every one except `Exec` and `Mark` — *do* have an "already there" no-op
+  case, though: re-applying a state the container already has doesn't fire the corresponding event
+  either (moving to the workspace/output it's already on doesn't reparent anything; re-floating,
+  re-fullscreening, or re-focusing an already-floating/fullscreen/focused window doesn't change
+  anything for Sway to report). `SwayAction::run()` calls `already_at_target()` first to check for
+  this and short-circuit with immediate success rather than waiting on an event Sway will never
+  send. `Workspace`/`Output` were the first two found needing this (via
+  `current_workspace()`/`current_output()`); `Floating`/`Fullscreen`/`Focus` were found live to have
+  the identical failure mode later — re-running `--floating`/`--fullscreen`/`--focus` on a window
+  already in that state hung the full `--timeout` and then errored, before this was added (checked
+  via `find_container_node()`'s `floating`/`fullscreen_mode`/`focused` fields). `Mark` was checked
+  live too and found *not* to need this — re-applying a mark the container already has still fires
+  `WindowChange::Mark`. Confirmed by `tests/live_sway.rs`'s
+  `workspace_is_a_no_op_when_already_on_the_target_workspace`,
+  `output_is_a_no_op_when_already_on_the_target_output`,
+  `floating_is_a_no_op_when_already_floating`, `fullscreen_is_a_no_op_when_already_fullscreen`, and
+  `focus_is_a_no_op_when_already_focused`.
 - **`Exec`** → `run_wait_matching_exec_event()`. Matching purely on event content (app_id/class, or
   nothing at all with no filter) is ambiguous whenever more than one qualifying `New` window can
   appear around the same time — Sway broadcasts window events to every IPC connection, so a second,
@@ -170,23 +184,86 @@ variant knows how to:
   (0 collisions across 90 manual trials during development, versus every trial colliding before
   this) and `exec_falls_back_to_a_content_match_when_its_own_process_already_exited`.
 - **No event exists in Sway IPC for it** (`Split`, `NewColumn`, `NewRow`, `Height`, `Width`,
-  `Position`) → `run_wait_time()`: sends the command and sleeps for `--wait-time` before and after,
-  since Sway doesn't emit an event to confirm these. `Position` has no dedicated event because
-  moving a floating window doesn't reparent it in the tree. `NewColumn`/`NewRow` (`move
-  right`/`move down`) used to be event-confirmed via `WindowChange::Move`, but live-Sway testing
-  showed `move right` doesn't fire that event when the window is already at the tree's rightmost
-  position — the ordinary two-window case — so it hung until `--timeout` every time; both moved to
-  this wait-time pattern instead. On a multi-monitor setup, "move right"/"move down" on a window
-  with no sibling to move past within its workspace don't always no-op the way they do with a
-  single output — Sway's own move-direction semantics can instead escalate and relocate the whole
-  workspace to the next output in that direction. `SwayLaunch::run()` guards against this (see
-  below) rather than silently moving the window to a different monitor. Before actually running its
-  command, `run_wait_time()` also calls `container_exists()` (a `get_tree()` lookup) and errors
-  clearly if the container is gone — without this, a `[con_id=N]` criteria matching zero containers
-  is treated by Sway as success rather than a failure, so a container that closed between an
-  earlier action resolving it and this one running used to silently no-op instead of erroring;
-  confirmed by `tests/live_sway.rs`'s
+  `Position`) → `run_wait_time()`: sleeps for `--wait-time` *before* sending the command
+  unconditionally (there's no signal yet to poll for), then sends it, since Sway doesn't emit an
+  event to confirm any of these. `Position` has no dedicated event because moving a floating window
+  doesn't reparent it in the tree. `NewColumn`/`NewRow` (`move right`/`move down`) used to be
+  event-confirmed via `WindowChange::Move`, but live-Sway testing showed `move right` doesn't fire
+  that event when the window is already at the tree's rightmost position — the ordinary two-window
+  case — so it hung until `--timeout` every time; both moved to this wait-time pattern instead. On a
+  multi-monitor setup, "move right"/"move down" on a window with no sibling to move past within its
+  workspace don't always no-op the way they do with a single output — Sway's own move-direction
+  semantics can instead escalate and relocate the whole workspace to the next output in that
+  direction. `SwayLaunch::run()` guards against this (see below) rather than silently moving the
+  window to a different monitor. Before actually running its command, `run_wait_time()` also calls
+  `container_exists()` (a `get_tree()` lookup) and errors clearly if the container is gone —
+  without this, a `[con_id=N]` criteria matching zero containers is treated by Sway as success
+  rather than a failure, so a container that closed between an earlier action resolving it and this
+  one running used to silently no-op instead of erroring; confirmed by `tests/live_sway.rs`'s
   `wait_time_action_errors_clearly_when_its_container_already_closed`.
+
+  After sending the command, what happens next depends on `SwayAction::poll_matches()`, which now
+  has a matcher for every one of these six variants (per
+  `docs/plan-poll-based-wait-time-actions.md`, now fully landed): `run_wait_time()` hands off to
+  `run_poll_then_fallback()`, which polls `get_tree()` every `WAIT_TIME_POLL_INTERVAL` for up to
+  `WAIT_TIME_POLL_GRACE` for `poll_matches()` to confirm, returning immediately once it does (the
+  fast path) — mirroring `run_wait_matching_exec_event()`'s `PID_MARKER_FALLBACK_GRACE` pattern of
+  a short, bounded confirmation window rather than a hang. If the grace period elapses without a
+  match, `run_poll_then_fallback()` falls back to today's original behavior — assume success and
+  sleep out the rest of `--wait-time` — the same never-regress-into-a-hang principle as the `Exec`
+  PID-marker fallback, since several of these have a legitimate case where the expected state never
+  arrives at all (a solo-window resize clamp, a tiled `NewColumn`/`NewRow` already at the tree's
+  edge). Each variant's own confirmation:
+
+  - **`Split`** — `parent_node_layout()` (`[con_id]`'s *parent* node's `layout` field, not the
+    container's own — confirmed live: splitting a window with siblings wraps it in a new split
+    container one level up, and splitting a solo window sets the workspace it's already the sole
+    child of directly, but a leaf window's own `layout` is always unset either way) matching the
+    requested `Split::H`/`V`. No known no-op case — even re-applying an already-set direction
+    matches on the very first poll. Confirmed live by `tests/live_sway.rs`'s
+    `split_confirms_via_poll_well_under_a_large_wait_time` (a real parent-layout change, confirmed
+    well under `2 * --wait-time`) and `split_is_idempotent_and_still_confirms_promptly_when_already_set`.
+  - **`Height`/`Width`** — `parse_pixel_value()` first checks the value has a `px` suffix (a `ppt`
+    percentage opts out of polling entirely — `None`, not `Some(false)` — since there's no pixel
+    figure to poll for without also resolving the reference dimension it's a percentage of).
+    `height_matches()`/`width_matches()` then compare the container's own `rect`/`deco_rect`/
+    `current_border_width` (via `node_by_id()`) against the requested pixel value. Height has one
+    consistent formula (`rect.height + deco_rect.height`, the decoration-inclusive outer height,
+    confirmed live for both a freshly-floated and a plain tiled resize). Width needed two candidate
+    formulas, not one — confirmed live that a window resized while it's been floating since the
+    very command that floated it matches `rect.width` exactly, but a window that had already been
+    tiled for a while before being floated and resized comes out `2 * current_border_width` short
+    on `rect.width` alone (this project never found a single deterministic rule for the discrepancy,
+    so `width_matches()` accepts either). The grace-period fallback is what handles the solo-window
+    clamp (resizing a window that's the sole occupant of its workspace is silently clamped to
+    100%): the poll can never confirm it, so it always falls back, same as before this feature
+    existed. Confirmed live by `tests/live_sway.rs`'s `height_confirms_via_poll_when_resized_with_a_sibling`/
+    `width_confirms_via_poll_when_resized_with_a_sibling` (fast path) and
+    `height_and_width_fall_back_gracefully_when_solo_window_clamps_the_resize` (fallback path).
+  - **`Position`** — `position_matches()` compares `deco_rect.x`/`deco_rect.y` (the
+    decoration-inclusive frame `move position` actually targets — confirmed live, and that
+    `deco_rect.x`/`rect.x` are always equal in this project's testing, so there's no width-style
+    formula ambiguity here) against either the parsed `<x>,<y>` or, for `center`, a computed target
+    (`compute_center_position()`: the output's own rect, read via a second `get_outputs()` call
+    since `get_tree()` alone doesn't carry output geometry, centered against the window's current
+    outer footprint). Unlike Height/Width, a tiled window's `move position` isn't a silent no-op
+    that falls back gracefully — Sway rejects it outright ("Only floating containers can be moved
+    to an absolute position"), which `run_sway_command()`'s `?` propagates as an error *before*
+    `poll_matches()` is ever reached, confirmed live by `tests/live_sway.rs`'s
+    `position_errors_clearly_for_a_tiled_window`. `position_confirms_via_poll_for_a_floating_window`
+    covers the fast path.
+  - **`NewColumn`/`NewRow`** — the one pair with no fixed target to check against (a successful move
+    can land the window almost anywhere in the tree), so these are the only variants that also use
+    `poll_baseline()`: `run_wait_time()` snapshots the container's own `rect` (via `node_by_id()`)
+    *before* sending the command, and `poll_matches()` compares the *current* `rect` against that
+    snapshot afterward — any real move changes it, a no-op doesn't. This deliberately does **not**
+    compare parent/sibling structure — an earlier design that snapshotted the parent's full
+    children-id list was found live to false-positive on exactly the documented "already at the
+    edge" no-op case, because Sway can still incidentally restructure *other* siblings there (wrapping
+    one in a new split container) even though the target window's own `rect` never changes.
+    Confirmed live by `tests/live_sway.rs`'s `new_column_confirms_via_poll_when_swapping_past_a_sibling`/
+    `new_row_confirms_via_poll_when_swapping_past_a_sibling` (fast path, a real sibling swap) and
+    `new_column_falls_back_gracefully_at_the_edge_with_a_large_wait_time` (fallback path).
 
 ### Orchestration: `SwayLaunch::run()`
 
@@ -210,14 +287,27 @@ variant knows how to:
 final container id is printed to stdout (`main.rs`, as a bare integer, or as `{"container_id": N}`
 under `--json`) — this is what makes commands chainable/scriptable (see README examples).
 
-Before running `NewColumn`/`NewRow`, `run()` calls `relocates_to_another_output(container_id)`,
-which checks `get_outputs()` (skipping the guard entirely when there's only one output) and, if
-more than one exists, `get_tree()` to see whether `container_id` is the only window in its
-workspace — the exact condition under which "move right"/"move down" can relocate the whole
-workspace to a different output instead of no-oping (see above). When both are true, the action is
-skipped (logged under `--verbose`) rather than run, trading a silent cross-monitor relocation for a
-silent no-op — confirmed by `tests/live_sway.rs`'s
-`new_column_does_not_relocate_a_solo_window_to_a_different_output`.
+Before running `NewColumn`/`NewRow`, `run()` calls
+`relocates_to_another_output(container_id, direction)`, which checks `get_outputs()` (skipping the
+guard entirely when there's only one output) and, if more than one exists, `get_tree()` +
+`is_at_the_trailing_workspace_edge()` to see whether `container_id` is at risk of the relocation
+described above. This originally checked only "is `container_id` the only window in its
+workspace" — live testing found that too narrow: a *non-solo* workspace can escalate too, whenever
+`container_id` is already the trailing child of a workspace whose own `layout` already matches the
+move's axis (confirmed live: two windows side by side, `move right` on the rightmost relocated it
+to a different output, not a same-workspace no-op, even with a sibling to its left). The current
+check — direct child of its workspace (not nested in a sub-container), workspace `layout` matches
+the axis (`SplitH` for `NewColumn`, `SplitV` for `NewRow`), and last child in that list — subsumes
+the original solo-window case (trivially both direct- and last-child of its workspace) while also
+catching the multi-window case that check alone missed; a solo window whose workspace layout
+*doesn't* match the axis (e.g. stacked via `splitv`, then moved right) was confirmed live to
+restructure in place rather than escalate, so checking layout too (not just child count) also
+avoids skipping a move that would actually have been safe. A window nested inside a sub-container
+is conservatively never flagged — that case wasn't confirmed live either way. When flagged, the
+action is skipped (logged under `--verbose`) rather than run, trading a silent cross-monitor
+relocation for a silent no-op — confirmed by `tests/live_sway.rs`'s
+`new_column_does_not_relocate_a_solo_window_to_a_different_output` and
+`new_column_does_not_relocate_a_non_solo_window_at_the_trailing_edge`.
 
 Each Sway IPC call opens its own fresh `Connection` (`new_connection()` in `sway_launch.rs`) — there
 is no persistent/shared connection across actions.
@@ -375,11 +465,14 @@ unpolished.
     dispatch tables, window-match logic, CLI argument validation/parsing) via `cargo test`. The
     functions that open, read, or write the Sway IPC socket directly (`new_connection`,
     `event_loop`, `run_sway_command`'s connection call, `run_wait_time`,
-    `run_wait_matching_events`, `run_wait_matching_exec_event`, `container_exists`,
-    `find_existing_container_id`'s connection call, `SwayAction::run`,
-    `SwayAction::already_at_target`, `current_workspace`, `current_output`,
-    `containing_node_name`, `relocates_to_another_output`, `SwayLaunch::run`,
-    `SwayLaunch::debug_events`) are exempted from the `cargo llvm-cov` line-
+    `run_wait_matching_events`, `run_wait_matching_exec_event`, `run_poll_then_fallback`,
+    `container_exists`, `parent_node_layout`, `node_by_id`, `find_container_node`,
+    `position_matches`, `node_and_output_name`, `output_rect`,
+    `find_existing_container_id`'s connection call,
+    `SwayAction::run`, `SwayAction::already_at_target`, `SwayAction::poll_baseline`'s
+    `NewColumn`/`NewRow` arm, `current_workspace`, `current_output`, `containing_node_name`,
+    `relocates_to_another_output`, `SwayLaunch::run`, `SwayLaunch::debug_events`) are exempted from
+    the `cargo llvm-cov` line-
     coverage measurement — they require a live Sway compositor, so `cargo test`/`cargo llvm-cov`
     (which run headlessly, without one) never execute them. They're no longer *unverifiable*,
     though: `tests/live_sway.rs` (see the Testing section below) exercises them for real against a
