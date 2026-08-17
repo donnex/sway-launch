@@ -271,6 +271,11 @@ template:
 sway-launch --template template.toml --apps code,kitty
 ```
 
+`--apps` splits its argument on plain commas, with no escaping — a command that itself needs to
+contain a literal comma (a URL query string, a `sh -c 'a, b'`) can't be represented this way. Use
+`--bindings` instead for that case, since each command there is its own TOML field, not part of a
+comma-separated list.
+
 Or applied via a bindings file, for full control over each slot's identity — including matching an
 already-open window instead of launching a new one:
 
