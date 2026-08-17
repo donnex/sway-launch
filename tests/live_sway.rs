@@ -1156,8 +1156,8 @@ fn every_shipped_template_resolves_and_launches_successfully() {
         .collect();
     paths.sort();
     assert!(
-        paths.len() >= 15,
-        "expected at least 15 non-dual-output template files, found {}: {:?}",
+        paths.len() >= 17,
+        "expected at least 17 non-dual-output template files, found {}: {:?}",
         paths.len(),
         paths
     );
