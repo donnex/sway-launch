@@ -263,6 +263,99 @@ fn template_rejects_binding_with_app_id_and_class_together() {
 }
 
 #[test]
+fn template_builtin_name_is_found_and_parsed_without_a_toml_extension() {
+    // Deliberately mismatches --apps' count against quad-grid's real 4
+    // slots rather than trying to fully run() it (its steps set split
+    // actions, which would need a real Sway socket) — the resulting error
+    // naming all 4 real slot names only happens if the embedded
+    // quad-grid.toml content was actually found and parsed via the bare
+    // name, proving the lookup itself works, while staying headless-safe:
+    // bindings_from_apps() fails before run_steps() ever touches IPC.
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--template", "quad-grid", "--apps", "kitty,kitty"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    for slot in ["top-left", "top-right", "bottom-left", "bottom-right"] {
+        assert!(
+            stderr.contains(slot),
+            "stderr should name slot {slot:?}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn template_unknown_builtin_name_errors_clearly() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--template", "not-a-real-template", "--apps", "kitty"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("not-a-real-template"));
+    assert!(stderr.contains("--list-templates"));
+}
+
+#[test]
+fn template_toml_suffixed_name_is_never_treated_as_a_builtin() {
+    // A bare name with no extension that happens to also not exist as a
+    // built-in (checked above) is one failure mode; this checks the
+    // opposite direction — a nonexistent .toml path must fail as a file
+    // read, not silently fall back to a built-in lookup, even though
+    // "quad-grid" itself is a real built-in name.
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--template", "quad-grid.toml", "--apps", "kitty"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("quad-grid.toml"));
+    assert!(!stderr.contains("--list-templates"));
+}
+
+#[test]
+fn list_templates_prints_known_names_and_descriptions() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--list-templates"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert!(stdout.contains("quad-grid"));
+    assert!(stdout.contains("quad-terminals.toml's shape."));
+    assert!(stdout.contains("sidebar-left-dual-stack"));
+}
+
+#[test]
+fn list_templates_json_output_is_a_structured_array() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--list-templates", "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("output should be valid JSON");
+    let templates = parsed["templates"]
+        .as_array()
+        .expect("templates should be an array");
+    assert!(templates.len() >= 18);
+    assert!(templates
+        .iter()
+        .any(|entry| entry["name"] == "quad-grid" && entry["description"].is_string()));
+}
+
+#[test]
 fn template_conflicts_with_layout() {
     let template = TempToml::write("conflicts-template", "[[step]]\nslot = \"editor\"\n");
 

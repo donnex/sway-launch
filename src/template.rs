@@ -1,7 +1,44 @@
 use crate::layout::LayoutStep;
 use crate::sway_launch::Split;
+use include_dir::{include_dir, Dir};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
+
+/// The contents of `examples/templates/` at compile time — the single
+/// source of truth for both the shipped example files and the built-in
+/// templates `--template <name>` (no `.toml` extension) resolves against,
+/// so there's nothing to keep in sync between the two.
+static BUILTIN_TEMPLATES: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/examples/templates");
+
+/// A built-in template's name and one-line description (its file's first
+/// header comment line), as listed by `--list-templates`.
+pub struct BuiltinTemplate {
+    pub name: &'static str,
+    pub description: &'static str,
+}
+
+/// Looks up a built-in template's raw TOML contents by name (no `.toml`
+/// extension, e.g. `"quad-grid"`), or `None` if there's no such built-in.
+pub fn builtin(name: &str) -> Option<&'static str> {
+    BUILTIN_TEMPLATES
+        .get_file(format!("{name}.toml"))
+        .and_then(|file| file.contents_utf8())
+}
+
+/// Every built-in template's name and description, sorted by name, for
+/// `--list-templates`.
+pub fn builtin_templates() -> Vec<BuiltinTemplate> {
+    let mut templates: Vec<BuiltinTemplate> = BUILTIN_TEMPLATES
+        .files()
+        .filter_map(|file| {
+            let name = file.path().file_stem()?.to_str()?;
+            let description = file.contents_utf8()?.lines().next()?.strip_prefix("# ")?;
+            Some(BuiltinTemplate { name, description })
+        })
+        .collect();
+    templates.sort_unstable_by_key(|template| template.name);
+    templates
+}
 
 /// A reusable layout shape: a sequence of steps that describe what to do to
 /// a window, without saying which application it belongs to. Combined with
@@ -423,5 +460,61 @@ mod tests {
             "#,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn builtin_finds_a_known_template_by_name() {
+        let contents = builtin("quad-grid").expect("quad-grid should be a built-in template");
+        assert!(contents.contains("slot = \"top-left\""));
+    }
+
+    #[test]
+    fn builtin_returns_none_for_an_unknown_name() {
+        assert!(builtin("not-a-real-template").is_none());
+    }
+
+    #[test]
+    fn builtin_returns_none_for_a_name_with_a_toml_extension() {
+        // The lookup is keyed on the bare name only — main.rs's dispatch is
+        // what decides a `.toml`-suffixed value should never reach here at
+        // all, but builtin() itself shouldn't silently strip the extension
+        // either.
+        assert!(builtin("quad-grid.toml").is_none());
+    }
+
+    #[test]
+    fn builtin_templates_lists_every_shipped_template_sorted_by_name() {
+        let templates = builtin_templates();
+        assert!(
+            templates.len() >= 18,
+            "expected at least 18 built-in templates, found {}",
+            templates.len()
+        );
+        let mut sorted_names: Vec<_> = templates.iter().map(|t| t.name).collect();
+        let mut expected = sorted_names.clone();
+        expected.sort_unstable();
+        assert_eq!(
+            sorted_names, expected,
+            "builtin_templates() should be sorted by name"
+        );
+        sorted_names.sort_unstable();
+        assert!(sorted_names.contains(&"quad-grid"));
+    }
+
+    #[test]
+    fn builtin_templates_every_description_is_a_complete_sentence() {
+        // Regression test: --list-templates prints each description as one
+        // line, so a header whose first comment line doesn't end its
+        // thought (wraps onto a second line before a period) would print a
+        // truncated, broken-looking sentence. See the header comments this
+        // was fixed for (e.g. quad-grid.toml, sidebar-left-dual-stack.toml).
+        for template in builtin_templates() {
+            assert!(
+                template.description.trim_end().ends_with('.'),
+                "{:?}'s description should be a complete sentence, got {:?}",
+                template.name,
+                template.description
+            );
+        }
     }
 }

@@ -424,6 +424,46 @@ has a known history of interacting badly with `#[serde(deny_unknown_fields)]` on
 this project's explicit typo-catching regression tests (see `parse_rejects_misspelled_step_field`
 in both `layout.rs` and `template.rs`).
 
+### Built-in templates (`--template <name>`, `--list-templates`)
+
+`--template`'s argument can be either a path to a template file ending in `.toml` (the original
+behavior above) or a bare name with no extension, resolved against a built-in copy of every file
+under `examples/templates/` embedded directly into the binary at compile time via the
+`include_dir` crate (`template.rs`'s `BUILTIN_TEMPLATES:
+Dir<'_>`, `static`, built from `include_dir!("$CARGO_MANIFEST_DIR/examples/templates")`) — the
+single source of truth for both the shipped example files and the built-ins, so there's nothing to
+keep in sync between the two: a new file under `examples/templates/` becomes a built-in
+automatically, with no code change. `main.rs`'s `resolve_template_contents()` is the dispatch
+point, checked before `run_template()` reads anything: a `.toml`-suffixed value is read from disk
+exactly as before this existed; anything else is looked up via `template::builtin()`
+(`BUILTIN_TEMPLATES.get_file()` + `contents_utf8()`), erroring clearly (naming `--list-templates`)
+if no such built-in exists. This extension-based split was chosen over inspecting the filesystem
+(e.g. "try a built-in first, fall back to a file") specifically so there's no TOCTOU-ish ambiguity
+and no silent shadowing between the two: every shipped template file already ends in `.toml` by
+convention (see "Example layout scripts" below), so requiring external files to do the same costs
+nothing while making the two paths mutually exclusive by construction — confirmed by
+`tests/template.rs`'s `template_toml_suffixed_name_is_never_treated_as_a_builtin` (a `.toml`-suffixed
+value that happens to share a real built-in's name still fails as a file read, not a lookup) and
+`template_unknown_builtin_name_errors_clearly`.
+
+`--list-templates` (`main.rs`'s `print_builtin_templates()`) is a standalone mode — doesn't touch
+Sway IPC, so it's checked and short-circuits right after `--completions`, before the `--layout`/
+`--template` dispatch — printing every built-in's name and a one-line description
+(`template::builtin_templates()`: each file's *first* header-comment line, stripped of its leading
+`#` and space), sorted by name, or (`--json`) the same as a `{"templates": [...]}` array. Because this
+description is extracted programmatically, every template file's header comment must lead with one
+complete, self-contained sentence (ending in `.`) before any further rationale — several existing
+headers didn't (a single sentence wrapped across the first two lines) and were rewritten alongside
+this feature so `--list-templates` never prints a sentence truncated mid-thought;
+`template.rs`'s `builtin_templates_every_description_is_a_complete_sentence` test guards against
+this regressing, so keep it true of any new template file's header too.
+
+`tests/live_sway.rs`'s `builtin_template_name_resolves_and_launches_without_a_toml_extension`
+drives the built-in dispatch path against a real compositor (`--template quad-grid`, no path or
+extension), alongside the existing `every_shipped_template_resolves_and_launches_successfully`
+(which still drives every file by its `.toml` path, unchanged) — proving the embedded copy a bare
+name resolves to is the genuine, working template content, not just that the lookup compiles.
+
 ## Example layout scripts
 
 `examples/` splits into three subdirectories by what each file actually is, not just topic:
@@ -445,7 +485,9 @@ in both `layout.rs` and `template.rs`).
   `sway-launch --template <file> --apps ...`/`--bindings <file>`. Named for the shape alone, never
   an application: spelled-out count words for even splits/grids (`dual-row.toml`,
   `triple-column.toml`, `six-grid.toml`, ...) and descriptive compound names for special-purpose
-  shapes (`master-dual-stack.toml`, `sidebar-left.toml`, `floating-overlay.toml`, ...).
+  shapes (`master-dual-stack.toml`, `sidebar-left.toml`, `floating-overlay.toml`, ...). Every file
+  here is also embedded into the binary as a built-in `--template <name>` — see "Built-in templates
+  (`--template <name>`, `--list-templates`)" under "`--template`" above for how.
 
 The files under `examples/layouts/` and `examples/templates/` are plain data (not executable, no
 `-h`/`--help`), so the Scripts/Shell conventions don't apply to them.

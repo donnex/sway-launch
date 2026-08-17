@@ -116,8 +116,10 @@ struct Args {
 
     /// Run a reusable declarative TOML layout template instead of a single
     /// command; see README.md for the schema. Steps declare a `slot` instead
-    /// of an application, resolved via --bindings or --apps. Conflicts with
-    /// --layout and every per-window flag, same reasoning as --layout
+    /// of an application, resolved via --bindings or --apps. Either a path
+    /// to a template file ending in .toml, or a built-in template name with
+    /// no extension (see --list-templates). Conflicts with --layout and
+    /// every per-window flag, same reasoning as --layout
     #[clap(long, conflicts_with_all = [
         "command", "con_id", "existing", "app_id", "class", "split",
         "floating", "fullscreen", "focus", "mark", "new_column", "new_row",
@@ -125,6 +127,10 @@ struct Args {
         "layout",
     ])]
     template: Option<PathBuf>,
+
+    /// List built-in --template names and exit
+    #[clap(long)]
+    list_templates: bool,
 
     /// Bindings file supplying each --template slot's application identity.
     /// Requires --template; conflicts with --apps
@@ -151,6 +157,11 @@ fn main() {
             "sway-launch",
             &mut io::stdout(),
         );
+        process::exit(0);
+    }
+
+    if args.list_templates {
+        print_builtin_templates(args.json);
         process::exit(0);
     }
 
@@ -277,15 +288,68 @@ enum BindingsSource<'a> {
     Apps(&'a str),
 }
 
+/// Resolves `--template`'s argument to raw TOML contents. A value ending in
+/// `.toml` is read as an external file, exactly as before this existed;
+/// anything else is looked up as a built-in template name via
+/// `template::builtin()` — matching every shipped template file's own
+/// `.toml` extension means there's no ambiguity between the two, and
+/// nothing on disk to stat to decide which one a given value means.
+fn resolve_template_contents(template_arg: &Path) -> Result<String, String> {
+    let is_file = template_arg.extension().and_then(|ext| ext.to_str()) == Some("toml");
+
+    if is_file {
+        std::fs::read_to_string(template_arg)
+            .map_err(|error| format!("{}: {}", template_arg.display(), error))
+    } else {
+        let name = template_arg.to_string_lossy();
+        template::builtin(&name).map(str::to_string).ok_or_else(|| {
+            format!(
+                "no built-in template named {:?} (run --list-templates to see available \
+                 names, or pass a path ending in .toml to use a template file)",
+                name
+            )
+        })
+    }
+}
+
+/// The `--list-templates` standalone mode: prints every built-in
+/// `--template` name and its one-line description, or (with `--json`) the
+/// same as a `{"templates": [...]}` array. Doesn't touch Sway IPC, so it's
+/// checked and short-circuits right after `--completions`, same as
+/// `--layout`/`--template`.
+fn print_builtin_templates(json: bool) {
+    let templates = template::builtin_templates();
+
+    if json {
+        let templates: Vec<_> = templates
+            .iter()
+            .map(|template| {
+                serde_json::json!({ "name": template.name, "description": template.description })
+            })
+            .collect();
+        println!("{}", serde_json::json!({ "templates": templates }));
+        return;
+    }
+
+    let name_width = templates
+        .iter()
+        .map(|template| template.name.len())
+        .max()
+        .unwrap_or(0);
+    for template in &templates {
+        println!("{:<name_width$}  {}", template.name, template.description);
+    }
+}
+
 /// Reads and parses a `--template` file, resolves it against `--bindings`/
 /// `--apps` into ordinary layout steps via `template::resolve()`, then hands
 /// them to `run_steps()` — the same execution path `--layout` uses, since a
 /// resolved template is just a `Vec<layout::LayoutStep>`.
 fn run_template(path: &Path, bindings_source: BindingsSource, args: &Args) -> ! {
-    let contents = match std::fs::read_to_string(path) {
+    let contents = match resolve_template_contents(path) {
         Ok(contents) => contents,
         Err(error) => {
-            eprintln!("{}: {}", path.display(), error);
+            eprintln!("{}", error);
             process::exit(1);
         }
     };

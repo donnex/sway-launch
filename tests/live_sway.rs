@@ -1227,6 +1227,49 @@ fn every_shipped_template_resolves_and_launches_successfully() {
         .expect("kill should succeed");
 }
 
+#[test]
+fn builtin_template_name_resolves_and_launches_without_a_toml_extension() {
+    // --template <name> (no .toml extension, no path) is a separate
+    // dispatch path from --template <file>.toml (main.rs's
+    // resolve_template_contents()), driving the same embedded content
+    // every_shipped_template_resolves_and_launches_successfully above
+    // drives from disk — proves the bare-name lookup finds the real
+    // embedded quad-grid template and genuinely launches real windows via
+    // it, not just that resolve_template_contents() parses successfully.
+    let mut connection = connect();
+    connection
+        .run_command("[app_id=foot] kill")
+        .expect("kill should succeed");
+
+    let output = sway_launch_command()
+        .args([
+            "--template",
+            "quad-grid",
+            "--apps",
+            "foot,foot,foot,foot",
+            "--timeout",
+            "10",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let ids: Vec<i64> = stdout
+        .lines()
+        .map(|line| line.parse().expect("each line should be a container id"))
+        .collect();
+    assert_eq!(ids.len(), 4, "quad-grid has 4 slots");
+
+    connection
+        .run_command("[app_id=foot] kill")
+        .expect("kill should succeed");
+}
+
 /// A temporary, executable copy of one of the shipped `examples/scripts/`
 /// files (`kitty` substituted for `foot`, same idea as `TempToml`), removed
 /// again when it goes out of scope even if an assertion panics mid-test.

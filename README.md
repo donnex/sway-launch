@@ -88,7 +88,8 @@ Options:
   -v, --verbose                    Verbose output
       --json                       Print the result as a JSON object instead of a bare container id
       --layout <LAYOUT>            Run a declarative TOML layout file instead of a single command; see README.md for the schema. Each step is the equivalent of one sway-launch invocation's flags, so this conflicts with every per-window flag below, which would otherwise apply to no specific step
-      --template <TEMPLATE>        Run a reusable declarative TOML layout template instead of a single command; see README.md for the schema. Steps declare a `slot` instead of an application, resolved via --bindings or --apps. Conflicts with --layout and every per-window flag, same reasoning as --layout
+      --template <TEMPLATE>        Run a reusable declarative TOML layout template instead of a single command; see README.md for the schema. Steps declare a `slot` instead of an application, resolved via --bindings or --apps. Either a path to a template file ending in .toml, or a built-in template name with no extension (see --list-templates). Conflicts with --layout and every per-window flag, same reasoning as --layout
+      --list-templates             List built-in --template names and exit
       --bindings <BINDINGS>        Bindings file supplying each --template slot's application identity. Requires --template; conflicts with --apps
       --apps <APPS>                Comma-separated list of commands to launch into --template's slots, in the order they first appear in the template. Requires --template; conflicts with --bindings
   -h, --help                       Print help
@@ -338,9 +339,20 @@ resolved `id` is always its slot name). `--template` requires exactly one of `--
 and conflicts with `--layout` and every per-window flag, same reasoning as `--layout`. See
 [`examples/templates/quad-grid.toml`](examples/templates/quad-grid.toml).
 
-[`examples/templates/`](examples/templates) has a small library of other app-agnostic shapes ready
-to apply to any application via `--apps`/`--bindings`. Each file's own header comment has a
-ready-to-run `--apps` example.
+Every file under [`examples/templates/`](examples/templates) is also built into the `sway-launch`
+binary itself as a *built-in template* — `--template <name>` (no `.toml` extension, e.g.
+`--template quad-grid`) resolves that name against the embedded copy, so using one doesn't require
+cloning this repo or downloading anything. A value ending in `.toml` is always read from disk
+instead, so a built-in name and a same-named local template file never collide. Run
+`sway-launch --list-templates` to print every built-in name with a one-line description
+(add `--json` for structured output).
+
+```shell
+sway-launch --template quad-grid --apps kitty,firefox,code,thunar
+```
+
+The library below has a small set of other app-agnostic shapes ready to apply to any application
+via `--apps`/`--bindings`. Each file's own header comment has a ready-to-run `--apps` example.
 
 | Category | Template | Shape | Slots |
 | --- | --- | --- | --- |

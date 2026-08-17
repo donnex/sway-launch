@@ -1,6 +1,6 @@
-# A sidebar on the left made of two stacked windows (75% height on top,
-# 25% on the bottom), and a wide main window on the right — sidebar-left.toml's
-# shape, with the sidebar split into two windows instead of one.
+# A sidebar on the left split into two stacked windows (75% height on top, 25% on the bottom).
+# A wide main window on the right — sidebar-left.toml's shape, with the
+# sidebar split into two windows instead of one.
 # Run with, e.g.:
 #   sway-launch --template examples/templates/sidebar-left-dual-stack.toml \
 #     --apps kitty,kitty,code

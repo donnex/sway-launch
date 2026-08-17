@@ -1,5 +1,5 @@
-# The app-agnostic version of examples/layouts/quad-terminals.toml's shape:
-# an equally sized 2x2 grid, two rows of two, with no application baked in.
+# The app-agnostic version of examples/layouts/quad-terminals.toml's shape.
+# An equally sized 2x2 grid, two rows of two, with no application baked in.
 # Run with, e.g.:
 #   sway-launch --template examples/templates/quad-grid.toml --apps kitty,firefox,code,thunar
 # or with per-slot app_id/class matching via a --bindings file; see
