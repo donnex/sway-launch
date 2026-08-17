@@ -2164,13 +2164,13 @@ mod tests {
     #[test]
     fn sway_command_exec() {
         let action = SwayAction::Exec {
-            command: "kitty",
+            command: "foot",
             app_id_match: "",
             class_match: "",
             verbose: false,
             timeout: time::Duration::from_secs(5),
         };
-        assert_eq!(action.sway_command(), "exec kitty");
+        assert_eq!(action.sway_command(), "exec foot");
     }
 
     #[test]
@@ -2333,15 +2333,15 @@ mod tests {
     #[test]
     fn display_exec() {
         let action = SwayAction::Exec {
-            command: "kitty",
-            app_id_match: "kitty",
+            command: "foot",
+            app_id_match: "foot",
             class_match: "",
             verbose: false,
             timeout: time::Duration::from_secs(5),
         };
         assert_eq!(
             action.to_string(),
-            "Exec \"kitty\" (app_id_match: \"kitty\") (class_match: \"\")"
+            "Exec \"foot\" (app_id_match: \"foot\") (class_match: \"\")"
         );
     }
 
@@ -2526,7 +2526,7 @@ mod tests {
     #[test]
     fn container_id_is_none_for_exec() {
         let action = SwayAction::Exec {
-            command: "kitty",
+            command: "foot",
             app_id_match: "",
             class_match: "",
             verbose: false,
@@ -2553,7 +2553,7 @@ mod tests {
         // any pre-existing window being reparented (not just the one we
         // just launched) could be mistaken for a match.
         let action = SwayAction::Exec {
-            command: "kitty",
+            command: "foot",
             app_id_match: "",
             class_match: "",
             verbose: false,
@@ -2860,13 +2860,13 @@ mod tests {
     #[test]
     fn exec_without_filter_matches_any_new_window() {
         let action = SwayAction::Exec {
-            command: "kitty",
+            command: "foot",
             app_id_match: "",
             class_match: "",
             verbose: false,
             timeout: time::Duration::from_secs(5),
         };
-        let event = window_event("new", 99, Some("kitty"), None);
+        let event = window_event("new", 99, Some("foot"), None);
         assert!(matches!(
             action.matches_window_event(&event),
             Ok(WindowEventMatch::NewWindowMatchWithoutCheck)
@@ -2880,13 +2880,13 @@ mod tests {
         // just launched — not a `Move` (or any other) event belonging to
         // some other, pre-existing window.
         let action = SwayAction::Exec {
-            command: "kitty",
+            command: "foot",
             app_id_match: "",
             class_match: "",
             verbose: false,
             timeout: time::Duration::from_secs(5),
         };
-        let event = window_event("move", 99, Some("kitty"), None);
+        let event = window_event("move", 99, Some("foot"), None);
         assert!(matches!(
             action.matches_window_event(&event),
             Err(WindowEventMatchError::EventChangeTypeMismatch)
@@ -2896,13 +2896,13 @@ mod tests {
     #[test]
     fn exec_with_app_id_match_accepts_matching_app_id() {
         let action = SwayAction::Exec {
-            command: "kitty",
-            app_id_match: "kitty",
+            command: "foot",
+            app_id_match: "foot",
             class_match: "",
             verbose: false,
             timeout: time::Duration::from_secs(5),
         };
-        let event = window_event("new", 99, Some("kitty"), None);
+        let event = window_event("new", 99, Some("foot"), None);
         assert!(matches!(
             action.matches_window_event(&event),
             Ok(WindowEventMatch::WindowAppId)
@@ -2912,8 +2912,8 @@ mod tests {
     #[test]
     fn exec_with_app_id_match_rejects_different_app_id() {
         let action = SwayAction::Exec {
-            command: "kitty",
-            app_id_match: "kitty",
+            command: "foot",
+            app_id_match: "foot",
             class_match: "",
             verbose: false,
             timeout: time::Duration::from_secs(5),
@@ -2996,13 +2996,13 @@ mod tests {
         // Args::app_id's conflicts_with in main.rs, which now prevents a
         // caller from setting both in the first place).
         let action = SwayAction::Exec {
-            command: "kitty",
-            app_id_match: "kitty",
+            command: "foot",
+            app_id_match: "foot",
             class_match: "SomethingElseEntirely",
             verbose: false,
             timeout: time::Duration::from_secs(5),
         };
-        let event = window_event("new", 99, Some("kitty"), Some("SomethingElseEntirely"));
+        let event = window_event("new", 99, Some("foot"), Some("SomethingElseEntirely"));
         assert!(matches!(
             action.matches_window_event(&event),
             Ok(WindowEventMatch::WindowAppId)
@@ -3084,20 +3084,20 @@ mod tests {
 
     #[test]
     fn window_app_id_match_true_when_equal() {
-        let event = window_event("new", 1, Some("kitty"), None);
-        assert!(window_app_id_match(&event.container, "kitty"));
+        let event = window_event("new", 1, Some("foot"), None);
+        assert!(window_app_id_match(&event.container, "foot"));
     }
 
     #[test]
     fn window_app_id_match_false_when_different() {
-        let event = window_event("new", 1, Some("kitty"), None);
+        let event = window_event("new", 1, Some("foot"), None);
         assert!(!window_app_id_match(&event.container, "alacritty"));
     }
 
     #[test]
     fn window_app_id_match_false_when_absent() {
         let event = window_event("new", 1, None, None);
-        assert!(!window_app_id_match(&event.container, "kitty"));
+        assert!(!window_app_id_match(&event.container, "foot"));
     }
 
     #[test]
@@ -3133,19 +3133,19 @@ mod tests {
         let tree = node_tree(
             1,
             vec![
-                leaf_node_value(10, Some("kitty"), None),
+                leaf_node_value(10, Some("foot"), None),
                 leaf_node_value(11, Some("firefox"), None),
             ],
-            vec![leaf_node_value(20, Some("kitty"), None)],
+            vec![leaf_node_value(20, Some("foot"), None)],
         );
-        let mut ids = matching_container_ids(&tree, "kitty", "");
+        let mut ids = matching_container_ids(&tree, "foot", "");
         ids.sort();
         assert_eq!(ids, vec![10, 20]);
     }
 
     #[test]
     fn matching_container_ids_empty_when_no_match() {
-        let tree = node_tree(1, vec![leaf_node_value(10, Some("kitty"), None)], vec![]);
+        let tree = node_tree(1, vec![leaf_node_value(10, Some("foot"), None)], vec![]);
         assert_eq!(
             matching_container_ids(&tree, "nonexistent", ""),
             Vec::<i64>::new()
@@ -3160,19 +3160,19 @@ mod tests {
 
     #[test]
     fn matching_container_ids_recurses_into_nested_containers() {
-        let inner = container_node_value(2, vec![leaf_node_value(10, Some("kitty"), None)], vec![]);
+        let inner = container_node_value(2, vec![leaf_node_value(10, Some("foot"), None)], vec![]);
         let tree = node_tree(1, vec![inner], vec![]);
-        assert_eq!(matching_container_ids(&tree, "kitty", ""), vec![10]);
+        assert_eq!(matching_container_ids(&tree, "foot", ""), vec![10]);
     }
 
     #[test]
     fn matching_container_ids_prefers_app_id_over_class_when_both_set() {
         let tree = node_tree(
             1,
-            vec![leaf_node_value(10, Some("kitty"), Some("NoMatch"))],
+            vec![leaf_node_value(10, Some("foot"), Some("NoMatch"))],
             vec![],
         );
-        assert_eq!(matching_container_ids(&tree, "kitty", "NoMatch"), vec![10]);
+        assert_eq!(matching_container_ids(&tree, "foot", "NoMatch"), vec![10]);
     }
 
     // resolve_matches
@@ -3180,21 +3180,21 @@ mod tests {
     #[test]
     fn resolve_matches_errors_on_zero_matches() {
         assert_eq!(
-            resolve_matches(vec![], "app_id \"kitty\""),
-            Err("No existing window matches app_id \"kitty\"".to_string())
+            resolve_matches(vec![], "app_id \"foot\""),
+            Err("No existing window matches app_id \"foot\"".to_string())
         );
     }
 
     #[test]
     fn resolve_matches_ok_on_single_match() {
-        assert_eq!(resolve_matches(vec![42], "app_id \"kitty\""), Ok(42));
+        assert_eq!(resolve_matches(vec![42], "app_id \"foot\""), Ok(42));
     }
 
     #[test]
     fn resolve_matches_errors_listing_ids_on_multiple_matches() {
         assert_eq!(
-            resolve_matches(vec![42, 91], "app_id \"kitty\""),
-            Err("2 windows match app_id \"kitty\": 42, 91 — retarget with --con-id".to_string())
+            resolve_matches(vec![42, 91], "app_id \"foot\""),
+            Err("2 windows match app_id \"foot\": 42, 91 — retarget with --con-id".to_string())
         );
     }
 
@@ -3203,7 +3203,7 @@ mod tests {
 
     #[test]
     fn find_containing_name_finds_the_nearest_ancestor_of_kind() {
-        let leaf = leaf_node_value(10, Some("kitty"), None);
+        let leaf = leaf_node_value(10, Some("foot"), None);
         let workspace = workspace_node_tree(2, "main", vec![leaf], vec![]);
         assert_eq!(
             find_containing_name(&workspace, 10, NodeType::Workspace, None),
@@ -3222,7 +3222,7 @@ mod tests {
 
     #[test]
     fn find_workspace_node_locates_the_workspace_containing_the_id() {
-        let leaf = leaf_node_value(10, Some("kitty"), None);
+        let leaf = leaf_node_value(10, Some("foot"), None);
         let workspace = workspace_node_tree(2, "main", vec![leaf], vec![]);
         let found = find_workspace_node(&workspace, 10).expect("should find workspace");
         assert_eq!(found.name.as_deref(), Some("main"));
@@ -3230,14 +3230,14 @@ mod tests {
 
     #[test]
     fn find_workspace_node_returns_none_when_id_not_found() {
-        let leaf = leaf_node_value(10, Some("kitty"), None);
+        let leaf = leaf_node_value(10, Some("foot"), None);
         let workspace = workspace_node_tree(2, "main", vec![leaf], vec![]);
         assert!(find_workspace_node(&workspace, 999).is_none());
     }
 
     #[test]
     fn contains_id_true_for_self_and_descendants() {
-        let leaf = leaf_node_value(10, Some("kitty"), None);
+        let leaf = leaf_node_value(10, Some("foot"), None);
         let tree = node_tree(1, vec![leaf], vec![]);
         assert!(contains_id(&tree, 1));
         assert!(contains_id(&tree, 10));
@@ -3251,7 +3251,7 @@ mod tests {
 
     #[test]
     fn find_parent_layout_returns_the_direct_parents_layout() {
-        let leaf = leaf_node_value(10, Some("kitty"), None);
+        let leaf = leaf_node_value(10, Some("foot"), None);
         let mut parent_value = container_node_value(2, vec![leaf], vec![]);
         parent_value["layout"] = serde_json::json!("splitv");
         let parent: Node = serde_json::from_value(parent_value).expect("valid Node test fixture");
@@ -3260,7 +3260,7 @@ mod tests {
 
     #[test]
     fn find_parent_layout_finds_the_nearest_ancestor_when_nested() {
-        let leaf = leaf_node_value(10, Some("kitty"), None);
+        let leaf = leaf_node_value(10, Some("foot"), None);
         let mut inner_value = container_node_value(2, vec![leaf], vec![]);
         inner_value["layout"] = serde_json::json!("splith");
         let tree = node_tree(1, vec![inner_value], vec![]);
@@ -3269,7 +3269,7 @@ mod tests {
 
     #[test]
     fn find_parent_layout_checks_floating_children_too() {
-        let floating = leaf_node_value(20, Some("kitty"), None);
+        let floating = leaf_node_value(20, Some("foot"), None);
         let mut value = container_node_value(1, vec![], vec![floating]);
         value["layout"] = serde_json::json!("splitv");
         let tree: Node = serde_json::from_value(value).expect("valid Node test fixture");
@@ -3286,7 +3286,7 @@ mod tests {
 
     #[test]
     fn find_node_finds_self_and_nested_children() {
-        let leaf = leaf_node_value(10, Some("kitty"), None);
+        let leaf = leaf_node_value(10, Some("foot"), None);
         let inner = container_node_value(2, vec![leaf], vec![]);
         let tree = node_tree(1, vec![inner], vec![]);
         assert_eq!(find_node(&tree, 1).map(|node| node.id), Some(1));
@@ -3296,7 +3296,7 @@ mod tests {
 
     #[test]
     fn find_node_finds_floating_children() {
-        let floating = leaf_node_value(20, Some("kitty"), None);
+        let floating = leaf_node_value(20, Some("foot"), None);
         let tree = node_tree(1, vec![], vec![floating]);
         assert_eq!(find_node(&tree, 20).map(|node| node.id), Some(20));
     }
@@ -3323,7 +3323,7 @@ mod tests {
     // width_matches / height_matches
 
     fn node_with_geometry(width: i32, height: i32, border_width: i32, deco_height: i32) -> Node {
-        let mut value = leaf_node_value(10, Some("kitty"), None);
+        let mut value = leaf_node_value(10, Some("foot"), None);
         value["rect"] = serde_json::json!({"x": 0, "y": 0, "width": width, "height": height});
         value["deco_rect"] =
             serde_json::json!({"x": 0, "y": 0, "width": width, "height": deco_height});
@@ -3364,7 +3364,7 @@ mod tests {
     // node_is_floating
 
     fn node_with_floating_state(node_type: &str, floating: Option<&str>) -> Node {
-        let mut value = leaf_node_value(10, Some("kitty"), None);
+        let mut value = leaf_node_value(10, Some("foot"), None);
         value["type"] = serde_json::json!(node_type);
         if let Some(floating) = floating {
             value["floating"] = serde_json::json!(floating);
@@ -3461,7 +3461,7 @@ mod tests {
 
     #[test]
     fn is_at_the_trailing_workspace_edge_true_for_a_solo_window() {
-        let leaf = leaf_node_value(10, Some("kitty"), None);
+        let leaf = leaf_node_value(10, Some("foot"), None);
         let workspace = workspace_node_tree_with_layout(2, "main", "splith", vec![leaf]);
         assert!(is_at_the_trailing_workspace_edge(
             &workspace,
@@ -3475,8 +3475,8 @@ mod tests {
         // The case the old solo-window-only check missed: container_id has
         // a sibling, but is still the trailing (rightmost) child of a
         // workspace whose own layout already matches the move axis.
-        let leaf1 = leaf_node_value(10, Some("kitty"), None);
-        let leaf2 = leaf_node_value(11, Some("kitty"), None);
+        let leaf1 = leaf_node_value(10, Some("foot"), None);
+        let leaf2 = leaf_node_value(11, Some("foot"), None);
         let workspace = workspace_node_tree_with_layout(2, "main", "splith", vec![leaf1, leaf2]);
         assert!(is_at_the_trailing_workspace_edge(
             &workspace,
@@ -3487,8 +3487,8 @@ mod tests {
 
     #[test]
     fn is_at_the_trailing_workspace_edge_false_for_a_leading_sibling() {
-        let leaf1 = leaf_node_value(10, Some("kitty"), None);
-        let leaf2 = leaf_node_value(11, Some("kitty"), None);
+        let leaf1 = leaf_node_value(10, Some("foot"), None);
+        let leaf2 = leaf_node_value(11, Some("foot"), None);
         let workspace = workspace_node_tree_with_layout(2, "main", "splith", vec![leaf1, leaf2]);
         assert!(!is_at_the_trailing_workspace_edge(
             &workspace,
@@ -3503,7 +3503,7 @@ mod tests {
         // right, restructures in place rather than escalating — the
         // workspace's own layout has to match the move's axis too, not
         // just "container_id is the trailing child".
-        let leaf = leaf_node_value(10, Some("kitty"), None);
+        let leaf = leaf_node_value(10, Some("foot"), None);
         let workspace = workspace_node_tree_with_layout(2, "main", "splitv", vec![leaf]);
         assert!(!is_at_the_trailing_workspace_edge(
             &workspace,
@@ -3514,8 +3514,8 @@ mod tests {
 
     #[test]
     fn is_at_the_trailing_workspace_edge_checks_the_down_axis_for_new_row() {
-        let leaf1 = leaf_node_value(10, Some("kitty"), None);
-        let leaf2 = leaf_node_value(11, Some("kitty"), None);
+        let leaf1 = leaf_node_value(10, Some("foot"), None);
+        let leaf2 = leaf_node_value(11, Some("foot"), None);
         let workspace = workspace_node_tree_with_layout(2, "main", "splitv", vec![leaf1, leaf2]);
         assert!(is_at_the_trailing_workspace_edge(
             &workspace,

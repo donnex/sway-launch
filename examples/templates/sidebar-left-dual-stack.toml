@@ -3,7 +3,7 @@
 # sidebar split into two windows instead of one.
 # Run with, e.g.:
 #   sway-launch --template examples/templates/sidebar-left-dual-stack.toml \
-#     --apps kitty,kitty,code
+#     --apps foot,foot,code
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
 #

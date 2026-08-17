@@ -1,12 +1,12 @@
 #!/bin/sh
 #
-# Launch a floating kitty terminal, move it to workspace 2, and center it.
+# Launch a floating foot terminal, move it to workspace 2, and center it.
 #
 set -eu
 
 print_usage() {
   printf 'Usage: %s\n' "$(basename "$0")"
-  printf 'Launch a floating kitty terminal on workspace 2, centered.\n'
+  printf 'Launch a floating foot terminal on workspace 2, centered.\n'
 }
 
 # snippet: usage
@@ -29,4 +29,4 @@ case "${1:-}" in
   ;;
 esac
 
-sway-launch -a kitty --floating --workspace 2 --position center kitty
+sway-launch -a foot --floating --workspace 2 --position center foot
