@@ -1,6 +1,6 @@
 # Two windows stacked in a single column.
 # Run with, e.g.:
-#   sway-launch --template templates/dual-column.toml --apps foot,firefox
+#   sway-launch --template dual-column --apps foot,firefox
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
 

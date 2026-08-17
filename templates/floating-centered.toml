@@ -1,6 +1,6 @@
 # A single floating window, centered on the current workspace.
 # Run with, e.g.:
-#   sway-launch --template templates/floating-centered.toml --apps foot
+#   sway-launch --template floating-centered --apps foot
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
 
