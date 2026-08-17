@@ -1215,6 +1215,127 @@ fn every_shipped_template_resolves_and_launches_successfully() {
         .expect("kill should succeed");
 }
 
+/// A temporary, executable copy of one of the shipped `examples/scripts/`
+/// files (`kitty` substituted for `foot`, same idea as `TempToml`), removed
+/// again when it goes out of scope even if an assertion panics mid-test.
+struct TempScript(std::path::PathBuf);
+
+impl TempScript {
+    fn write(name: &str, contents: &str) -> Self {
+        let path = std::env::temp_dir().join(format!("sway-launch-live-test-script-{}", name));
+        std::fs::write(&path, contents).expect("failed to write temp script file");
+        let mut permissions = std::fs::metadata(&path)
+            .expect("temp script file should exist")
+            .permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+        std::fs::set_permissions(&path, permissions).expect("failed to chmod +x temp script file");
+        Self(path)
+    }
+}
+
+impl std::ops::Deref for TempScript {
+    type Target = std::path::Path;
+
+    fn deref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for TempScript {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn count_app_id_windows(node: &Node, app_id: &str) -> usize {
+    let mut count = usize::from(node.app_id.as_deref() == Some(app_id));
+    for child in node.nodes.iter().chain(node.floating_nodes.iter()) {
+        count += count_app_id_windows(child, app_id);
+    }
+    count
+}
+
+#[test]
+fn every_basic_example_script_launches_successfully() {
+    // Drives the actual shipped shell scripts under examples/scripts/ that
+    // use only kitty (foot substituted in, same substitute-and-run idea
+    // every_shipped_template_resolves_and_launches_successfully uses for
+    // TOML files) — CLAUDE.md's live-Sway coverage rule names "an example
+    // script" alongside --layout/--template files, which already got this
+    // treatment; scripts never did until this test. Each script invokes
+    // `sway-launch` by bare name (relying on PATH, since that's how a user
+    // actually runs these), so a temporary directory holding a copy of the
+    // compiled test binary under that exact name is prepended to PATH for
+    // the duration of each script run. The five "advanced" scripts
+    // (browser-comparison, dev-workspace, editor-with-floating-terminal,
+    // floating-file-manager, quad-mixed-apps) need Firefox/Chromium/Thunar/
+    // VS Code, none of which are installed in this project's
+    // live-sway-tests CI job — scoped out here rather than silently
+    // covering none of the 11.
+    let mut connection = connect();
+
+    let bin_dir = std::env::temp_dir().join("sway-launch-live-test-script-bin");
+    std::fs::create_dir_all(&bin_dir).expect("failed to create temp PATH dir for scripts");
+    let fake_bin_path = bin_dir.join("sway-launch");
+    std::fs::copy(env!("CARGO_BIN_EXE_sway-launch"), &fake_bin_path)
+        .expect("failed to copy the compiled binary into the temp PATH dir");
+    let mut permissions = std::fs::metadata(&fake_bin_path)
+        .expect("copied binary should exist")
+        .permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&fake_bin_path, permissions)
+        .expect("failed to chmod +x the copied binary");
+    let path_with_fake_bin_first = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let scripts_with_expected_window_counts = [
+        ("dual-terminals", 2),
+        ("triple-row", 3),
+        ("column-split", 2),
+        ("quad-terminals", 4),
+        ("workspace-and-position", 1),
+        ("retarget-floating", 1),
+    ];
+
+    for (name, expected_window_count) in scripts_with_expected_window_counts {
+        connection
+            .run_command("[app_id=foot] kill")
+            .expect("kill should succeed");
+
+        let path = examples_dir("scripts").join(name);
+        let contents = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read {path:?}: {error}"));
+        let contents = contents.replace("kitty", "foot");
+        let script = TempScript::write(name, &contents);
+
+        let output = Command::new(&*script)
+            .env("PATH", &path_with_fake_bin_first)
+            .output()
+            .unwrap_or_else(|error| panic!("failed to run {name}: {error}"));
+        assert!(
+            output.status.success(),
+            "examples/scripts/{name} (kitty substituted for foot) failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        std::thread::sleep(Duration::from_millis(300));
+        let tree = connection.get_tree().expect("get_tree should succeed");
+        let window_count = count_app_id_windows(&tree, "foot");
+        assert_eq!(
+            window_count, expected_window_count,
+            "examples/scripts/{name} should have launched {expected_window_count} foot \
+             window(s), found {window_count}"
+        );
+    }
+
+    connection
+        .run_command("[app_id=foot] kill")
+        .expect("kill should succeed");
+}
+
 #[test]
 fn dual_output_template_moves_windows_to_separate_outputs() {
     // dual-output.toml ships with HDMI-A-1/DP-1 as placeholder output names
