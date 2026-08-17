@@ -63,7 +63,7 @@ struct Args {
     width: Option<String>,
 
     /// Move window to new row (move down)
-    #[clap(short, long, short = 'r')]
+    #[clap(long, short = 'r')]
     new_row: bool,
 
     /// Move new window to workspace

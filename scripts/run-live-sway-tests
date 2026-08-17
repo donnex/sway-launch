@@ -124,10 +124,22 @@ if ! poll 50 0.1 sway_ipc_ready; then
   die "Timed out waiting for headless Sway to become ready."
 fi
 
+# Derived from Sway's own runtime dir rather than assumed as "wayland-1" —
+# which display number a fresh, isolated XDG_RUNTIME_DIR headless Sway
+# instance picks is Sway's own choice, not something this script controls.
+wayland_display=''
+for wayland_socket in "$sway_runtime_dir"/wayland-*; do
+  case "$wayland_socket" in
+  *.lock) continue ;;
+  esac
+  [ -S "$wayland_socket" ] && wayland_display="$(basename "$wayland_socket")"
+done
+[ -n "$wayland_display" ] || die "Could not find a Wayland display socket under $sway_runtime_dir."
+
 printf '%sRunning live-Sway tests%s\n' "${COLOR_CYAN}" "${COLOR_RESET}"
 if SWAYSOCK="$sway_socket" \
   XDG_RUNTIME_DIR="$sway_runtime_dir" \
-  WAYLAND_DISPLAY=wayland-1 \
+  WAYLAND_DISPLAY="$wayland_display" \
   cargo test --features live-sway-tests --test live_sway -- --test-threads=1; then
   printf '%s✓ Live-Sway tests passed%s\n' "${COLOR_GREEN}" "${COLOR_RESET}"
 else
