@@ -15,7 +15,7 @@ manual `sleep`s. See `README.md` for full CLI usage and layout-building examples
 ## Commands
 
 - Build: `cargo build`
-- Run: `cargo run -- [OPTIONS] [COMMAND]` (e.g. `cargo run -- -a kitty kitty`)
+- Run: `cargo run -- [OPTIONS] [COMMAND]` (e.g. `cargo run -- -a foot foot`)
 - Format: `cargo fmt`
 - Lint: `cargo clippy`
 - Test: `cargo test` — runs the unit tests in `src/sway_launch.rs` and `src/main.rs` (covering all
@@ -69,24 +69,25 @@ The crate is four source files plus five integration test files:
 - `tests/live_sway.rs` — the odd one out: gated behind the `live-sway-tests` Cargo feature (so a
   plain `cargo test` skips it entirely) and needs a real, reachable Sway compositor, run via
   `scripts/run-live-sway-tests` rather than directly. Drives the compiled binary against real
-  windows (`foot`, the only software-rendered — no GPU/EGL needed — client already pulled in as
-  sway's own default-terminal dependency; `kitty`, this project's usual example app, needs a real
-  GPU and fails headlessly) and asserts on real tree state read back via `swayipc::Connection`,
-  covering the IPC-touching functions the other four test files, and `cargo llvm-cov`, can't
-  reach headlessly (see the Testing bullet under Rust conventions). Beyond the individual
-  action/flag tests, `every_shipped_template_resolves_and_launches_successfully` and
+  windows (`foot` — software-rendered, no GPU/EGL needed, so it runs headlessly; already pulled in
+  as sway's own default-terminal dependency, and this project's example app throughout, so no
+  stand-in substitution is needed anywhere in this file) and asserts on real tree state read back
+  via `swayipc::Connection`, covering the IPC-touching functions the other four test files, and
+  `cargo llvm-cov`, can't reach headlessly (see the Testing bullet under Rust conventions). Beyond
+  the individual action/flag tests, `every_shipped_template_resolves_and_launches_successfully` and
   `dual_output_template_moves_windows_to_separate_outputs` drive every file under
   `examples/templates/` directly (not a hand-written stand-in), and
   `quad_terminals_layout_launches_four_windows_in_a_grid`/
   `retarget_by_id_layout_floats_the_first_step_by_name` do the same for `examples/layouts/` — a
   broken shipped example is a live-Sway test failure, not just a manual-testing gap.
   `every_basic_example_script_launches_successfully` extends this to `examples/scripts/`'s six
-  kitty-only "basic" scripts (`dual-terminals`, `triple-row`, `column-split`, `quad-terminals`,
+  foot-only "basic" scripts (`dual-terminals`, `triple-row`, `column-split`, `quad-terminals`,
   `workspace-and-position`, `retarget-floating`): unlike the TOML files, each script invokes
   `sway-launch` by bare name via `PATH` rather than being passed as an argument to it, so the test
   copies the compiled binary into a temp directory named `sway-launch` and prepends that directory
-  to `PATH` for the duration of each run, the same substitute-kitty-for-foot idea applied to an
-  executable rather than a data file. The five "advanced" scripts (`browser-comparison`,
+  to `PATH` for the duration of each run, then runs the shipped script file directly — no temporary
+  copy of the script itself is needed, since it already ships ready to run as-is. The five
+  "advanced" scripts (`browser-comparison`,
   `dev-workspace`, `editor-with-floating-terminal`, `floating-file-manager`, `quad-mixed-apps`) are
   scoped out — none of Firefox/Chromium/Thunar/VS Code are installed in the `live-sway-tests` CI
   job. Several tests
@@ -471,7 +472,7 @@ name resolves to is the genuine, working template content, not just that the loo
 - `examples/scripts/` — tracked, user-facing example scripts, each a small standalone shell script
   built out of `sway-launch` calls that demonstrates one layout. Basic examples (`dual-terminals`,
   `triple-row`, `column-split`, `quad-terminals`, `workspace-and-position`, `retarget-floating`)
-  use only `kitty`; advanced examples (`dev-workspace`, `floating-file-manager`,
+  use only `foot`; advanced examples (`dev-workspace`, `floating-file-manager`,
   `browser-comparison`, `quad-mixed-apps`, `editor-with-floating-terminal`) combine multiple
   applications (Firefox, Chromium, Thunar, VS Code) and exercise more of the CLI surface
   (`--class` matching, `--floating`, `--mark`, `--width`/`--height`). README.md's "Recreatable

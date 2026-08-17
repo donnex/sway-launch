@@ -1270,38 +1270,6 @@ fn builtin_template_name_resolves_and_launches_without_a_toml_extension() {
         .expect("kill should succeed");
 }
 
-/// A temporary, executable copy of one of the shipped `examples/scripts/`
-/// files (`kitty` substituted for `foot`, same idea as `TempToml`), removed
-/// again when it goes out of scope even if an assertion panics mid-test.
-struct TempScript(std::path::PathBuf);
-
-impl TempScript {
-    fn write(name: &str, contents: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("sway-launch-live-test-script-{}", name));
-        std::fs::write(&path, contents).expect("failed to write temp script file");
-        let mut permissions = std::fs::metadata(&path)
-            .expect("temp script file should exist")
-            .permissions();
-        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
-        std::fs::set_permissions(&path, permissions).expect("failed to chmod +x temp script file");
-        Self(path)
-    }
-}
-
-impl std::ops::Deref for TempScript {
-    type Target = std::path::Path;
-
-    fn deref(&self) -> &std::path::Path {
-        &self.0
-    }
-}
-
-impl Drop for TempScript {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
-}
-
 fn count_app_id_windows(node: &Node, app_id: &str) -> usize {
     let mut count = usize::from(node.app_id.as_deref() == Some(app_id));
     for child in node.nodes.iter().chain(node.floating_nodes.iter()) {
@@ -1312,12 +1280,10 @@ fn count_app_id_windows(node: &Node, app_id: &str) -> usize {
 
 #[test]
 fn every_basic_example_script_launches_successfully() {
-    // Drives the actual shipped shell scripts under examples/scripts/ that
-    // use only kitty (foot substituted in, same substitute-and-run idea
-    // every_shipped_template_resolves_and_launches_successfully uses for
-    // TOML files) — CLAUDE.md's live-Sway coverage rule names "an example
-    // script" alongside --layout/--template files, which already got this
-    // treatment; scripts never did until this test. Each script invokes
+    // Drives the actual shipped shell scripts under examples/scripts/,
+    // which use only foot — CLAUDE.md's live-Sway coverage rule names "an
+    // example script" alongside --layout/--template files, which already
+    // got this treatment; scripts never did until this test. Each script invokes
     // `sway-launch` by bare name (relying on PATH, since that's how a user
     // actually runs these), so a temporary directory holding a copy of the
     // compiled test binary under that exact name is prepended to PATH for
@@ -1361,18 +1327,14 @@ fn every_basic_example_script_launches_successfully() {
             .expect("kill should succeed");
 
         let path = examples_dir("scripts").join(name);
-        let contents = std::fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("failed to read {path:?}: {error}"));
-        let contents = contents.replace("kitty", "foot");
-        let script = TempScript::write(name, &contents);
 
-        let output = Command::new(&*script)
+        let output = Command::new(&path)
             .env("PATH", &path_with_fake_bin_first)
             .output()
             .unwrap_or_else(|error| panic!("failed to run {name}: {error}"));
         assert!(
             output.status.success(),
-            "examples/scripts/{name} (kitty substituted for foot) failed: {}",
+            "examples/scripts/{name} failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
 
@@ -1474,9 +1436,8 @@ fn dual_output_template_moves_windows_to_separate_outputs() {
 
 #[test]
 fn quad_terminals_layout_launches_four_windows_in_a_grid() {
-    // Drives the actual examples/layouts/quad-terminals.toml file (kitty
-    // substituted for foot, which can't launch headlessly — see CLAUDE.md's
-    // Testing section), rather than a hand-written stand-in.
+    // Drives the actual examples/layouts/quad-terminals.toml file directly,
+    // rather than a hand-written stand-in.
     //
     // Unlike every other test in this file, this one asserts on *relative*
     // multi-window grid geometry rather than a single freshly launched
@@ -1494,10 +1455,7 @@ fn quad_terminals_layout_launches_four_windows_in_a_grid() {
         .run_command("workspace live-sway-test-quad-terminals")
         .expect("workspace switch should succeed");
 
-    let contents = std::fs::read_to_string(examples_dir("layouts").join("quad-terminals.toml"))
-        .expect("quad-terminals.toml should be readable");
-    let contents = contents.replace("kitty", "foot");
-    let path = TempToml::write("quad-terminals", &contents);
+    let path = examples_dir("layouts").join("quad-terminals.toml");
 
     let output = sway_launch_command()
         .args(["--layout", path.to_str().unwrap(), "--wait-time", "100"])
@@ -1553,10 +1511,7 @@ fn retarget_by_id_layout_floats_the_first_step_by_name() {
         .run_command("[app_id=foot] kill")
         .expect("kill should succeed");
 
-    let contents = std::fs::read_to_string(examples_dir("layouts").join("retarget-by-id.toml"))
-        .expect("retarget-by-id.toml should be readable");
-    let contents = contents.replace("kitty", "foot");
-    let path = TempToml::write("retarget-by-id", &contents);
+    let path = examples_dir("layouts").join("retarget-by-id.toml");
 
     let output = sway_launch_command()
         .args(["--layout", path.to_str().unwrap(), "--wait-time", "100"])

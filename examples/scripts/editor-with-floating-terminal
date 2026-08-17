@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Launch VS Code full-width, then a small floating kitty terminal on top of
+# Launch VS Code full-width, then a small floating foot terminal on top of
 # it for quick one-off commands.
 #
 set -eu
@@ -39,4 +39,4 @@ esac
 command -v code >/dev/null 2>&1 || die "code not found on PATH. Install VS Code first."
 
 sway-launch -c Code code
-sway-launch -a kitty --floating --width 700px --height 450px kitty
+sway-launch -a foot --floating --width 700px --height 450px foot

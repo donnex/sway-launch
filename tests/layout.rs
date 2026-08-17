@@ -137,7 +137,7 @@ fn layout_rejects_misspelled_field() {
 fn layout_rejects_command_and_con_id_together() {
     let path = TempToml::write(
         "command-and-con-id",
-        "[[step]]\ncommand = \"kitty\"\ncon_id = 42\n",
+        "[[step]]\ncommand = \"foot\"\ncon_id = 42\n",
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
@@ -154,7 +154,7 @@ fn layout_rejects_command_and_con_id_together() {
 fn layout_rejects_app_id_and_class_together() {
     let path = TempToml::write(
         "app-id-and-class",
-        "[[step]]\ncon_id = 42\napp_id = \"kitty\"\nclass = \"Kitty\"\n",
+        "[[step]]\ncon_id = 42\napp_id = \"foot\"\nclass = \"Foot\"\n",
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))

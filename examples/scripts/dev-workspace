@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Launch a dev workspace: VS Code on the left, two kitty terminals stacked
+# Launch a dev workspace: VS Code on the left, two foot terminals stacked
 # in a column on the right.
 #
 set -eu
@@ -39,5 +39,5 @@ esac
 command -v code >/dev/null 2>&1 || die "code not found on PATH. Install VS Code first."
 
 sway-launch -c Code --split h --width 65ppt code
-sway-launch --new-column -a kitty --split v kitty
-sway-launch -a kitty kitty
+sway-launch --new-column -a foot --split v foot
+sway-launch -a foot foot

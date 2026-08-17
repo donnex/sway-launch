@@ -1,12 +1,12 @@
 #!/bin/sh
 #
-# Launch four kitty terminals as an equally sized 2x2 grid, two rows of two.
+# Launch four foot terminals as an equally sized 2x2 grid, two rows of two.
 #
 set -eu
 
 print_usage() {
   printf 'Usage: %s\n' "$(basename "$0")"
-  printf 'Launch four kitty terminals as a 2x2 grid.\n'
+  printf 'Launch four foot terminals as a 2x2 grid.\n'
 }
 
 # snippet: usage
@@ -29,8 +29,8 @@ case "${1:-}" in
   ;;
 esac
 
-sway-launch -a kitty --split h kitty
-sway-launch -a kitty --split v kitty
+sway-launch -a foot --split h foot
+sway-launch -a foot --split v foot
 
-sway-launch --new-row -a kitty --split h kitty
-sway-launch -a kitty kitty
+sway-launch --new-row -a foot --split h foot
+sway-launch -a foot foot

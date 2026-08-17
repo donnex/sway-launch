@@ -8,7 +8,7 @@
 # sized" claim above).
 # Run with, e.g.:
 #   sway-launch --template examples/templates/six-grid.toml \
-#     --apps kitty,firefox,code,thunar,chromium,kitty
+#     --apps foot,firefox,code,thunar,chromium,foot
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
 

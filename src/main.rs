@@ -527,7 +527,7 @@ mod tests {
             "2",
             "--position",
             "center",
-            "kitty",
+            "foot",
         ])
         .unwrap();
         assert_eq!(args.workspace, Some("2".to_string()));
@@ -536,21 +536,21 @@ mod tests {
 
     #[test]
     fn args_rejects_invalid_position() {
-        let result = Args::try_parse_from(["sway-launch", "--position", "notvalid", "kitty"]);
+        let result = Args::try_parse_from(["sway-launch", "--position", "notvalid", "foot"]);
         assert!(result.is_err());
     }
 
     #[test]
     fn args_accepts_app_id_alone() {
-        let args = Args::try_parse_from(["sway-launch", "-a", "kitty", "kitty"]).unwrap();
-        assert_eq!(args.app_id, Some("kitty".to_string()));
+        let args = Args::try_parse_from(["sway-launch", "-a", "foot", "foot"]).unwrap();
+        assert_eq!(args.app_id, Some("foot".to_string()));
         assert_eq!(args.class, None);
     }
 
     #[test]
     fn args_accepts_class_alone() {
-        let args = Args::try_parse_from(["sway-launch", "-c", "Kitty", "kitty"]).unwrap();
-        assert_eq!(args.class, Some("Kitty".to_string()));
+        let args = Args::try_parse_from(["sway-launch", "-c", "Foot", "foot"]).unwrap();
+        assert_eq!(args.class, Some("Foot".to_string()));
         assert_eq!(args.app_id, None);
     }
 
@@ -558,7 +558,7 @@ mod tests {
     fn args_rejects_app_id_and_class_together() {
         // Regression test: combining -a/-c used to silently ignore -c
         // instead of being rejected.
-        let result = Args::try_parse_from(["sway-launch", "-a", "kitty", "-c", "Kitty", "kitty"]);
+        let result = Args::try_parse_from(["sway-launch", "-a", "foot", "-c", "Foot", "foot"]);
         assert!(result.is_err());
     }
 
@@ -571,32 +571,32 @@ mod tests {
 
     #[test]
     fn args_rejects_con_id_and_command_together() {
-        let result = Args::try_parse_from(["sway-launch", "--con-id", "42", "kitty"]);
+        let result = Args::try_parse_from(["sway-launch", "--con-id", "42", "foot"]);
         assert!(result.is_err());
     }
 
     #[test]
     fn args_rejects_con_id_and_app_id_together() {
-        let result = Args::try_parse_from(["sway-launch", "--con-id", "42", "-a", "kitty"]);
+        let result = Args::try_parse_from(["sway-launch", "--con-id", "42", "-a", "foot"]);
         assert!(result.is_err());
     }
 
     #[test]
     fn args_rejects_con_id_and_class_together() {
-        let result = Args::try_parse_from(["sway-launch", "--con-id", "42", "-c", "Kitty"]);
+        let result = Args::try_parse_from(["sway-launch", "--con-id", "42", "-c", "Foot"]);
         assert!(result.is_err());
     }
 
     #[test]
     fn args_accepts_existing_with_app_id() {
-        let args = Args::try_parse_from(["sway-launch", "--existing", "-a", "kitty"]).unwrap();
+        let args = Args::try_parse_from(["sway-launch", "--existing", "-a", "foot"]).unwrap();
         assert!(args.existing);
-        assert_eq!(args.app_id, Some("kitty".to_string()));
+        assert_eq!(args.app_id, Some("foot".to_string()));
     }
 
     #[test]
     fn args_rejects_existing_and_command_together() {
-        let result = Args::try_parse_from(["sway-launch", "--existing", "-a", "kitty", "kitty"]);
+        let result = Args::try_parse_from(["sway-launch", "--existing", "-a", "foot", "foot"]);
         assert!(result.is_err());
     }
 
@@ -608,20 +608,20 @@ mod tests {
 
     #[test]
     fn args_accepts_neither_app_id_nor_class() {
-        let args = Args::try_parse_from(["sway-launch", "kitty"]).unwrap();
+        let args = Args::try_parse_from(["sway-launch", "foot"]).unwrap();
         assert_eq!(args.app_id, None);
         assert_eq!(args.class, None);
     }
 
     #[test]
     fn args_new_row_short_flag_is_r() {
-        let args = Args::try_parse_from(["sway-launch", "-r", "kitty"]).unwrap();
+        let args = Args::try_parse_from(["sway-launch", "-r", "foot"]).unwrap();
         assert!(args.new_row);
     }
 
     #[test]
     fn args_rejects_invalid_height() {
-        let result = Args::try_parse_from(["sway-launch", "--height", "notasize", "kitty"]);
+        let result = Args::try_parse_from(["sway-launch", "--height", "notasize", "foot"]);
         assert!(result.is_err());
     }
 
@@ -633,7 +633,7 @@ mod tests {
             "80ppt",
             "--width",
             "1200px",
-            "kitty",
+            "foot",
         ])
         .unwrap();
         assert_eq!(args.height, Some("80ppt".to_string()));
@@ -642,20 +642,20 @@ mod tests {
 
     #[test]
     fn args_defaults_timeout_and_wait_time() {
-        let args = Args::try_parse_from(["sway-launch", "kitty"]).unwrap();
+        let args = Args::try_parse_from(["sway-launch", "foot"]).unwrap();
         assert_eq!(args.timeout, 5);
         assert_eq!(args.wait_time, 20);
     }
 
     #[test]
     fn args_json_defaults_to_false() {
-        let args = Args::try_parse_from(["sway-launch", "kitty"]).unwrap();
+        let args = Args::try_parse_from(["sway-launch", "foot"]).unwrap();
         assert!(!args.json);
     }
 
     #[test]
     fn args_accepts_json_flag() {
-        let args = Args::try_parse_from(["sway-launch", "--json", "kitty"]).unwrap();
+        let args = Args::try_parse_from(["sway-launch", "--json", "foot"]).unwrap();
         assert!(args.json);
     }
 
