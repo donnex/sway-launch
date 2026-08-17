@@ -235,7 +235,9 @@ command/`--con-id`/`--existing` mutual exclusivity plus one layout-only addition
   `existing`. Errors if the named `id` doesn't exist, or was used by more than one step.
 
 As with the CLI's `--app-id`/`--class`, a step can't set both `app_id` and `class` — pick
-whichever matches the application.
+whichever matches the application. `con_id` can't be combined with `app_id`/`class` either, same as
+the CLI: a `con_id` target already names an exact container, so a match criteria alongside it would
+only be silently ignored.
 
 Neither has a CLI equivalent — a single `sway-launch` invocation only ever has one step, so
 there's nothing to name or reference.
