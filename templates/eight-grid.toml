@@ -7,7 +7,7 @@
 # (confirmed live; see six-grid.toml's own header comment for the same
 # fix).
 # Run with, e.g.:
-#   sway-launch --template examples/templates/eight-grid.toml \
+#   sway-launch --template templates/eight-grid.toml \
 #     --apps foot,foot,foot,foot,foot,foot,foot,foot
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.

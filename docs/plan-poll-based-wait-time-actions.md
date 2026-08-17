@@ -60,7 +60,7 @@ Sway accepts the command but the tree never reaches the "requested" state:
 
 - **`Height`/`Width`**: resizing a window that is the *sole occupant* of its workspace is silently
   clamped by Sway — the container stays at 100%. This is exactly why
-  `examples/templates/master-dual-stack.toml` and `sidebar-left.toml` had to put their `width` on
+  `templates/master-dual-stack.toml` and `sidebar-left.toml` had to put their `width` on
   the *second*-launched slot, not the first (see their header comments and
   `tests/live_sway.rs`'s `height_alone_resizes_a_non_solo_window`, which specifically launches a
   sibling first to avoid this).
