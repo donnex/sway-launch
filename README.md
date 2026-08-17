@@ -357,6 +357,7 @@ ready-to-run `--apps` example.
 | Master/stack | [`dual-stack-sidebars`](examples/templates/dual-stack-sidebars.toml) | One main window, a 2-window stack flanking each side | 5 |
 | Sidebar | [`sidebar-left`](examples/templates/sidebar-left.toml) | Narrow sidebar on the left, wide main window on the right | 2 |
 | Sidebar | [`sidebar-right`](examples/templates/sidebar-right.toml) | Wide main window on the left, narrow sidebar on the right | 2 |
+| Sidebar | [`sidebar-left-dual-stack`](examples/templates/sidebar-left-dual-stack.toml) | Sidebar on the left split into two windows (75%/25% height), wide main window on the right | 3 |
 | Floating | [`floating-overlay`](examples/templates/floating-overlay.toml) | A tiled main window, with a small floating window on top | 2 |
 | Floating | [`floating-centered`](examples/templates/floating-centered.toml) | A single floating window, centered | 1 |
 | Multi-workspace/output | [`workspace-spread`](examples/templates/workspace-spread.toml) | Each window moved to its own named workspace | 3 |
