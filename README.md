@@ -311,9 +311,11 @@ to apply to any application via `--apps`/`--bindings`: even splits/grids
 ([`dual-row`](examples/templates/dual-row.toml), [`dual-column`](examples/templates/dual-column.toml),
 [`triple-row`](examples/templates/triple-row.toml),
 [`triple-column`](examples/templates/triple-column.toml), `quad-grid` above,
-[`six-grid`](examples/templates/six-grid.toml), [`nine-grid`](examples/templates/nine-grid.toml)),
-master/stack layouts ([`master-dual-stack`](examples/templates/master-dual-stack.toml),
-[`master-triple-stack`](examples/templates/master-triple-stack.toml)), asymmetric two-pane layouts
+[`six-grid`](examples/templates/six-grid.toml), [`eight-grid`](examples/templates/eight-grid.toml),
+[`nine-grid`](examples/templates/nine-grid.toml)), master/stack layouts
+([`master-dual-stack`](examples/templates/master-dual-stack.toml),
+[`master-triple-stack`](examples/templates/master-triple-stack.toml),
+[`dual-stack-sidebars`](examples/templates/dual-stack-sidebars.toml)), asymmetric two-pane layouts
 ([`sidebar-left`](examples/templates/sidebar-left.toml),
 [`sidebar-right`](examples/templates/sidebar-right.toml)), floating windows
 ([`floating-overlay`](examples/templates/floating-overlay.toml),
