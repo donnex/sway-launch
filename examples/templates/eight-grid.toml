@@ -1,0 +1,40 @@
+# An equally sized 4x2 grid, two rows of four, with no application baked in
+# — the same shape-extension idea as six-grid.toml, one column wider. Only
+# the first window of each row gets an explicit split="h" — giving every
+# column its own split call instead nests each new window inside the
+# previous one's half rather than joining a single flat row, producing an
+# uneven 640/320/160/160-style split instead of four equal columns
+# (confirmed live; see six-grid.toml's own header comment for the same
+# fix).
+# Run with, e.g.:
+#   sway-launch --template examples/templates/eight-grid.toml \
+#     --apps kitty,kitty,kitty,kitty,kitty,kitty,kitty,kitty
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+
+[[step]]
+slot = "top-1"
+split = "h"
+
+[[step]]
+slot = "top-2"
+
+[[step]]
+slot = "top-3"
+
+[[step]]
+slot = "top-4"
+
+[[step]]
+slot = "bottom-1"
+new_row = true
+split = "h"
+
+[[step]]
+slot = "bottom-2"
+
+[[step]]
+slot = "bottom-3"
+
+[[step]]
+slot = "bottom-4"

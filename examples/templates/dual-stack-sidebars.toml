@@ -1,0 +1,27 @@
+# A narrow stack of two windows on the left, one wide main window in the
+# middle, and another narrow stack of two windows on the right — two
+# master-dual-stack.toml-style stacks flanking a single main column.
+# Run with, e.g.:
+#   sway-launch --template examples/templates/dual-stack-sidebars.toml \
+#     --apps kitty,kitty,code,kitty,kitty
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+
+[[step]]
+slot = "left-top"
+split = "v"
+
+[[step]]
+slot = "left-bottom"
+
+[[step]]
+slot = "main"
+new_column = true
+
+[[step]]
+slot = "right-top"
+new_column = true
+split = "v"
+
+[[step]]
+slot = "right-bottom"
