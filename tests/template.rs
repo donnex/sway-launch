@@ -204,6 +204,75 @@ fn template_rejects_misspelled_step_field() {
 }
 
 #[test]
+fn template_malformed_toml_errors() {
+    let path = TempToml::write("malformed", "this is not toml [[[");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--template", path.to_str().unwrap(), "--apps", "foot"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+}
+
+#[test]
+fn template_missing_file_errors() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            "/nonexistent-sway-launch-test-template.toml",
+            "--apps",
+            "foot",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("nonexistent-sway-launch-test-template.toml"));
+}
+
+#[test]
+fn template_bindings_malformed_toml_errors() {
+    let template = TempToml::write(
+        "malformed-bindings-template",
+        "[[step]]\nslot = \"editor\"\n",
+    );
+    let bindings = TempToml::write("malformed-bindings-bindings", "this is not toml [[[");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            template.to_str().unwrap(),
+            "--bindings",
+            bindings.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+}
+
+#[test]
+fn template_bindings_missing_file_errors() {
+    let template = TempToml::write("missing-bindings-template", "[[step]]\nslot = \"editor\"\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            template.to_str().unwrap(),
+            "--bindings",
+            "/nonexistent-sway-launch-test-bindings.toml",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("nonexistent-sway-launch-test-bindings.toml"));
+}
+
+#[test]
 fn template_requires_bindings_or_apps() {
     let template = TempToml::write("requires-binding-source", "[[step]]\nslot = \"editor\"\n");
 
