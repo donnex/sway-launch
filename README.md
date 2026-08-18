@@ -520,13 +520,13 @@ the final result (the bare container id, or the `--json` object below), so
 ```shell
 $ sway-launch --split h -v foot
 Sway action: Exec "foot" (app_id_match: "") (class_match: "")
-Sway command: exec foot
-Event mismatch: Title container id 286 (Event does not match action event matches)
-Event match: New container id 437 (New window without app_id or class check)
+Sway command: exec env SWAY_LAUNCH_PID_MARKER=<pid>-<nanos> foot
+Event match: New container id 437 (PID-marker-confirmed)
 Target container id: 437
 Sway action: Split (container id: 437) (split: Horizontal)
 No matching event types for action. Will run Sway command and wait 20 ms.
 Sway command: [con_id=437] splith
+Confirmed via poll (container id: 437)
 437
 ```
 
