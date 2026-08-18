@@ -544,22 +544,24 @@ real and captured. `figlet`'s own `-c` (center) flag is deliberately not used: i
 own default 80-column canvas rather than the pane's real width, which reintroduced the same
 wrapping bug this two-pass measurement exists to avoid; labels are left-aligned instead.
 
-Screenshots are written to `--output-dir` (default `screenshots/` at the repo root, gitignored —
-not committed) as one `<template-name>.png` per template; `--only <name>` (repeatable) limits a run
-to specific templates, useful when iterating on one shape.
+Screenshots are written to `--output-dir` (default `screenshots/` at the repo root) as one
+`<template-name>.png` per template; `--only <name>` (repeatable) limits a run to specific
+templates, useful when iterating on one shape. Unlike most other generated output in this repo,
+`screenshots/` **is** committed: these images are user-facing documentation, embedded as thumbnails
+in README.md's "Templates" table, not a build artifact — so they need to exist in the repo for that
+table to render for anyone who hasn't run the script themselves.
 
 **Screenshots must always stay in sync with the actual `templates/` files.** Whenever a template
 file is added, removed, or has its shape changed (a step's `split`/`floating`/`height`/`width`/
 `workspace`/`output`/etc. — anything that changes what the rendered layout actually looks like,
 not just prose in its header comment), regenerate the affected screenshot(s) via
 `scripts/generate-layout-screenshots --only <name>` (or a full run with no `--only` after a
-broader change) in the *same* piece of work, the same discipline `tests/live_sway.rs`'s own
-coverage rule above and "Keeping a workflow up to date" under CI below already hold this project
-to elsewhere. A screenshot depicting a shape the template no longer produces is exactly as much a
-bug as a stale doc or a CI workflow drifting from the tooling — fix it immediately, not as a
-follow-up. This holds regardless of whether `screenshots/` happens to be populated locally at the
-time; the rule is about the *change* including regeneration, not about a committed artifact (there
-isn't one — `screenshots/` is gitignored).
+broader change) *and commit the updated PNG(s)* in the *same* piece of work, the same discipline
+`tests/live_sway.rs`'s own coverage rule above and "Keeping a workflow up to date" under CI below
+already hold this project to elsewhere. A screenshot depicting a shape the template no longer
+produces is exactly as much a bug as a stale doc or a CI workflow drifting from the tooling — fix
+it immediately, not as a follow-up. A new template file needs a row added to README.md's
+"Templates" table, thumbnail included, in the same change too, for the same reason.
 
 ## Rust conventions
 
