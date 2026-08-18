@@ -2,13 +2,14 @@
 """Generate a labeled screenshot of every shipped --template shape.
 
 Run directly by a maintainer (not invoked by anything else): builds the
-project, starts a throwaway headless Sway compositor, runs every file under
-templates/ (skipping dual-output.toml and workspace-spread.toml, which a
-single-output screenshot can't meaningfully depict) with each slot filled by
-a foot window colored and labeled with its own slot name (via figlet, sized
-to that slot's actual measured geometry so it fits regardless of shape),
-captures one screenshot per template with grim, then tears the compositor
-down. Requires sway, swaymsg, foot, figlet, grim, and cargo on PATH.
+project, starts a throwaway headless Sway compositor with a small inner gap
+between windows (--gaps), runs every file under templates/ (skipping
+dual-output.toml and workspace-spread.toml, which a single-output screenshot
+can't meaningfully depict) with each slot filled by a foot window colored
+and labeled with its own slot name (via figlet, sized to that slot's actual
+measured geometry so it fits regardless of shape), captures one screenshot
+per template with grim, then tears the compositor down. Requires sway,
+swaymsg, foot, figlet, grim, and cargo on PATH.
 """
 
 import argparse
@@ -34,7 +35,8 @@ import tomllib  # noqa: E402 (must follow the version_info guard above)
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = REPO_ROOT / "templates"
 REQUIRED_COMMANDS = ["sway", "swaymsg", "foot", "figlet", "grim", "cargo"]
-FIGLET_FONT = "mini"
+FIGLET_FONT = "mini"  # default; overridable per run via --font
+GAPS_PX = 6  # inner gap between adjacent windows, so touching panes stay visually distinct
 # Empirically measured against a solo, full-output foot window (see this
 # script's development notes / commit message): monospace cell size scales
 # ~linearly with foot's -f ...:size=N. Used to work out, per slot, the
@@ -111,27 +113,27 @@ def ordered_slots(template_path):
     return slots
 
 
-def figlet_render_size(text):
-    """The (columns, rows) figlet's FIGLET_FONT actually renders `text` as."""
+def figlet_render_size(text, font):
+    """The (columns, rows) figlet's `font` actually renders `text` as."""
     result = subprocess.run(
-        ["figlet", "-f", FIGLET_FONT, text], check=True, capture_output=True, text=True
+        ["figlet", "-f", font, text], check=True, capture_output=True, text=True
     )
     lines = result.stdout.rstrip("\n").split("\n")
     return max(len(line) for line in lines), len(lines)
 
 
-def font_size_for_rect(slot, rect_width, rect_height):
+def font_size_for_rect(slot, rect_width, rect_height, font):
     """The largest foot font point size whose rendering of `slot`'s figlet
     label still fits comfortably inside a rect_width x rect_height pane,
     clamped to [MIN_FONT_SIZE, MAX_FONT_SIZE]."""
-    columns, rows = figlet_render_size(slot)
+    columns, rows = figlet_render_size(slot, font)
     width_limited_size = rect_width / (columns * WIDTH_MARGIN * PX_PER_COLUMN_PER_PT)
     height_limited_size = rect_height / (rows * HEIGHT_MARGIN * PX_PER_ROW_PER_PT)
     size = min(width_limited_size, height_limited_size)
     return int(max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, size)))
 
 
-def build_bindings_toml(slots, font_sizes):
+def build_bindings_toml(slots, font_sizes, font):
     blocks = []
     for index, slot in enumerate(slots):
         color = SLOT_COLORS[index % len(SLOT_COLORS)]
@@ -139,7 +141,7 @@ def build_bindings_toml(slots, font_sizes):
         command = (
             f"env LC_ALL=C.utf8 foot -T {slot} -f monospace:size={font_size} "
             f"-o colors.background={color} -o colors.foreground=ffffff "
-            f"-e sh -c 'clear; figlet -f {FIGLET_FONT} {slot}; sleep infinity'"
+            f"-e sh -c 'clear; figlet -f {font} {slot}; sleep infinity'"
         )
         escaped_command = command.replace("\\", "\\\\").replace('"', '\\"')
         blocks.append(f'[[binding]]\nslot = "{slot}"\ncommand = "{escaped_command}"\n')
@@ -151,8 +153,9 @@ class HeadlessSway:
     down on __exit__ (including on an unhandled exception or signal) —
     mirrors scripts/run-live-sway-tests' setup/cleanup, adapted to Python."""
 
-    def __init__(self, resolution):
+    def __init__(self, resolution, gaps_px):
         self.resolution = resolution
+        self.gaps_px = gaps_px
         self.runtime_dir = None
         self.process = None
         self.socket_path = None
@@ -168,9 +171,18 @@ class HeadlessSway:
             "XDG_RUNTIME_DIR": str(self.runtime_dir),
             "PATH": os.environ.get("PATH", ""),
         }
+        # gaps as a config directive (rather than a runtime `gaps ... set`
+        # command run once at startup) so it applies as the real default for
+        # every workspace this script switches to later, not just the ones
+        # that already exist at the moment the command runs — confirmed live
+        # that the runtime command's "all" scope does *not* retroactively
+        # cover workspaces created afterward, which every screenshot's own
+        # workspace is.
+        config_path = self.runtime_dir / "config"
+        config_path.write_text(f"gaps inner {self.gaps_px}\n")
         with open(log_path, "wb") as log_file:
             self.process = subprocess.Popen(
-                ["sway", "-c", "/dev/null"], env=env, stdout=log_file, stderr=subprocess.STDOUT
+                ["sway", "-c", str(config_path)], env=env, stdout=log_file, stderr=subprocess.STDOUT
             )
 
         self.socket_path = self.runtime_dir / f"sway-ipc.{os.getuid()}.{self.process.pid}.sock"
@@ -297,7 +309,7 @@ def run_template(sway, sway_launch_binary, template_path, bindings_toml, wait_ti
     time.sleep(0.3)
 
 
-def generate_screenshot(sway, sway_launch_binary, template_path, output_dir, wait_time_ms):
+def generate_screenshot(sway, sway_launch_binary, template_path, output_dir, wait_time_ms, font):
     slots = ordered_slots(template_path)
     if not slots:
         status(f"skipping {template_path.name} (no slots)")
@@ -310,7 +322,9 @@ def generate_screenshot(sway, sway_launch_binary, template_path, output_dir, wai
     # equal quadrants vs. a sidebar's narrow column) isn't known until
     # sway-launch actually lays it out, so there's no way to pick a font
     # size that's guaranteed to fit without measuring first.
-    run_template(sway, sway_launch_binary, template_path, build_bindings_toml(slots, {}), wait_time_ms)
+    run_template(
+        sway, sway_launch_binary, template_path, build_bindings_toml(slots, {}, font), wait_time_ms
+    )
     rects = sway.slot_rects()
     sway.kill_foot_windows()
 
@@ -320,12 +334,16 @@ def generate_screenshot(sway, sway_launch_binary, template_path, output_dir, wai
         if rect is None:
             font_sizes[slot] = DEFAULT_FONT_SIZE
             continue
-        font_sizes[slot] = font_size_for_rect(slot, *rect)
+        font_sizes[slot] = font_size_for_rect(slot, *rect, font)
 
     # Second pass: relaunch with each slot's own computed font size and
     # capture the real screenshot.
     run_template(
-        sway, sway_launch_binary, template_path, build_bindings_toml(slots, font_sizes), wait_time_ms
+        sway,
+        sway_launch_binary,
+        template_path,
+        build_bindings_toml(slots, font_sizes, font),
+        wait_time_ms,
     )
 
     output_path = output_dir / f"{template_path.stem}.png"
@@ -362,6 +380,20 @@ def main():
         metavar="WxH",
         help="headless output resolution (default: %(default)s)",
     )
+    parser.add_argument(
+        "--gaps",
+        type=int,
+        default=GAPS_PX,
+        metavar="PX",
+        help="inner gap in pixels between adjacent windows (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--font",
+        default=FIGLET_FONT,
+        metavar="NAME",
+        help="figlet font used for each slot's label (default: %(default)s); see `figlet -I2` "
+        "for the font directory, or `showfigfonts` for a preview of what's installed",
+    )
     args = parser.parse_args()
 
     check_required_commands()
@@ -386,9 +418,11 @@ def main():
     sway_launch_binary = REPO_ROOT / "target" / "debug" / "sway-launch"
 
     status("Starting headless Sway")
-    with HeadlessSway(args.resolution) as sway:
+    with HeadlessSway(args.resolution, args.gaps) as sway:
         for template_path in template_files:
-            generate_screenshot(sway, sway_launch_binary, template_path, args.output_dir, args.wait_time)
+            generate_screenshot(
+                sway, sway_launch_binary, template_path, args.output_dir, args.wait_time, args.font
+            )
 
     success(f"Generated {len(template_files)} screenshot(s) in {args.output_dir}")
 
