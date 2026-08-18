@@ -1,0 +1,399 @@
+#!/usr/bin/env python3
+"""Generate a labeled screenshot of every shipped --template shape.
+
+Run directly by a maintainer (not invoked by anything else): builds the
+project, starts a throwaway headless Sway compositor, runs every file under
+templates/ (skipping dual-output.toml and workspace-spread.toml, which a
+single-output screenshot can't meaningfully depict) with each slot filled by
+a foot window colored and labeled with its own slot name (via figlet, sized
+to that slot's actual measured geometry so it fits regardless of shape),
+captures one screenshot per template with grim, then tears the compositor
+down. Requires sway, swaymsg, foot, figlet, grim, and cargo on PATH.
+"""
+
+import argparse
+import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import tomllib
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+TEMPLATES_DIR = REPO_ROOT / "templates"
+REQUIRED_COMMANDS = ["sway", "swaymsg", "foot", "figlet", "grim", "cargo"]
+FIGLET_FONT = "mini"
+# Empirically measured against a solo, full-output foot window (see this
+# script's development notes / commit message): monospace cell size scales
+# ~linearly with foot's -f ...:size=N. Used to work out, per slot, the
+# largest font size that still fits that slot's own measured pixel rect —
+# a fixed guess didn't hold up across very different slot shapes (a 2x2
+# grid's quadrants vs. a sidebar template's narrow column).
+PX_PER_COLUMN_PER_PT = 0.81
+PX_PER_ROW_PER_PT = 1.65
+MIN_FONT_SIZE = 10
+MAX_FONT_SIZE = 28
+WIDTH_MARGIN = 1.25  # require this much extra horizontal room beyond the text itself
+HEIGHT_MARGIN = 3.0  # keep the label well clear of vertically cramped panes
+DEFAULT_FONT_SIZE = 12  # used for the geometry-measuring first pass, and as a fallback
+# A background color per slot, cycled if a template ever has more slots than
+# this. Chosen dark enough that white foreground text stays readable.
+SLOT_COLORS = [
+    "8B0000",  # dark red
+    "00008B",  # dark blue
+    "006400",  # dark green
+    "8B8B00",  # olive
+    "4B0082",  # indigo
+    "8B4513",  # saddle brown
+    "008B8B",  # dark cyan
+    "8B008B",  # dark magenta
+    "2F4F4F",  # dark slate gray
+]
+# dual-output.toml needs a second real output to do anything meaningful — the
+# same reason tests/live_sway.rs's every_shipped_template_resolves_and_launches_successfully
+# excludes it and covers it separately instead. workspace-spread.toml moves
+# every window to its own separate named workspace by design, so nothing
+# stays on the workspace this script captures — a single-output screenshot
+# can't depict "spread across workspaces" at all, not even partially.
+EXCLUDED_TEMPLATES = {"dual-output.toml", "workspace-spread.toml"}
+
+
+def is_color_enabled():
+    return sys.stdout.isatty()
+
+
+def colorize(text, code):
+    if not is_color_enabled():
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
+
+def status(message):
+    print(colorize(message, "0;36"))
+
+
+def success(message):
+    print(colorize(f"✓ {message}", "0;32"))
+
+
+def die(message):
+    print(colorize(f"✗ {message}", "0;31"), file=sys.stderr)
+    sys.exit(1)
+
+
+def check_required_commands():
+    missing = [command for command in REQUIRED_COMMANDS if shutil.which(command) is None]
+    if missing:
+        die(f"missing required command(s) on PATH: {', '.join(missing)}")
+
+
+def ordered_slots(template_path):
+    """Slot names in first-appearance order, the same order main.rs's
+    bindings_from_apps() zips --apps onto."""
+    document = tomllib.loads(template_path.read_text())
+    slots = []
+    for step in document.get("step", []):
+        slot = step.get("slot")
+        if slot is not None and slot not in slots:
+            slots.append(slot)
+    return slots
+
+
+def figlet_render_size(text):
+    """The (columns, rows) figlet's FIGLET_FONT actually renders `text` as."""
+    result = subprocess.run(
+        ["figlet", "-f", FIGLET_FONT, text], check=True, capture_output=True, text=True
+    )
+    lines = result.stdout.rstrip("\n").split("\n")
+    return max(len(line) for line in lines), len(lines)
+
+
+def font_size_for_rect(slot, rect_width, rect_height):
+    """The largest foot font point size whose rendering of `slot`'s figlet
+    label still fits comfortably inside a rect_width x rect_height pane,
+    clamped to [MIN_FONT_SIZE, MAX_FONT_SIZE]."""
+    columns, rows = figlet_render_size(slot)
+    width_limited_size = rect_width / (columns * WIDTH_MARGIN * PX_PER_COLUMN_PER_PT)
+    height_limited_size = rect_height / (rows * HEIGHT_MARGIN * PX_PER_ROW_PER_PT)
+    size = min(width_limited_size, height_limited_size)
+    return int(max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, size)))
+
+
+def build_bindings_toml(slots, font_sizes):
+    blocks = []
+    for index, slot in enumerate(slots):
+        color = SLOT_COLORS[index % len(SLOT_COLORS)]
+        font_size = font_sizes.get(slot, DEFAULT_FONT_SIZE)
+        command = (
+            f"env LC_ALL=C.utf8 foot -T {slot} -f monospace:size={font_size} "
+            f"-o colors.background={color} -o colors.foreground=ffffff "
+            f"-e sh -c 'clear; figlet -f {FIGLET_FONT} {slot}; sleep infinity'"
+        )
+        escaped_command = command.replace("\\", "\\\\").replace('"', '\\"')
+        blocks.append(f'[[binding]]\nslot = "{slot}"\ncommand = "{escaped_command}"\n')
+    return "\n".join(blocks)
+
+
+class HeadlessSway:
+    """Starts a throwaway headless Sway compositor on __enter__, tears it
+    down on __exit__ (including on an unhandled exception or signal) —
+    mirrors scripts/run-live-sway-tests' setup/cleanup, adapted to Python."""
+
+    def __init__(self, resolution):
+        self.resolution = resolution
+        self.runtime_dir = None
+        self.process = None
+        self.socket_path = None
+        self.wayland_display = None
+
+    def __enter__(self):
+        self.runtime_dir = Path(tempfile.mkdtemp(prefix="sway-launch-screenshots-"))
+        log_path = self.runtime_dir / "sway.log"
+        env = {
+            "WLR_BACKENDS": "headless",
+            "WLR_RENDERER": "pixman",
+            "WLR_LIBINPUT_NO_DEVICES": "1",
+            "XDG_RUNTIME_DIR": str(self.runtime_dir),
+            "PATH": os.environ.get("PATH", ""),
+        }
+        with open(log_path, "wb") as log_file:
+            self.process = subprocess.Popen(
+                ["sway", "-c", "/dev/null"], env=env, stdout=log_file, stderr=subprocess.STDOUT
+            )
+
+        self.socket_path = self.runtime_dir / f"sway-ipc.{os.getuid()}.{self.process.pid}.sock"
+
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if self.socket_path.exists():
+                try:
+                    subprocess.run(
+                        ["swaymsg", "-t", "get_version"],
+                        env=self._ipc_env(),
+                        check=True,
+                        capture_output=True,
+                    )
+                    break
+                except subprocess.CalledProcessError:
+                    pass
+            time.sleep(0.1)
+        else:
+            die(f"timed out waiting for headless Sway to become ready; see {log_path}")
+
+        for wayland_socket in self.runtime_dir.glob("wayland-*"):
+            if wayland_socket.suffix != ".lock":
+                self.wayland_display = wayland_socket.name
+                break
+        if self.wayland_display is None:
+            die(f"could not find a Wayland display socket under {self.runtime_dir}")
+
+        output_name = self._run_swaymsg_json(["-t", "get_outputs"])[0]["name"]
+        self._run_swaymsg(["output", output_name, "resolution", self.resolution])
+
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self.process is not None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
+        if self.runtime_dir is not None:
+            shutil.rmtree(self.runtime_dir, ignore_errors=True)
+        return False
+
+    def _ipc_env(self):
+        return {
+            "SWAYSOCK": str(self.socket_path),
+            "XDG_RUNTIME_DIR": str(self.runtime_dir),
+            "WAYLAND_DISPLAY": self.wayland_display or "",
+            "PATH": os.environ.get("PATH", ""),
+        }
+
+    def _run_swaymsg(self, args):
+        subprocess.run(["swaymsg", *args], env=self._ipc_env(), check=True, capture_output=True)
+
+    def _run_swaymsg_json(self, args):
+        result = subprocess.run(
+            ["swaymsg", *args], env=self._ipc_env(), check=True, capture_output=True, text=True
+        )
+        return json.loads(result.stdout)
+
+    def switch_workspace(self, name):
+        self._run_swaymsg([f"workspace {name}"])
+
+    def kill_foot_windows(self):
+        self._run_swaymsg(["[app_id=foot] kill"])
+
+    def run_sway_launch(self, sway_launch_binary, args, timeout):
+        subprocess.run(
+            [str(sway_launch_binary), *args],
+            env=self._ipc_env(),
+            check=True,
+            capture_output=True,
+            timeout=timeout,
+        )
+
+    def screenshot(self, output_path):
+        subprocess.run(["grim", str(output_path)], env=self._ipc_env(), check=True, capture_output=True)
+
+    def slot_rects(self):
+        """{slot_name: (rect_width, rect_height)} for every foot window
+        currently open, matched by window title (set via -T <slot> when
+        launching) rather than app_id, since every slot shares app_id=foot."""
+
+        def walk(node, rects):
+            name = node.get("name")
+            if node.get("app_id") == "foot" and name is not None:
+                rects[name] = (node["rect"]["width"], node["rect"]["height"])
+            for child in node.get("nodes", []) + node.get("floating_nodes", []):
+                walk(child, rects)
+
+        tree = self._run_swaymsg_json(["-t", "get_tree"])
+        rects = {}
+        walk(tree, rects)
+        return rects
+
+
+def write_bindings_file(sway, bindings_toml):
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".toml", dir=sway.runtime_dir, delete=False
+    ) as bindings_file:
+        bindings_file.write(bindings_toml)
+        return Path(bindings_file.name)
+
+
+def run_template(sway, sway_launch_binary, template_path, bindings_toml, wait_time_ms):
+    bindings_path = write_bindings_file(sway, bindings_toml)
+    sway.run_sway_launch(
+        sway_launch_binary,
+        [
+            "--template",
+            str(template_path),
+            "--bindings",
+            str(bindings_path),
+            "--wait-time",
+            str(wait_time_ms),
+        ],
+        timeout=30,
+    )
+    # Under a full run's cumulative load, rendering can still be settling
+    # briefly after sway-launch's own process has already exited — the same
+    # reasoning tests/live_sway.rs documents for its own post-launch sleeps.
+    time.sleep(0.3)
+
+
+def generate_screenshot(sway, sway_launch_binary, template_path, output_dir, wait_time_ms):
+    slots = ordered_slots(template_path)
+    if not slots:
+        status(f"skipping {template_path.name} (no slots)")
+        return
+
+    sway.switch_workspace(f"screenshot-{template_path.stem}")
+
+    # First pass: launch at a uniform default font size purely to measure
+    # each slot's real pixel geometry — a template's shape (a 2x2 grid's
+    # equal quadrants vs. a sidebar's narrow column) isn't known until
+    # sway-launch actually lays it out, so there's no way to pick a font
+    # size that's guaranteed to fit without measuring first.
+    run_template(sway, sway_launch_binary, template_path, build_bindings_toml(slots, {}), wait_time_ms)
+    rects = sway.slot_rects()
+    sway.kill_foot_windows()
+
+    font_sizes = {}
+    for slot in slots:
+        rect = rects.get(slot)
+        if rect is None:
+            font_sizes[slot] = DEFAULT_FONT_SIZE
+            continue
+        font_sizes[slot] = font_size_for_rect(slot, *rect)
+
+    # Second pass: relaunch with each slot's own computed font size and
+    # capture the real screenshot.
+    run_template(
+        sway, sway_launch_binary, template_path, build_bindings_toml(slots, font_sizes), wait_time_ms
+    )
+
+    output_path = output_dir / f"{template_path.stem}.png"
+    sway.screenshot(output_path)
+    sway.kill_foot_windows()
+    success(f"{template_path.stem} -> {output_path}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=REPO_ROOT / "screenshots",
+        help="directory screenshots are written to (default: %(default)s); not tracked by git, add it to .gitignore yourself if you want",
+    )
+    parser.add_argument(
+        "--only",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="only generate this template's screenshot (its file stem, e.g. quad-grid); repeatable",
+    )
+    parser.add_argument(
+        "--wait-time",
+        type=int,
+        default=300,
+        metavar="MS",
+        help="--wait-time passed through to each sway-launch invocation (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--resolution",
+        default="1920x1080",
+        metavar="WxH",
+        help="headless output resolution (default: %(default)s)",
+    )
+    args = parser.parse_args()
+
+    check_required_commands()
+
+    template_files = sorted(
+        path for path in TEMPLATES_DIR.glob("*.toml") if path.name not in EXCLUDED_TEMPLATES
+    )
+    if args.only:
+        wanted = set(args.only)
+        template_files = [path for path in template_files if path.stem in wanted]
+        missing = wanted - {path.stem for path in template_files}
+        if missing:
+            die(f"unknown template name(s): {', '.join(sorted(missing))}")
+
+    if not template_files:
+        die("no template files matched")
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    status("Building sway-launch")
+    subprocess.run(["cargo", "build", "--quiet"], cwd=REPO_ROOT, check=True)
+    sway_launch_binary = REPO_ROOT / "target" / "debug" / "sway-launch"
+
+    status("Starting headless Sway")
+    with HeadlessSway(args.resolution) as sway:
+        for template_path in template_files:
+            generate_screenshot(sway, sway_launch_binary, template_path, args.output_dir, args.wait_time)
+
+    success(f"Generated {len(template_files)} screenshot(s) in {args.output_dir}")
+
+
+if __name__ == "__main__":
+    # Let SIGTERM raise SystemExit like a normal exit, so HeadlessSway's
+    # __exit__ still runs its cleanup instead of the process being killed
+    # out from under it.
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(1))
+    try:
+        main()
+    except subprocess.CalledProcessError as error:
+        stderr = error.stderr.decode() if isinstance(error.stderr, bytes) else (error.stderr or "")
+        die(f"{' '.join(error.cmd)} failed: {stderr.strip() or error}")
+    except KeyboardInterrupt:
+        die("interrupted")
