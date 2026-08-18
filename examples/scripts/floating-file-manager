@@ -25,6 +25,19 @@ die() {
   exit 1
 }
 
+setup_colors() {
+  if [ -t 1 ]; then
+    COLOR_RED="$(printf '\033[0;31m')"
+    COLOR_RESET="$(printf '\033[0m')"
+  else
+    COLOR_RED=''
+    COLOR_RESET=''
+  fi
+}
+
+setup_colors
+readonly COLOR_RED COLOR_RESET
+
 case "${1:-}" in
 -h | --help)
   usage 0
