@@ -395,8 +395,22 @@ comma-separated list, zips it 1:1 onto the template's distinct `slot` names in f
 order, erroring on a count mismatch), then calls `template::resolve()` and hands the result to the
 same `run_steps()` `--layout` uses — a resolved template is just a `Vec<layout::LayoutStep>`, so
 nothing downstream needs to know a template was involved. `--template` requires exactly one of
-`--bindings`/`--apps` (`requires` on both `clap` fields handles "needs `--template`"; the "exactly
-one of the two" part is a manual check in `main()`, since `clap`'s `requires` can't express it), and
+`--bindings`/`--apps`, and the reverse also holds: `--bindings`/`--apps` require `--template`. Both
+directions are manual checks in `main()`, not `clap`'s declarative `requires`/`conflicts_with` —
+`requires = "template"` on the `bindings`/`apps` fields was tried first, but a live-Sway-review
+investigation found `clap`'s `derive` macro only reliably enforces it when `--bindings`/`--apps` is
+combined with a narrow subset of other flags (`--json`/`--verbose`/`--timeout`/`--wait-time`);
+combined with almost anything else (`--con-id`, `--existing`, any per-window flag, `--completions`,
+`--list-templates`, no flags at all beyond a bare `command`), it silently parsed clean with no
+`--template` and no error, falling through to the ordinary direct-CLI dispatch with `--bindings`/
+`--apps` discarded — confirmed reproducible independent of this project's own `main.rs` changes, so
+a pre-existing `clap` interaction, not a regression. The manual check (mirroring the existing
+"exactly one of `--bindings`/`--apps`" check already in `main()`) replaced `requires` entirely,
+rather than being layered alongside it, so there's exactly one code path and one error message
+for "missing `--template`" regardless of which other flags are also present. `completions` and
+`list_templates` additionally list `bindings`/`apps` in their own `conflicts_with_all`, since both
+short-circuit via `process::exit(0)` before the manual check would otherwise run — without that,
+`--completions ... --apps ...` would still silently ignore `--apps`. `--template` itself
 `conflicts_with_all`-conflicts with `--layout` and every per-window flag, same reasoning as
 `--layout`.
 

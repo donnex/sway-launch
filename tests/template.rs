@@ -288,6 +288,38 @@ fn template_requires_bindings_or_apps() {
 }
 
 #[test]
+fn template_apps_without_template_flag_errors() {
+    // Regression test: --apps combined with --con-id (no --template) used to
+    // parse cleanly and silently fall through to the ordinary --con-id
+    // dispatch, discarding --apps entirely instead of erroring.
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--apps", "foot", "--con-id", "1"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("--template"));
+}
+
+#[test]
+fn template_bindings_without_template_flag_errors() {
+    let bindings = TempToml::write(
+        "bindings-without-template",
+        "[[binding]]\nslot = \"editor\"\ncon_id = 1\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--bindings", bindings.to_str().unwrap(), "--con-id", "1"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("--template"));
+}
+
+#[test]
 fn template_apps_rejects_an_empty_entry() {
     let template = TempToml::write(
         "apps-empty-entry-template",
