@@ -507,6 +507,46 @@ scripts comes up again, recreate it under the same untracked-scratch-space conve
 used to document, rather than letting one-off verification scripts accumulate in `examples/`
 unpolished.
 
+## Screenshots
+
+`scripts/generate-layout-screenshots` is a maintainer-run Python tool (not invoked by anything
+else, including CI) that generates a labeled screenshot of every shipped `--template` shape, for
+visual reference when writing docs or checking a shape actually looks like its description claims.
+It's Python, not POSIX sh like the rest of `scripts/` — the reasoning being it needs to parse TOML
+(`tomllib`, stdlib) and `swaymsg`'s JSON tree output, and orchestrate several subprocesses (`sway`,
+`swaymsg`, `sway-launch`, `figlet`, `grim`), which gets painful in POSIX sh without pulling in
+`jq`/similar as another new dependency. Requires `sway`, `swaymsg`, `foot`, `figlet`, `grim`, and
+`cargo` on `PATH` — `figlet`/`grim` are new dependencies introduced solely for this script, not
+used anywhere else in the project.
+
+It reuses `run-live-sway-tests`'s throwaway-headless-Sway recipe (same `WLR_BACKENDS=headless`
+setup/teardown), but loops over every `templates/*.toml` file on one long-lived compositor instead
+of restarting one per test — each template gets its own Sway workspace
+(`workspace screenshot-<name>`), so `grim`ing the current output after switching to it never picks
+up a previous template's leftover windows, without needing to kill/relaunch the compositor itself
+between iterations. `dual-output.toml` (needs a second real output) and `workspace-spread.toml`
+(moves every window to its own separate workspace by design) are excluded — a single-output
+screenshot can't meaningfully depict either.
+
+Each slot is filled with a `foot` window given a distinct background color and its own slot name
+rendered via `figlet` (the `mini` font), so the shape and slot names are both readable directly
+from the image without needing the template's own source alongside it. The font size is **not**
+a fixed guess — a template's shape (a 2x2 grid's equal quadrants vs. a sidebar's narrow column)
+isn't known until `sway-launch` actually lays it out, so a fixed size that looked fine in one
+template wrapped ugly in another. Instead, each template is launched twice: a first pass at a
+uniform default size purely to measure every slot's real pixel rect via `get_tree` (matched by
+window title, set via `foot -T <slot>`, since every slot shares `app_id=foot`); then, per slot, the
+largest font size that still fits that measured rect is computed from empirically-calibrated
+`foot` monospace-cell metrics (`PX_PER_COLUMN_PER_PT`/`PX_PER_ROW_PER_PT` in the script, along with
+the derivation notes) and clamped to a sane range — and only then is the template relaunched for
+real and captured. `figlet`'s own `-c` (center) flag is deliberately not used: it pads to figlet's
+own default 80-column canvas rather than the pane's real width, which reintroduced the same
+wrapping bug this two-pass measurement exists to avoid; labels are left-aligned instead.
+
+Screenshots are written to `--output-dir` (default `screenshots/` at the repo root, gitignored —
+not committed) as one `<template-name>.png` per template; `--only <name>` (repeatable) limits a run
+to specific templates, useful when iterating on one shape.
+
 ## Rust conventions
 
 - Always target the latest stable Rust release, and verify the toolchain is current before
