@@ -55,12 +55,14 @@ jobs:
     permissions:
       contents: read
       issues: write
-      checks: write
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
       - name: cargo audit
-        uses: rustsec/audit-check@v2.0.0
+        uses: actions-rust-lang/audit@v1.2.7
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
