@@ -20,8 +20,16 @@ import subprocess
 import sys
 import tempfile
 import time
-import tomllib
 from pathlib import Path
+
+if sys.version_info < (3, 11):
+    print(
+        f"✗ requires Python 3.11+ for tomllib (found {sys.version_info.major}.{sys.version_info.minor})",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+import tomllib  # noqa: E402 (must follow the version_info guard above)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = REPO_ROOT / "templates"
@@ -332,7 +340,7 @@ def main():
         "--output-dir",
         type=Path,
         default=REPO_ROOT / "screenshots",
-        help="directory screenshots are written to (default: %(default)s); not tracked by git, add it to .gitignore yourself if you want",
+        help="directory screenshots are written to (default: %(default)s); committed to the repo, see CLAUDE.md's Screenshots section",
     )
     parser.add_argument(
         "--only",
@@ -395,5 +403,7 @@ if __name__ == "__main__":
     except subprocess.CalledProcessError as error:
         stderr = error.stderr.decode() if isinstance(error.stderr, bytes) else (error.stderr or "")
         die(f"{' '.join(error.cmd)} failed: {stderr.strip() or error}")
+    except subprocess.TimeoutExpired as error:
+        die(f"{' '.join(error.cmd)} timed out after {error.timeout}s")
     except KeyboardInterrupt:
         die("interrupted")
