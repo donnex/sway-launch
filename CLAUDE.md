@@ -543,9 +543,18 @@ between iterations. `dual-output.toml` (needs a second real output) and `workspa
 (moves every window to its own separate workspace by design) are excluded — a single-output
 screenshot can't meaningfully depict either.
 
+Unlike `run-live-sway-tests`, the compositor isn't started with `-c /dev/null` — it's started
+against a temp config file containing a single `gaps inner <--gaps>` directive (default `6`), so
+adjacent windows stay visually distinct in the screenshot instead of touching edge-to-edge.
+Confirmed live that this has to be a config directive rather than a `gaps inner all set <N>`
+runtime command sent once at startup: the runtime command's `all` scope only covers workspaces that
+already exist at the moment it runs, not ones a later `switch_workspace()` call creates — which is
+every screenshot's own workspace — so it silently produced zero gap before this was caught.
+
 Each slot is filled with a `foot` window given a distinct background color and its own slot name
-rendered via `figlet` (the `mini` font), so the shape and slot names are both readable directly
-from the image without needing the template's own source alongside it. The font size is **not**
+rendered via `figlet` (`--font`, default the `mini` font), so the shape and slot names are both
+readable directly from the image without needing the template's own source alongside it. The font
+size is **not**
 a fixed guess — a template's shape (a 2x2 grid's equal quadrants vs. a sidebar's narrow column)
 isn't known until `sway-launch` actually lays it out, so a fixed size that looked fine in one
 template wrapped ugly in another. Instead, each template is launched twice: a first pass at a
