@@ -957,7 +957,10 @@ GitHub Actions is set up: `.github/workflows/check.yml` runs `cargo fmt --check`
 `cargo build`, and `cargo test` on every push and pull request, a separate `live-sway-tests` job
 that installs `sway`+`foot` and runs `scripts/run-live-sway-tests` (kept as its own job so a
 live-Sway hiccup doesn't block the fast unit-test feedback loop), and a `cargo audit` job via the
-`rustsec/audit-check` action. `.github/workflows/release.yml` re-runs the same core checks (not the
+`actions-rust-lang/audit` action (switched from `rustsec/audit-check`, which has had no release
+since September 2024 and still declares the now-deprecated `node20` runtime with nothing newer to
+bump to; `actions-rust-lang/audit` is a composite action with no Node runtime of its own, so it
+sidesteps the issue rather than just deferring it). `.github/workflows/release.yml` re-runs the same core checks (not the
 live-Sway job — a release build doesn't need a compositor) against the exact tagged commit, then
 builds and publishes a release archive when a `v*` tag is pushed. Keep both in sync with this
 file's Rust conventions above whenever the checks change.
