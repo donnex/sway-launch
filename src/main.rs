@@ -91,7 +91,12 @@ struct Args {
     debug_events: bool,
 
     /// Generate a shell completion script and print it to stdout
-    #[clap(long, value_enum)]
+    #[clap(long, value_enum, conflicts_with_all = [
+        "command", "con_id", "existing", "app_id", "class", "split",
+        "floating", "fullscreen", "focus", "mark", "new_column", "new_row",
+        "workspace", "output", "height", "width", "position", "debug_events",
+        "layout", "template", "list_templates",
+    ])]
     completions: Option<clap_complete::Shell>,
 
     /// Verbose output
@@ -129,7 +134,12 @@ struct Args {
     template: Option<PathBuf>,
 
     /// List built-in --template names and exit
-    #[clap(long)]
+    #[clap(long, conflicts_with_all = [
+        "command", "con_id", "existing", "app_id", "class", "split",
+        "floating", "fullscreen", "focus", "mark", "new_column", "new_row",
+        "workspace", "output", "height", "width", "position", "debug_events",
+        "layout", "template", "completions",
+    ])]
     list_templates: bool,
 
     /// Bindings file supplying each --template slot's application identity.

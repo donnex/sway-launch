@@ -356,7 +356,7 @@ a `SwayLaunch` first — it's checked and short-circuits right after `Args::pars
 
 ### `--layout`
 
-Another standalone mode, short-circuiting right after `--completions` (before the
+Another standalone mode, short-circuiting after `--completions`/`--list-templates` (before the
 command/`--con-id`/`--existing` validation, since a layout file satisfies that requirement on its
 own). `main.rs`'s `run_layout()` reads the file, parses it via `layout::parse()`
 (`toml::from_str::<layout::Layout>`), then hands `parsed_layout.step` to `run_steps()` (shared with
