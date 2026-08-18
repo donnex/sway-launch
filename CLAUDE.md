@@ -112,9 +112,10 @@ The crate is four source files plus five integration test files:
   change adds or changes a CLI flag/action, an example script, a `--layout` file, or a
   `--template` file, add or update a `tests/live_sway.rs` case for it in the *same* change — driving
   the actual shipped file/flag against a real compositor, not a hand-written stand-in, per the
-  precedent above. Treat a gap here exactly like CLAUDE.md drifting from the implementation or a CI
-  workflow drifting from the tooling (see "Keeping a workflow up to date" under CI below): a bug to
-  fix immediately, not a follow-up.
+  precedent above. Treat a gap here exactly like CLAUDE.md drifting from the implementation, a CI
+  workflow drifting from the tooling (see "Keeping a workflow up to date" under CI below), or a
+  stale screenshot drifting from the template it's supposed to depict (see "Screenshots" below): a
+  bug to fix immediately, not a follow-up.
 
 All five integration test files need `CARGO_BIN_EXE_sway-launch` (to invoke the compiled binary as
 a subprocess), which is only set for files under `tests/`, not for the bin crate's own unit test
@@ -546,6 +547,19 @@ wrapping bug this two-pass measurement exists to avoid; labels are left-aligned 
 Screenshots are written to `--output-dir` (default `screenshots/` at the repo root, gitignored —
 not committed) as one `<template-name>.png` per template; `--only <name>` (repeatable) limits a run
 to specific templates, useful when iterating on one shape.
+
+**Screenshots must always stay in sync with the actual `templates/` files.** Whenever a template
+file is added, removed, or has its shape changed (a step's `split`/`floating`/`height`/`width`/
+`workspace`/`output`/etc. — anything that changes what the rendered layout actually looks like,
+not just prose in its header comment), regenerate the affected screenshot(s) via
+`scripts/generate-layout-screenshots --only <name>` (or a full run with no `--only` after a
+broader change) in the *same* piece of work, the same discipline `tests/live_sway.rs`'s own
+coverage rule above and "Keeping a workflow up to date" under CI below already hold this project
+to elsewhere. A screenshot depicting a shape the template no longer produces is exactly as much a
+bug as a stale doc or a CI workflow drifting from the tooling — fix it immediately, not as a
+follow-up. This holds regardless of whether `screenshots/` happens to be populated locally at the
+time; the rule is about the *change* including regeneration, not about a committed artifact (there
+isn't one — `screenshots/` is gitignored).
 
 ## Rust conventions
 
