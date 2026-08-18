@@ -35,7 +35,7 @@ import tomllib  # noqa: E402 (must follow the version_info guard above)
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = REPO_ROOT / "templates"
 REQUIRED_COMMANDS = ["sway", "swaymsg", "foot", "figlet", "grim", "cargo"]
-FIGLET_FONT = "mini"  # default; overridable per run via --font
+FIGLET_FONT = "standard"  # default; overridable per run via --font
 GAPS_PX = 6  # inner gap between adjacent windows, so touching panes stay visually distinct
 # Empirically measured against a solo, full-output foot window (see this
 # script's development notes / commit message): monospace cell size scales

@@ -552,7 +552,10 @@ already exist at the moment it runs, not ones a later `switch_workspace()` call 
 every screenshot's own workspace — so it silently produced zero gap before this was caught.
 
 Each slot is filled with a `foot` window given a distinct background color and its own slot name
-rendered via `figlet` (`--font`, default the `mini` font), so the shape and slot names are both
+rendered via `figlet` (`--font`, default the `standard` font — `mini` was tried first but found too
+cramped to read at a glance; `standard` reads clearly even in a 3x3 grid's small cells, at the cost
+of hitting `MAX_FONT_SIZE`'s clamp rather than growing further in wide panes), so the shape and
+slot names are both
 readable directly from the image without needing the template's own source alongside it. The font
 size is **not**
 a fixed guess — a template's shape (a 2x2 grid's equal quadrants vs. a sidebar's narrow column)
