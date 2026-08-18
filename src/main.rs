@@ -95,7 +95,7 @@ struct Args {
         "command", "con_id", "existing", "app_id", "class", "split",
         "floating", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "output", "height", "width", "position", "debug_events",
-        "layout", "template", "list_templates",
+        "layout", "template", "list_templates", "bindings", "apps",
     ])]
     completions: Option<clap_complete::Shell>,
 
@@ -138,19 +138,19 @@ struct Args {
         "command", "con_id", "existing", "app_id", "class", "split",
         "floating", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "output", "height", "width", "position", "debug_events",
-        "layout", "template", "completions",
+        "layout", "template", "completions", "bindings", "apps",
     ])]
     list_templates: bool,
 
     /// Bindings file supplying each --template slot's application identity.
     /// Requires --template; conflicts with --apps
-    #[clap(long, requires = "template", conflicts_with = "apps")]
+    #[clap(long, conflicts_with = "apps")]
     bindings: Option<PathBuf>,
 
     /// Comma-separated list of commands to launch into --template's slots,
     /// in the order they first appear in the template. Requires --template;
     /// conflicts with --bindings
-    #[clap(long, requires = "template")]
+    #[clap(long)]
     apps: Option<String>,
 
     /// Command to execute
@@ -177,6 +177,15 @@ fn main() {
 
     if let Some(layout_path) = &args.layout {
         run_layout(layout_path, &args);
+    }
+
+    if args.template.is_none() && (args.bindings.is_some() || args.apps.is_some()) {
+        Args::command()
+            .error(
+                ErrorKind::MissingRequiredArgument,
+                "--bindings/--apps require --template",
+            )
+            .exit();
     }
 
     if let Some(template_path) = &args.template {
