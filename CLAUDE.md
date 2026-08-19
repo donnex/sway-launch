@@ -221,7 +221,12 @@ variant knows how to:
   without this, a `[con_id=N]` criteria matching zero containers is treated by Sway as success
   rather than a failure, so a container that closed between an earlier action resolving it and this
   one running used to silently no-op instead of erroring; confirmed by `tests/live_sway.rs`'s
-  `wait_time_action_errors_clearly_when_its_container_already_closed`.
+  `wait_time_action_errors_clearly_when_its_container_already_closed`. That "Sway treats a missing
+  `[con_id=N]` as success" behavior is itself Sway-version-dependent, the same kind of split
+  `node_is_floating()` (below) documents for a different field: confirmed live, Sway 1.9 (still
+  what `apt` installs on Ubuntu 24.04/CI) silently no-ops, while Sway 1.11 already errors clearly
+  with `"No matching node."` on its own. `container_exists()` is therefore redundant on 1.11 but
+  still required for 1.9 — don't remove it on the strength of testing against a newer Sway alone.
 
   After sending the command, what happens next depends on `SwayAction::poll_matches()`, which now
   has a matcher for every one of these six variants (per
