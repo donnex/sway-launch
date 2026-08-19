@@ -606,6 +606,36 @@ produces is exactly as much a bug as a stale doc or a CI workflow drifting from 
 it immediately, not as a follow-up. A new template file needs a row added to README.md's
 "Templates" table, thumbnail included, in the same change too, for the same reason.
 
+## Python conventions
+
+`scripts/generate-layout-screenshots` is currently the only Python file in the project, so these
+conventions are scoped to it rather than a general `bin/`/`lib/` project layout. Managed with `uv`
+via the repo-root `pyproject.toml`/`uv.lock` (`uv run scripts/generate-layout-screenshots ...`
+works the same as running it directly, using the same pinned tool versions). `black` (formatter)
+and `ruff` (linter) are dev-only dependencies (`[dependency-groups].dev`, never imported at
+runtime) — both must pass with no findings before committing:
+
+```shell
+uv run black scripts/generate-layout-screenshots
+uv run ruff check scripts/generate-layout-screenshots
+```
+
+Formatting and linting only — no `mypy`/`ty` type-checking and no requirement that every function
+be annotated, a deliberate, narrower adoption for this one maintainer script rather than the full
+type-checked convention a larger Python codebase would use. `pyproject.toml`'s `[tool.ruff.lint]`
+`select` list is the canonical rule selection minus `ANN` (flake8-annotations, which exists to
+enforce the typing requirement this project has opted out of) and `D` (pydocstyle, which would
+require a docstring on every function — in tension with this project's own "default to no
+comments, name things clearly instead" style). Two rule-specific overrides:
+
+- `UP036` (outdated-version-block) is ignored: the `sys.version_info < (3, 11)` guard at the top of
+  the script is a runtime UX check (a friendly error for whichever Python actually ends up running
+  it) — `requires-python` in `pyproject.toml` only documents the minimum, it doesn't enforce it at
+  runtime, so this isn't the dead code the rule assumes it is.
+- `[tool.ruff.lint.pylint]`'s `max-args` is raised to 6, to fit `generate_screenshot()`'s six plain
+  config values — bundling them into a dataclass for a single ~400-line maintainer script isn't
+  worth the added indirection.
+
 ## Rust conventions
 
 - Always target the latest stable Rust release, and verify the toolchain is current before
