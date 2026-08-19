@@ -43,4 +43,4 @@ sway-launch -a foot --split h foot
 sway-launch -a firefox --split v 'firefox --new-window https://example.com'
 
 sway-launch --new-row -a thunar --split h thunar
-sway-launch -c Code code
+sway-launch -a code code

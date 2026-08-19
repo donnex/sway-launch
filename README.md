@@ -215,8 +215,8 @@ Basic (all `foot`):
 Advanced (multiple applications):
 
 - [`examples/scripts/dev-workspace`](examples/scripts/dev-workspace) — VS Code taking most of the
-  width, with two terminals stacked in a column beside it. Demonstrates `--class` matching
-  (`-c Code`) alongside `--app-id`, plus `--width` and `--new-column`.
+  width, with two terminals stacked in a column beside it. Demonstrates `--app-id` matching
+  alongside `--width` and `--new-column`.
 - [`examples/scripts/floating-file-manager`](examples/scripts/floating-file-manager) — Thunar as a
   floating, fixed-size window with a mark set, ready for a `for_window` rule to reposition it (see
   [Mark](#mark) below). Demonstrates combining `--floating`, `--width`/`--height`, and `--mark`.
