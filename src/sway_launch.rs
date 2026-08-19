@@ -2716,14 +2716,18 @@ mod tests {
         // so the Some(bool) returned is always Some(false) here — this test
         // only asserts Split opts into polling at all, not the match outcome
         // itself (that needs a live Sway tree, covered by
-        // tests/live_sway.rs).
-        let action = SwayAction::Split {
-            container_id: 999999,
-            split: Split::H,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        assert_eq!(action.poll_matches(999999, None), Some(false));
+        // tests/live_sway.rs). Both directions are exercised so
+        // poll_matches()'s Split::V => NodeLayout::SplitV arm isn't left
+        // unhit by cargo test.
+        for split in [Split::H, Split::V] {
+            let action = SwayAction::Split {
+                container_id: 999999,
+                split,
+                verbose: false,
+                wait_time: time::Duration::from_millis(20),
+            };
+            assert_eq!(action.poll_matches(999999, None), Some(false));
+        }
     }
 
     #[test]
