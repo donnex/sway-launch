@@ -314,7 +314,14 @@ enum BindingsSource<'a> {
 /// `.toml` extension means there's no ambiguity between the two, and
 /// nothing on disk to stat to decide which one a given value means.
 fn resolve_template_contents(template_arg: &Path) -> Result<String, String> {
-    let is_file = template_arg.extension().and_then(|ext| ext.to_str()) == Some("toml");
+    // template_arg.extension() is checked via a direct suffix match on the
+    // full string, not Path::extension() — extension() returns None for a
+    // filename that's only an extension with nothing before it (e.g. a file
+    // literally named ".toml"), which would otherwise be misclassified as a
+    // built-in-name lookup instead of a file read.
+    let is_file = template_arg
+        .to_str()
+        .is_some_and(|value| value.ends_with(".toml"));
 
     if is_file {
         std::fs::read_to_string(template_arg)
