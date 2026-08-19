@@ -12,6 +12,10 @@ Because it blocks until the window exists (and until each follow-up action compl
 designed to be chained in shell scripts to deterministically build up window layouts without
 manual `sleep`s. See `README.md` for full CLI usage and layout-building examples.
 
+**This repository is public** (confirmed with the user 2026-08-19). The Content section below's
+strict, no-confirmation-step placeholder policy and the Issues section's issue-tracker sensitivity
+rules both apply in full because of this — there's no "private repo" fallback to lean on.
+
 ## Commands
 
 - Build: `cargo build`
@@ -949,6 +953,9 @@ only to topic branches.
 
 ## Workflow
 
+- This repo is public (see the note under "Project Overview"), so `README.md` must open with the
+  AI-assistance disclaimer directly below the title. If the README is ever rewritten, or the
+  disclaimer is accidentally removed, restore it.
 - Commits to `dev` or any other in-progress branch do not need confirmation before committing —
   proceed directly once the change is ready. After the commit completes, show a summary of what
   changed and why. If the work produces multiple commits, commit each as its own concern per Git
