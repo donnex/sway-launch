@@ -754,8 +754,8 @@ Run a script directly with `sh <script>`; make it executable first with `chmod +
   error-reporting mechanism; and a harness-invoked hook/daemon/action script whose stdout or exit
   code is itself part of a contract with its caller (e.g. a status line that must always exit 0
   and never write to stderr, or an action script whose plain stdout is surfaced as another tool's
-  failure message) — `die`'s colored, stderr-and-exit-1 behavior would break that contract, so
-  this third category is exempt from both `usage()` and the error-reporting mechanism.
+  failure message) — `die`'s stderr-and-exit-1 behavior would break that contract, so this third
+  category is exempt from both `usage()` and the error-reporting mechanism.
 - Always use `set -eu` at the top of every script. Be aware that `set -e` does not catch failures
   inside pipelines — in `cmd1 | cmd2` only `cmd2`'s exit code is checked. Handle pipeline errors
   explicitly by storing intermediate output in a variable or temp file rather than piping
