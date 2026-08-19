@@ -1,0 +1,41 @@
+[project]
+name = "sway-launch"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "black>=26.5.1",
+    "ruff>=0.16.3",
+]
+
+[tool.black]
+target-version = ["py311"]
+
+[tool.ruff.lint]
+select = [
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "C90", # mccabe
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "G",   # flake8-logging-format
+    "I",   # isort
+    "ISC", # flake8-implicit-str-concat
+    "PIE", # flake8-pie
+    "PL",  # Pylint
+    "RUF", # Ruff-specific rules
+    "UP",  # pyupgrade
+    "W",   # pycodestyle warnings
+]
+ignore = [
+    "UP036", # outdated-version-block — the sys.version_info guard here is a
+    # runtime UX check (a friendly error for a too-old interpreter actually
+    # running the script), not dead code implied by requires-python, which
+    # only documents the minimum, never enforces it at runtime.
+]
+
+[tool.ruff.lint.pylint]
+max-args = 6 # generate_screenshot()'s 6 plain config values don't warrant
+# bundling into a dataclass for a single maintainer script this size.
