@@ -24,19 +24,19 @@ import time
 from pathlib import Path
 
 if sys.version_info < (3, 11):
-    print(
-        f"✗ requires Python 3.11+ for tomllib (found {sys.version_info.major}.{sys.version_info.minor})",
-        file=sys.stderr,
-    )
+    found = f"{sys.version_info.major}.{sys.version_info.minor}"
+    print(f"✗ requires Python 3.11+ for tomllib (found {found})", file=sys.stderr)
     sys.exit(1)
 
-import tomllib  # noqa: E402 (must follow the version_info guard above)
+import tomllib
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = REPO_ROOT / "templates"
 REQUIRED_COMMANDS = ["sway", "swaymsg", "foot", "figlet", "grim", "cargo"]
 FIGLET_FONT = "standard"  # default; overridable per run via --font
-GAPS_PX = 6  # inner gap between adjacent windows, so touching panes stay visually distinct
+GAPS_PX = (
+    6  # inner gap between adjacent windows, so touching panes stay visually distinct
+)
 # Empirically calibrated against a solo, full-output foot window: monospace
 # cell size scales ~linearly with foot's -f ...:size=N. No separate
 # derivation notes exist beyond this comment — recalibrate directly against
@@ -66,8 +66,9 @@ SLOT_COLORS = [
     "2F4F4F",  # dark slate gray
 ]
 # dual-output.toml needs a second real output to do anything meaningful — the
-# same reason tests/live_sway.rs's every_shipped_template_resolves_and_launches_successfully
-# excludes it and covers it separately instead. workspace-spread.toml moves
+# same reason tests/live_sway.rs's
+# every_shipped_template_resolves_and_launches_successfully excludes it and
+# covers it separately instead. workspace-spread.toml moves
 # every window to its own separate named workspace by design, so nothing
 # stays on the workspace this script captures — a single-output screenshot
 # can't depict "spread across workspaces" at all, not even partially.
@@ -88,7 +89,9 @@ def die(message):
 
 
 def check_required_commands():
-    missing = [command for command in REQUIRED_COMMANDS if shutil.which(command) is None]
+    missing = [
+        command for command in REQUIRED_COMMANDS if shutil.which(command) is None
+    ]
     if missing:
         die(f"missing required command(s) on PATH: {', '.join(missing)}")
 
@@ -174,10 +177,15 @@ class HeadlessSway:
         config_path.write_text(f"gaps inner {self.gaps_px}\n")
         with open(log_path, "wb") as log_file:
             self.process = subprocess.Popen(
-                ["sway", "-c", str(config_path)], env=env, stdout=log_file, stderr=subprocess.STDOUT
+                ["sway", "-c", str(config_path)],
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
             )
 
-        self.socket_path = self.runtime_dir / f"sway-ipc.{os.getuid()}.{self.process.pid}.sock"
+        self.socket_path = (
+            self.runtime_dir / f"sway-ipc.{os.getuid()}.{self.process.pid}.sock"
+        )
 
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
@@ -229,11 +237,17 @@ class HeadlessSway:
         }
 
     def _run_swaymsg(self, args):
-        subprocess.run(["swaymsg", *args], env=self._ipc_env(), check=True, capture_output=True)
+        subprocess.run(
+            ["swaymsg", *args], env=self._ipc_env(), check=True, capture_output=True
+        )
 
     def _run_swaymsg_json(self, args):
         result = subprocess.run(
-            ["swaymsg", *args], env=self._ipc_env(), check=True, capture_output=True, text=True
+            ["swaymsg", *args],
+            env=self._ipc_env(),
+            check=True,
+            capture_output=True,
+            text=True,
         )
         return json.loads(result.stdout)
 
@@ -253,7 +267,12 @@ class HeadlessSway:
         )
 
     def screenshot(self, output_path):
-        subprocess.run(["grim", str(output_path)], env=self._ipc_env(), check=True, capture_output=True)
+        subprocess.run(
+            ["grim", str(output_path)],
+            env=self._ipc_env(),
+            check=True,
+            capture_output=True,
+        )
 
     def slot_rects(self):
         """{slot_name: (rect_width, rect_height)} for every foot window
@@ -301,7 +320,9 @@ def run_template(sway, sway_launch_binary, template_path, bindings_toml, wait_ti
     time.sleep(0.3)
 
 
-def generate_screenshot(sway, sway_launch_binary, template_path, output_dir, wait_time_ms, font):
+def generate_screenshot(
+    sway, sway_launch_binary, template_path, output_dir, wait_time_ms, font
+):
     slots = ordered_slots(template_path)
     if not slots:
         status(f"skipping {template_path.name} (no slots)")
@@ -315,7 +336,11 @@ def generate_screenshot(sway, sway_launch_binary, template_path, output_dir, wai
     # sway-launch actually lays it out, so there's no way to pick a font
     # size that's guaranteed to fit without measuring first.
     run_template(
-        sway, sway_launch_binary, template_path, build_bindings_toml(slots, {}, font), wait_time_ms
+        sway,
+        sway_launch_binary,
+        template_path,
+        build_bindings_toml(slots, {}, font),
+        wait_time_ms,
     )
     rects = sway.slot_rects()
     sway.kill_foot_windows()
@@ -345,26 +370,31 @@ def generate_screenshot(sway, sway_launch_binary, template_path, output_dir, wai
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
         default=REPO_ROOT / "screenshots",
-        help="directory screenshots are written to (default: %(default)s); committed to the repo, see CLAUDE.md's Screenshots section",
+        help="directory screenshots are written to (default: %(default)s); "
+        "committed to the repo, see CLAUDE.md's Screenshots section",
     )
     parser.add_argument(
         "--only",
         action="append",
         default=[],
         metavar="NAME",
-        help="only generate this template's screenshot (its file stem, e.g. quad-grid); repeatable",
+        help="only generate this template's screenshot (its file stem, e.g. "
+        "quad-grid); repeatable",
     )
     parser.add_argument(
         "--wait-time",
         type=int,
         default=300,
         metavar="MS",
-        help="--wait-time passed through to each sway-launch invocation (default: %(default)s)",
+        help="--wait-time passed through to each sway-launch invocation "
+        "(default: %(default)s)",
     )
     parser.add_argument(
         "--resolution",
@@ -383,15 +413,18 @@ def main():
         "--font",
         default=FIGLET_FONT,
         metavar="NAME",
-        help="figlet font used for each slot's label (default: %(default)s); see `figlet -I2` "
-        "for the font directory, or `showfigfonts` for a preview of what's installed",
+        help="figlet font used for each slot's label (default: %(default)s); "
+        "see `figlet -I2` for the font directory, or `showfigfonts` for a "
+        "preview of what's installed",
     )
     args = parser.parse_args()
 
     check_required_commands()
 
     template_files = sorted(
-        path for path in TEMPLATES_DIR.glob("*.toml") if path.name not in EXCLUDED_TEMPLATES
+        path
+        for path in TEMPLATES_DIR.glob("*.toml")
+        if path.name not in EXCLUDED_TEMPLATES
     )
     if args.only:
         wanted = set(args.only)
@@ -413,7 +446,12 @@ def main():
     with HeadlessSway(args.resolution, args.gaps) as sway:
         for template_path in template_files:
             generate_screenshot(
-                sway, sway_launch_binary, template_path, args.output_dir, args.wait_time, args.font
+                sway,
+                sway_launch_binary,
+                template_path,
+                args.output_dir,
+                args.wait_time,
+                args.font,
             )
 
     success(f"Generated {len(template_files)} screenshot(s) in {args.output_dir}")
@@ -427,7 +465,11 @@ if __name__ == "__main__":
     try:
         main()
     except subprocess.CalledProcessError as error:
-        stderr = error.stderr.decode() if isinstance(error.stderr, bytes) else (error.stderr or "")
+        stderr = (
+            error.stderr.decode()
+            if isinstance(error.stderr, bytes)
+            else (error.stderr or "")
+        )
         die(f"{' '.join(error.cmd)} failed: {stderr.strip() or error}")
     except subprocess.TimeoutExpired as error:
         die(f"{' '.join(error.cmd)} timed out after {error.timeout}s")
