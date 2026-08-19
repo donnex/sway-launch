@@ -419,6 +419,25 @@ fn template_toml_suffixed_name_is_never_treated_as_a_builtin() {
 }
 
 #[test]
+fn template_file_named_dot_toml_is_read_as_a_file_not_a_builtin_lookup() {
+    // Regression test: Path::extension() returns None for a filename that's
+    // only an extension with nothing before it (e.g. a file literally named
+    // ".toml"), which used to misclassify this as a built-in-name lookup
+    // instead of a file read, erroring with "no built-in template named
+    // \".toml\"" even when the file existed on disk. resolve_template_contents()
+    // now checks the string suffix directly instead.
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--template", ".toml", "--apps", "foot"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains(".toml"));
+    assert!(!stderr.contains("no built-in template named"));
+}
+
+#[test]
 fn list_templates_prints_known_names_and_descriptions() {
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
         .args(["--list-templates"])
