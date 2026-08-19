@@ -569,8 +569,9 @@ template wrapped ugly in another. Instead, each template is launched twice: a fi
 uniform default size purely to measure every slot's real pixel rect via `get_tree` (matched by
 window title, set via `foot -T <slot>`, since every slot shares `app_id=foot`); then, per slot, the
 largest font size that still fits that measured rect is computed from empirically-calibrated
-`foot` monospace-cell metrics (`PX_PER_COLUMN_PER_PT`/`PX_PER_ROW_PER_PT` in the script, along with
-the derivation notes) and clamped to a sane range — and only then is the template relaunched for
+`foot` monospace-cell metrics (`PX_PER_COLUMN_PER_PT`/`PX_PER_ROW_PER_PT` in the script, with a
+comment there on how to recalibrate them — there are no separate derivation notes elsewhere) and
+clamped to a sane range — and only then is the template relaunched for
 real and captured. `figlet`'s own `-c` (center) flag is deliberately not used: it pads to figlet's
 own default 80-column canvas rather than the pane's real width, which reintroduced the same
 wrapping bug this two-pass measurement exists to avoid; labels are left-aligned instead.
