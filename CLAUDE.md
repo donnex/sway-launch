@@ -548,7 +548,10 @@ It's Python, not POSIX sh like the rest of `scripts/` — the reasoning being it
 `swaymsg`, `sway-launch`, `figlet`, `grim`), which gets painful in POSIX sh without pulling in
 `jq`/similar as another new dependency. Requires `sway`, `swaymsg`, `foot`, `figlet`, `grim`, and
 `cargo` on `PATH` — `figlet`/`grim` are new dependencies introduced solely for this script, not
-used anywhere else in the project.
+used anywhere else in the project. Confirmed with the user (2026-08-19) per the Shell conventions'
+"confirm before depending on a new external command" rule — Python scripts follow the same rule by
+extension, since the reasoning (a new tool the project didn't already require) applies regardless
+of language.
 
 It reuses `run-live-sway-tests`'s throwaway-headless-Sway recipe (same `WLR_BACKENDS=headless`
 setup/teardown), but loops over every `templates/*.toml` file on one long-lived compositor instead
@@ -613,7 +616,9 @@ conventions are scoped to it rather than a general `bin/`/`lib/` project layout.
 via the repo-root `pyproject.toml`/`uv.lock` (`uv run scripts/generate-layout-screenshots ...`
 works the same as running it directly, using the same pinned tool versions). `black` (formatter)
 and `ruff` (linter) are dev-only dependencies (`[dependency-groups].dev`, never imported at
-runtime) — both must pass with no findings before committing:
+runtime) — both must pass with no findings before committing. Adopting `uv` added `/.venv` to
+`.gitignore` (confirmed with the user, 2026-08-19, per the Git conventions' "never modify
+`.gitignore` without explicit confirmation" rule):
 
 ```shell
 uv run black scripts/generate-layout-screenshots
