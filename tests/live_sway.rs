@@ -1108,12 +1108,15 @@ fn exec_falls_back_to_a_content_match_when_its_own_process_already_exited() {
 
 #[test]
 fn wait_time_action_errors_clearly_when_its_container_already_closed() {
-    // Regression test: Sway treats a [con_id=N] criteria matching zero
-    // containers as success, not an error, so a wait-time action
+    // Regression test: on Sway 1.9, a [con_id=N] criteria matching zero
+    // containers is treated as success, not an error, so a wait-time action
     // (Split/NewColumn/NewRow/Height/Width/Position) used to silently no-op
     // instead of erroring if the container closed between an earlier action
     // resolving it and this one running. run_wait_time()'s container_exists()
-    // check is what's under test here.
+    // check is what's under test here — still required on 1.9, though
+    // confirmed live to be redundant on Sway 1.11, which already errors
+    // clearly ("No matching node.") on its own; see container_exists()'s doc
+    // comment for that version split.
     let mut connection = connect();
     let (container_id, guard) = launch_foot(&[]);
     connection
