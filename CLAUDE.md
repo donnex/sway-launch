@@ -673,10 +673,11 @@ These rules apply to every script in this repo, regardless of language.
     ever be exempt.
   - Such a script still needs its header comment to explain how it's invoked and by what, since it
     has no `--help` to carry that. Configuration it reads from the environment belongs there too.
-- For a script a user runs directly, use color and clear presentation — structured formatting,
-  tables, progress/status indicators, etc. — for its terminal output when it makes sense: status
-  messages that should stand out (success/warning/error), progress, or tabular data. Skip it for
-  something too small to warrant it, e.g. a script whose entire output is a single line.
+- For a script a user runs directly, use clear presentation — structured formatting, tables,
+  progress/status indicators, etc. — for its terminal output when it makes sense: status messages
+  that should stand out (success/warning/error), progress, or tabular data. Skip it for something
+  too small to warrant it, e.g. a script whose entire output is a single line. Do not use ANSI
+  color codes — plain text only.
 - Always include a brief description at the top of every file:
   - Shell: three comment lines directly below the shebang — a blank `#`, a one-line summary, a
     closing blank `#`.
