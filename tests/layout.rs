@@ -81,6 +81,41 @@ fn layout_conflicts_with_a_per_window_flag() {
 }
 
 #[test]
+fn layout_conflicts_with_stray_apps_flag() {
+    // Regression test: --apps combined with --layout used to parse cleanly
+    // and silently discard --apps instead of erroring, since --layout wasn't
+    // listed in --apps'/--bindings' conflicts (unlike --completions and
+    // --list-templates, which already list both for the same reason).
+    let path = TempToml::write("stray-apps", "[[step]]\ncon_id = 42\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap(), "--apps", "foot"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+}
+
+#[test]
+fn layout_conflicts_with_stray_bindings_flag() {
+    let layout_path = TempToml::write("stray-bindings-layout", "[[step]]\ncon_id = 42\n");
+    let bindings_path =
+        TempToml::write("stray-bindings", "[[binding]]\nslot = \"a\"\ncon_id = 1\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--layout",
+            layout_path.to_str().unwrap(),
+            "--bindings",
+            bindings_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+}
+
+#[test]
 fn layout_missing_file_errors() {
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
         .args(["--layout", "/nonexistent-sway-launch-test-layout.toml"])
