@@ -37,12 +37,14 @@ TEMPLATES_DIR = REPO_ROOT / "templates"
 REQUIRED_COMMANDS = ["sway", "swaymsg", "foot", "figlet", "grim", "cargo"]
 FIGLET_FONT = "standard"  # default; overridable per run via --font
 GAPS_PX = 6  # inner gap between adjacent windows, so touching panes stay visually distinct
-# Empirically measured against a solo, full-output foot window (see this
-# script's development notes / commit message): monospace cell size scales
-# ~linearly with foot's -f ...:size=N. Used to work out, per slot, the
-# largest font size that still fits that slot's own measured pixel rect —
-# a fixed guess didn't hold up across very different slot shapes (a 2x2
-# grid's quadrants vs. a sidebar template's narrow column).
+# Empirically calibrated against a solo, full-output foot window: monospace
+# cell size scales ~linearly with foot's -f ...:size=N. No separate
+# derivation notes exist beyond this comment — recalibrate directly against
+# a live foot window (measure its cell rect at two known font sizes via
+# get_tree and divide) if these ever need revisiting. Used to work out, per
+# slot, the largest font size that still fits that slot's own measured pixel
+# rect — a fixed guess didn't hold up across very different slot shapes (a
+# 2x2 grid's quadrants vs. a sidebar template's narrow column).
 PX_PER_COLUMN_PER_PT = 0.81
 PX_PER_ROW_PER_PT = 1.65
 MIN_FONT_SIZE = 10
