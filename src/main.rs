@@ -116,6 +116,7 @@ struct Args {
         "command", "con_id", "existing", "app_id", "class", "split",
         "floating", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "output", "height", "width", "position", "debug_events",
+        "bindings", "apps",
     ])]
     layout: Option<PathBuf>,
 
