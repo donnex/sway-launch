@@ -1,5 +1,10 @@
 # sway-launch
 
+> [!WARNING]
+> This project was created with AI assistance (Claude). It comes with no guarantees of
+> correctness, security, or fitness for any particular purpose, and may not have been reviewed by
+> a human. Review the code yourself before relying on it.
+
 `sway-launch` is a CLI for the [Sway](https://swaywm.org/) window manager. It launches an
 application, waits for its window to appear via Sway's IPC event stream, then optionally runs
 follow-up actions against that window — floating, fullscreen, resizing, moving to a
