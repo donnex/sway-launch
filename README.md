@@ -8,21 +8,17 @@
 `sway-launch` is a CLI for the [Sway](https://swaywm.org/) window manager. It launches an
 application, waits for its window to appear via Sway's IPC event stream, then optionally runs
 follow-up actions against that window — floating, fullscreen, resizing, moving to a
-workspace/output, splitting, marking, and more (see [Actions reference](#actions-reference)). It
-can act on an already-open window the same way, via `--con-id`/`--existing`, instead of always
-launching a new one.
+workspace/output, splitting, marking, and more (see [Actions reference](#actions-reference)).
 
-Because it blocks until the window exists — and until each follow-up action is actually confirmed
-— it's built to be chained: run several `sway-launch` calls in a row in a shell script, and each
-one starts only once the previous window is ready, with no manual `sleep`s. That covers everything
-from a single one-off action (*open a new floating, centered Firefox window*) to a full startup
-script that recreates a saved workspace layout every time Sway starts (see
-[Recreatable layouts](#recreatable-layouts)).
-
-For a layout you'll reuse, `--layout` runs a whole sequence of steps from one TOML file instead of
-a shell script, and `--template` goes one step further: an app-agnostic layout — a grid, a
-master/stack arrangement, a sidebar — that applies to any set of applications via
-`--apps`/`--bindings`, so the same shape is reusable across different setups.
+- **Deterministic** — blocks until the window exists, and until each follow-up action is actually
+  confirmed, so layouts build up reliably with no manual `sleep`s or race conditions.
+- **Zero setup** — a single static binary; no daemon, no config file. Chain calls directly in a
+  shell script.
+- **Built-in template library** — dozens of ready-made grid, sidebar, and master/stack layouts
+  ship inside the binary. Apply one to any set of applications with `--template <name> --apps ...`
+  — no files to write (see [Templates](#templates)).
+- **Works on existing windows too** — not just newly launched ones, via
+  `--con-id`/`--existing` (see [Target an existing window](#target-an-existing-window)).
 
 Requires a running Sway session — `sway-launch` talks to Sway over its IPC socket (the same one
 `swaymsg` uses), so it won't do anything useful outside of one.
@@ -30,6 +26,7 @@ Requires a running Sway session — `sway-launch` talks to Sway over its IPC soc
 ## Table of contents
 
 - [Installation](#installation)
+- [Quickstart](#quickstart)
 - [Basic usage](#basic-usage)
 - [Recreatable layouts](#recreatable-layouts)
   - [Examples](#examples)
@@ -101,26 +98,45 @@ Options:
   -V, --version                    Print version
 ```
 
-## Basic usage
+## Quickstart
 
-The most basic use is to just execute the given command; it then waits for a matching Sway IPC
-new-window event before returning the window's unique container id.
+A few commands to try immediately — each one blocks until confirmed, so nothing here needs a
+manual wait between them.
 
 ```shell
+# Launch a terminal, wait for it to appear
 $ sway-launch foot
 271
 ```
 
-The command must be quoted when passed to `sway-launch`.
-
 ```shell
-$ sway-launch 'firefox --new-window https://example.com'
-272
+# Two terminals side by side — the second command doesn't start until the first window exists
+sway-launch -a foot --split h foot
+sway-launch -a foot foot
 ```
 
-On its own this isn't very useful, but since every `sway-launch` command blocks until its window
-is created, multiple commands can be chained together in a script without needing a manual
-`sleep` — each command starts only once the previous window exists.
+```shell
+# Floating, centered, and sized — all in one command
+sway-launch --floating --position center --width 800px --height 500px foot
+```
+
+```shell
+# An instant 2x2 grid from a built-in template — no files to write
+sway-launch --template quad-grid --apps foot,foot,foot,foot
+```
+
+```shell
+# See every built-in template shape
+sway-launch --list-templates
+```
+
+See [Basic usage](#basic-usage) below for chaining and window-matching in more depth, and
+[Templates](#templates) for the full built-in library.
+
+## Basic usage
+
+Beyond the Quickstart commands above, a command passed to `sway-launch` must be quoted when it
+contains spaces, e.g. `'firefox --new-window https://example.com'`.
 
 Since the container id of the matching window is returned, it's also possible to combine
 `sway-launch` with custom `swaymsg` commands.
