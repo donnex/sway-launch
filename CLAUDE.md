@@ -632,6 +632,10 @@ it immediately, not as a follow-up. A new template file needs a row added to REA
     `run_wait_matching_events`, `run_wait_matching_exec_event`, `run_poll_then_fallback`,
     `container_exists`, `parent_node_layout`, `node_by_id`, `find_container_node`,
     `position_matches`, `node_and_output_name`, `output_rect`,
+    `expected_position`'s `"center"` arm (only reachable once `output_rect()` succeeds, so it's
+    exempt for the same reason `output_rect` itself is; the rest of `expected_position` — explicit
+    coordinates, and `"center"` without a live socket — is ordinary pure logic and stays
+    coverage-measured),
     `find_existing_container_id`'s connection call,
     `SwayAction::run`, `SwayAction::already_at_target`, `SwayAction::poll_baseline`'s
     `NewColumn`/`NewRow` arm, `current_workspace`, `current_output`, `containing_node_name`,
