@@ -749,12 +749,17 @@ impl SwayAction<'_> {
 
         let container_id = self.container_id().unwrap();
 
-        // A wait-time action's [con_id=N] criteria matching zero containers
-        // is "success" as far as Sway's concerned (there's simply nothing to
+        // On Sway 1.9 (still what `apt` installs on Ubuntu 24.04/CI — see
+        // node_is_floating()'s doc comment for the same version split), a
+        // wait-time action's [con_id=N] criteria matching zero containers is
+        // "success" as far as Sway's concerned (there's simply nothing to
         // apply the command to) — unlike an event-confirmed action, which
         // would visibly hang until --timeout instead. Without this check, a
         // container that closed between an earlier action resolving it and
-        // this one running would silently no-op rather than error.
+        // this one running would silently no-op rather than error on 1.9.
+        // Sway 1.11 already errors clearly ("No matching node.") on its own,
+        // confirmed live, making this check redundant there — it's kept for
+        // 1.9 compatibility, not because it's still needed on every version.
         if !self::container_exists(container_id)? {
             return Err(format!(
                 "container id {} no longer exists — window may have closed",
@@ -1454,8 +1459,12 @@ fn find_workspace_node(node: &Node, container_id: i64) -> Option<&Node> {
 /// Whether `container_id` is still present anywhere in the current tree —
 /// used by `run_wait_time()` to catch a container that closed between an
 /// earlier action resolving it and this one about to run its command
-/// against it, since Sway treats a `[con_id=N]` criteria matching zero
-/// containers as success rather than an error.
+/// against it. Needed on Sway 1.9 (still what `apt` installs on Ubuntu
+/// 24.04/CI), which treats a `[con_id=N]` criteria matching zero containers
+/// as success rather than an error; Sway 1.11 already errors clearly
+/// ("No matching node.") on its own, confirmed live, which makes this check
+/// redundant there but still required for 1.9 — see `node_is_floating()`'s
+/// doc comment for the same version split.
 fn container_exists(container_id: i64) -> Result<bool, String> {
     let tree = match self::new_connection()?.get_tree() {
         Ok(tree) => tree,
