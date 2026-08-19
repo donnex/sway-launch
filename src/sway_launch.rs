@@ -850,6 +850,12 @@ impl SwayAction<'_> {
         // the value returned once it's used.
         let mut fallback: Option<(i64, time::Instant)> = None;
 
+        // Once any_process_has_env_var() observes the marked process (or a
+        // marked descendant) is gone, it can't come back for this token —
+        // cached so a burst of further content-matching events before the
+        // fallback is actually used doesn't re-scan all of /proc on each one.
+        let mut marked_process_confirmed_gone = false;
+
         loop {
             let effective_deadline = match fallback {
                 Some((_, first_seen)) => first_seen
@@ -920,7 +926,9 @@ impl SwayAction<'_> {
                 fallback = Some((window.container.id, time::Instant::now()));
             }
 
-            if !self::any_process_has_env_var(PID_MARKER_VAR, &token) {
+            marked_process_confirmed_gone = marked_process_confirmed_gone
+                || !self::any_process_has_env_var(PID_MARKER_VAR, &token);
+            if marked_process_confirmed_gone {
                 let (container_id, _) = fallback.expect("just set above if it wasn't already");
                 if verbose {
                     eprintln!(
