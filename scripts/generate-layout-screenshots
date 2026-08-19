@@ -72,26 +72,16 @@ SLOT_COLORS = [
 EXCLUDED_TEMPLATES = {"dual-output.toml", "workspace-spread.toml"}
 
 
-def is_color_enabled():
-    return sys.stdout.isatty()
-
-
-def colorize(text, code):
-    if not is_color_enabled():
-        return text
-    return f"\033[{code}m{text}\033[0m"
-
-
 def status(message):
-    print(colorize(message, "0;36"))
+    print(message)
 
 
 def success(message):
-    print(colorize(f"✓ {message}", "0;32"))
+    print(f"✓ {message}")
 
 
 def die(message):
-    print(colorize(f"✗ {message}", "0;31"), file=sys.stderr)
+    print(f"✗ {message}", file=sys.stderr)
     sys.exit(1)
 
 
