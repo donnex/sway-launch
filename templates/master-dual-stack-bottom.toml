@@ -1,0 +1,17 @@
+# One large main window on top, two smaller windows split side by side below it.
+# Run with, e.g.:
+#   sway-launch --template master-dual-stack-bottom --apps code,foot,foot
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+
+[[step]]
+slot = "main"
+split = "v"
+
+[[step]]
+slot = "stack-left"
+height = "35ppt"
+split = "h"
+
+[[step]]
+slot = "stack-right"

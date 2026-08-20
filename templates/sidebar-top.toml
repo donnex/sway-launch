@@ -1,0 +1,13 @@
+# A narrow bar across the top, a wide main window below it.
+# Run with, e.g.:
+#   sway-launch --template sidebar-top --apps foot,code
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+
+[[step]]
+slot = "topbar"
+split = "v"
+
+[[step]]
+slot = "main"
+height = "75ppt"
