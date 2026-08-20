@@ -342,11 +342,17 @@ catching the multi-window case that check alone missed; a solo window whose work
 *doesn't* match the axis (e.g. stacked via `splitv`, then moved right) was confirmed live to
 restructure in place rather than escalate, so checking layout too (not just child count) also
 avoids skipping a move that would actually have been safe. A window nested inside a sub-container
-is conservatively never flagged — that case wasn't confirmed live either way. When flagged, the
-action is skipped (logged under `--verbose`) rather than run, trading a silent cross-monitor
-relocation for a silent no-op — confirmed by `tests/live_sway.rs`'s
-`new_column_does_not_relocate_a_solo_window_to_a_different_output` and
-`new_column_does_not_relocate_a_non_solo_window_at_the_trailing_edge`.
+is conservatively never flagged; unlike the direct-child cases above, this was initially left
+unconfirmed live in either direction, but later confirmed safe rather than just untested — in both
+an axis-mismatched nesting (a `splitv` sub-container under a `splith` workspace) and the
+axis-matched worst case (a `splith` sub-container under a `splith` workspace, target as its
+trailing child), `move right` never escalated the nested target to a different output; it simply
+popped the target out to become a new direct child of the workspace, staying on the same output.
+When flagged, the action is skipped (logged under `--verbose`) rather than run, trading a silent
+cross-monitor relocation for a silent no-op — confirmed by `tests/live_sway.rs`'s
+`new_column_does_not_relocate_a_solo_window_to_a_different_output`,
+`new_column_does_not_relocate_a_non_solo_window_at_the_trailing_edge`, and (the nested case)
+`new_column_does_not_relocate_a_nested_window_to_a_different_output`.
 
 Each Sway IPC call opens its own fresh `Connection` (`new_connection()` in `sway_launch.rs`) — there
 is no persistent/shared connection across actions.
