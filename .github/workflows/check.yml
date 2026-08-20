@@ -17,7 +17,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: rustfmt, clippy, llvm-tools-preview
 
       - uses: Swatinem/rust-cache@v2
 
@@ -32,6 +32,24 @@ jobs:
 
       - name: cargo test
         run: cargo test --locked
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      # Thresholds are calibrated to this project's actual measured baseline
+      # (81.46% regions / 82.84% lines as of 2026-08-20), not an arbitrary
+      # round number: sway_launch.rs's IPC-touching functions are
+      # deliberately exempted from unit-test coverage (see CLAUDE.md's Rust
+      # conventions -- they're exercised by tests/live_sway.rs instead,
+      # which this job can't run headlessly), so a flat 90%+ target isn't
+      # the right bar here the way it might be for a project with no such
+      # exemption list. This gate exists to catch a *regression* (new
+      # pure-logic code added with no test) against the known baseline, not
+      # to enforce an idealized number.
+      - name: cargo llvm-cov (coverage regression gate, excluding main.rs)
+        run: |
+          cargo llvm-cov --locked --ignore-filename-regex 'main\.rs' \
+            --fail-under-lines 82 --fail-under-regions 80 --fail-under-functions 90
 
   lint-scripts-and-docs:
     runs-on: ubuntu-latest
@@ -52,7 +70,7 @@ jobs:
         run: npm install -g markdownlint-cli
 
       - name: markdownlint
-        run: markdownlint README.md CLAUDE.md docs/*.md
+        run: markdownlint '**/*.md'
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3

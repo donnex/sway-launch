@@ -1098,16 +1098,31 @@ live-Sway case is exactly as much a bug as a missing lint step — see the cover
 `tests/live_sway.rs` in the Architecture section and the matching Rust workflow bullet above.
 
 GitHub Actions is set up: `.github/workflows/check.yml` runs `cargo fmt --check`, `cargo clippy`,
-`cargo build`, and `cargo test` on every push and pull request, a separate `live-sway-tests` job
-that installs `sway`+`foot` and runs `scripts/run-live-sway-tests` (kept as its own job so a
-live-Sway hiccup doesn't block the fast unit-test feedback loop), and a `cargo audit` job via the
-`actions-rust-lang/audit` action (switched from `rustsec/audit-check`, which has had no release
-since September 2024 and still declares the now-deprecated `node20` runtime with nothing newer to
-bump to; `actions-rust-lang/audit` is a composite action with no Node runtime of its own, so it
-sidesteps the issue rather than just deferring it). `.github/workflows/release.yml` re-runs the same core checks (not the
-live-Sway job — a release build doesn't need a compositor) against the exact tagged commit, then
-builds and publishes a release archive when a `v*` tag is pushed. Keep both in sync with this
-file's Rust conventions above whenever the checks change.
+`cargo build`, `cargo test`, and a `cargo llvm-cov` coverage-regression gate (`--fail-under-lines
+82 --fail-under-regions 80 --fail-under-functions 90`, calibrated to this project's actual measured
+baseline — see the comment above that step in `check.yml` for why a flat number this project didn't
+choose arbitrarily still coexists with the qualitative "cover every pure/logic function" target
+under Rust conventions above) in its `check` job; a separate `lint-scripts-and-docs` job that runs
+`shellcheck`/`shfmt` on every script under `scripts/`/`examples/scripts/`, `markdownlint '**/*.md'`
+(every Markdown file in the repo, not a fixed list, so a newly added one like `CHANGELOG.md` is
+covered automatically), and `black --check`/`ruff check` on the one Python script; a separate
+`live-sway-tests` job that installs `sway`+`foot` and runs `scripts/run-live-sway-tests` (kept as
+its own job so a live-Sway hiccup doesn't block the fast unit-test feedback loop); and a `cargo
+audit` job via the `actions-rust-lang/audit` action (switched from `rustsec/audit-check`, which has
+had no release since September 2024 and still declares the now-deprecated `node20` runtime with
+nothing newer to bump to; `actions-rust-lang/audit` is a composite action with no Node runtime of
+its own, so it sidesteps the issue rather than just deferring it).
+
+`.github/workflows/release.yml` re-runs `check.yml`'s `check` and `lint-scripts-and-docs` checks
+combined into one job (not the coverage gate, not `live-sway-tests` or `audit` — a release build
+doesn't need a compositor or a coverage measurement, and the security audit runs independently on
+every push regardless) against the exact tagged commit, then builds and publishes a release archive
+when a `v*` tag is pushed. Release notes come from `CHANGELOG.md` rather than `gh`'s own
+auto-generated notes: an `awk` script extracts the section matching the tag's version (see the
+Changelog section above) and fails the release outright if that section is missing or empty — a
+release can't ship without the version-bump-and-changelog commit having actually finalized
+`CHANGELOG.md` first. Keep both workflow files in sync with this file's Rust/Shell/Python
+conventions above whenever the checks change.
 
 ## Content
 
