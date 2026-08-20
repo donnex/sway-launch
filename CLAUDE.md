@@ -624,6 +624,25 @@ produces is exactly as much a bug as a stale doc or a CI workflow drifting from 
 it immediately, not as a follow-up. A new template file needs a row added to README.md's
 "Templates" table, thumbnail included, in the same change too, for the same reason.
 
+## Changelog
+
+- `CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/): dated
+  `## [X.Y.Z]` sections (newest first), each broken into `Added`/`Changed`/`Deprecated`/`Removed`/
+  `Fixed`/`Security` subsections as needed, plus a `## [Unreleased]` section at the top for work
+  already on `dev` but not yet released.
+- Whenever a user-facing change lands — a new flag/action, a new built-in template, a behavior
+  change, a bug fix a user would notice — add a bullet under `## [Unreleased]` in the **same
+  commit** as the change, the same sync-in-the-same-work discipline this file already holds
+  `tests/live_sway.rs`, CI workflows, and `templates/`'s screenshots/README table to (see the
+  Architecture, CI, and Screenshots sections above). Write it for a user reading release notes, not
+  as a copy of the commit title: describe the effect, not the implementation.
+- Purely internal changes (refactors, test-only additions, CI/tooling, contributor-facing doc
+  updates to this file) don't get a changelog entry — `CHANGELOG.md` is for users, not
+  contributors.
+- At release time, see "Merging to master" below: `## [Unreleased]` is renamed to the new version
+  heading and a fresh empty `## [Unreleased]` is added above it, as part of the version-bump
+  commit.
+
 ## Python conventions
 
 `scripts/generate-layout-screenshots` is currently the only Python file in the project, so these
@@ -947,15 +966,25 @@ Merging to `master` happens only on explicit request, as a sequence:
 
 1. Perform the mandatory pre-merge history check above. Do not proceed to the next step until
    `dev`'s history is already clean.
-2. Present a summary of what's about to land — the commit range (`git log --oneline
+2. Recommend a `Cargo.toml` `version` bump based on what's landed on `dev` since the last release
+   (semver: patch for fixes/internal work, minor for a backward-compatible feature, major for a
+   breaking change) — then ask for confirmation before applying it. Apply it together with
+   finalizing `CHANGELOG.md` (see "Changelog" above): rename `## [Unreleased]` to
+   `## [X.Y.Z] - YYYY-MM-DD` with the new version and today's date, and add a fresh empty
+   `## [Unreleased]` above it. This version-bump-and-changelog commit must be the last commit on
+   `dev` before the fast-forward merge to `master` — nothing else lands on `dev` after it.
+3. Present a summary of what's about to land — the commit range (`git log --oneline
    master..dev`) and a nutshell of what changed.
-3. Get explicit confirmation on that summary. Asking for the merge and confirming its contents are
+4. Get explicit confirmation on that summary. Asking for the merge and confirming its contents are
    two separate steps; don't collapse them just because the user already said "merge."
-4. Once confirmed, fast-forward `master` to `dev`: `git merge --ff-only dev` — no merge commit, no
+5. Once confirmed, fast-forward `master` to `dev`: `git merge --ff-only dev` — no merge commit, no
    squash, since `dev`'s history is already linear and clean. If there's no local `master` checkout
    to merge into, push `dev`'s tip directly to `master` on the remote instead.
-5. If a true fast-forward isn't possible (something moved `master` independently), stop and ask
+6. If a true fast-forward isn't possible (something moved `master` independently), stop and ask
    rather than falling back to a merge commit or force-push.
+7. Once `master` is updated, create and push an annotated tag matching the new version, `vX.Y.Z`,
+   so `.github/workflows/release.yml` (which triggers on a pushed `v*` tag; see the CI section
+   above) picks it up and builds/publishes the release archive.
 
 Remind the user to merge when it seems due: when a large feature/fix on `dev` looks finished, or
 `dev` has accumulated a lot of commits ahead of `master`, say so and suggest merging. This is a
@@ -1131,6 +1160,14 @@ necessary for reproducible builds (`cargo build --locked`, `uv run` both depend 
 scope for this policy categorically, not as a one-off approval — a future `cargo update`/`uv lock`
 regenerating either file with different URLs needs no re-confirmation and shouldn't be flagged by a
 future content-policy review.
+
+**Approved exception:** `CHANGELOG.md`'s header and this file's "Changelog" section
+(`CLAUDE.md:627`) link to `https://keepachangelog.com/en/1.1.0/` and
+`https://semver.org/spec/v2.0.0.html`. Both are real URLs, but each is a necessary reference to the
+specific upstream spec the surrounding text is about, the same reasoning as the `swaywm.org`/
+`cli.github.com`/`doc.rust-lang.org` exception above — the user explicitly signed off on these
+after being asked (2026-08-20). Don't flag these two in a future content-policy review, and don't
+use this as precedent for adding other real URLs without the same explicit confirmation.
 
 ## Issues
 
