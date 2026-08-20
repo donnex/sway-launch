@@ -551,6 +551,74 @@ fn new_column_does_not_relocate_a_non_solo_window_at_the_trailing_edge() {
 }
 
 #[test]
+fn new_column_does_not_relocate_a_nested_window_to_a_different_output() {
+    // Regression test closing a gap relocates_to_another_output()'s own doc
+    // comment acknowledged but left unconfirmed: is_at_the_trailing_workspace_edge()
+    // only checks direct children of the workspace
+    // (workspace.nodes.last().id == container_id), so a window nested one
+    // level deep inside a sub-container is conservatively never flagged,
+    // even when it's the trailing child of a sub-container whose own layout
+    // also matches the move axis -- the worst-case configuration for this
+    // guard. Manually probed live against a multi-output compositor before
+    // writing this test: in both an axis-mismatched nesting (sub-container
+    // splitv under a splith workspace) and this axis-matched one (a splith
+    // sub-container under a splith workspace, target as its trailing
+    // child), "move right" never escalated the target to a different
+    // output -- it simply popped the target out of the sub-container to
+    // become a new direct child of the workspace, staying on the same
+    // output throughout. So the guard's conservatism is confirmed safe, not
+    // just untested.
+    let mut connection = connect();
+    connection
+        .run_command("create_output")
+        .expect("create_output should succeed")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("create_output should succeed");
+
+    let (_first_id, _first_guard) =
+        launch_foot(&["--workspace", "live-sway-test-new-column-nested"]);
+    let (second_id, _second_guard) =
+        launch_foot(&["--workspace", "live-sway-test-new-column-nested"]);
+    // Splitting a window that already has a sibling wraps it in a new,
+    // nested split container one level up (see CLAUDE.md's Split notes) --
+    // splith here matches the workspace's own layout, nesting second_id in
+    // the axis-matched worst case rather than the safer mismatched one.
+    connection
+        .run_command(format!("[con_id={second_id}] splith"))
+        .expect("splith should succeed")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("splith should succeed");
+    let (third_id, _third_guard) =
+        launch_foot(&["--workspace", "live-sway-test-new-column-nested"]);
+
+    let tree_before = connection.get_tree().expect("get_tree should succeed");
+    let output_before = output_containing(&tree_before, third_id, None)
+        .expect("launched window should be found in the tree")
+        .to_string();
+
+    let output = sway_launch_command()
+        .args(["--con-id", &third_id.to_string(), "--new-column"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --new-column failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let tree_after = connection.get_tree().expect("get_tree should succeed");
+    let output_after = output_containing(&tree_after, third_id, None);
+    assert_eq!(
+        output_after,
+        Some(output_before.as_str()),
+        "a window nested one level deep, even as the trailing child of an axis-matched \
+         sub-container, should not be relocated to a different output by --new-column"
+    );
+}
+
+#[test]
 fn fullscreen_enables_fullscreen_mode() {
     let mut connection = connect();
     let (container_id, _guard) = launch_foot(&["--fullscreen"]);
