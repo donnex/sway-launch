@@ -1098,12 +1098,24 @@ for adding other real URLs without the same explicit confirmation.
 
 **Approved exception:** `README.md:3`/`CLAUDE.md:7` (`https://swaywm.org/`, the window manager
 this tool is built for), `CLAUDE.md:714` (`https://cli.github.com/`, the `gh` CLI's own site), and
-`Cargo.toml:6` (`https://doc.rust-lang.org/cargo/reference/manifest.html`, `cargo init`'s
+`Cargo.toml:9` (`https://doc.rust-lang.org/cargo/reference/manifest.html`, `cargo init`'s
 boilerplate "see more keys" comment pointing at Cargo's own manifest reference docs) are real
 URLs, but each is a necessary reference to the specific upstream project/tool the surrounding text
 is about, not a leak of unrelated real-world data — the user explicitly signed off on these after
 being asked (2026-08-15). Don't flag these specific ones in a future content-policy review, and
 don't use this as precedent for adding other real URLs without the same explicit confirmation.
+
+**Approved exception:** `Cargo.toml:7`'s `repository = "https://github.com/donnex/sway-launch"` is
+a real URL, but — like `README.md`'s Releases-page link above — it's self-referential (the repo
+describing its own location), not a leak of unrelated real-world data, and the user explicitly
+signed off on it after being asked (2026-08-19). Don't flag it in a future content-policy review.
+
+**Standing exception:** `Cargo.lock` and `uv.lock` (package registry index URLs — `crates.io-index`,
+`pypi.org`, `pythonhosted.org`) are tool-generated lockfile content, not authored by anyone, and
+necessary for reproducible builds (`cargo build --locked`, `uv run` both depend on them). Out of
+scope for this policy categorically, not as a one-off approval — a future `cargo update`/`uv lock`
+regenerating either file with different URLs needs no re-confirmation and shouldn't be flagged by a
+future content-policy review.
 
 ## Issues
 
