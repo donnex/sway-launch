@@ -1605,6 +1605,19 @@ fn height_matches(node: &Node, expected_px: i32) -> bool {
 /// position at all (e.g. `container_id` not found, or not on a known
 /// output), folds into `false` ("not confirmed yet"), consistent with
 /// `SwayAction::poll_matches()`'s other arms.
+///
+/// Confirmed live that a fullscreen window's `deco_rect` stays `{0, 0, 0,
+/// 0}` permanently (not a transient race — held stable across a multi-second
+/// sweep), since Sway never computes decoration geometry for a window with
+/// no border/titlebar to draw. Comparing only `deco_rect` would therefore
+/// mean `--position` against a fullscreen container (directly, or via
+/// `--floating --fullscreen --position` in one invocation) can never be
+/// confirmed by polling — `move position` actually succeeds immediately
+/// (confirmed live via `rect.x`/`rect.y` landing on the requested target),
+/// but every invocation would still burn the full poll grace period before
+/// falling back to sleeping `--wait-time`. Falling back to `rect.x`/`rect.y`
+/// when `deco_rect` is unset closes that gap, mirroring `width_matches()`'s
+/// existing dual-formula tolerance for a different Sway geometry quirk.
 fn position_matches(container_id: i64, position: &str) -> bool {
     let Some((node, output_name)) = self::node_and_output_name(container_id) else {
         return false;
@@ -1614,7 +1627,11 @@ fn position_matches(container_id: i64, position: &str) -> bool {
     else {
         return false;
     };
-    node.deco_rect.x == expected_x && node.deco_rect.y == expected_y
+    if node.deco_rect.width == 0 && node.deco_rect.height == 0 {
+        node.rect.x == expected_x && node.rect.y == expected_y
+    } else {
+        node.deco_rect.x == expected_x && node.deco_rect.y == expected_y
+    }
 }
 
 /// `container_id`'s tree node together with the name of the output

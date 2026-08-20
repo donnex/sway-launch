@@ -281,7 +281,16 @@ variant knows how to:
     to an absolute position"), which `run_sway_command()`'s `?` propagates as an error *before*
     `poll_matches()` is ever reached, confirmed live by `tests/live_sway.rs`'s
     `position_errors_clearly_for_a_tiled_window`. `position_confirms_via_poll_for_a_floating_window`
-    covers the fast path.
+    covers the fast path. A *fullscreen* window is a second exception to the `deco_rect.x`/`rect.x`
+    equality above: confirmed live that a fullscreen window's `deco_rect` stays `{0, 0, 0, 0}`
+    permanently (stable across a multi-second sweep, not a transient settle race), since Sway never
+    computes decoration geometry for a window with no border/titlebar to draw — `move position`
+    still succeeds immediately against a fullscreen container (`rect.x`/`rect.y` land on the
+    requested target right away), but comparing only `deco_rect` meant this could never be confirmed
+    via poll, always burning the full grace period before falling back. `position_matches()` falls
+    back to `rect.x`/`rect.y` whenever `deco_rect` is unset (both `width`/`height` zero), the same
+    dual-formula-tolerance shape as `width_matches()` above for a different geometry quirk. Confirmed
+    live by `tests/live_sway.rs`'s `position_confirms_via_poll_for_a_fullscreen_window`.
   - **`NewColumn`/`NewRow`** — the one pair with no fixed target to check against (a successful move
     can land the window almost anywhere in the tree), so these are the only variants that also use
     `poll_baseline()`: `run_wait_time()` snapshots the container's own `rect` (via `node_by_id()`)
