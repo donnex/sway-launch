@@ -636,6 +636,59 @@ fn position_confirms_via_poll_for_a_floating_window() {
 }
 
 #[test]
+fn position_confirms_via_poll_for_a_fullscreen_window() {
+    // Regression test: confirmed live that a fullscreen window's deco_rect
+    // stays {0, 0, 0, 0} permanently (stable across a multi-second sweep,
+    // not a transient race), since Sway never computes decoration geometry
+    // for a window with no border/titlebar to draw. position_matches()
+    // comparing only deco_rect.x/y meant --position against a fullscreen
+    // container could never be confirmed via poll -- move position actually
+    // succeeds immediately (rect.x/y land on the requested target right
+    // away), but every invocation still burned the full poll grace period
+    // before falling back to sleeping --wait-time. Falling back to
+    // rect.x/y when deco_rect is unset fixes this, mirroring
+    // width_matches()'s existing dual-formula tolerance.
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&["--floating", "--fullscreen"]);
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--position",
+            "100,100",
+            "--wait-time",
+            "2000",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --position failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(2500),
+        "--position took {:?} against a 2000ms --wait-time (fallback would take ~4000ms), \
+         suggesting it fell back to sleeping instead of confirming via poll",
+        started.elapsed()
+    );
+
+    let node = get_node(&mut connection, container_id);
+    assert_eq!(
+        node.deco_rect.width, 0,
+        "expected deco_rect to stay unset while fullscreen"
+    );
+    assert_eq!(
+        node.deco_rect.height, 0,
+        "expected deco_rect to stay unset while fullscreen"
+    );
+    assert_eq!(node.rect.x, 100);
+    assert_eq!(node.rect.y, 100);
+}
+
+#[test]
 fn position_errors_clearly_for_a_tiled_window() {
     // Corrects an assumption docs/plan-poll-based-wait-time-actions.md
     // carried over from earlier conversation exploration: a tiled window
