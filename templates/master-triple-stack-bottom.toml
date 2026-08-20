@@ -1,0 +1,26 @@
+# One large main window on top, three smaller windows split side by side below it.
+# Run with, e.g.:
+#   sway-launch --template master-triple-stack-bottom --apps code,foot,foot,foot
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+#
+# Only stack-left gets an explicit split="h" — giving stack-middle its own
+# split call too nests it (and stack-right) inside stack-left's half,
+# rather than joining a single flat row, producing an uneven column split
+# instead of three equal columns (same reasoning as master-triple-stack.toml's
+# stack-top, rotated to top/bottom here; confirmed live).
+
+[[step]]
+slot = "main"
+split = "v"
+
+[[step]]
+slot = "stack-left"
+split = "h"
+height = "30ppt"
+
+[[step]]
+slot = "stack-middle"
+
+[[step]]
+slot = "stack-right"
