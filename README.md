@@ -36,7 +36,7 @@ Requires a running Sway session — `sway-launch` talks to Sway over its IPC soc
   - [Target an existing window](#target-an-existing-window)
   - [Floating](#floating) · [Fullscreen](#fullscreen) · [Focus](#focus) · [Mark](#mark)
   - [Workspace](#workspace) · [Output](#output) · [Height and width](#height-and-width) ·
-    [Position](#position) · [Split](#split)
+    [Position](#position) · [Split](#split) · [New column](#new-column) · [New row](#new-row)
   - [Verbose](#verbose) · [JSON output](#json-output) · [Wait time](#wait-time) ·
     [Debug events](#debug-events)
 
@@ -536,6 +536,33 @@ Change split on the new window.
 sway-launch --split v foot
 sway-launch --split h foot
 ```
+
+### New column
+
+Move the window right, into a new column beside its current one (`move right`).
+
+```shell
+sway-launch -a foot foot
+sway-launch --new-column foot
+```
+
+On a multi-monitor setup, this can be silently skipped — not delayed, not erroring, simply not
+run — whenever the window is already the trailing (rightmost) child of a workspace laid out
+horizontally: Sway's own `move right` would otherwise relocate the window to the next output
+instead of restructuring it in place, and `sway-launch` skips the command rather than doing that
+silently on your behalf. Run with `--verbose` to see when this happens.
+
+### New row
+
+Move the window down, into a new row beneath its current one (`move down`).
+
+```shell
+sway-launch -a foot foot
+sway-launch --new-row foot
+```
+
+Subject to the same multi-monitor skip as [New column](#new-column) above, along the vertical axis
+instead.
 
 ### Verbose
 
