@@ -747,7 +747,9 @@ impl SwayAction<'_> {
         // let this command finish before the next action runs.
         thread::sleep(wait_time);
 
-        let container_id = self.container_id().unwrap();
+        let container_id = self
+            .container_id()
+            .expect("run_wait_time() is only ever called for variants other than Exec");
 
         // On Sway 1.9 (still what `apt` installs on Ubuntu 24.04/CI — see
         // node_is_floating()'s doc comment for the same version split), a
@@ -1026,7 +1028,9 @@ impl SwayAction<'_> {
         &self,
         window: &WindowEvent,
     ) -> Result<WindowEventMatch, WindowEventMatchError> {
-        let matching_window_change_events = self.matching_window_change_events().unwrap();
+        let matching_window_change_events = self.matching_window_change_events().expect(
+            "matches_window_event() is only ever called for variants with a matching event type",
+        );
 
         if !matching_window_change_events.contains(&window.change) {
             return Err(WindowEventMatchError::EventChangeTypeMismatch);
@@ -1055,7 +1059,11 @@ impl SwayAction<'_> {
                 return Ok(WindowEventMatch::NewWindowMatchWithoutCheck);
             }
             _ => {
-                if self.container_id().unwrap() == window.container.id {
+                if self
+                    .container_id()
+                    .expect("only Exec lacks a container_id, and it's handled in the arm above")
+                    == window.container.id
+                {
                     return Ok(WindowEventMatch::WindowContainerIdMatch);
                 }
             }
