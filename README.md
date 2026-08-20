@@ -61,6 +61,8 @@ sway-launch --completions bash > /etc/bash_completion.d/sway-launch
 ```
 
 ```shell
+Launch an application, wait for its Sway window, then run follow-up actions against it
+
 Usage: sway-launch [OPTIONS] [COMMAND]
 
 Arguments:
