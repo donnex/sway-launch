@@ -1405,14 +1405,18 @@ enum MoveDirection {
 /// list — this subsumes the original solo-window case (trivially both
 /// direct- and last-child of its workspace) while also catching the
 /// multi-window case that check alone missed. A window nested inside a
-/// sub-container is conservatively never flagged — that case wasn't
-/// confirmed live either way, so this only guards the confirmed risk
-/// rather than guessing at an unconfirmed one; a false negative here just
-/// means `SwayLaunch::run()` doesn't skip an action Sway would have
-/// silently no-oped or handled in place anyway, per the cases actually
-/// tested. Returns `false` (safe to proceed) if outputs/tree can't be read
-/// or `container_id`/its workspace can't be found, rather than blocking
-/// the action on an inconclusive check.
+/// sub-container is conservatively never flagged. Confirmed live in both an
+/// axis-mismatched nesting (a `splitv` sub-container under a `splith`
+/// workspace) and the axis-matched worst case (a `splith` sub-container
+/// under a `splith` workspace, target as its trailing child) that this
+/// conservatism costs nothing: `move right` on the nested target never
+/// escalated to a different output either way, it simply popped the target
+/// out to become a new direct child of the workspace — see
+/// `tests/live_sway.rs`'s
+/// `new_column_does_not_relocate_a_nested_window_to_a_different_output`.
+/// Returns `false` (safe to proceed) if outputs/tree can't be read or
+/// `container_id`/its workspace can't be found, rather than blocking the
+/// action on an inconclusive check.
 fn relocates_to_another_output(
     container_id: i64,
     direction: MoveDirection,
