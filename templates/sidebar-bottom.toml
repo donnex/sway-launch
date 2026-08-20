@@ -1,0 +1,13 @@
+# A wide main window on top, a narrow bar across the bottom.
+# Run with, e.g.:
+#   sway-launch --template sidebar-bottom --apps code,foot
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+
+[[step]]
+slot = "main"
+split = "v"
+
+[[step]]
+slot = "bottombar"
+height = "25ppt"
