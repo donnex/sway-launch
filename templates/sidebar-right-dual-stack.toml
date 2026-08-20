@@ -1,0 +1,30 @@
+# A wide main window on the left, a sidebar on the right split into two stacked windows (75% height on top, 25% on the bottom).
+# sidebar-right.toml's shape, with the sidebar split into two windows
+# instead of one — sidebar-left-dual-stack.toml mirrored to the other side.
+# Run with, e.g.:
+#   sway-launch --template sidebar-right-dual-stack --apps code,foot,foot
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+#
+# Width is set on sidebar-top rather than main: resizing a window is a
+# no-op while it's still the workspace's only window, so the first-launched
+# slot (main) can't be resized directly — sizing the second slot instead
+# reshapes both, since sway redistributes the space between them (same
+# reasoning as sidebar-right.toml's sidebar width, applied here). Height is
+# set on sidebar-bottom for the same reason, one level down: it's the
+# second window added to the sidebar column, so it's the "solo in its own
+# axis" case again, same as sidebar-left-dual-stack.toml.
+
+[[step]]
+slot = "main"
+split = "h"
+
+[[step]]
+slot = "sidebar-top"
+new_column = true
+split = "v"
+width = "25ppt"
+
+[[step]]
+slot = "sidebar-bottom"
+height = "25ppt"
