@@ -21,3 +21,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--json` now also applies to error output: a failure prints `{"error": "...", "rolled_back": [...]}`
   instead of a plain-text message, so a `--json` caller doesn't need to also parse plain stderr on
   failure.
+- `floating-overlay` template's overlay window is now explicitly centered (`position = "center"`),
+  so it lands somewhere deterministic every run instead of wherever Sway's own default floating
+  placement happened to put it.
