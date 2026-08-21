@@ -147,13 +147,41 @@ Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`,
 - render itself as a `swaymsg` command string (`sway_command()`) — `Mark`'s, `Workspace`'s, and
   `Output`'s values are wrapped through `quote_sway_string()` before interpolation, since Sway's
   command parser splits on unquoted `,`/`;` and an unescaped value could otherwise inject
-  additional commands; `Height`, `Width`, and `Position` don't need this since they're already
-  regex-constrained in `main.rs` (`Position` additionally translates its validated `<x>,<y>` CLI
-  form into Sway's space-separated `move position <x> <y>` syntax), and `Exec`'s command is passed
-  through unquoted by design (the tool's whole job is to run it)
+  additional commands; `Height`, `Width`, and `Position` don't need this since they hold typed
+  `Size`/`Position` values (see below), not arbitrary strings — `sway_command()` is their
+  serialization point, formatting a `Size`/`Position` back into Sway's `<n>px`/`<n>ppt` or
+  space-separated `move position <x> <y>` syntax, rather than interpolating a pre-validated string,
+  and `Exec`'s command is passed through unquoted by design (the tool's whole job is to run it)
 - declare which `WindowChange` event(s) would confirm it completed (`matching_window_change_events()`)
 - report its `--timeout`/`--wait-time` value, whichever field the variant actually has
   (`duration()`)
+
+**`Height`/`Width` hold a `Size` (`Pixels(u32)`/`Percent(u32)`), `Position` holds a `Position`
+(`Center`/`Coordinates { x: i32, y: i32 }`)** — both real types, not the validated strings this
+project originally carried all the way from the CLI/TOML through to `sway_command()`. An external
+review suggested this (typed values instead of repeatedly re-parsing/re-validating strings); the
+CLI/TOML-facing surface didn't change at all (`--height 300px`, `position = "100,200"`, etc. still
+parse identically) — only the internal representation, from the moment a `SwayLaunch` is
+constructed (`main.rs`'s `Args`, `layout.rs`'s `LayoutStep::to_sway_launch()`) onward.
+`validate_size_argument`/`validate_position_argument` still do the actual CLI/TOML-facing
+validation (unchanged contract: `Result<String, String>`, still what `main.rs`'s `#[clap(value_parser
+= ...)]` and `layout.rs`'s manual `to_sway_launch()` checks call) — `parse_size()`/`parse_position()`
+are new, separate, **infallible** functions that convert an already-validated string into the typed
+form, `.expect()`-ing that the digits parse as `u32`/`i32` cleanly. That `.expect()` is only sound
+because both validators were tightened in the same change to also reject a value that matches the
+`\d+` shape but overflows `u32`/`i32` (e.g. an absurd 11-digit pixel count) — without that, a
+value passing validation but failing to parse would panic instead of erroring cleanly, the exact
+failure mode this project treats as a bug elsewhere (see the Content/security-review discipline
+generally). `sway_command()` becomes each variant's serialization point (`Size`/`Position` both
+implement `Display`, rendering the identical `<n>px`/`<n>ppt`/`center`/`<x>,<y>` text the CLI/TOML
+side accepts, so `SwayAction::Display`'s human-readable line and the actual Sway command text stay
+in sync by construction rather than by two independently-written format strings), and
+`SwayAction::poll_matches()`'s `Height`/`Width` arms match directly on `Size::Pixels`/`Size::Percent`
+instead of calling the now-removed `parse_pixel_value()` on every poll iteration.
+`LayoutStep`/`TemplateStep` themselves deliberately stayed `Option<String>` — they're TOML-facing
+schema types where a plain string is the natural representation and keeps per-field error messages
+(`"height: ..."`) exactly as before; only `SwayLaunch`/`SwayAction` needed to be typed for the
+stated goal (safer internals, less repeated parsing) to actually land.
 
 `SwayAction::run()` dispatches based on whether the action has a corresponding IPC event:
 
@@ -298,9 +326,10 @@ Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`,
     matches on the very first poll. Confirmed live by `tests/live_sway.rs`'s
     `split_confirms_via_poll_well_under_a_large_wait_time` (a real parent-layout change, confirmed
     well under `2 * --wait-time`) and `split_is_idempotent_and_still_confirms_promptly_when_already_set`.
-  - **`Height`/`Width`** — `parse_pixel_value()` first checks the value has a `px` suffix (a `ppt`
-    percentage opts out of polling entirely — `None`, not `Some(false)` — since there's no pixel
-    figure to poll for without also resolving the reference dimension it's a percentage of).
+  - **`Height`/`Width`** — matches directly on the held `Size`: `Size::Percent` opts out of polling
+    entirely (`None`, not `Some(false)`) since there's no pixel figure to poll for without also
+    resolving the reference dimension it's a percentage of, while `Size::Pixels` opts in
+    unconditionally.
     `height_matches()`/`width_matches()` then compare the container's own `rect`/`deco_rect`/
     `current_border_width` (via `node_by_id()`) against the requested pixel value. Height has one
     consistent formula (`rect.height + deco_rect.height`, the decoration-inclusive outer height,
