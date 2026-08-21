@@ -12,3 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--scratchpad` flag (and the matching `--layout`/`--template` step field) to move a window to
   Sway's scratchpad, runs last after every other action — pairs well with `--mark`/`--floating`/
   `--width`/`--height`/`--position` for the classic "dropdown terminal" pattern.
+- `--rollback-on-error`: if a later `--layout`/`--template` step fails, kill every window this
+  invocation itself launched by an earlier, already-completed step, instead of leaving them open.
+  Requires `--layout` or `--template`.
+
+### Changed
+
+- `--json` now also applies to error output: a failure prints `{"error": "...", "rolled_back": [...]}`
+  instead of a plain-text message, so a `--json` caller doesn't need to also parse plain stderr on
+  failure.

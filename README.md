@@ -303,6 +303,19 @@ would otherwise be unclear which step it applied to — `--timeout`, `--wait-tim
 `--json` still apply, the latter printing one `{"container_ids": [...]}` array at the end instead
 of a line per step.
 
+Stopping at the first error leaves whatever earlier steps already launched open by default — add
+`--rollback-on-error` to close them automatically instead:
+
+```shell
+sway-launch --layout layout.toml --rollback-on-error
+```
+
+Only windows this invocation itself launched (a step's `command`) are ever closed — a step that
+retargeted an already-open window via `con_id`/`existing`/`target_id` is left alone, since that
+window existed before this run and isn't this run's to close. Requires `--layout` or `--template`.
+With `--json`, the error object includes which container ids were closed:
+`{"error": "...", "rolled_back": [123, 456]}`.
+
 ### Templates
 
 A `--layout` file bakes a specific application into every step (`command`/`app_id`), which means
@@ -610,6 +623,17 @@ output.
 $ sway-launch --json foot
 {"container_id":437}
 ```
+
+This also applies to errors — a failure prints a JSON object to stderr instead of a plain-text
+message, so a `--json` caller never needs to also parse plain stderr on failure:
+
+```shell
+$ sway-launch --json --con-id 999999 --floating
+{"error":"command failed with 'No matching node.'","rolled_back":[]}
+```
+
+`rolled_back` is only ever non-empty when `--rollback-on-error` (see "Layout files" above) actually
+closed something first.
 
 ### Wait time
 

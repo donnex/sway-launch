@@ -99,7 +99,7 @@ struct Args {
         "command", "con_id", "existing", "app_id", "class", "split",
         "floating", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
-        "layout", "template", "list_templates", "bindings", "apps",
+        "layout", "template", "list_templates", "bindings", "apps", "rollback_on_error",
     ])]
     completions: Option<clap_complete::Shell>,
 
@@ -143,7 +143,7 @@ struct Args {
         "command", "con_id", "existing", "app_id", "class", "split",
         "floating", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
-        "layout", "template", "completions", "bindings", "apps",
+        "layout", "template", "completions", "bindings", "apps", "rollback_on_error",
     ])]
     list_templates: bool,
 
@@ -157,6 +157,13 @@ struct Args {
     /// conflicts with --bindings
     #[clap(long)]
     apps: Option<String>,
+
+    /// If a later --layout/--template step fails, kill every window this
+    /// invocation itself launched by an earlier, already-completed step
+    /// (not one it merely retargeted via con_id/existing/target_id), rather
+    /// than leaving them open. Requires --layout or --template
+    #[clap(long)]
+    rollback_on_error: bool,
 
     /// Command to execute
     command: Option<String>,
@@ -205,6 +212,15 @@ fn main() {
                 .exit(),
         };
         run_template(template_path, bindings_source, &args);
+    }
+
+    if args.rollback_on_error && args.layout.is_none() && args.template.is_none() {
+        Args::command()
+            .error(
+                ErrorKind::MissingRequiredArgument,
+                "--rollback-on-error requires --layout or --template",
+            )
+            .exit();
     }
 
     let command = args.command.unwrap_or_default();
@@ -262,10 +278,7 @@ fn main() {
     if args.debug_events {
         match sway_launch.debug_events() {
             Ok(_) => process::exit(0),
-            Err(error) => {
-                eprintln!("{}", error);
-                process::exit(1);
-            }
+            Err(error) => fail(args.json, &error),
         }
     }
 
@@ -277,29 +290,56 @@ fn main() {
                 println!("{}", container_id);
             }
         }
-        Err(error) => {
-            eprintln!("{}", error);
-            process::exit(1);
-        }
+        Err(error) => fail(args.json, &error),
     };
+}
+
+/// Reports a runtime failure — file I/O, TOML parsing, or the
+/// `SwayLaunch`/step operation itself failing against Sway — to stderr and
+/// exits 1. When `--json` is set, the message is wrapped in a
+/// `{"error": "..."}` object instead of printed as plain text, mirroring the
+/// structured `{"container_id": ...}`/`{"container_ids": [...]}` success
+/// shapes below rather than leaving `--json` callers to also parse plain-text
+/// stderr on failure. Deliberately scoped to these runtime failures only — a
+/// bad CLI invocation (missing/conflicting flags, caught via clap's `.error()`
+/// calls above) is still reported via clap's own usage-error formatting
+/// regardless of `--json`, the same as `--help` itself isn't JSON.
+fn fail(json: bool, message: &str) -> ! {
+    fail_with_rollback(json, message, &[]);
+}
+
+/// `fail()`, plus the container ids `run_steps()`'s `--rollback-on-error`
+/// killed before giving up — `rolled_back` is always empty outside that path.
+fn fail_with_rollback(json: bool, message: &str, rolled_back: &[i64]) -> ! {
+    if json {
+        eprintln!(
+            "{}",
+            serde_json::json!({ "error": message, "rolled_back": rolled_back })
+        );
+    } else {
+        eprintln!("{}", message);
+        if !rolled_back.is_empty() {
+            let ids = rolled_back
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!("rolled back {} container(s): {}", rolled_back.len(), ids);
+        }
+    }
+    process::exit(1);
 }
 
 /// Reads and parses a `--layout` file, then hands its steps to `run_steps()`.
 fn run_layout(path: &Path, args: &Args) -> ! {
     let contents = match std::fs::read_to_string(path) {
         Ok(contents) => contents,
-        Err(error) => {
-            eprintln!("{}: {}", path.display(), error);
-            process::exit(1);
-        }
+        Err(error) => fail(args.json, &format!("{}: {}", path.display(), error)),
     };
 
     let parsed_layout = match layout::parse(&contents) {
         Ok(parsed_layout) => parsed_layout,
-        Err(error) => {
-            eprintln!("{}: {}", path.display(), error);
-            process::exit(1);
-        }
+        Err(error) => fail(args.json, &format!("{}: {}", path.display(), error)),
     };
 
     run_steps(&parsed_layout.step, args);
@@ -380,52 +420,40 @@ fn print_builtin_templates(json: bool) {
 fn run_template(path: &Path, bindings_source: BindingsSource, args: &Args) -> ! {
     let contents = match resolve_template_contents(path) {
         Ok(contents) => contents,
-        Err(error) => {
-            eprintln!("{}", error);
-            process::exit(1);
-        }
+        Err(error) => fail(args.json, &error),
     };
 
     let parsed_template = match template::parse(&contents) {
         Ok(parsed_template) => parsed_template,
-        Err(error) => {
-            eprintln!("{}: {}", path.display(), error);
-            process::exit(1);
-        }
+        Err(error) => fail(args.json, &format!("{}: {}", path.display(), error)),
     };
 
     let bindings = match bindings_source {
         BindingsSource::File(bindings_path) => {
             let contents = match std::fs::read_to_string(bindings_path) {
                 Ok(contents) => contents,
-                Err(error) => {
-                    eprintln!("{}: {}", bindings_path.display(), error);
-                    process::exit(1);
-                }
+                Err(error) => fail(
+                    args.json,
+                    &format!("{}: {}", bindings_path.display(), error),
+                ),
             };
             match template::parse_bindings(&contents) {
                 Ok(bindings) => bindings,
-                Err(error) => {
-                    eprintln!("{}: {}", bindings_path.display(), error);
-                    process::exit(1);
-                }
+                Err(error) => fail(
+                    args.json,
+                    &format!("{}: {}", bindings_path.display(), error),
+                ),
             }
         }
         BindingsSource::Apps(apps) => match bindings_from_apps(&parsed_template, apps) {
             Ok(bindings) => bindings,
-            Err(error) => {
-                eprintln!("{}: {}", path.display(), error);
-                process::exit(1);
-            }
+            Err(error) => fail(args.json, &format!("{}: {}", path.display(), error)),
         },
     };
 
     let resolved_steps = match template::resolve(&parsed_template, &bindings) {
         Ok(resolved_steps) => resolved_steps,
-        Err(error) => {
-            eprintln!("{}: {}", path.display(), error);
-            process::exit(1);
-        }
+        Err(error) => fail(args.json, &format!("{}: {}", path.display(), error)),
     };
 
     run_steps(&resolved_steps, args);
@@ -497,16 +525,20 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
     let default_wait_time = time::Duration::from_millis(args.wait_time);
     let mut container_ids = Vec::new();
     let mut resolved_ids = HashMap::new();
+    // Only ids this invocation itself launched via `command` (Target::Exec),
+    // not ones it merely retargeted via con_id/existing/target_id — see
+    // fail_step()'s doc comment.
+    let mut launched_container_ids = Vec::new();
 
     for (index, step) in steps.iter().enumerate() {
         if let Some(id) = step.id.as_deref() {
             if resolved_ids.contains_key(id) {
-                eprintln!(
-                    "step {}: id {:?} was already used by an earlier step",
-                    index + 1,
-                    id
+                fail_step(
+                    args,
+                    &launched_container_ids,
+                    index,
+                    format!("id {:?} was already used by an earlier step", id),
                 );
-                process::exit(1);
             }
         }
 
@@ -517,11 +549,17 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
             &resolved_ids,
         ) {
             Ok(sway_launch) => sway_launch,
-            Err(error) => {
-                eprintln!("step {}: {}", index + 1, error);
-                process::exit(1);
-            }
+            Err(error) => fail_step(args, &launched_container_ids, index, error),
         };
+
+        // Equivalent to matching Target::Exec on the resolved SwayLaunch,
+        // read directly off the step instead: to_sway_launch() having just
+        // succeeded above guarantees exactly one of command/con_id/existing/
+        // target_id was set, so a non-empty `command` here is exactly the
+        // case it resolved to Target::Exec (a step this invocation is about
+        // to launch a new window for, as opposed to retargeting one that
+        // already existed via con_id/existing/target_id).
+        let launched_a_new_window = step.command.is_some();
 
         match sway_launch.run() {
             Ok(container_id) => {
@@ -529,14 +567,14 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
                     println!("{}", container_id);
                 }
                 container_ids.push(container_id);
+                if launched_a_new_window {
+                    launched_container_ids.push(container_id);
+                }
                 if let Some(id) = step.id.as_deref() {
                     resolved_ids.insert(id.to_string(), container_id);
                 }
             }
-            Err(error) => {
-                eprintln!("step {}: {}", index + 1, error);
-                process::exit(1);
-            }
+            Err(error) => fail_step(args, &launched_container_ids, index, error),
         }
     }
 
@@ -545,6 +583,52 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
     }
 
     process::exit(0);
+}
+
+/// Reports a step failure (`step N: <message>`) — shared by every failure
+/// branch in `run_steps()`, since an id collision or a step-conversion error
+/// is caught *before* that step's own `SwayLaunch::run()` ever executes, but
+/// earlier steps may already have launched real windows needing the same
+/// `--rollback-on-error` cleanup as a later step's own `run()` failure.
+/// `launched_container_ids` is only ever ids `Target::Exec` resolved —
+/// windows this invocation retargeted via con_id/existing/target_id were
+/// already open before this invocation started, so rolling them back would
+/// close something the user, not this run, created.
+fn fail_step(args: &Args, launched_container_ids: &[i64], index: usize, error: String) -> ! {
+    let rolled_back = if args.rollback_on_error {
+        rollback(launched_container_ids)
+    } else {
+        Vec::new()
+    };
+    fail_with_rollback(
+        args.json,
+        &format!("step {}: {}", index + 1, error),
+        &rolled_back,
+    );
+}
+
+/// Best-effort `--rollback-on-error` cleanup: kills every id in
+/// `launched_container_ids`, most-recently-launched first, via a fresh
+/// `[con_id] kill` command each. A kill that itself fails (e.g. the window
+/// already closed on its own in the meantime) is logged to stderr and
+/// skipped rather than treated as fatal — it doesn't stop the rest of the
+/// rollback, and the original step failure being reported by `fail_step()`
+/// stays the primary error either way. Returns the ids actually killed, for
+/// `fail_with_rollback()` to report alongside that error.
+fn rollback(launched_container_ids: &[i64]) -> Vec<i64> {
+    let mut rolled_back = Vec::new();
+    for &container_id in launched_container_ids.iter().rev() {
+        match sway_launch::kill_container(container_id) {
+            Ok(()) => rolled_back.push(container_id),
+            Err(error) => {
+                eprintln!(
+                    "warning: --rollback-on-error failed to close container {}: {}",
+                    container_id, error
+                );
+            }
+        }
+    }
+    rolled_back
 }
 
 #[cfg(test)]
