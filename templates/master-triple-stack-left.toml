@@ -14,6 +14,10 @@
 # then joins last via new_column, pulling it out to become a new horizontal
 # sibling beside the finished stack.
 
+[template]
+description = "A 3-window stack on the left, one large main window on the right."
+category = "Master/stack"
+
 [[step]]
 slot = "stack-top"
 split = "v"

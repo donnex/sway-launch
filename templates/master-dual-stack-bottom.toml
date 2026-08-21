@@ -4,6 +4,10 @@
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
 
+[template]
+description = "One large main window on top, two smaller windows split side by side below it."
+category = "Master/stack"
+
 [[step]]
 slot = "main"
 split = "v"

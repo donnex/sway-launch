@@ -15,6 +15,10 @@
 # reason, one level up: it's the first window added to a second column, so
 # it's the "solo in its own axis" case again, same as sidebar-left.toml.
 
+[template]
+description = "A sidebar on the left split into two stacked windows (75% height on top, 25% on the bottom)."
+category = "Sidebar"
+
 [[step]]
 slot = "sidebar-top"
 split = "v"

@@ -18,6 +18,10 @@
 # joins it, discarding an earlier sibling's explicit resize. Resizing main
 # only after every sibling already exists avoids this.
 
+[template]
+description = "A wide main window flanked by one narrow sidebar on each side (50%/25%/25% width)."
+category = "Master/stack"
+
 [[step]]
 slot = "sidebar-left"
 split = "h"

@@ -15,6 +15,10 @@
 # second window added to the sidebar column, so it's the "solo in its own
 # axis" case again, same as sidebar-left-dual-stack.toml.
 
+[template]
+description = "A wide main window on the left, a sidebar on the right split into two stacked windows (75% height on top, 25% on the bottom)."
+category = "Sidebar"
+
 [[step]]
 slot = "main"
 split = "h"

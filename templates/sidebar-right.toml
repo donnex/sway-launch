@@ -4,6 +4,10 @@
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
 
+[template]
+description = "A wide main window on the left, a narrow sidebar on the right."
+category = "Sidebar"
+
 [[step]]
 slot = "main"
 split = "h"

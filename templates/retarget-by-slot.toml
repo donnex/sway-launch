@@ -5,6 +5,10 @@
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
 
+[template]
+description = "Launch two windows side by side, then retarget the first one specifically by its slot name."
+category = "Retargeting"
+
 [[step]]
 slot = "first"
 split = "h"

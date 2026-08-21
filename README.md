@@ -340,6 +340,10 @@ comes from a separate `--bindings <FILE>` or `--apps <list>`, so the same templa
 reused across completely different applications.
 
 ```toml
+[template]
+description = "An editor beside a terminal."
+category = "Grid"
+
 [[step]]
 slot = "editor"
 split = "h"
@@ -347,6 +351,12 @@ split = "h"
 [[step]]
 slot = "terminal"
 ```
+
+Every template file requires a `[template]` table with `description` and `category` — the source
+`--list-templates`/`--show-template --json` read a built-in's name from, and how README.md's own
+"Templates" table below groups it alongside similarly-shaped templates (`Grid`, `Master/stack`,
+`Sidebar`, `Floating`, `Multi-workspace/output`, `Retargeting`; not a closed set — a new shape can
+introduce a new category). `description` should be a complete, self-contained sentence.
 
 Applied to a plain list of commands, launched into the slots in the order they first appear in the
 template:
@@ -396,8 +406,8 @@ binary itself as a *built-in template* — `--template <name>` (no `.toml` exten
 `--template quad-grid`) resolves that name against the embedded copy, so using one doesn't require
 cloning this repo or downloading anything. A value ending in `.toml` is always read from disk
 instead, so a built-in name and a same-named local template file never collide. Run
-`sway-launch --list-templates` to print every built-in name with a one-line description
-(add `--json` for structured output).
+`sway-launch --list-templates` to print every built-in name with its category and one-line
+description (add `--json` for structured output).
 
 ```shell
 sway-launch --template quad-grid --apps foot,firefox,code,thunar
