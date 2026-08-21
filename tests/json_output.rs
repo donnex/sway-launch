@@ -155,6 +155,18 @@ fn dry_run_never_launches_the_command() {
 }
 
 #[test]
+fn validate_without_layout_or_template_errors() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--con-id", "42", "--validate"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("--validate requires --layout or --template"));
+}
+
+#[test]
 fn con_id_verbose_diagnostics_go_to_stderr_not_stdout() {
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
         .args(["--con-id", "42", "--verbose"])

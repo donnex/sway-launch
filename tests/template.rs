@@ -158,6 +158,57 @@ fn template_dry_run_json_output_is_a_structured_steps_array() {
 }
 
 #[test]
+fn template_validate_reports_success_without_launching_anything() {
+    let template = TempToml::write(
+        "validate-ok-template",
+        "[[step]]\nslot = \"editor\"\n\n[[step]]\nslot = \"terminal\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            template.to_str().unwrap(),
+            "--apps",
+            "code,foot",
+            "--validate",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        output.status.success(),
+        "sway-launch --template --validate failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(stdout.trim(), "valid: 2 step(s)");
+}
+
+#[test]
+fn template_validate_reports_a_step_error() {
+    let template = TempToml::write(
+        "validate-bad-template",
+        "[[step]]\nslot = \"editor\"\nheight = \"notasize\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            template.to_str().unwrap(),
+            "--apps",
+            "code",
+            "--validate",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("step 1"));
+    assert!(stderr.contains("height"));
+}
+
+#[test]
 fn template_target_id_references_an_earlier_slot() {
     let template = TempToml::write(
         "target-id-template",
