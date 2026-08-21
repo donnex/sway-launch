@@ -2175,19 +2175,38 @@ impl<'a> SwayLaunch<'a> {
         )
     }
 
-    pub fn run(&self) -> Result<i64, String> {
+    pub fn run(&self) -> Result<RunOutcome, String> {
         let container_id = self.resolve_container_id()?;
 
         if self.verbose {
             eprintln!("Target container id: {}", container_id);
         }
 
+        let mut actions = Vec::new();
         for action in self.build_actions(container_id, true)? {
+            actions.push(action.sway_command_verb());
             action.run()?;
         }
 
-        Ok(container_id)
+        Ok(RunOutcome {
+            container_id,
+            actions,
+        })
     }
+}
+
+/// `SwayLaunch::run()`'s result: the resolved container id, plus every
+/// action's verb (`SwayAction::sway_command_verb()`, the same
+/// container-id-free text `--dry-run` prints) in the order it actually ran
+/// — a real run's richer `--json` shape (`main.rs`) reports this alongside
+/// `container_id`. Since `run()` stops at the first action that fails,
+/// `actions` on a successful `Ok` is always the *complete* planned list,
+/// not a partial one — there's no per-action "confirmed"/"failed" status to
+/// report here, because a failed action never returns at all; it's
+/// reported as `run()`'s `Err` instead, same as before this existed.
+pub struct RunOutcome {
+    pub container_id: i64,
+    pub actions: Vec<String>,
 }
 
 #[cfg(test)]

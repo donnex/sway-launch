@@ -314,11 +314,17 @@ fn main() {
     }
 
     match sway_launch.run() {
-        Ok(container_id) => {
+        Ok(outcome) => {
             if args.json {
-                println!("{}", serde_json::json!({ "container_id": container_id }));
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "container_id": outcome.container_id,
+                        "actions": outcome.actions,
+                    })
+                );
             } else {
-                println!("{}", container_id);
+                println!("{}", outcome.container_id);
             }
         }
         Err(error) => fail(args.json, &error),
@@ -669,16 +675,16 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
         let launched_a_new_window = step.command.is_some();
 
         match sway_launch.run() {
-            Ok(container_id) => {
+            Ok(outcome) => {
                 if !args.json {
-                    println!("{}", container_id);
+                    println!("{}", outcome.container_id);
                 }
-                container_ids.push(container_id);
+                container_ids.push(outcome.container_id);
                 if launched_a_new_window {
-                    launched_container_ids.push(container_id);
+                    launched_container_ids.push(outcome.container_id);
                 }
                 if let Some(id) = step.id.as_deref() {
-                    resolved_ids.insert(id.to_string(), container_id);
+                    resolved_ids.insert(id.to_string(), outcome.container_id);
                 }
             }
             Err(error) => fail_step(args, &launched_container_ids, index, error),
@@ -686,7 +692,13 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
     }
 
     if args.json {
-        println!("{}", serde_json::json!({ "container_ids": container_ids }));
+        println!(
+            "{}",
+            serde_json::json!({
+                "container_ids": container_ids,
+                "containers": resolved_ids,
+            })
+        );
     }
 
     process::exit(0);

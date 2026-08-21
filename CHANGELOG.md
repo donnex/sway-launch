@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--json` now also applies to error output: a failure prints `{"error": "...", "rolled_back": [...]}`
   instead of a plain-text message, so a `--json` caller doesn't need to also parse plain stderr on
   failure.
+- `--json`'s success output is richer: a single invocation now also reports `"actions"` (every
+  action that actually ran, in order); `--layout`/`--template` now also reports `"containers"` (a
+  map from each named step's `id`/`slot` to its container id). No compatibility shim — every field
+  from the previous shape is still present, just alongside the new ones.
 - `floating-overlay` template's overlay window is now explicitly centered (`position = "center"`),
   so it lands somewhere deterministic every run instead of wherever Sway's own default floating
   placement happened to put it.

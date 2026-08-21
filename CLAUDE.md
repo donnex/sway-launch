@@ -435,8 +435,8 @@ other action (size, position, mark) gets a chance to apply to it first while it'
 visible/tiled, and a `--mark` set earlier in the same invocation is still there to retarget the
 window by later (e.g. `swaymsg 'mark dropdown-term scratchpad show'`), the classic "dropdown
 terminal" scripting pattern. The final container id is printed to stdout (`main.rs`, as a bare
-integer, or as `{"container_id": N}` under `--json`) — this is what makes commands
-chainable/scriptable (see README examples).
+integer, or as part of a richer object under `--json` — see "`--json`'s richer schema" below) —
+this is what makes commands chainable/scriptable (see README examples).
 
 `NewColumn`/`NewRow` running *before* `Workspace`/`Output` in this order means `--new-column
 --workspace 3` (or `--new-row --output ...`) restructures the window relative to its *origin*
@@ -496,14 +496,39 @@ doesn't apply to them.
 
 Errors always go to stderr regardless of `--json` (`main.rs`'s `fail()`/`fail_with_rollback()`), but
 their *shape* on stderr does follow `--json`: a `{"error": "...", "rolled_back": [...]}` object
-instead of a plain-text line, mirroring the structured `{"container_id": ...}`/
-`{"container_ids": [...]}` success shapes rather than leaving a `--json` caller to also parse
-plain-text stderr on failure. `rolled_back` is only ever non-empty when `run_steps()`'s
-`--rollback-on-error` (see "`--layout`" below) actually killed something first — every other error
-path passes an empty slice. This is deliberately scoped to *runtime* failures (file I/O, TOML
-parsing, a `SwayLaunch`/step actually failing against Sway) — a bad CLI invocation
-(missing/conflicting flags, `Args::command().error(...).exit()`) is still reported via clap's own
-usage-error formatting regardless of `--json`, the same as `--help` itself isn't JSON either.
+instead of a plain-text line, mirroring the structured success shapes below rather than leaving a
+`--json` caller to also parse plain-text stderr on failure. `rolled_back` is only ever non-empty
+when `run_steps()`'s `--rollback-on-error` (see "`--layout`" below) actually killed something
+first — every other error path passes an empty slice. This is deliberately scoped to *runtime*
+failures (file I/O, TOML parsing, a `SwayLaunch`/step actually failing against Sway) — a bad CLI
+invocation (missing/conflicting flags, `Args::command().error(...).exit()`) is still reported via
+clap's own usage-error formatting regardless of `--json`, the same as `--help` itself isn't JSON
+either.
+
+### `--json`'s richer schema
+
+An external review suggested expanding `--json`'s success shapes beyond a bare id/id-list — since
+no version has ever shipped (`Cargo.toml` is still `0.1.0`, no `v*` tags exist), there was no
+existing consumer to stay compatible with, so this was a free redesign rather than an additive one.
+
+`SwayLaunch::run()` itself now returns `Result<RunOutcome, String>` instead of `Result<i64,
+String>` — `RunOutcome { container_id: i64, actions: Vec<String> }`, where `actions` is every
+action's `sway_command_verb()` (the same container-id-free text `--dry-run` prints — see above),
+collected in the order it actually ran, immediately before each one's own `.run()` call. Because
+`run()` still stops and returns `Err` at the first action that fails (unchanged), a successful
+`Ok(RunOutcome)`'s `actions` is always the *complete* planned list, never a partial one — there's
+no per-action "confirmed"/"failed" status to report the way the review's own illustrative example
+showed, because a failed action never reaches the `Ok` return at all; it's `run()`'s `Err` instead,
+exactly as before this existed. Plain (non-`--json`) output is unaffected — still just the bare
+`container_id`.
+
+A single invocation's `--json` output is now `{"container_id": N, "actions": [...]}`. `run_steps()`
+(`--layout`/`--template`) already tracked a `resolved_ids: HashMap<String, i64>` of every named
+step's (`id`, or a template `slot`, which resolves to the same name — see "`--template`" below)
+container id, purely to resolve later `target_id` references — that same map is now serialized
+directly as `--json`'s new `"containers"` field, alongside the existing `"container_ids"` array
+(every step's id positionally, named or not). No new bookkeeping was needed for this specifically
+because `resolved_ids` already existed for an unrelated reason.
 
 ### `--debug-events`
 
@@ -583,10 +608,10 @@ own). `main.rs`'s `run_layout()` reads the file, parses it via `layout::parse()`
 flags use — plus the same `command`/`con_id`/`existing` one-of-four-required rule `main.rs`
 enforces for the direct-CLI case, `target_id` being the fourth, layout-only option) and calls
 `.run()` on it, stopping at the first error. Prints one container id per line as each step
-completes, or (if `--json` is set) collects them into one `{"container_ids": [...]}` array printed
-at the end instead. Every top-level per-window flag `conflicts_with_all`-conflicts with `--layout`
-in `Args`, since a step's own fields are what apply, not a top-level flag with no specific step to
-attach to.
+completes, or (if `--json` is set) collects them into one `{"container_ids": [...], "containers":
+{...}}` object printed at the end instead (see "`--json`'s richer schema" above). Every top-level
+per-window flag `conflicts_with_all`-conflicts with `--layout` in `Args`, since a step's own fields
+are what apply, not a top-level flag with no specific step to attach to.
 
 **Named/aliased steps (`id`/`target_id`)**: a step's `id` names it for later reference; a later
 step's `target_id` resolves to that named step's container id instead of launching/matching its
