@@ -11,7 +11,11 @@ follow-up actions against that window — floating, fullscreen, resizing, moving
 workspace/output, splitting, marking, and more (see [Actions reference](#actions-reference)).
 
 - **Deterministic** — blocks until the window exists, and until each follow-up action is actually
-  confirmed, so layouts build up reliably with no manual `sleep`s or race conditions.
+  confirmed, so layouts build up reliably with no manual `sleep`s or race conditions. Window
+  correlation itself is deterministic whenever the launched process's own marker is observable, and
+  falls back to a bounded heuristic on the rare occasions it isn't (see
+  [Basic usage](#basic-usage)) — chaining calls sequentially, the default and recommended way to use
+  this tool, keeps things fully deterministic throughout.
 - **Zero setup** — a single static binary; no daemon, no config file. Chain calls directly in a
   shell script.
 - **Built-in template library** — dozens of ready-made grid, sidebar, and master/stack layouts
@@ -178,12 +182,16 @@ sequentially, each one finishing (its window matched and confirmed) before the n
 that's still the recommended, fully reliable way to use it. Launching a new window (no
 `--con-id`/`--existing`) correlates the window it matches back to the specific process it spawned,
 so two `sway-launch` processes launching ordinary applications at the same time (e.g. backgrounded
-with `&`) no longer collide on each other's windows. That correlation can't help for a
-single-instance application (a browser, an editor) that's already running, though: invoking it
-again typically just forwards the request to the existing instance and exits immediately, so the
-new window is legitimately owned by a process `sway-launch` never spawned — nothing to correlate
-against. Two concurrent invocations both targeting a single-instance application can still
-collide in that specific case. When in doubt, chain calls sequentially.
+with `&`) no longer collide on each other's windows — this correlation is deterministic whenever
+that process's own marker is observable, which is the case that matters in practice. It falls back
+to a bounded heuristic (the first plausibly-matching window seen, after a short grace period) only
+when the marker genuinely can't be observed: that correlation can't help for a single-instance
+application (a browser, an editor) that's already running, since invoking it again typically just
+forwards the request to the existing instance and exits immediately, so the new window is
+legitimately owned by a process `sway-launch` never spawned — nothing to correlate against. Two
+concurrent invocations both targeting a single-instance application can still collide in that
+specific case; a heavily loaded system can, in principle, also delay marker observation long enough
+to hit the same fallback even for an ordinary application. When in doubt, chain calls sequentially.
 
 ## Recreatable layouts
 
