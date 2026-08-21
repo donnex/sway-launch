@@ -2586,6 +2586,34 @@ fn mark_with_special_characters_is_stored_literally_not_executed() {
 }
 
 #[test]
+fn mark_with_an_embedded_newline_is_not_executed_as_a_separate_command() {
+    // Companion to the comma/semicolon case above, for a character
+    // quote_sway_string() doesn't escape at all (only `\`/`"` are).
+    // Confirmed live (this project's security review, 2026-08-21) that
+    // Sway's own command parser normalizes a raw newline inside the quoted
+    // mark into a literal `;` when storing it -- so, unlike the comma case,
+    // this does NOT assert byte-identical storage of the input; it asserts
+    // what was actually observed: the newline becomes `;` in the stored
+    // mark, and critically, still as part of ONE literal mark rather than
+    // splitting into a separate executed command.
+    let mut connection = connect();
+    let malicious_mark =
+        "live-sway-test-newline-injection\nexec touch /tmp/sway-launch-live-test-newline-pwned";
+    let expected_stored_mark =
+        "live-sway-test-newline-injection;exec touch /tmp/sway-launch-live-test-newline-pwned";
+    let _ = std::fs::remove_file("/tmp/sway-launch-live-test-newline-pwned");
+
+    let (container_id, _guard) = launch_foot(&["--mark", malicious_mark]);
+
+    let node = get_node(&mut connection, container_id);
+    assert!(node.marks.contains(&expected_stored_mark.to_string()));
+    assert!(
+        !std::path::Path::new("/tmp/sway-launch-live-test-newline-pwned").exists(),
+        "mark should be stored as one literal mark, not executed as a separate command"
+    );
+}
+
+#[test]
 fn verbose_prints_real_diagnostics_to_stderr_for_a_live_action() {
     // con_id_verbose_diagnostics_go_to_stderr_not_stdout in
     // tests/json_output.rs covers --verbose's stream separation via
