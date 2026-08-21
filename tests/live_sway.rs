@@ -939,6 +939,58 @@ fn position_moves_a_floating_window_to_given_coordinates() {
 }
 
 #[test]
+fn position_accepts_negative_coordinates_on_a_negatively_offset_output() {
+    // Regression test for the negative-coordinates fix
+    // (validate_position_argument's regex, plus --position's clap
+    // `allow_hyphen_values` -- clap otherwise rejects a value starting with
+    // `-` as an unrecognized option before validate_position_argument ever
+    // runs, confirmed live while writing this fix). Sway's coordinate space
+    // is global across every output, so an output positioned left of the
+    // primary one legitimately has a negative origin -- this places a
+    // second output there and confirms --position can target a negative
+    // absolute coordinate on it end to end, not just that the CLI accepts
+    // the flag.
+    let mut connection = connect();
+    let outputs_before: Vec<String> = connection
+        .get_outputs()
+        .expect("get_outputs should succeed")
+        .into_iter()
+        .map(|output| output.name)
+        .collect();
+    connection
+        .run_command("create_output")
+        .expect("create_output should succeed")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("create_output should succeed");
+    let new_output = connection
+        .get_outputs()
+        .expect("get_outputs should succeed")
+        .into_iter()
+        .map(|output| output.name)
+        .find(|name| !outputs_before.contains(name))
+        .expect("create_output should have added a new output");
+    connection
+        .run_command(format!("output {new_output} position -1920 0"))
+        .expect("repositioning the output should succeed")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("repositioning the output should succeed");
+
+    let (container_id, _guard) = launch_foot(&[
+        "--output",
+        &new_output,
+        "--floating",
+        "--position",
+        "-1000,100",
+    ]);
+
+    let node = get_node(&mut connection, container_id);
+    assert_eq!(node.deco_rect.x, -1000);
+    assert_eq!(node.deco_rect.y, 100);
+}
+
+#[test]
 fn position_confirms_via_poll_for_a_floating_window() {
     // Regression test for docs/plan-poll-based-wait-time-actions.md's
     // poll-then-fallback mechanism reaching Position: confirms via

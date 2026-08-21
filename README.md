@@ -86,7 +86,7 @@ Options:
   -r, --new-row                    Move window to new row (move down)
       --workspace <WORKSPACE>      Move new window to workspace
       --output <OUTPUT>            Move new window to output (monitor)
-      --position <POSITION>        Set position on new window. Either "center" or "<x>,<y>" in pixels
+      --position <POSITION>        Set position on new window. Either "center" or "<x>,<y>" in pixels (x/y may be negative)
       --scratchpad                 Move window to the scratchpad
   -t, --timeout <TIMEOUT>          Timeout in seconds [default: 5]
   -w, --wait-time <WAIT_TIME>      Wait time in ms. Used for actions that do not have a corresponding Sway IPC event [default: 20]
@@ -554,11 +554,14 @@ sway-launch --floating --width 1200px --height 80ppt foot
 Set the position of the new window. Only makes sense for a floating window — a tiled window's
 position is determined by the layout, not by coordinates, and Sway rejects the command outright
 (rather than silently ignoring it) if the window isn't floating, so pair this with `--floating`.
-Either `center`, or `<x>,<y>` in pixels from the top-left corner.
+Either `center`, or `<x>,<y>` in pixels. Coordinates are in Sway's global space, spanning every
+output — `<x>`/`<y>` may be negative, which is a real, valid position on a multi-monitor setup
+where an output sits left of or above the primary one.
 
 ```shell
 sway-launch --floating --position center foot
 sway-launch --floating --position 100,200 foot
+sway-launch --floating --position -1000,100 foot
 ```
 
 ### Split

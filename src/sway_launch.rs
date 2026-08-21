@@ -1267,14 +1267,23 @@ pub fn validate_size_argument(value: &str) -> Result<String, String> {
 }
 
 /// Validates a `--position` value, or a `LayoutStep`'s `position` field —
-/// both take the same `center`/`<x>,<y>` format.
+/// both take the same `center`/`<x>,<y>` format. `<x>`/`<y>` each allow a
+/// leading `-`: Sway's coordinate space is global across every output, and
+/// an output positioned left of or above the primary one legitimately has a
+/// negative origin (confirmed live: `compute_center_position()`, used for
+/// `--position center`, already accounts for output origin and can itself
+/// land on a negative coordinate on such a layout) — rejecting a
+/// user-supplied negative coordinate here would make the tool unable to
+/// target a position its own `center` computation can already produce.
 pub fn validate_position_argument(value: &str) -> Result<String, String> {
-    let re = Regex::new(r"^center$|^\d+,\d+$").unwrap();
+    let re = Regex::new(r"^center$|^-?\d+,-?\d+$").unwrap();
     match re.is_match(value) {
         true => Ok(value.to_string()),
-        false => {
-            Err("Must be \"center\" or \"<X>,<Y>\" in pixels. E.g. center/100,200".to_string())
-        }
+        false => Err(
+            "Must be \"center\" or \"<X>,<Y>\" in pixels (X/Y may be negative). E.g. \
+             center/100,200/-100,200"
+                .to_string(),
+        ),
     }
 }
 
@@ -2332,8 +2341,32 @@ mod tests {
     }
 
     #[test]
-    fn validate_position_argument_rejects_negative() {
-        assert!(validate_position_argument("-1,200").is_err());
+    fn validate_position_argument_accepts_negative_x() {
+        assert_eq!(
+            validate_position_argument("-1,200"),
+            Ok("-1,200".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_position_argument_accepts_negative_y() {
+        assert_eq!(
+            validate_position_argument("100,-200"),
+            Ok("100,-200".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_position_argument_accepts_negative_x_and_y() {
+        assert_eq!(
+            validate_position_argument("-1920,-200"),
+            Ok("-1920,-200".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_position_argument_rejects_bare_dash() {
+        assert!(validate_position_argument("-,200").is_err());
     }
 
     #[test]
@@ -2535,6 +2568,20 @@ mod tests {
             wait_time: time::Duration::from_millis(20),
         };
         assert_eq!(action.sway_command(), "[con_id=42] move position 100 200");
+    }
+
+    #[test]
+    fn sway_command_position_negative_coordinates() {
+        let action = SwayAction::Position {
+            container_id: 42,
+            position: "-1920,-200",
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(
+            action.sway_command(),
+            "[con_id=42] move position -1920 -200"
+        );
     }
 
     #[test]

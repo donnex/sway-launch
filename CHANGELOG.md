@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `--position <x>,<y>` (and the matching `--layout`/`--template` step field) now accepts negative
+  coordinates — a real, valid position on a multi-monitor setup where an output sits left of or
+  above the primary one.
 - `--json` now also applies to error output: a failure prints `{"error": "...", "rolled_back": [...]}`
   instead of a plain-text message, so a `--json` caller doesn't need to also parse plain stderr on
   failure.

@@ -78,8 +78,8 @@ struct Args {
     #[clap(long)]
     output: Option<String>,
 
-    /// Set position on new window. Either "center" or "<x>,<y>" in pixels
-    #[clap(long, value_parser = sway_launch::validate_position_argument)]
+    /// Set position on new window. Either "center" or "<x>,<y>" in pixels (x/y may be negative)
+    #[clap(long, value_parser = sway_launch::validate_position_argument, allow_hyphen_values = true)]
     position: Option<String>,
 
     /// Move window to the scratchpad
