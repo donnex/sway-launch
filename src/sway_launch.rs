@@ -2263,6 +2263,24 @@ mod tests {
     }
 
     #[test]
+    fn quote_sway_string_wraps_a_value_containing_a_newline() {
+        // Regression test: confirmed live (this project's security review,
+        // 2026-08-21) that a literal newline embedded in a --mark value
+        // can't break out of the quoting either -- Sway's own parser treats
+        // it as part of the quoted literal, not a command separator, the
+        // same as the comma/semicolon case below. quote_sway_string()
+        // itself needs no special handling for `\n` (only `\`/`"` are
+        // escaped) since it's neither of those; this test just pins that
+        // the newline survives untouched inside the quotes rather than
+        // being stripped or otherwise mishandled. See
+        // mark_with_special_characters_is_stored_literally_not_executed in
+        // tests/live_sway.rs for the live-Sway proof this is actually safe.
+        let injected = "foo\nexec malicious-command";
+        let quoted = quote_sway_string(injected);
+        assert_eq!(quoted, "\"foo\nexec malicious-command\"");
+    }
+
+    #[test]
     fn quote_sway_string_neutralizes_command_separators() {
         // Regression test: an unquoted mark containing a command separator
         // used to let extra Sway commands be injected into the same call.
