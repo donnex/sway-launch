@@ -209,7 +209,7 @@ impl fmt::Display for WindowEventMatchError {
 }
 
 #[derive(Copy, Clone, Debug)]
-enum SwayAction<'a> {
+pub enum SwayAction<'a> {
     Exec {
         command: &'a str,
         app_id_match: &'a str,
@@ -408,93 +408,63 @@ impl fmt::Display for SwayAction<'_> {
 }
 
 impl SwayAction<'_> {
+    /// The full `swaymsg` command string, `[con_id=N] <verb>` for every
+    /// variant except `Exec` (which has no target container yet — it *is*
+    /// the command that creates one). Just wraps `sway_command_verb()` with
+    /// the `[con_id=N]` prefix; kept as a separate method (rather than
+    /// inlining that wrap at every `run_sway_command()` call site) so
+    /// there's exactly one place that does it.
     fn sway_command(&self) -> String {
         match self {
             SwayAction::Exec { command, .. } => format!("exec {}", command),
-            SwayAction::Floating { container_id, .. } => {
-                format!("[con_id={}] floating enable", container_id)
+            other => {
+                let container_id = other
+                    .container_id()
+                    .expect("only Exec lacks a container_id, and it's handled in the arm above");
+                format!("[con_id={}] {}", container_id, other.sway_command_verb())
             }
-            SwayAction::Sticky { container_id, .. } => {
-                format!("[con_id={}] sticky enable", container_id)
+        }
+    }
+
+    /// The `swaymsg` command *without* the `[con_id=N]` target prefix —
+    /// `sway_command()`'s own building block, and also what `--dry-run`
+    /// prints for a planned action whose container id isn't resolved yet
+    /// (a not-yet-launched `Exec` target has no id to show). Never called
+    /// for `Exec` itself, which has no verb-only form (`exec <command>` has
+    /// no target-container concept at all) — `sway_command()` handles that
+    /// variant directly instead of delegating here.
+    pub fn sway_command_verb(&self) -> String {
+        match self {
+            SwayAction::Exec { .. } => {
+                unreachable!("Exec has no verb-only form; sway_command() handles it directly")
             }
-            SwayAction::Fullscreen { container_id, .. } => {
-                format!("[con_id={}] fullscreen enable", container_id)
-            }
-            SwayAction::Focus { container_id, .. } => {
-                format!("[con_id={}] focus", container_id)
-            }
-            SwayAction::Split {
-                container_id,
-                split,
-                ..
-            } => match split {
-                Split::V => format!("[con_id={}] splitv", container_id),
-                Split::H => format!("[con_id={}] splith", container_id),
+            SwayAction::Floating { .. } => "floating enable".to_string(),
+            SwayAction::Sticky { .. } => "sticky enable".to_string(),
+            SwayAction::Fullscreen { .. } => "fullscreen enable".to_string(),
+            SwayAction::Focus { .. } => "focus".to_string(),
+            SwayAction::Split { split, .. } => match split {
+                Split::V => "splitv".to_string(),
+                Split::H => "splith".to_string(),
             },
-            SwayAction::Mark {
-                container_id, mark, ..
-            } => {
-                format!("[con_id={}] mark {}", container_id, quote_sway_string(mark))
+            SwayAction::Mark { mark, .. } => format!("mark {}", quote_sway_string(mark)),
+            SwayAction::NewColumn { .. } => "move right".to_string(),
+            SwayAction::NewRow { .. } => "move down".to_string(),
+            SwayAction::Workspace { workspace, .. } => {
+                format!("move workspace {}", quote_sway_string(workspace))
             }
-            SwayAction::NewColumn { container_id, .. } => {
-                format!("[con_id={}] move right", container_id)
+            SwayAction::Output { output, .. } => {
+                format!("move container to output {}", quote_sway_string(output))
             }
-            SwayAction::NewRow { container_id, .. } => {
-                format!("[con_id={}] move down", container_id)
-            }
-            SwayAction::Workspace {
-                container_id,
-                workspace,
-                ..
-            } => {
-                format!(
-                    "[con_id={}] move workspace {}",
-                    container_id,
-                    quote_sway_string(workspace)
-                )
-            }
-            SwayAction::Output {
-                container_id,
-                output,
-                ..
-            } => {
-                format!(
-                    "[con_id={}] move container to output {}",
-                    container_id,
-                    quote_sway_string(output)
-                )
-            }
-            SwayAction::Height {
-                container_id,
-                height,
-                ..
-            } => {
-                format!("[con_id={}] resize set height {}", container_id, height)
-            }
-            SwayAction::Width {
-                container_id,
-                width,
-                ..
-            } => {
-                format!("[con_id={}] resize set width {}", container_id, width)
-            }
-            SwayAction::Position {
-                container_id,
-                position,
-                ..
-            } => {
+            SwayAction::Height { height, .. } => format!("resize set height {}", height),
+            SwayAction::Width { width, .. } => format!("resize set width {}", width),
+            SwayAction::Position { position, .. } => {
                 let position_command = match position {
                     self::Position::Center => "center".to_string(),
                     self::Position::Coordinates { x, y } => format!("{} {}", x, y),
                 };
-                format!(
-                    "[con_id={}] move position {}",
-                    container_id, position_command
-                )
+                format!("move position {}", position_command)
             }
-            SwayAction::Scratchpad { container_id, .. } => {
-                format!("[con_id={}] move scratchpad", container_id)
-            }
+            SwayAction::Scratchpad { .. } => "move scratchpad".to_string(),
         }
     }
 
@@ -2034,16 +2004,30 @@ impl<'a> SwayLaunch<'a> {
     /// `container_id`, in the same fixed order `run()` always used, without
     /// running any of them — the "plan" half of the plan-then-execute split
     /// `run()` itself is now just the "execute" half of. Exists as its own
-    /// method (rather than inlined into `run()`) specifically so `--dry-run`
-    /// can print the plan without ever touching Sway IPC beyond what
-    /// building it already requires (`relocates_to_another_output()`'s own
-    /// `get_outputs()`/`get_tree()` reads, for the `NewColumn`/`NewRow`
-    /// skip check below — building the plan still isn't fully IPC-free).
-    fn build_actions(&self, container_id: i64) -> Result<Vec<SwayAction<'a>>, String> {
+    /// method (rather than inlined into `run()`) so `--dry-run` can print
+    /// the plan instead of running it.
+    ///
+    /// `check_relocation` controls whether `NewColumn`/`NewRow` actually
+    /// call `relocates_to_another_output()` (a live `get_outputs()`/
+    /// `get_tree()` read) to decide whether to skip them — `run()` passes
+    /// `true`, needing the real answer since it's about to run the action
+    /// for real. `--dry-run` (via `build_actions_for_preview()`) passes
+    /// `false`: previewing a plan has no real `container_id` to check
+    /// against yet (nothing has launched), so the check can't give a
+    /// meaningful answer anyway, and skipping it entirely is what makes
+    /// previewing fully IPC-free — `NewColumn`/`NewRow` are always included
+    /// in a preview when the flag is set, same as every other action.
+    fn build_actions(
+        &self,
+        container_id: i64,
+        check_relocation: bool,
+    ) -> Result<Vec<SwayAction<'a>>, String> {
         let mut actions = Vec::new();
 
         if self.new_column {
-            if self::relocates_to_another_output(container_id, MoveDirection::Right)? {
+            if check_relocation
+                && self::relocates_to_another_output(container_id, MoveDirection::Right)?
+            {
                 if self.verbose {
                     eprintln!(
                         "Skipping new-column: container id {} is at the trailing edge of a \
@@ -2062,7 +2046,9 @@ impl<'a> SwayLaunch<'a> {
             }
         }
         if self.new_row {
-            if self::relocates_to_another_output(container_id, MoveDirection::Down)? {
+            if check_relocation
+                && self::relocates_to_another_output(container_id, MoveDirection::Down)?
+            {
                 if self.verbose {
                     eprintln!(
                         "Skipping new-row: container id {} is at the trailing edge of a \
@@ -2175,6 +2161,20 @@ impl<'a> SwayLaunch<'a> {
         Ok(actions)
     }
 
+    /// The `--dry-run` entry point: every `SwayAction` this `SwayLaunch`
+    /// would apply, in order, without a real `container_id` (nothing has
+    /// launched) and without touching Sway IPC at all — see
+    /// `build_actions()`'s doc comment for why `check_relocation: false`
+    /// is what makes that possible. Infallible (`build_actions()` only
+    /// ever errors via the relocation check this skips), so callers don't
+    /// need to handle a `--dry-run` preview failing the way a real `run()`
+    /// can.
+    pub fn build_actions_for_preview(&self) -> Vec<SwayAction<'a>> {
+        self.build_actions(0, false).expect(
+            "check_relocation: false means build_actions() makes no IPC call, so it can't fail",
+        )
+    }
+
     pub fn run(&self) -> Result<i64, String> {
         let container_id = self.resolve_container_id()?;
 
@@ -2182,7 +2182,7 @@ impl<'a> SwayLaunch<'a> {
             eprintln!("Target container id: {}", container_id);
         }
 
-        for action in self.build_actions(container_id)? {
+        for action in self.build_actions(container_id, true)? {
             action.run()?;
         }
 
@@ -2731,6 +2731,38 @@ mod tests {
             timeout: time::Duration::from_secs(5),
         };
         assert_eq!(action.sway_command(), "[con_id=42] move scratchpad");
+    }
+
+    // SwayAction::sway_command_verb
+
+    #[test]
+    fn sway_command_verb_omits_the_con_id_prefix() {
+        // Regression test for the sway_command()/sway_command_verb() split
+        // (--dry-run's foundation): the verb-only form is exactly
+        // sway_command() with the "[con_id=N] " prefix stripped, for every
+        // variant that has one.
+        let action = SwayAction::Floating {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(action.sway_command(), "[con_id=42] floating enable");
+        assert_eq!(action.sway_command_verb(), "floating enable");
+    }
+
+    #[test]
+    fn sway_command_verb_position_matches_sway_command_minus_the_prefix() {
+        let action = SwayAction::Position {
+            container_id: 42,
+            position: Position::Coordinates { x: -1920, y: -200 },
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(
+            action.sway_command(),
+            "[con_id=42] move position -1920 -200"
+        );
+        assert_eq!(action.sway_command_verb(), "move position -1920 -200");
     }
 
     // SwayAction::Display
@@ -4249,7 +4281,7 @@ mod tests {
     fn build_actions_is_empty_when_no_flags_are_set() {
         let sway_launch = minimal_sway_launch();
         let actions = sway_launch
-            .build_actions(42)
+            .build_actions(42, true)
             .expect("no flags set means no IPC call at all, so this can't fail");
         assert!(actions.is_empty());
     }
@@ -4281,7 +4313,7 @@ mod tests {
         sway_launch.scratchpad = true;
 
         let actions = sway_launch
-            .build_actions(42)
+            .build_actions(42, true)
             .expect("none of these flags touch IPC while building the plan");
 
         let kinds: Vec<&str> = actions
@@ -4328,7 +4360,7 @@ mod tests {
     fn build_actions_omits_mark_when_empty() {
         let sway_launch = minimal_sway_launch();
         let actions = sway_launch
-            .build_actions(42)
+            .build_actions(42, true)
             .expect("no flags set means no IPC call at all, so this can't fail");
         assert!(!actions
             .iter()
@@ -4346,13 +4378,57 @@ mod tests {
         // new_column_combined_with_workspace_* tests for that.
         let mut sway_launch = minimal_sway_launch();
         sway_launch.new_column = true;
-        assert!(sway_launch.build_actions(42).is_err());
+        assert!(sway_launch.build_actions(42, true).is_err());
     }
 
     #[test]
     fn build_actions_propagates_the_relocation_check_error_for_new_row() {
         let mut sway_launch = minimal_sway_launch();
         sway_launch.new_row = true;
-        assert!(sway_launch.build_actions(42).is_err());
+        assert!(sway_launch.build_actions(42, true).is_err());
+    }
+
+    #[test]
+    fn build_actions_with_check_relocation_false_never_touches_ipc() {
+        // The whole point of check_relocation: false — confirms
+        // new_column/new_row are always included (never skipped, and
+        // never erroring) with no reachable Sway socket, unlike the two
+        // tests above with check_relocation: true.
+        let mut sway_launch = minimal_sway_launch();
+        sway_launch.new_column = true;
+        sway_launch.new_row = true;
+        let actions = sway_launch
+            .build_actions(42, false)
+            .expect("check_relocation: false makes no IPC call, so this can't fail");
+        assert!(actions
+            .iter()
+            .any(|action| matches!(action, SwayAction::NewColumn { .. })));
+        assert!(actions
+            .iter()
+            .any(|action| matches!(action, SwayAction::NewRow { .. })));
+    }
+
+    // SwayLaunch::build_actions_for_preview
+
+    #[test]
+    fn build_actions_for_preview_never_touches_ipc_even_with_new_column_set() {
+        let mut sway_launch = minimal_sway_launch();
+        sway_launch.new_column = true;
+        sway_launch.floating = true;
+        // Would panic (build_actions_for_preview()'s own .expect()) if this
+        // somehow tried an IPC call in this headless test environment —
+        // passing at all is the assertion.
+        let actions = sway_launch.build_actions_for_preview();
+        assert_eq!(actions.len(), 2);
+    }
+
+    #[test]
+    fn build_actions_for_preview_verbs_are_container_id_free() {
+        let mut sway_launch = minimal_sway_launch();
+        sway_launch.floating = true;
+        sway_launch.mark = "pinned";
+        let actions = sway_launch.build_actions_for_preview();
+        let verbs: Vec<String> = actions.iter().map(|a| a.sway_command_verb()).collect();
+        assert_eq!(verbs, vec!["floating enable", "mark \"pinned\""]);
     }
 }
