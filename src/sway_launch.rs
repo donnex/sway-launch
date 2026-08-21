@@ -1888,7 +1888,7 @@ pub struct SwayLaunch<'a> {
     pub wait_time: time::Duration,
 }
 
-impl SwayLaunch<'_> {
+impl<'a> SwayLaunch<'a> {
     pub fn debug_events(&self) -> Result<(), String> {
         let subscriptions = [
             EventType::Workspace,
@@ -1932,12 +1932,17 @@ impl SwayLaunch<'_> {
         }
     }
 
-    pub fn run(&self) -> Result<i64, String> {
-        let container_id = self.resolve_container_id()?;
-
-        if self.verbose {
-            eprintln!("Target container id: {}", container_id);
-        }
+    /// Builds the sequence of `SwayAction`s `run()` would apply against
+    /// `container_id`, in the same fixed order `run()` always used, without
+    /// running any of them — the "plan" half of the plan-then-execute split
+    /// `run()` itself is now just the "execute" half of. Exists as its own
+    /// method (rather than inlined into `run()`) specifically so `--dry-run`
+    /// can print the plan without ever touching Sway IPC beyond what
+    /// building it already requires (`relocates_to_another_output()`'s own
+    /// `get_outputs()`/`get_tree()` reads, for the `NewColumn`/`NewRow`
+    /// skip check below — building the plan still isn't fully IPC-free).
+    fn build_actions(&self, container_id: i64) -> Result<Vec<SwayAction<'a>>, String> {
+        let mut actions = Vec::new();
 
         if self.new_column {
             if self::relocates_to_another_output(container_id, MoveDirection::Right)? {
@@ -1951,12 +1956,11 @@ impl SwayLaunch<'_> {
                     );
                 }
             } else {
-                SwayAction::NewColumn {
+                actions.push(SwayAction::NewColumn {
                     container_id,
                     verbose: self.verbose,
                     wait_time: self.wait_time,
-                }
-                .run()?;
+                });
             }
         }
         if self.new_row {
@@ -1971,116 +1975,117 @@ impl SwayLaunch<'_> {
                     );
                 }
             } else {
-                SwayAction::NewRow {
+                actions.push(SwayAction::NewRow {
                     container_id,
                     verbose: self.verbose,
                     wait_time: self.wait_time,
-                }
-                .run()?;
+                });
             }
         }
         if let Some(workspace) = self.workspace {
-            SwayAction::Workspace {
+            actions.push(SwayAction::Workspace {
                 container_id,
                 workspace,
                 verbose: self.verbose,
                 timeout: self.timeout,
-            }
-            .run()?;
+            });
         }
         if let Some(output) = self.output {
-            SwayAction::Output {
+            actions.push(SwayAction::Output {
                 container_id,
                 output,
                 verbose: self.verbose,
                 timeout: self.timeout,
-            }
-            .run()?;
+            });
         }
         if let Some(split) = self.split {
-            SwayAction::Split {
+            actions.push(SwayAction::Split {
                 container_id,
                 split,
                 verbose: self.verbose,
                 wait_time: self.wait_time,
-            }
-            .run()?;
+            });
         }
         if self.floating {
-            SwayAction::Floating {
+            actions.push(SwayAction::Floating {
                 container_id,
                 verbose: self.verbose,
                 timeout: self.timeout,
-            }
-            .run()?;
+            });
         }
         if self.sticky {
-            SwayAction::Sticky {
+            actions.push(SwayAction::Sticky {
                 container_id,
                 verbose: self.verbose,
                 wait_time: self.wait_time,
-            }
-            .run()?;
+            });
         }
         if self.fullscreen {
-            SwayAction::Fullscreen {
+            actions.push(SwayAction::Fullscreen {
                 container_id,
                 verbose: self.verbose,
                 timeout: self.timeout,
-            }
-            .run()?;
+            });
         }
         if self.focus {
-            SwayAction::Focus {
+            actions.push(SwayAction::Focus {
                 container_id,
                 verbose: self.verbose,
                 timeout: self.timeout,
-            }
-            .run()?;
+            });
         }
         if let Some(height) = self.height {
-            SwayAction::Height {
+            actions.push(SwayAction::Height {
                 container_id,
                 height,
                 verbose: self.verbose,
                 wait_time: self.wait_time,
-            }
-            .run()?;
+            });
         }
         if let Some(width) = self.width {
-            SwayAction::Width {
+            actions.push(SwayAction::Width {
                 container_id,
                 width,
                 verbose: self.verbose,
                 wait_time: self.wait_time,
-            }
-            .run()?;
+            });
         }
         if let Some(position) = self.position {
-            SwayAction::Position {
+            actions.push(SwayAction::Position {
                 container_id,
                 position,
                 verbose: self.verbose,
                 wait_time: self.wait_time,
-            }
-            .run()?;
+            });
         }
         if !self.mark.is_empty() {
-            SwayAction::Mark {
+            actions.push(SwayAction::Mark {
                 container_id,
                 mark: self.mark,
                 verbose: self.verbose,
                 timeout: self.timeout,
-            }
-            .run()?;
+            });
         }
         if self.scratchpad {
-            SwayAction::Scratchpad {
+            actions.push(SwayAction::Scratchpad {
                 container_id,
                 verbose: self.verbose,
                 timeout: self.timeout,
-            }
-            .run()?;
+            });
+        }
+
+        Ok(actions)
+    }
+
+    pub fn run(&self) -> Result<i64, String> {
+        let container_id = self.resolve_container_id()?;
+
+        if self.verbose {
+            eprintln!("Target container id: {}", container_id);
+        }
+
+        for action in self.build_actions(container_id)? {
+            action.run()?;
         }
 
         Ok(container_id)
@@ -4056,5 +4061,143 @@ mod tests {
             WindowEventMatchError::NoMatchingEvent.to_string(),
             "No matching event"
         );
+    }
+
+    // SwayLaunch::build_actions
+
+    fn minimal_sway_launch() -> SwayLaunch<'static> {
+        SwayLaunch {
+            target: Target::ConId(42),
+            app_id_match: "",
+            class_match: "",
+            split: None,
+            floating: false,
+            sticky: false,
+            fullscreen: false,
+            focus: false,
+            mark: "",
+            new_column: false,
+            new_row: false,
+            workspace: None,
+            output: None,
+            height: None,
+            width: None,
+            position: None,
+            scratchpad: false,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+            wait_time: time::Duration::from_millis(20),
+        }
+    }
+
+    #[test]
+    fn build_actions_is_empty_when_no_flags_are_set() {
+        let sway_launch = minimal_sway_launch();
+        let actions = sway_launch
+            .build_actions(42)
+            .expect("no flags set means no IPC call at all, so this can't fail");
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn build_actions_includes_every_flag_in_the_documented_fixed_order() {
+        // Regression test for the SwayLaunch::run() -> build_actions() split
+        // (external-review.md #5/#32): every flag except new_column/new_row
+        // (which need a live get_outputs()/get_tree() call inside
+        // relocates_to_another_output() even just to build the plan, so
+        // they're covered separately by tests/live_sway.rs, not headlessly
+        // here) is exercised together, asserting both that each one
+        // produces its documented action *and* that the overall order
+        // matches CLAUDE.md's Architecture section exactly: Workspace ->
+        // Output -> Split -> Floating -> Sticky -> Fullscreen -> Focus ->
+        // Height -> Width -> Position -> Mark -> Scratchpad.
+        let mut sway_launch = minimal_sway_launch();
+        sway_launch.workspace = Some("3");
+        sway_launch.output = Some("HDMI-A-1");
+        sway_launch.split = Some(Split::H);
+        sway_launch.floating = true;
+        sway_launch.sticky = true;
+        sway_launch.fullscreen = true;
+        sway_launch.focus = true;
+        sway_launch.height = Some("300px");
+        sway_launch.width = Some("400px");
+        sway_launch.position = Some("center");
+        sway_launch.mark = "pinned";
+        sway_launch.scratchpad = true;
+
+        let actions = sway_launch
+            .build_actions(42)
+            .expect("none of these flags touch IPC while building the plan");
+
+        let kinds: Vec<&str> = actions
+            .iter()
+            .map(|action| match action {
+                SwayAction::Workspace { .. } => "workspace",
+                SwayAction::Output { .. } => "output",
+                SwayAction::Split { .. } => "split",
+                SwayAction::Floating { .. } => "floating",
+                SwayAction::Sticky { .. } => "sticky",
+                SwayAction::Fullscreen { .. } => "fullscreen",
+                SwayAction::Focus { .. } => "focus",
+                SwayAction::Height { .. } => "height",
+                SwayAction::Width { .. } => "width",
+                SwayAction::Position { .. } => "position",
+                SwayAction::Mark { .. } => "mark",
+                SwayAction::Scratchpad { .. } => "scratchpad",
+                other => panic!("unexpected action in plan: {:?}", other),
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                "workspace",
+                "output",
+                "split",
+                "floating",
+                "sticky",
+                "fullscreen",
+                "focus",
+                "height",
+                "width",
+                "position",
+                "mark",
+                "scratchpad",
+            ]
+        );
+        for action in &actions {
+            assert_eq!(action.container_id(), Some(42));
+        }
+    }
+
+    #[test]
+    fn build_actions_omits_mark_when_empty() {
+        let sway_launch = minimal_sway_launch();
+        let actions = sway_launch
+            .build_actions(42)
+            .expect("no flags set means no IPC call at all, so this can't fail");
+        assert!(!actions
+            .iter()
+            .any(|action| matches!(action, SwayAction::Mark { .. })));
+    }
+
+    #[test]
+    fn build_actions_propagates_the_relocation_check_error_for_new_column() {
+        // Headless environments have no reachable Sway socket, so
+        // relocates_to_another_output()'s own get_outputs() call fails —
+        // confirming build_actions() surfaces that as an error rather than
+        // silently building an incomplete plan. The actual guard behavior
+        // (skip vs. include NewColumn) needs a live compositor; see
+        // tests/live_sway.rs's new_column_does_not_relocate_*/
+        // new_column_combined_with_workspace_* tests for that.
+        let mut sway_launch = minimal_sway_launch();
+        sway_launch.new_column = true;
+        assert!(sway_launch.build_actions(42).is_err());
+    }
+
+    #[test]
+    fn build_actions_propagates_the_relocation_check_error_for_new_row() {
+        let mut sway_launch = minimal_sway_launch();
+        sway_launch.new_row = true;
+        assert!(sway_launch.build_actions(42).is_err());
     }
 }

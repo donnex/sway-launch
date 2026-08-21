@@ -360,7 +360,7 @@ Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`,
     `new_row_confirms_via_poll_when_swapping_past_a_sibling` (fast path, a real sibling swap) and
     `new_column_falls_back_gracefully_at_the_edge_with_a_large_wait_time` (fallback path).
 
-### Orchestration: `SwayLaunch::run()`
+### Orchestration: `SwayLaunch::build_actions()`/`run()`
 
 `SwayLaunch` no longer always launches a new window — it has a `target: Target` field
 (`Target::Exec { command }`, `Target::ConId(i64)`, or `Target::Existing`), and
@@ -376,20 +376,32 @@ Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`,
   workspace — a hidden scratchpad window matching the criteria is just as eligible as a visible
   one (documented for the user in README.md's "Target an existing window" section).
 
-`run()` then conditionally runs the other actions in a fixed order (`NewColumn` → `NewRow` →
+`run()` used to conditionally build *and immediately run* the other actions inline, one `if
+self.foo { SwayAction::Foo { .. }.run()?; }` block per flag. An external review flagged that shape
+as a code-structure risk (every future action inflates one already-large function, and there's no
+way to inspect the planned actions without running them) — split into two methods instead:
+`build_actions(container_id)` builds the fixed-order `Vec<SwayAction>` (`NewColumn` → `NewRow` →
 `Workspace` → `Output` → `Split` → `Floating` → `Sticky` → `Fullscreen` → `Focus` → `Height` →
-`Width` → `Position` → `Mark` → `Scratchpad`) based on which CLI flags were set, each against that
-same `container_id`. `Sticky` runs immediately after `Floating` — a conventional pairing (sticky is
-most useful on a small floating utility window), not a hard dependency: live testing confirmed
-`--sticky` alone, with no `--floating`, works identically (see `SwayAction::poll_matches()`'s
-`Sticky` arm above), so this ordering is about grouping related flags together, not about one
-requiring the other to run first. `Scratchpad` runs last deliberately — it's the one action that hides the window
-away, so every other action (size, position, mark) gets a chance to apply to it first while it's
-still visible/tiled, and a `--mark` set earlier in the same invocation is still there to retarget
-the window by later (e.g. `swaymsg 'mark dropdown-term scratchpad show'`), the classic
-"dropdown terminal" scripting pattern. The
-final container id is printed to stdout (`main.rs`, as a bare integer, or as `{"container_id": N}`
-under `--json`) — this is what makes commands chainable/scriptable (see README examples).
+`Width` → `Position` → `Mark` → `Scratchpad`) based on which CLI flags were set, without running any
+of them, and `run()` itself is now just `resolve_container_id()` + `for action in
+self.build_actions(container_id)? { action.run()?; }`. A mechanical extraction, not a redesign —
+`SwayAction<'a>`'s existing lifetime already matched `SwayLaunch<'a>`'s, so no data ever needed to
+change shape, only *when* each `SwayAction` gets constructed. This is also what makes
+`build_actions()` itself unit-testable headlessly for the first time (see its tests in
+`sway_launch.rs`, `build_actions_includes_every_flag_in_the_documented_fixed_order` in particular,
+which pins the exact order above) — before the split, testing the order meant testing `run()`
+end-to-end against live Sway, since building and running were the same inseparable step. `Sticky`
+runs immediately after `Floating` — a conventional pairing (sticky is most useful on a small
+floating utility window), not a hard dependency: live testing confirmed `--sticky` alone, with no
+`--floating`, works identically (see `SwayAction::poll_matches()`'s `Sticky` arm above), so this
+ordering is about grouping related flags together, not about one requiring the other to run first.
+`Scratchpad` runs last deliberately — it's the one action that hides the window away, so every
+other action (size, position, mark) gets a chance to apply to it first while it's still
+visible/tiled, and a `--mark` set earlier in the same invocation is still there to retarget the
+window by later (e.g. `swaymsg 'mark dropdown-term scratchpad show'`), the classic "dropdown
+terminal" scripting pattern. The final container id is printed to stdout (`main.rs`, as a bare
+integer, or as `{"container_id": N}` under `--json`) — this is what makes commands
+chainable/scriptable (see README examples).
 
 `NewColumn`/`NewRow` running *before* `Workspace`/`Output` in this order means `--new-column
 --workspace 3` (or `--new-row --output ...`) restructures the window relative to its *origin*
@@ -405,7 +417,7 @@ needed. Confirmed by `tests/live_sway.rs`'s
 `new_column_combined_with_workspace_lands_on_the_target_workspace_correctly` and
 `new_column_output_guard_still_applies_when_combined_with_output`.
 
-Before running `NewColumn`/`NewRow`, `run()` calls
+Before including `NewColumn`/`NewRow` in the plan at all, `build_actions()` calls
 `relocates_to_another_output(container_id, direction)`, which checks `get_outputs()` (skipping the
 guard entirely when there's only one output) and, if more than one exists, `get_tree()` +
 `is_at_the_trailing_workspace_edge()` to see whether `container_id` is at risk of the relocation
@@ -832,7 +844,11 @@ comments, name things clearly instead" style). Two rule-specific overrides:
     `find_existing_container_id`'s connection call,
     `SwayAction::run`, `SwayAction::already_at_target`, `SwayAction::poll_baseline`'s
     `NewColumn`/`NewRow` arm, `current_workspace`, `current_output`, `containing_node_name`,
-    `relocates_to_another_output`, `SwayLaunch::run`, `SwayLaunch::debug_events`) are exempted from
+    `relocates_to_another_output`, `SwayLaunch::run`, `SwayLaunch::build_actions`'s
+    `NewColumn`/`NewRow` arms (their `relocates_to_another_output()` call — the rest of
+    `build_actions()` is ordinary pure logic and stays coverage-measured, same reasoning as
+    `expected_position` above; see "Orchestration" below for why it's split out from `run()` at
+    all), `SwayLaunch::debug_events`) are exempted from
     the `cargo llvm-cov` line-
     coverage measurement — they require a live Sway compositor, so `cargo test`/`cargo llvm-cov`
     (which run headlessly, without one) never execute them. They're no longer *unverifiable*,
