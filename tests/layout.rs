@@ -142,6 +142,77 @@ fn layout_dry_run_reports_a_step_error_without_running_earlier_steps() {
 }
 
 #[test]
+fn layout_validate_reports_success_without_launching_anything() {
+    let path = TempToml::write(
+        "validate-ok",
+        "[[step]]\ncommand = \"code\"\nid = \"editor\"\n\n[[step]]\ntarget_id = \"editor\"\nwidth = \"70ppt\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap(), "--validate"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        output.status.success(),
+        "sway-launch --layout --validate failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(stdout.trim(), "valid: 2 step(s)");
+}
+
+#[test]
+fn layout_validate_json_output_is_a_structured_object() {
+    let path = TempToml::write("validate-ok-json", "[[step]]\ncon_id = 42\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap(), "--validate", "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(stdout.trim(), "{\"steps\":1,\"valid\":true}");
+}
+
+#[test]
+fn layout_validate_reports_a_step_error() {
+    let path = TempToml::write(
+        "validate-bad",
+        "[[step]]\ncon_id = 42\n\n[[step]]\nheight = \"notasize\"\ncon_id = 91\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap(), "--validate"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("step 2"));
+    assert!(stderr.contains("height"));
+}
+
+#[test]
+fn layout_validate_json_error_output_is_a_structured_object() {
+    let path = TempToml::write(
+        "validate-bad-json",
+        "[[step]]\nheight = \"notasize\"\ncon_id = 42\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap(), "--validate", "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.starts_with('{') && stderr.contains("\"error\""));
+    assert!(stderr.contains("step 1"));
+}
+
+#[test]
 fn layout_json_output_is_a_single_array() {
     let path = TempToml::write(
         "json-output",
