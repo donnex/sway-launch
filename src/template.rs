@@ -65,7 +65,26 @@ pub fn builtin_templates() -> Vec<BuiltinTemplate> {
 pub struct Template {
     pub template: TemplateMetadata,
     #[serde(default)]
+    pub layout: TemplateLayoutContext,
+    #[serde(default)]
     pub step: Vec<TemplateStep>,
+}
+
+/// A template file's optional `[layout]` table: a `workspace`/`output`
+/// applied to every resolved step that doesn't set its own — closes the
+/// "works if the workspace/output happens to already be in the right
+/// state" gap a template has no other way to express (see README.md's
+/// "Recreatable layouts" section), letting a template pin itself to a
+/// specific workspace/output instead of always operating on whatever's
+/// currently focused when it runs. A step's own `workspace`/`output` field
+/// still wins when set — this is a fallback applied per-field in
+/// `resolve()`, not a step-level override switch, so a step can use the
+/// template's workspace but its own output, or vice versa.
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct TemplateLayoutContext {
+    pub workspace: Option<String>,
+    pub output: Option<String>,
 }
 
 /// A template file's required `[template]` table: a one-line `description`
@@ -166,6 +185,11 @@ pub fn parse_bindings(contents: &str) -> Result<Bindings, String> {
 /// slot name, so a later `target_id` step can reference it via the same
 /// mechanism named layout steps already use.
 ///
+/// Every resolved step's `workspace`/`output` falls back to the template's
+/// own `[layout]` table (`TemplateLayoutContext`) when the step doesn't set
+/// its own — applied per-field via `Option::or_else()`, so a step can mix a
+/// template-level workspace with its own output, or vice versa.
+///
 /// A repeated `slot` name is rejected here directly, with a template-shaped
 /// error naming the slot — this used to be left for `run_steps()`'s generic
 /// "id already used by an earlier step" check to catch instead, which is
@@ -258,8 +282,14 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
             mark: step.mark.clone(),
             new_column: step.new_column,
             new_row: step.new_row,
-            workspace: step.workspace.clone(),
-            output: step.output.clone(),
+            workspace: step
+                .workspace
+                .clone()
+                .or_else(|| template.layout.workspace.clone()),
+            output: step
+                .output
+                .clone()
+                .or_else(|| template.layout.output.clone()),
             height: step.height.clone(),
             width: step.width.clone(),
             position: step.position.clone(),
@@ -323,6 +353,7 @@ mod tests {
     fn minimal_template(step: Vec<TemplateStep>) -> Template {
         Template {
             template: minimal_metadata(),
+            layout: TemplateLayoutContext::default(),
             step,
         }
     }
@@ -390,6 +421,65 @@ mod tests {
         assert_eq!(resolved[0].command, Some("foot".to_string()));
         assert!(resolved[0].floating);
         assert_eq!(resolved[0].mark, Some("pinned".to_string()));
+    }
+
+    #[test]
+    fn resolve_applies_the_template_layout_context_to_a_step_without_its_own() {
+        let mut template = minimal_template(vec![minimal_step()]);
+        template.layout.workspace = Some("3".to_string());
+        template.layout.output = Some("HDMI-A-1".to_string());
+        let bindings = Bindings {
+            binding: vec![minimal_binding()],
+        };
+
+        let resolved = resolve(&template, &bindings).expect("valid template should resolve");
+        assert_eq!(resolved[0].workspace, Some("3".to_string()));
+        assert_eq!(resolved[0].output, Some("HDMI-A-1".to_string()));
+    }
+
+    #[test]
+    fn resolve_lets_a_step_s_own_workspace_and_output_win_over_the_template_layout_context() {
+        let mut step = minimal_step();
+        step.workspace = Some("5".to_string());
+        step.output = Some("DP-1".to_string());
+        let mut template = minimal_template(vec![step]);
+        template.layout.workspace = Some("3".to_string());
+        template.layout.output = Some("HDMI-A-1".to_string());
+        let bindings = Bindings {
+            binding: vec![minimal_binding()],
+        };
+
+        let resolved = resolve(&template, &bindings).expect("valid template should resolve");
+        assert_eq!(resolved[0].workspace, Some("5".to_string()));
+        assert_eq!(resolved[0].output, Some("DP-1".to_string()));
+    }
+
+    #[test]
+    fn resolve_mixes_a_step_s_own_field_with_the_template_layout_context_s_other_field() {
+        let mut step = minimal_step();
+        step.workspace = Some("5".to_string());
+        let mut template = minimal_template(vec![step]);
+        template.layout.workspace = Some("3".to_string());
+        template.layout.output = Some("HDMI-A-1".to_string());
+        let bindings = Bindings {
+            binding: vec![minimal_binding()],
+        };
+
+        let resolved = resolve(&template, &bindings).expect("valid template should resolve");
+        assert_eq!(resolved[0].workspace, Some("5".to_string()));
+        assert_eq!(resolved[0].output, Some("HDMI-A-1".to_string()));
+    }
+
+    #[test]
+    fn resolve_leaves_workspace_and_output_unset_without_a_layout_context() {
+        let template = minimal_template(vec![minimal_step()]);
+        let bindings = Bindings {
+            binding: vec![minimal_binding()],
+        };
+
+        let resolved = resolve(&template, &bindings).expect("valid template should resolve");
+        assert_eq!(resolved[0].workspace, None);
+        assert_eq!(resolved[0].output, None);
     }
 
     #[test]
@@ -525,6 +615,62 @@ mod tests {
         .expect("valid template should parse");
         assert_eq!(template.step.len(), 1);
         assert_eq!(template.step[0].slot, Some("editor".to_string()));
+    }
+
+    #[test]
+    fn parse_reads_a_template_with_a_layout_context_table() {
+        let template = parse(
+            r#"
+            [template]
+            description = "A test template."
+            category = "Test"
+
+            [layout]
+            workspace = "3"
+            output = "HDMI-A-1"
+
+            [[step]]
+            slot = "editor"
+            "#,
+        )
+        .expect("valid template should parse");
+        assert_eq!(template.layout.workspace, Some("3".to_string()));
+        assert_eq!(template.layout.output, Some("HDMI-A-1".to_string()));
+    }
+
+    #[test]
+    fn parse_defaults_the_layout_context_when_the_table_is_absent() {
+        let template = parse(
+            r#"
+            [template]
+            description = "A test template."
+            category = "Test"
+
+            [[step]]
+            slot = "editor"
+            "#,
+        )
+        .expect("valid template should parse");
+        assert_eq!(template.layout.workspace, None);
+        assert_eq!(template.layout.output, None);
+    }
+
+    #[test]
+    fn parse_rejects_misspelled_layout_context_field() {
+        let result = parse(
+            r#"
+            [template]
+            description = "A test template."
+            category = "Test"
+
+            [layout]
+            workpsace = "3"
+
+            [[step]]
+            slot = "editor"
+            "#,
+        );
+        assert!(result.is_err());
     }
 
     #[test]
