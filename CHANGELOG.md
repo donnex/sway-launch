@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--validate`: parses and validates a `--layout`/`--template` file (formats, target-field
   consistency, `target_id` references, and for `--template`, `--bindings`/`--apps` resolution)
   without launching anything or touching Sway IPC. Requires `--layout` or `--template`.
+- `--show-template <NAME_OR_PATH>`: prints a `--template`'s raw TOML and exits, without running it
+  — the same built-in-name-or-file-path resolution `--template` itself uses. `--json` prints
+  `{"name": ..., "contents": "..."}`.
 
 ### Changed
 
