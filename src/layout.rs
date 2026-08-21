@@ -162,9 +162,9 @@ impl LayoutStep {
             new_row: self.new_row,
             workspace: self.workspace.as_deref(),
             output: self.output.as_deref(),
-            height: self.height.as_deref(),
-            width: self.width.as_deref(),
-            position: self.position.as_deref(),
+            height: self.height.as_deref().map(sway_launch::parse_size),
+            width: self.width.as_deref().map(sway_launch::parse_size),
+            position: self.position.as_deref().map(sway_launch::parse_position),
             scratchpad: self.scratchpad,
             timeout: self
                 .timeout

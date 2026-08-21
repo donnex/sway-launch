@@ -70,6 +70,92 @@ impl fmt::Display for Split {
     }
 }
 
+/// A validated `--height`/`--width` value, parsed once via `parse_size()`
+/// rather than carried as a string and re-parsed on every use (previously,
+/// `SwayAction::poll_matches()`'s `Height`/`Width` arms each called
+/// `parse_pixel_value()` on the raw string on every poll iteration).
+/// `Display` renders the same `<n>px`/`<n>ppt` text `sway_command()` needs
+/// to interpolate into the Sway command, and that `SwayAction::Display`
+/// needs for its human-readable `Sway action: ...` line — this makes
+/// `sway_command()` a pure serialization step for these variants, not a
+/// second place the format is defined.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum Size {
+    Pixels(u32),
+    Percent(u32),
+}
+
+impl fmt::Display for Size {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Size::Pixels(pixels) => write!(f, "{}px", pixels),
+            Size::Percent(percent) => write!(f, "{}ppt", percent),
+        }
+    }
+}
+
+/// Parses a value already validated by `validate_size_argument()` — never
+/// called on unvalidated input. `validate_size_argument()` itself confirms
+/// the digits fit in a `u32`, not just that they're digits, specifically so
+/// the `.expect()`s here are trusting an already-checked invariant rather
+/// than gambling on one.
+pub fn parse_size(value: &str) -> Size {
+    if let Some(pixels) = value.strip_suffix("px") {
+        Size::Pixels(
+            pixels
+                .parse()
+                .expect("validate_size_argument guarantees this parses as u32"),
+        )
+    } else {
+        let percent = value
+            .strip_suffix("ppt")
+            .expect("validate_size_argument guarantees a px or ppt suffix");
+        Size::Percent(
+            percent
+                .parse()
+                .expect("validate_size_argument guarantees this parses as u32"),
+        )
+    }
+}
+
+/// A validated `--position` value, parsed once via `parse_position()`
+/// rather than carried as a string — same reasoning as `Size` above.
+/// `Display` renders `center` or `<x>,<y>`, the same text a `--position`
+/// CLI argument or TOML field would itself use.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum Position {
+    Center,
+    Coordinates { x: i32, y: i32 },
+}
+
+impl fmt::Display for Position {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Position::Center => write!(f, "center"),
+            Position::Coordinates { x, y } => write!(f, "{},{}", x, y),
+        }
+    }
+}
+
+/// Parses a value already validated by `validate_position_argument()` —
+/// never called on unvalidated input. `validate_position_argument()` itself
+/// confirms `<x>`/`<y>` each fit in an `i32`, so the `.expect()`s here are
+/// trusting an already-checked invariant rather than gambling on one.
+pub fn parse_position(value: &str) -> Position {
+    if value == "center" {
+        return Position::Center;
+    }
+    let (x, y) = value
+        .split_once(',')
+        .expect("validate_position_argument guarantees a comma-separated pair");
+    Position::Coordinates {
+        x: x.parse()
+            .expect("validate_position_argument guarantees this parses as i32"),
+        y: y.parse()
+            .expect("validate_position_argument guarantees this parses as i32"),
+    }
+}
+
 enum WindowEventMatch {
     WindowAppId,
     WindowClass,
@@ -187,19 +273,19 @@ enum SwayAction<'a> {
     },
     Height {
         container_id: i64,
-        height: &'a str,
+        height: Size,
         verbose: bool,
         wait_time: time::Duration,
     },
     Width {
         container_id: i64,
-        width: &'a str,
+        width: Size,
         verbose: bool,
         wait_time: time::Duration,
     },
     Position {
         container_id: i64,
-        position: &'a str,
+        position: Position,
         verbose: bool,
         wait_time: time::Duration,
     },
@@ -397,9 +483,9 @@ impl SwayAction<'_> {
                 position,
                 ..
             } => {
-                let position_command = match *position {
-                    "center" => "center".to_string(),
-                    coords => coords.replace(',', " "),
+                let position_command = match position {
+                    self::Position::Center => "center".to_string(),
+                    self::Position::Coordinates { x, y } => format!("{} {}", x, y),
                 };
                 format!(
                     "[con_id={}] move position {}",
@@ -666,31 +752,38 @@ impl SwayAction<'_> {
                 };
                 Some(self::parent_node_layout(container_id) == Some(expected))
             }
-            // `parse_pixel_value()` is deliberately checked before any IPC
-            // call — a `ppt` (percent) value has no pixel figure to poll
-            // for without also resolving the reference dimension it's a
+            // A `ppt` (percent) `Size` has no pixel figure to poll for
+            // without also resolving the reference dimension it's a
             // percentage of, so those opt out of polling entirely (`None`)
             // rather than resolving to `Some(false)` that could never
-            // become true. `px` values do have a formula (`width_matches`/
-            // `height_matches`), so they opt in unconditionally — a
-            // transient tree-read failure inside `node_by_id()` folds into
-            // `Some(false)` ("not confirmed yet"), not `None`, so a
-            // one-off hiccup doesn't skip the whole poll grace period the
-            // way returning `None` here would.
-            SwayAction::Height { height, .. } => {
-                let expected_px = self::parse_pixel_value(height)?;
-                Some(
-                    self::node_by_id(container_id)
-                        .is_some_and(|node| self::height_matches(&node, expected_px)),
-                )
-            }
-            SwayAction::Width { width, .. } => {
-                let expected_px = self::parse_pixel_value(width)?;
-                Some(
-                    self::node_by_id(container_id)
-                        .is_some_and(|node| self::width_matches(&node, expected_px)),
-                )
-            }
+            // become true. `Size::Pixels` values do have a formula
+            // (`width_matches`/`height_matches`), so they opt in
+            // unconditionally — a transient tree-read failure inside
+            // `node_by_id()` folds into `Some(false)` ("not confirmed
+            // yet"), not `None`, so a one-off hiccup doesn't skip the whole
+            // poll grace period the way returning `None` here would.
+            SwayAction::Height {
+                height: Size::Pixels(pixels),
+                ..
+            } => Some(
+                self::node_by_id(container_id)
+                    .is_some_and(|node| self::height_matches(&node, *pixels as i32)),
+            ),
+            SwayAction::Height {
+                height: Size::Percent(_),
+                ..
+            } => None,
+            SwayAction::Width {
+                width: Size::Pixels(pixels),
+                ..
+            } => Some(
+                self::node_by_id(container_id)
+                    .is_some_and(|node| self::width_matches(&node, *pixels as i32)),
+            ),
+            SwayAction::Width {
+                width: Size::Percent(_),
+                ..
+            } => None,
             SwayAction::Position { position, .. } => {
                 Some(self::position_matches(container_id, position))
             }
@@ -1255,14 +1348,16 @@ fn quote_sway_string(value: &str) -> String {
 }
 
 /// Validates a `--height`/`--width` value, or a `LayoutStep`'s `height`/
-/// `width` field — both take the same `\d+(px|ppt)` format.
+/// `width` field — both take the same `\d+(px|ppt)` format. Also confirms
+/// the digits actually fit in a `u32`, not just that the regex's unbounded
+/// `\d+` matched — `parse_size()` trusts a value that passed this check to
+/// parse infallibly, so a value that matches the shape but overflows (e.g.
+/// 11+ digits) must be rejected here, not discovered as a panic later.
 pub fn validate_size_argument(value: &str) -> Result<String, String> {
-    let re = Regex::new(r"^\d+(px|ppt)$").unwrap();
-    match re.is_match(value) {
-        true => Ok(value.to_string()),
-        false => {
-            Err("Must be in format <HEIGHT>px|ppt. E.g. 300px/20ppt. ppt = percent".to_string())
-        }
+    let re = Regex::new(r"^(\d+)(?:px|ppt)$").unwrap();
+    match re.captures(value) {
+        Some(captures) if captures[1].parse::<u32>().is_ok() => Ok(value.to_string()),
+        _ => Err("Must be in format <HEIGHT>px|ppt. E.g. 300px/20ppt. ppt = percent".to_string()),
     }
 }
 
@@ -1275,11 +1370,23 @@ pub fn validate_size_argument(value: &str) -> Result<String, String> {
 /// land on a negative coordinate on such a layout) — rejecting a
 /// user-supplied negative coordinate here would make the tool unable to
 /// target a position its own `center` computation can already produce.
+/// Also confirms `<x>`/`<y>` each actually fit in an `i32`, not just that
+/// the regex's unbounded `\d+` matched — `parse_position()` trusts a value
+/// that passed this check to parse infallibly, so a value that matches the
+/// shape but overflows must be rejected here, not discovered as a panic
+/// later (same reasoning as `validate_size_argument`'s `u32` check).
 pub fn validate_position_argument(value: &str) -> Result<String, String> {
-    let re = Regex::new(r"^center$|^-?\d+,-?\d+$").unwrap();
-    match re.is_match(value) {
-        true => Ok(value.to_string()),
-        false => Err(
+    if value == "center" {
+        return Ok(value.to_string());
+    }
+    let re = Regex::new(r"^(-?\d+),(-?\d+)$").unwrap();
+    match re.captures(value) {
+        Some(captures)
+            if captures[1].parse::<i32>().is_ok() && captures[2].parse::<i32>().is_ok() =>
+        {
+            Ok(value.to_string())
+        }
+        _ => Err(
             "Must be \"center\" or \"<X>,<Y>\" in pixels (X/Y may be negative). E.g. \
              center/100,200/-100,200"
                 .to_string(),
@@ -1677,16 +1784,6 @@ fn find_parent_layout(node: &Node, container_id: i64) -> Option<NodeLayout> {
         .find_map(|child| self::find_parent_layout(child, container_id))
 }
 
-/// A `\d+px` value's numeric part, or `None` for anything else (notably a
-/// `\d+ppt` percentage, which has no pixel figure to poll for without also
-/// resolving the reference dimension it's a percentage of — see
-/// `SwayAction::poll_matches()`'s `Height`/`Width` arms). Both are already
-/// validated by `validate_size_argument`'s regex by the time this runs, so
-/// a non-`px` value reaching here is always `ppt`, never malformed.
-fn parse_pixel_value(value: &str) -> Option<i32> {
-    value.strip_suffix("px")?.parse().ok()
-}
-
 /// The tree node with id `container_id`, or `None` if it can't be read
 /// (transient IPC error, or the container's gone) — used by
 /// `SwayAction::poll_matches()`'s `Height`/`Width`/`Position` arms to read
@@ -1766,7 +1863,7 @@ fn height_matches(node: &Node, expected_px: i32) -> bool {
 /// falling back to sleeping `--wait-time`. Falling back to `rect.x`/`rect.y`
 /// when `deco_rect` is unset closes that gap, mirroring `width_matches()`'s
 /// existing dual-formula tolerance for a different Sway geometry quirk.
-fn position_matches(container_id: i64, position: &str) -> bool {
+fn position_matches(container_id: i64, position: &Position) -> bool {
     let Some((node, output_name)) = self::node_and_output_name(container_id) else {
         return false;
     };
@@ -1818,9 +1915,13 @@ fn output_rect(output_name: &str) -> Option<swayipc::Rect> {
 /// which value is being compared). `output_name` is only consulted for
 /// `"center"`, so a window not on any output (e.g. the scratchpad) can
 /// still match a plain `"<x>,<y>"` position.
-fn expected_position(position: &str, node: &Node, output_name: Option<&str>) -> Option<(i32, i32)> {
+fn expected_position(
+    position: &Position,
+    node: &Node,
+    output_name: Option<&str>,
+) -> Option<(i32, i32)> {
     match position {
-        "center" => {
+        Position::Center => {
             let rect = self::output_rect(output_name?)?;
             Some(self::compute_center_position(
                 rect,
@@ -1828,10 +1929,7 @@ fn expected_position(position: &str, node: &Node, output_name: Option<&str>) -> 
                 node.rect.height + node.deco_rect.height,
             ))
         }
-        coords => {
-            let (x, y) = coords.split_once(',')?;
-            Some((x.parse().ok()?, y.parse().ok()?))
-        }
+        Position::Coordinates { x, y } => Some((*x, *y)),
     }
 }
 
@@ -1878,9 +1976,9 @@ pub struct SwayLaunch<'a> {
     pub new_row: bool,
     pub workspace: Option<&'a str>,
     pub output: Option<&'a str>,
-    pub height: Option<&'a str>,
-    pub width: Option<&'a str>,
-    pub position: Option<&'a str>,
+    pub height: Option<Size>,
+    pub width: Option<Size>,
+    pub position: Option<Position>,
     pub scratchpad: bool,
 
     pub verbose: bool,
@@ -2343,6 +2441,15 @@ mod tests {
     }
 
     #[test]
+    fn validate_size_argument_rejects_a_value_that_overflows_u32() {
+        // Regression test: the regex's \d+ has no digit-count bound, but
+        // parse_size() trusts a validated value to parse infallibly --
+        // matches the shape (all digits) while overflowing u32 (max
+        // 4294967295, 10 digits) must still be rejected here.
+        assert!(validate_size_argument("99999999999px").is_err());
+    }
+
+    #[test]
     fn validate_position_argument_accepts_center() {
         assert_eq!(
             validate_position_argument("center"),
@@ -2390,6 +2497,15 @@ mod tests {
     #[test]
     fn validate_position_argument_rejects_bare_dash() {
         assert!(validate_position_argument("-,200").is_err());
+    }
+
+    #[test]
+    fn validate_position_argument_rejects_a_coordinate_that_overflows_i32() {
+        // Same reasoning as validate_size_argument's overflow test:
+        // parse_position() trusts a validated value to parse infallibly, so
+        // a coordinate that overflows i32 (max 2147483647, 10 digits) must
+        // be rejected here, not discovered as a panic later.
+        assert!(validate_position_argument("99999999999,200").is_err());
     }
 
     #[test]
@@ -2553,7 +2669,7 @@ mod tests {
     fn sway_command_height() {
         let action = SwayAction::Height {
             container_id: 42,
-            height: "300px",
+            height: Size::Pixels(300),
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
@@ -2564,7 +2680,7 @@ mod tests {
     fn sway_command_width() {
         let action = SwayAction::Width {
             container_id: 42,
-            width: "20ppt",
+            width: Size::Percent(20),
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
@@ -2575,7 +2691,7 @@ mod tests {
     fn sway_command_position_center() {
         let action = SwayAction::Position {
             container_id: 42,
-            position: "center",
+            position: Position::Center,
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
@@ -2586,7 +2702,7 @@ mod tests {
     fn sway_command_position_coordinates() {
         let action = SwayAction::Position {
             container_id: 42,
-            position: "100,200",
+            position: Position::Coordinates { x: 100, y: 200 },
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
@@ -2597,7 +2713,7 @@ mod tests {
     fn sway_command_position_negative_coordinates() {
         let action = SwayAction::Position {
             container_id: 42,
-            position: "-1920,-200",
+            position: Position::Coordinates { x: -1920, y: -200 },
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
@@ -2751,7 +2867,7 @@ mod tests {
     fn display_height() {
         let action = SwayAction::Height {
             container_id: 42,
-            height: "300px",
+            height: Size::Pixels(300),
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
@@ -2765,7 +2881,7 @@ mod tests {
     fn display_width() {
         let action = SwayAction::Width {
             container_id: 42,
-            width: "20ppt",
+            width: Size::Percent(20),
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
@@ -2779,7 +2895,7 @@ mod tests {
     fn display_position() {
         let action = SwayAction::Position {
             container_id: 42,
-            position: "center",
+            position: Position::Center,
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
@@ -2825,7 +2941,7 @@ mod tests {
     fn duration_returns_the_wait_time_for_a_time_based_action() {
         let action = SwayAction::Height {
             container_id: 42,
-            height: "300px",
+            height: Size::Pixels(300),
             verbose: false,
             wait_time: time::Duration::from_millis(42),
         };
@@ -3003,19 +3119,19 @@ mod tests {
         };
         let height = SwayAction::Height {
             container_id: 42,
-            height: "300px",
+            height: Size::Pixels(300),
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
         let width = SwayAction::Width {
             container_id: 42,
-            width: "20ppt",
+            width: Size::Percent(20),
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
         let position = SwayAction::Position {
             container_id: 42,
-            position: "center",
+            position: Position::Center,
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
@@ -3110,19 +3226,19 @@ mod tests {
         };
         let height = SwayAction::Height {
             container_id: 42,
-            height: "300px",
+            height: Size::Pixels(300),
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
         let width = SwayAction::Width {
             container_id: 42,
-            width: "300px",
+            width: Size::Pixels(300),
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
         let position = SwayAction::Position {
             container_id: 42,
-            position: "center",
+            position: Position::Center,
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
@@ -3148,13 +3264,13 @@ mod tests {
         // tests/live_sway.rs).
         let height = SwayAction::Height {
             container_id: 999999,
-            height: "300px",
+            height: Size::Pixels(300),
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
         let width = SwayAction::Width {
             container_id: 999999,
-            width: "400px",
+            width: Size::Pixels(400),
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
@@ -3170,13 +3286,13 @@ mod tests {
         // rather than polling for something that could never match.
         let height = SwayAction::Height {
             container_id: 42,
-            height: "20ppt",
+            height: Size::Percent(20),
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
         let width = SwayAction::Width {
             container_id: 42,
-            width: "20ppt",
+            width: Size::Percent(20),
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
@@ -3204,13 +3320,13 @@ mod tests {
     fn position_has_a_poll_matcher() {
         let center = SwayAction::Position {
             container_id: 999999,
-            position: "center",
+            position: Position::Center,
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
         let coords = SwayAction::Position {
             container_id: 999999,
-            position: "100,200",
+            position: Position::Coordinates { x: 100, y: 200 },
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
@@ -3687,14 +3803,50 @@ mod tests {
     // parse_pixel_value
 
     #[test]
-    fn parse_pixel_value_parses_a_pixel_value() {
-        assert_eq!(parse_pixel_value("300px"), Some(300));
-        assert_eq!(parse_pixel_value("0px"), Some(0));
+    fn parse_size_parses_pixels() {
+        assert_eq!(parse_size("300px"), Size::Pixels(300));
+        assert_eq!(parse_size("0px"), Size::Pixels(0));
     }
 
     #[test]
-    fn parse_pixel_value_returns_none_for_percent() {
-        assert_eq!(parse_pixel_value("20ppt"), None);
+    fn parse_size_parses_percent() {
+        assert_eq!(parse_size("20ppt"), Size::Percent(20));
+    }
+
+    #[test]
+    fn size_display_matches_the_format_parse_size_accepts() {
+        assert_eq!(Size::Pixels(300).to_string(), "300px");
+        assert_eq!(Size::Percent(20).to_string(), "20ppt");
+    }
+
+    #[test]
+    fn parse_position_parses_center() {
+        assert_eq!(parse_position("center"), Position::Center);
+    }
+
+    #[test]
+    fn parse_position_parses_coordinates() {
+        assert_eq!(
+            parse_position("100,200"),
+            Position::Coordinates { x: 100, y: 200 }
+        );
+    }
+
+    #[test]
+    fn parse_position_parses_negative_coordinates() {
+        assert_eq!(
+            parse_position("-1920,-200"),
+            Position::Coordinates { x: -1920, y: -200 }
+        );
+    }
+
+    #[test]
+    fn position_display_matches_the_format_parse_position_accepts() {
+        assert_eq!(Position::Center.to_string(), "center");
+        assert_eq!(
+            Position::Coordinates { x: 100, y: 200 }.to_string(),
+            "100,200"
+        );
     }
 
     // width_matches / height_matches
@@ -3865,13 +4017,16 @@ mod tests {
     #[test]
     fn expected_position_parses_explicit_coordinates() {
         let node = node_with_geometry(400, 300, 2, 25);
-        assert_eq!(expected_position("100,200", &node, None), Some((100, 200)));
+        assert_eq!(
+            expected_position(&Position::Coordinates { x: 100, y: 200 }, &node, None),
+            Some((100, 200))
+        );
     }
 
     #[test]
     fn expected_position_center_without_an_output_name_is_none() {
         let node = node_with_geometry(400, 300, 2, 25);
-        assert_eq!(expected_position("center", &node, None), None);
+        assert_eq!(expected_position(&Position::Center, &node, None), None);
     }
 
     #[test]
@@ -3884,7 +4039,7 @@ mod tests {
         // than panicking when IPC is unavailable.
         let node = node_with_geometry(400, 300, 2, 25);
         assert_eq!(
-            expected_position("center", &node, Some("some-output")),
+            expected_position(&Position::Center, &node, Some("some-output")),
             None
         );
     }
@@ -4119,9 +4274,9 @@ mod tests {
         sway_launch.sticky = true;
         sway_launch.fullscreen = true;
         sway_launch.focus = true;
-        sway_launch.height = Some("300px");
-        sway_launch.width = Some("400px");
-        sway_launch.position = Some("center");
+        sway_launch.height = Some(Size::Pixels(300));
+        sway_launch.width = Some(Size::Pixels(400));
+        sway_launch.position = Some(Position::Center);
         sway_launch.mark = "pinned";
         sway_launch.scratchpad = true;
 
