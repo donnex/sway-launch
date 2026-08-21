@@ -41,6 +41,30 @@ fn find_node(node: &Node, con_id: i64) -> Option<&Node> {
         .find_map(|child| find_node(child, con_id))
 }
 
+/// The name of the nearest `NodeType::Workspace` ancestor of `con_id` —
+/// mirrors `sway_launch.rs`'s private `find_containing_name()`. Used to
+/// detect Sway's scratchpad (the fixed internal workspace named
+/// `__i3_scratch`) in a way that's reliable on both Sway 1.9 (still what
+/// `apt` installs on Ubuntu 24.04/CI) and 1.11, unlike the node's own
+/// `scratchpad_state` field — a CI-failure investigation found that field
+/// stays `Some(ScratchpadState::None)` on Sway 1.9 even for a genuinely
+/// scratchpadded window (see `sway_launch.rs`'s `node_is_in_scratchpad()`
+/// doc comment for the fuller story and the app-side fix).
+fn ancestor_workspace_name(node: &Node, con_id: i64, current: Option<&str>) -> Option<String> {
+    let current = if node.node_type == NodeType::Workspace {
+        node.name.as_deref()
+    } else {
+        current
+    };
+    if node.id == con_id {
+        return current.map(String::from);
+    }
+    node.nodes
+        .iter()
+        .chain(node.floating_nodes.iter())
+        .find_map(|child| ancestor_workspace_name(child, con_id, current))
+}
+
 /// The `layout` of `con_id`'s direct parent node — mirrors
 /// `sway_launch.rs`'s private `find_parent_layout()`, which
 /// `SwayAction::poll_matches()` uses to confirm a `Split` action, since a
@@ -454,6 +478,99 @@ fn focus_is_a_no_op_when_already_focused() {
          waiting for an event Sway doesn't fire for a no-op",
         started.elapsed()
     );
+}
+
+#[test]
+fn scratchpad_moves_a_tiled_window_to_the_scratchpad() {
+    // Also proves the WindowChange::Move confirmation actually fires despite
+    // Sway auto-floating a still-tiled window as part of the move (see
+    // SwayAction::matching_window_change_events()'s Scratchpad doc comment)
+    // — a WindowChange::Floating event fires first, and this only passes if
+    // that's correctly skipped rather than mistaken for the confirmation.
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&[]);
+
+    let output = sway_launch_command()
+        .args(["--con-id", &container_id.to_string(), "--scratchpad"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --scratchpad failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let workspace = ancestor_workspace_name(&tree, container_id, None);
+    assert_eq!(
+        workspace.as_deref(),
+        Some("__i3_scratch"),
+        "expected the window to be in Sway's scratchpad workspace, got ancestor workspace {:?}",
+        workspace
+    );
+}
+
+#[test]
+fn scratchpad_is_a_no_op_when_already_in_the_scratchpad() {
+    // Same as floating_is_a_no_op_when_already_floating, for --scratchpad:
+    // re-running "move scratchpad" on a window already there fires no event
+    // at all, confirmed live, so SwayAction::already_at_target()'s
+    // Scratchpad arm must short-circuit rather than hang the full --timeout.
+    let (container_id, _guard) = launch_foot(&["--scratchpad"]);
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--scratchpad",
+            "--timeout",
+            "5",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --scratchpad (already in the scratchpad) failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "--scratchpad on an already-scratchpadded window took {:?}, suggesting it hung \
+         waiting for an event Sway doesn't fire for a no-op",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn existing_matches_a_window_in_the_scratchpad() {
+    // Coverage gap found during a review pass: README.md/CLAUDE.md document
+    // that --existing's tree walk reaches Sway's __i3_scratch scratchpad —
+    // a hidden window is just as eligible a match as a visible one — but
+    // nothing here actually drove that path against a real compositor.
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&["--scratchpad"]);
+
+    let output = sway_launch_command()
+        .args([
+            "--existing",
+            "--app-id",
+            "foot",
+            "--mark",
+            "live-sway-test-scratchpad-existing",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --existing failed to match a scratchpad window: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let node = get_node(&mut connection, container_id);
+    assert!(node
+        .marks
+        .contains(&"live-sway-test-scratchpad-existing".to_string()));
 }
 
 #[test]

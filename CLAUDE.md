@@ -107,7 +107,11 @@ The crate is four source files plus five integration test files:
   `debug_events_prints_a_real_window_event`, spawned as a background child via the `KillChildOnDrop`
   guard (mirrors `KillOnDrop`, but for a `Child` rather than a container id) with its stdout read on
   a separate thread and forwarded through a channel — the same shape `sway_launch.rs`'s own event
-  loop uses internally.
+  loop uses internally. `--scratchpad` is covered by
+  `scratchpad_moves_a_tiled_window_to_the_scratchpad`/
+  `scratchpad_is_a_no_op_when_already_in_the_scratchpad`; `--existing`'s reach into the scratchpad
+  (documented in README.md's "Target an existing window" section, previously exercised only
+  manually, never regression-tested here) is covered by `existing_matches_a_window_in_the_scratchpad`.
 
   **This file's coverage must stay complete, not just present.** It's the one place anything
   IPC-touching actually gets exercised against real Sway, and — same as `.github/workflows/`'s
@@ -128,8 +132,8 @@ harness — that's why these live here instead of as `#[cfg(test)]` modules in `
 ### Core model: `SwayAction`
 
 Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`, `Fullscreen`,
-`Focus`, `NewColumn`, `NewRow`, `Workspace`, `Output`, `Mark`, `Height`, `Width`, `Position`). Each
-variant knows how to:
+`Focus`, `NewColumn`, `NewRow`, `Workspace`, `Output`, `Mark`, `Height`, `Width`, `Position`,
+`Scratchpad`). Each variant knows how to:
 
 - render itself as a `swaymsg` command string (`sway_command()`) — `Mark`'s, `Workspace`'s, and
   `Output`'s values are wrapped through `quote_sway_string()` before interpolation, since Sway's
@@ -144,7 +148,8 @@ variant knows how to:
 
 `SwayAction::run()` dispatches based on whether the action has a corresponding IPC event:
 
-- **Has an event** (`Exec`, `Floating`, `Fullscreen`, `Focus`, `Workspace`, `Output`, `Mark`) →
+- **Has an event** (`Exec`, `Floating`, `Fullscreen`, `Focus`, `Workspace`, `Output`, `Mark`,
+  `Scratchpad`) →
   `run_wait_matching_events()` for every variant except `Exec` (which gets its own
   `run_wait_matching_exec_event()`, below): connects to Sway, sends the command, then reads the
   event stream until a `Window` event matches (checked via `matches_window_event()`, container id
@@ -155,13 +160,22 @@ variant knows how to:
   respectively. `Focus` uses `WindowChange::Focus`, `Floating`/`Fullscreen` use
   `WindowChange::Floating`/`FullscreenMode`, confirmed reliable the same way by
   `focus_focuses_a_previously_unfocused_window`/`fullscreen_enables_fullscreen_mode` and
-  `floating_with_width_and_height_applies_all_three`.
+  `floating_with_width_and_height_applies_all_three`. `Scratchpad` (`[con_id] move scratchpad`)
+  also uses `WindowChange::Move`, a third variant reusing that event type — harmless, since each
+  `SwayAction::run()` waits on its own fresh event stream, so there's no cross-action ambiguity.
+  Confirmed live that moving a still-*tiled* window to the scratchpad first fires a
+  `WindowChange::Floating` event (Sway auto-floats it as part of the move) before the `Move` that
+  actually confirms it; `matches_window_event()` needs no special handling for this — the
+  `Floating` event's change type simply isn't in `Scratchpad`'s matching-events list, so it's
+  skipped like any other non-matching event while `run_wait_matching_events()` keeps waiting for
+  the `Move`. Confirmed by `tests/live_sway.rs`'s `scratchpad_moves_a_tiled_window_to_the_scratchpad`.
 
-  Five of these seven — every one except `Exec` and `Mark` — *do* have an "already there" no-op
+  Six of these eight — every one except `Exec` and `Mark` — *do* have an "already there" no-op
   case, though: re-applying a state the container already has doesn't fire the corresponding event
   either (moving to the workspace/output it's already on doesn't reparent anything; re-floating,
-  re-fullscreening, or re-focusing an already-floating/fullscreen/focused window doesn't change
-  anything for Sway to report). `SwayAction::run()` calls `already_at_target()` first to check for
+  re-fullscreening, re-focusing, or re-scratchpadding an already-floating/fullscreen/focused/
+  scratchpadded window doesn't change anything for Sway to report). `SwayAction::run()` calls
+  `already_at_target()` first to check for
   this and short-circuit with immediate success rather than waiting on an event Sway will never
   send. `Workspace`/`Output` were the first two found needing this (via
   `current_workspace()`/`current_output()`); `Floating`/`Fullscreen`/`Focus` were found live to have
@@ -175,14 +189,32 @@ variant knows how to:
   populates both, so `node_is_floating()` checks `node_type == FloatingCon` first and falls back to
   the `floating` field. Without this, `already_at_target()` never short-circuited on Sway 1.9,
   reproducing the exact pre-fix hang/error this paragraph describes; confirmed live in both
-  directions (broken on 1.9, fixed on both 1.9 and 1.11) during that investigation. `Mark` was
+  directions (broken on 1.9, fixed on both 1.9 and 1.11) during that investigation. `Scratchpad`
+  was found to need this the same way, live: re-running `--scratchpad` on an already-scratchpadded
+  window fires no event at all. Its own check is `container_is_in_scratchpad()`, which primarily
+  checks the container's ancestor workspace name — Sway's scratchpad is always the fixed internal
+  workspace named `__i3_scratch` — rather than `node_is_floating()`, deliberately, since the
+  auto-float event described above would otherwise make `already_at_target()` misreport a window
+  as already scratchpadded the moment it's floating, before the actual move has happened. This
+  wasn't the first design: the initial version checked a node's own `scratchpad_state` field
+  (`Some(ScratchpadState::Fresh)`/`Some(ScratchpadState::Changed)` once scratchpadded,
+  `Some(ScratchpadState::None)` or the field entirely absent otherwise) exclusively — the same kind
+  of Sway 1.9/1.11 split as `node_is_floating()`'s `floating` field above, just not caught locally
+  before merging, since this project's own dev/CI environments so far had only ever run Sway 1.11
+  until a real CI run against `ubuntu-latest`'s apt-installed 1.9 exposed it: `scratchpad_state`
+  stays `Some(ScratchpadState::None)` on 1.9 even for a genuinely scratchpadded window, so
+  `already_at_target()` never short-circuited there, reproducing the exact hang this paragraph
+  describes. Fixed the same way `node_is_floating()` was: checking the version-independent signal
+  (ancestor workspace name) first, keeping `node_is_in_scratchpad()`'s `scratchpad_state` read as a
+  secondary, redundant OR condition rather than removing it outright. `Mark` was
   checked live too and found *not* to need this — re-applying a mark the container already has
   still fires
   `WindowChange::Mark`. Confirmed by `tests/live_sway.rs`'s
   `workspace_is_a_no_op_when_already_on_the_target_workspace`,
   `output_is_a_no_op_when_already_on_the_target_output`,
-  `floating_is_a_no_op_when_already_floating`, `fullscreen_is_a_no_op_when_already_fullscreen`, and
-  `focus_is_a_no_op_when_already_focused`.
+  `floating_is_a_no_op_when_already_floating`, `fullscreen_is_a_no_op_when_already_fullscreen`,
+  `focus_is_a_no_op_when_already_focused`, and
+  `scratchpad_is_a_no_op_when_already_in_the_scratchpad`.
 - **`Exec`** → `run_wait_matching_exec_event()`. Matching purely on event content (app_id/class, or
   nothing at all with no filter) is ambiguous whenever more than one qualifying `New` window can
   appear around the same time — Sway broadcasts window events to every IPC connection, so a second,
@@ -322,7 +354,12 @@ variant knows how to:
 
 `run()` then conditionally runs the other actions in a fixed order (`NewColumn` → `NewRow` →
 `Workspace` → `Output` → `Split` → `Floating` → `Fullscreen` → `Focus` → `Height` → `Width` →
-`Position` → `Mark`) based on which CLI flags were set, each against that same `container_id`. The
+`Position` → `Mark` → `Scratchpad`) based on which CLI flags were set, each against that same
+`container_id`. `Scratchpad` runs last deliberately — it's the one action that hides the window
+away, so every other action (size, position, mark) gets a chance to apply to it first while it's
+still visible/tiled, and a `--mark` set earlier in the same invocation is still there to retarget
+the window by later (e.g. `swaymsg 'mark dropdown-term scratchpad show'`), the classic
+"dropdown terminal" scripting pattern. The
 final container id is printed to stdout (`main.rs`, as a bare integer, or as `{"container_id": N}`
 under `--json`) — this is what makes commands chainable/scriptable (see README examples).
 
@@ -704,6 +741,7 @@ comments, name things clearly instead" style). Two rule-specific overrides:
     `event_loop`, `run_sway_command`'s connection call, `run_wait_time`,
     `run_wait_matching_events`, `run_wait_matching_exec_event`, `run_poll_then_fallback`,
     `container_exists`, `parent_node_layout`, `node_by_id`, `find_container_node`,
+    `container_is_in_scratchpad`,
     `position_matches`, `node_and_output_name`, `output_rect`,
     `expected_position`'s `"center"` arm (only reachable once `output_rect()` succeeds, so it's
     exempt for the same reason `output_rect` itself is; the rest of `expected_position` — explicit

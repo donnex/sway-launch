@@ -277,10 +277,10 @@ sway-launch --layout layout.toml
 
 A step's keys mirror the CLI flags of the same name (`app_id`, `class`, `con_id`, `existing`,
 `split`, `floating`, `fullscreen`, `focus`, `mark`, `new_column`, `new_row`, `workspace`, `output`,
-`height`, `width`, `position`, `timeout`, `wait_time`) — `height`/`width`/`position` are validated
-the same way their CLI equivalents are, and a step without its own `timeout`/`wait_time` inherits
-the top-level `--timeout`/`--wait-time` values. Exactly one of `command`, `con_id`,
-`existing = true`, or `target_id` is required per step, matching the CLI's own
+`height`, `width`, `position`, `scratchpad`, `timeout`, `wait_time`) — `height`/`width`/`position`
+are validated the same way their CLI equivalents are, and a step without its own
+`timeout`/`wait_time` inherits the top-level `--timeout`/`--wait-time` values. Exactly one of
+`command`, `con_id`, `existing = true`, or `target_id` is required per step, matching the CLI's own
 command/`--con-id`/`--existing` mutual exclusivity plus one layout-only addition:
 
 - `id` names a step, so a later step can target its window specifically via `target_id` — useful
@@ -566,6 +566,20 @@ sway-launch --new-row foot
 
 Subject to the same multi-monitor skip as [New column](#new-column) above, along the vertical axis
 instead.
+
+### Scratchpad
+
+Move the window to Sway's scratchpad — hidden until shown again (e.g. `swaymsg scratchpad show`,
+or a keybinding matching a mark). Runs last, after every other action, so it's useful for building
+up a fully-configured window (size, position, mark) and then hiding it away in one invocation — the
+classic "dropdown terminal" pattern.
+
+```shell
+sway-launch --floating --width 500px --height 400px --mark dropdown-term --scratchpad foot
+```
+
+Re-running `--scratchpad` on a window already in the scratchpad is a no-op, the same as
+[Floating](#floating)/[Fullscreen](#fullscreen)/[Focus](#focus) above.
 
 ### Verbose
 
