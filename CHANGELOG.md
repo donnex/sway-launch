@@ -32,3 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `floating-overlay` template's overlay window is now explicitly centered (`position = "center"`),
   so it lands somewhere deterministic every run instead of wherever Sway's own default floating
   placement happened to put it.
+- A `--bindings` binding setting both `app_id` and `class` now errors immediately, naming the
+  offending slot, instead of only being caught later by a more generic step-level error.
+- Two `--template` steps sharing the same `slot` name now error immediately with a message naming
+  the slot (`template: slot "..." is used more than once`), instead of a generic, implementation-detail-flavored
+  "id already used by an earlier step" message.

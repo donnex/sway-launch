@@ -116,9 +116,11 @@ fn template_apps_count_mismatch_names_the_missing_slots() {
 
 #[test]
 fn template_rejects_two_steps_sharing_a_slot_name() {
-    // Two steps sharing a slot both resolve to id = the slot name, so this
-    // trips run_steps()'s existing duplicate-id check — proving templates
-    // reuse that mechanism rather than needing their own.
+    // Two steps sharing a slot are rejected by resolve() itself, with a
+    // template-shaped error naming the slot -- this used to be left for
+    // run_steps()'s generic "id already used by an earlier step" check to
+    // catch instead (an implementation detail, not the actual authoring
+    // mistake), so the error text this asserts on changed accordingly.
     let template = TempToml::write(
         "duplicate-slot-template",
         "[[step]]\nslot = \"editor\"\n\n[[step]]\nslot = \"editor\"\n",
@@ -140,8 +142,9 @@ fn template_rejects_two_steps_sharing_a_slot_name() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
-    assert!(stderr.contains("step 2"));
+    assert!(stderr.contains("slot"));
     assert!(stderr.contains("editor"));
+    assert!(stderr.contains("more than once"));
 }
 
 #[test]
