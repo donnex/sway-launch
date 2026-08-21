@@ -78,6 +78,8 @@ pub struct TemplateStep {
     pub height: Option<String>,
     pub width: Option<String>,
     pub position: Option<String>,
+    #[serde(default)]
+    pub scratchpad: bool,
 
     pub timeout: Option<u64>,
     pub wait_time: Option<u64>,
@@ -206,6 +208,7 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
             height: step.height.clone(),
             width: step.width.clone(),
             position: step.position.clone(),
+            scratchpad: step.scratchpad,
             timeout: step.timeout,
             wait_time: step.wait_time,
         });
@@ -248,6 +251,7 @@ mod tests {
             height: None,
             width: None,
             position: None,
+            scratchpad: false,
             timeout: None,
             wait_time: None,
         }

@@ -78,6 +78,10 @@ struct Args {
     #[clap(long, value_parser = sway_launch::validate_position_argument)]
     position: Option<String>,
 
+    /// Move window to the scratchpad
+    #[clap(long)]
+    scratchpad: bool,
+
     /// Timeout in seconds
     #[clap(short, long, default_value_t = 5)]
     timeout: u64,
@@ -94,7 +98,7 @@ struct Args {
     #[clap(long, value_enum, conflicts_with_all = [
         "command", "con_id", "existing", "app_id", "class", "split",
         "floating", "fullscreen", "focus", "mark", "new_column", "new_row",
-        "workspace", "output", "height", "width", "position", "debug_events",
+        "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
         "layout", "template", "list_templates", "bindings", "apps",
     ])]
     completions: Option<clap_complete::Shell>,
@@ -115,7 +119,7 @@ struct Args {
     #[clap(long, conflicts_with_all = [
         "command", "con_id", "existing", "app_id", "class", "split",
         "floating", "fullscreen", "focus", "mark", "new_column", "new_row",
-        "workspace", "output", "height", "width", "position", "debug_events",
+        "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
         "bindings", "apps",
     ])]
     layout: Option<PathBuf>,
@@ -129,7 +133,7 @@ struct Args {
     #[clap(long, conflicts_with_all = [
         "command", "con_id", "existing", "app_id", "class", "split",
         "floating", "fullscreen", "focus", "mark", "new_column", "new_row",
-        "workspace", "output", "height", "width", "position", "debug_events",
+        "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
         "layout",
     ])]
     template: Option<PathBuf>,
@@ -138,7 +142,7 @@ struct Args {
     #[clap(long, conflicts_with_all = [
         "command", "con_id", "existing", "app_id", "class", "split",
         "floating", "fullscreen", "focus", "mark", "new_column", "new_row",
-        "workspace", "output", "height", "width", "position", "debug_events",
+        "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
         "layout", "template", "completions", "bindings", "apps",
     ])]
     list_templates: bool,
@@ -249,6 +253,7 @@ fn main() {
         height: args.height.as_deref(),
         width: args.width.as_deref(),
         position: args.position.as_deref(),
+        scratchpad: args.scratchpad,
         timeout: time::Duration::from_secs(args.timeout),
         wait_time: time::Duration::from_millis(args.wait_time),
         verbose: args.verbose,
