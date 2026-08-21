@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--rollback-on-error`: if a later `--layout`/`--template` step fails, kill every window this
   invocation itself launched by an earlier, already-completed step, instead of leaving them open.
   Requires `--layout` or `--template`.
+- `master-dual-stack-left`/`master-triple-stack-left` built-in templates — `master-dual-stack`/
+  `master-triple-stack` mirrored to the other side (stack on the left, main window on the right).
 
 ### Changed
 

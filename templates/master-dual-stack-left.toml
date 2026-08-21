@@ -1,0 +1,26 @@
+# A 2-window stack on the left, one large main window on the right.
+# master-dual-stack.toml mirrored to the other side.
+# Run with, e.g.:
+#   sway-launch --template master-dual-stack-left --apps foot,foot,code
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+#
+# Built the same way sidebar-left-dual-stack.toml builds its narrower
+# 2-window sidebar column: the stack forms first (stack-top solo sets the
+# workspace's own layout to splitv; stack-bottom joins it as a flat second
+# child, no explicit new_row needed), then main joins via new_column
+# ("move right"), which pulls it out of the vertical stack and into a new
+# horizontal sibling beside it — converting the workspace from "three
+# windows stacked" into "stack column | main" side by side.
+
+[[step]]
+slot = "stack-top"
+split = "v"
+
+[[step]]
+slot = "stack-bottom"
+
+[[step]]
+slot = "main"
+new_column = true
+width = "65ppt"
