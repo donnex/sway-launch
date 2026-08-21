@@ -1290,6 +1290,41 @@ fn template_apps_resolve_to_real_windows() {
 }
 
 #[test]
+fn template_layout_context_moves_a_step_without_its_own_workspace_to_the_template_s_workspace() {
+    // Proves the [layout] table's workspace fallback (template::resolve())
+    // actually reaches a real window, not just the resolved LayoutStep --
+    // the step itself sets no workspace of its own.
+    let mut connection = connect();
+    let path = TempToml::write(
+        "layout-context",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n\
+         [layout]\nworkspace = \"live-sway-test-template-layout-context\"\n\n\
+         [[step]]\nslot = \"window\"\n",
+    );
+
+    let output = sway_launch_command()
+        .args(["--template", path.to_str().unwrap(), "--apps", "foot"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --template failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    let container_id: i64 = stdout
+        .trim()
+        .parse()
+        .expect("stdout should be a container id");
+    let _guard = KillOnDrop(container_id);
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let workspace = workspace_containing(&tree, container_id, None);
+    assert_eq!(workspace, Some("live-sway-test-template-layout-context"));
+}
+
+#[test]
 fn new_column_and_new_row_complete_promptly_when_already_at_the_edge() {
     // Regression test for the bug this crate's own README/CLAUDE.md
     // describe: "move right"/"move down" don't fire WindowChange::Move when

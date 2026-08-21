@@ -401,6 +401,21 @@ resolved `id` is always its slot name). `--template` requires exactly one of `--
 and conflicts with `--layout` and every per-window flag, same reasoning as `--layout`. See
 [`templates/quad-grid.toml`](templates/quad-grid.toml).
 
+A template can also declare an optional `[layout]` table, applied to every step that doesn't set
+its own `workspace`/`output`:
+
+```toml
+[layout]
+workspace = "3"
+output = "HDMI-A-1"
+```
+
+This pins the whole template to a specific workspace/output instead of always operating on
+whatever's currently focused when it runs — closes the "works if the workspace/output happens to
+already be in the right state" gap noted above. A step's own `workspace`/`output` still wins when
+set, applied per field, so a step can mix the template's workspace with its own output (or vice
+versa).
+
 Every file under [`templates/`](templates/) is also built into the `sway-launch`
 binary itself as a *built-in template* — `--template <name>` (no `.toml` extension, e.g.
 `--template quad-grid`) resolves that name against the embedded copy, so using one doesn't require

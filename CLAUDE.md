@@ -699,6 +699,28 @@ above (since the slot name *is* the id), and two `TemplateStep`s accidentally sh
 trip `run_steps()`'s **existing** "id already used by an earlier step" check, rather than needing a
 separate duplicate-slot check in `resolve()` itself.
 
+**Template-level workspace/output context (`[layout]` table).** A template file may declare an
+optional `[layout]` table (`Template.layout: TemplateLayoutContext`, `workspace`/`output`, both
+`Option<String>`, `#[serde(default)]` so the whole table is optional) applied to every resolved
+step that doesn't set its own `workspace`/`output` — closes the "works if the workspace/output
+happens to already be in the right state" gap README.md's "Recreatable layouts" section
+acknowledges, letting a template pin itself to a specific workspace/output instead of always
+operating on whatever's currently focused when it runs. `resolve()` applies this as a per-field
+fallback (`step.workspace.clone().or_else(|| template.layout.workspace.clone())`, same for
+`output`), not a step-level override switch — a step can mix the template's workspace with its own
+output, or vice versa. Unlike `[template]`'s table, this one is optional: a template with no
+`[layout]` table behaves exactly as before this existed (`TemplateLayoutContext::default()`, both
+fields `None`, so `or_else()` never fires). Confirmed live by `tests/live_sway.rs`'s
+`template_layout_context_moves_a_step_without_its_own_workspace_to_the_template_s_workspace`; the
+fallback/override/mixed-field logic itself is ordinary pure logic in `resolve()`, covered headlessly
+by `template.rs`'s `resolve_applies_the_template_layout_context_to_a_step_without_its_own`,
+`resolve_lets_a_step_s_own_workspace_and_output_win_over_the_template_layout_context`,
+`resolve_mixes_a_step_s_own_field_with_the_template_layout_context_s_other_field`, and
+`resolve_leaves_workspace_and_output_unset_without_a_layout_context`, plus two
+`tests/template.rs` `--dry-run`-based end-to-end checks
+(`template_layout_context_applies_workspace_and_output_to_a_step_without_its_own`,
+`template_layout_context_does_not_override_a_step_s_own_workspace_and_output`).
+
 **`LayoutStep`/`TemplateStep` mirror `Args` by design and nothing keeps any of them in sync
 automatically** — no compiler check, no test. When adding a new flag to `main.rs`'s `Args`, add the
 matching field to `layout.rs`'s `LayoutStep` *and* `template.rs`'s `TemplateStep` in the same
