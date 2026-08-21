@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Requires `--layout` or `--template`.
 - `master-dual-stack-left`/`master-triple-stack-left` built-in templates — `master-dual-stack`/
   `master-triple-stack` mirrored to the other side (stack on the left, main window on the right).
+- `--sticky` flag (and the matching `--layout`/`--template` step field) to make a window show on
+  every workspace instead of just the one it was launched on. Works regardless of floating state,
+  pairs well with `--floating`.
 
 ### Changed
 

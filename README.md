@@ -34,7 +34,8 @@ Requires a running Sway session — `sway-launch` talks to Sway over its IPC soc
   - [Templates](#templates)
 - [Actions reference](#actions-reference)
   - [Target an existing window](#target-an-existing-window)
-  - [Floating](#floating) · [Fullscreen](#fullscreen) · [Focus](#focus) · [Mark](#mark)
+  - [Floating](#floating) · [Sticky](#sticky) · [Fullscreen](#fullscreen) · [Focus](#focus) ·
+    [Mark](#mark)
   - [Workspace](#workspace) · [Output](#output) · [Height and width](#height-and-width) ·
     [Position](#position) · [Split](#split) · [New column](#new-column) · [New row](#new-row)
   - [Verbose](#verbose) · [JSON output](#json-output) · [Wait time](#wait-time) ·
@@ -75,6 +76,7 @@ Options:
       --existing                   Act on an already-open window found via --app-id/--class, instead of launching a new one
   -s, --split <SPLIT>              Change split for new window [possible values: v, h]
   -f, --floating                   Make new window floating
+      --sticky                     Make new window sticky (shows on all workspaces)
       --fullscreen                 Make new window fullscreen
       --focus                      Focus new window
   -m, --mark <MARK>                Add mark to new window
@@ -85,6 +87,7 @@ Options:
       --workspace <WORKSPACE>      Move new window to workspace
       --output <OUTPUT>            Move new window to output (monitor)
       --position <POSITION>        Set position on new window. Either "center" or "<x>,<y>" in pixels
+      --scratchpad                 Move window to the scratchpad
   -t, --timeout <TIMEOUT>          Timeout in seconds [default: 5]
   -w, --wait-time <WAIT_TIME>      Wait time in ms. Used for actions that do not have a corresponding Sway IPC event [default: 20]
   -d, --debug-events               Debug events. Output all Sway IPC events until stopped
@@ -96,6 +99,7 @@ Options:
       --list-templates             List built-in --template names and exit
       --bindings <BINDINGS>        Bindings file supplying each --template slot's application identity. Requires --template; conflicts with --apps
       --apps <APPS>                Comma-separated list of commands to launch into --template's slots, in the order they first appear in the template. Requires --template; conflicts with --bindings
+      --rollback-on-error          If a later --layout/--template step fails, kill every window this invocation itself launched by an earlier, already-completed step (not one it merely retargeted via con_id/existing/target_id), rather than leaving them open. Requires --layout or --template
   -h, --help                       Print help
   -V, --version                    Print version
 ```
@@ -276,8 +280,8 @@ sway-launch --layout layout.toml
 ```
 
 A step's keys mirror the CLI flags of the same name (`app_id`, `class`, `con_id`, `existing`,
-`split`, `floating`, `fullscreen`, `focus`, `mark`, `new_column`, `new_row`, `workspace`, `output`,
-`height`, `width`, `position`, `scratchpad`, `timeout`, `wait_time`) — `height`/`width`/`position`
+`split`, `floating`, `sticky`, `fullscreen`, `focus`, `mark`, `new_column`, `new_row`, `workspace`,
+`output`, `height`, `width`, `position`, `scratchpad`, `timeout`, `wait_time`) — `height`/`width`/`position`
 are validated the same way their CLI equivalents are, and a step without its own
 `timeout`/`wait_time` inherits the top-level `--timeout`/`--wait-time` values. Exactly one of
 `command`, `con_id`, `existing = true`, or `target_id` is required per step, matching the CLI's own
@@ -472,6 +476,17 @@ windows — Firefox, for example, uses `app_id=firefox`.
 
 ```shell
 sway-launch --floating 'firefox --new-window https://example.com'
+```
+
+### Sticky
+
+Makes the window sticky (shows on the current output across every workspace, instead of just the
+one it was launched on). Confirmed to work regardless of floating state — pair with `--floating`
+for the common case (a small utility window you want visible no matter which workspace you switch
+to), but a tiled window can be made sticky too.
+
+```shell
+sway-launch --floating --sticky foot
 ```
 
 ### Fullscreen

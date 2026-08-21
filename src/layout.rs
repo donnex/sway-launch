@@ -34,6 +34,8 @@ pub struct LayoutStep {
     #[serde(default)]
     pub floating: bool,
     #[serde(default)]
+    pub sticky: bool,
+    #[serde(default)]
     pub fullscreen: bool,
     #[serde(default)]
     pub focus: bool,
@@ -152,6 +154,7 @@ impl LayoutStep {
             class_match,
             split: self.split,
             floating: self.floating,
+            sticky: self.sticky,
             fullscreen: self.fullscreen,
             focus: self.focus,
             mark: self.mark.as_deref().unwrap_or_default(),
@@ -247,6 +250,7 @@ mod tests {
             class: None,
             split: None,
             floating: false,
+            sticky: false,
             fullscreen: false,
             focus: false,
             mark: None,

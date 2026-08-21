@@ -142,6 +142,11 @@ enum SwayAction<'a> {
         verbose: bool,
         timeout: time::Duration,
     },
+    Sticky {
+        container_id: i64,
+        verbose: bool,
+        wait_time: time::Duration,
+    },
     Fullscreen {
         container_id: i64,
         verbose: bool,
@@ -234,6 +239,9 @@ impl fmt::Display for SwayAction<'_> {
             SwayAction::Floating { container_id, .. } => {
                 write!(f, "Floating (container_id: {})", container_id)
             }
+            SwayAction::Sticky { container_id, .. } => {
+                write!(f, "Sticky (container_id: {})", container_id)
+            }
             SwayAction::Fullscreen { container_id, .. } => {
                 write!(f, "Fullscreen (container_id: {})", container_id)
             }
@@ -319,6 +327,9 @@ impl SwayAction<'_> {
             SwayAction::Exec { command, .. } => format!("exec {}", command),
             SwayAction::Floating { container_id, .. } => {
                 format!("[con_id={}] floating enable", container_id)
+            }
+            SwayAction::Sticky { container_id, .. } => {
+                format!("[con_id={}] sticky enable", container_id)
             }
             SwayAction::Fullscreen { container_id, .. } => {
                 format!("[con_id={}] fullscreen enable", container_id)
@@ -406,6 +417,7 @@ impl SwayAction<'_> {
             SwayAction::Exec { verbose, .. }
             | SwayAction::Split { verbose, .. }
             | SwayAction::Floating { verbose, .. }
+            | SwayAction::Sticky { verbose, .. }
             | SwayAction::Fullscreen { verbose, .. }
             | SwayAction::Focus { verbose, .. }
             | SwayAction::NewColumn { verbose, .. }
@@ -433,6 +445,7 @@ impl SwayAction<'_> {
             | SwayAction::Mark { timeout, .. }
             | SwayAction::Scratchpad { timeout, .. } => timeout,
             SwayAction::Split { wait_time, .. }
+            | SwayAction::Sticky { wait_time, .. }
             | SwayAction::NewColumn { wait_time, .. }
             | SwayAction::NewRow { wait_time, .. }
             | SwayAction::Height { wait_time, .. }
@@ -445,6 +458,7 @@ impl SwayAction<'_> {
         match self {
             SwayAction::Split { container_id, .. }
             | SwayAction::Floating { container_id, .. }
+            | SwayAction::Sticky { container_id, .. }
             | SwayAction::Fullscreen { container_id, .. }
             | SwayAction::Focus { container_id, .. }
             | SwayAction::NewColumn { container_id, .. }
@@ -506,6 +520,12 @@ impl SwayAction<'_> {
             // `relocates_to_another_output()`) by skipping NewColumn/
             // NewRow rather than silently moving the window to a
             // different monitor when that's the situation.
+            // No WindowChange variant exists for sticky at all — confirmed
+            // live by subscribing to window events while toggling
+            // `sticky enable`/`sticky disable` on a live container: zero
+            // events fired either way, unlike Floating/Fullscreen/Focus
+            // above, which each have a dedicated WindowChange variant.
+            SwayAction::Sticky { .. } => None,
             SwayAction::Split { .. }
             | SwayAction::NewColumn { .. }
             | SwayAction::NewRow { .. }
@@ -673,6 +693,16 @@ impl SwayAction<'_> {
             }
             SwayAction::Position { position, .. } => {
                 Some(self::position_matches(container_id, position))
+            }
+            // Unlike Floating's `floating`/node-type split (see
+            // node_is_floating()'s doc comment), `sticky` is a plain `bool`
+            // on `Node` with no version-dependent quirk found — confirmed
+            // live that `sticky enable` sets it directly and immediately,
+            // even on a still-tiled container (see the Sticky doc comment
+            // on `matching_window_change_events()`'s arm for why this is a
+            // wait-time action at all).
+            SwayAction::Sticky { .. } => {
+                Some(self::node_by_id(container_id).is_some_and(|node| node.sticky))
             }
             // No fixed target exists for "move right"/"move down" — a
             // successful move can land the window almost anywhere in the
@@ -1831,6 +1861,7 @@ pub struct SwayLaunch<'a> {
 
     pub split: Option<Split>,
     pub floating: bool,
+    pub sticky: bool,
     pub fullscreen: bool,
     pub focus: bool,
     pub mark: &'a str,
@@ -1971,6 +2002,14 @@ impl SwayLaunch<'_> {
                 container_id,
                 verbose: self.verbose,
                 timeout: self.timeout,
+            }
+            .run()?;
+        }
+        if self.sticky {
+            SwayAction::Sticky {
+                container_id,
+                verbose: self.verbose,
+                wait_time: self.wait_time,
             }
             .run()?;
         }
@@ -2344,6 +2383,16 @@ mod tests {
     }
 
     #[test]
+    fn sway_command_sticky() {
+        let action = SwayAction::Sticky {
+            container_id: 42,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(action.sway_command(), "[con_id=42] sticky enable");
+    }
+
+    #[test]
     fn sway_command_fullscreen() {
         let action = SwayAction::Fullscreen {
             container_id: 42,
@@ -2537,6 +2586,16 @@ mod tests {
             timeout: time::Duration::from_secs(5),
         };
         assert_eq!(action.to_string(), "Floating (container_id: 42)");
+    }
+
+    #[test]
+    fn display_sticky() {
+        let action = SwayAction::Sticky {
+            container_id: 42,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(action.to_string(), "Sticky (container_id: 42)");
     }
 
     #[test]
@@ -2840,6 +2899,21 @@ mod tests {
     }
 
     #[test]
+    fn sticky_has_no_matching_window_change() {
+        // Regression test: confirmed live that toggling sticky fires no
+        // WindowChange event at all, unlike Floating/Fullscreen/Focus,
+        // which each have a dedicated variant — Sticky must stay a
+        // wait-time action, not accidentally wired up to wait on an event
+        // that will never arrive.
+        let action = SwayAction::Sticky {
+            container_id: 42,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(action.matching_window_change_events(), None);
+    }
+
+    #[test]
     fn split_height_width_have_no_matching_window_change() {
         let split = SwayAction::Split {
             container_id: 42,
@@ -2982,10 +3056,16 @@ mod tests {
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
+        let sticky = SwayAction::Sticky {
+            container_id: 42,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
         assert_eq!(split.poll_baseline(42), None);
         assert_eq!(height.poll_baseline(42), None);
         assert_eq!(width.poll_baseline(42), None);
         assert_eq!(position.poll_baseline(42), None);
+        assert_eq!(sticky.poll_baseline(42), None);
     }
 
     #[test]
@@ -3032,6 +3112,22 @@ mod tests {
         };
         assert_eq!(height.poll_matches(42, None), None);
         assert_eq!(width.poll_matches(42, None), None);
+    }
+
+    #[test]
+    fn sticky_has_a_poll_matcher() {
+        // container_id 999999 is never in the tree read back by
+        // node_by_id()'s IPC call in this headless test environment, so
+        // the Some(bool) returned is always Some(false) here — this test
+        // only asserts Sticky opts into polling at all, not the match
+        // outcome itself (that needs a live Sway tree, covered by
+        // tests/live_sway.rs).
+        let action = SwayAction::Sticky {
+            container_id: 999999,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        assert_eq!(action.poll_matches(999999, None), Some(false));
     }
 
     #[test]
