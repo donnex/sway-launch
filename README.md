@@ -43,7 +43,7 @@ Requires a running Sway session — `sway-launch` talks to Sway over its IPC soc
   - [Workspace](#workspace) · [Output](#output) · [Height and width](#height-and-width) ·
     [Position](#position) · [Split](#split) · [New column](#new-column) · [New row](#new-row)
   - [Verbose](#verbose) · [JSON output](#json-output) · [Dry run](#dry-run) ·
-    [Wait time](#wait-time) · [Debug events](#debug-events)
+    [Validate](#validate) · [Wait time](#wait-time) · [Debug events](#debug-events)
 
 ## Installation
 
@@ -93,6 +93,7 @@ Options:
       --position <POSITION>        Set position on new window. Either "center" or "<x>,<y>" in pixels (x/y may be negative)
       --scratchpad                 Move window to the scratchpad
       --dry-run                    Print the planned sequence of Sway commands instead of running them — works with a direct command or --layout/--template. Never touches Sway IPC or launches anything
+      --validate                   Validate a --layout/--template file (and, for --template, --bindings/--apps resolution) without launching anything or touching Sway IPC. Requires --layout or --template
   -t, --timeout <TIMEOUT>          Timeout in seconds [default: 5]
   -w, --wait-time <WAIT_TIME>      Wait time in ms. Used for actions that do not have a corresponding Sway IPC event [default: 20]
   -d, --debug-events               Debug events. Output all Sway IPC events until stopped
@@ -690,6 +691,27 @@ inconsistent preview. `--json` prints a structured `{"steps": [{"target": "...",
 A `target_id` reference in a `--layout`/`--template` step still resolves during a dry run (so the
 plan doesn't error out partway through), but against a placeholder rather than a real container id,
 since nothing has actually launched — the placeholder is never shown in the output either way.
+
+### Validate
+
+Parses and validates a `--layout`/`--template` file — every step's height/width/position formats,
+target-field consistency, and `target_id` references, plus (for `--template`) `--bindings`/`--apps`
+resolution — without launching anything or touching Sway IPC. Requires `--layout` or `--template`.
+
+```shell
+$ sway-launch --layout layout.toml --validate
+valid: 3 step(s)
+```
+
+```shell
+$ sway-launch --layout layout.toml --validate
+step 2: height: Must be in format <HEIGHT>px|ppt. E.g. 300px/20ppt. ppt = percent
+```
+
+`--json` prints `{"valid": true, "steps": N}` on success, or the same structured
+`{"error": "...", "rolled_back": [...]}` shape every other runtime error uses. Useful in CI or a
+dotfiles repo to catch a typo in a layout/template file without needing a live Sway session to
+check it against.
 
 ### Wait time
 

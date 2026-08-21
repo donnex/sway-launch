@@ -65,15 +65,17 @@ The crate is four source files plus five integration test files:
 - `tests/json_output.rs` — asserts `main()`'s actual stdout/stderr behavior (`--json` output,
   `--verbose` diagnostics going to stderr) by driving the compiled binary with `--con-id`, the one
   target mode that never touches the Sway socket, so this runs headless in CI. Also covers
-  `--dry-run`'s direct-CLI path — `--dry-run` never touches Sway IPC by design (see "`--dry-run`"
-  below), so unlike most other flags it doesn't need `--con-id` specifically to stay headless.
+  `--dry-run`'s direct-CLI path (`--dry-run` never touches Sway IPC by design — see "`--dry-run`"
+  below — so unlike most other flags it doesn't need `--con-id` specifically to stay headless) and
+  `--validate`'s "requires `--layout`/`--template`" check.
 - `tests/layout.rs` — asserts `--layout`'s end-to-end behavior (file reading, TOML parsing, step
   iteration, `--json` output, error messages) the same way, using `con_id`-only steps. Also covers
-  `--layout --dry-run`, including the `target_id`-placeholder-resolution case.
+  `--layout --dry-run` (including the `target_id`-placeholder-resolution case) and
+  `--layout --validate` (success, a step error, and both `--json` shapes).
 - `tests/template.rs` — the same headless approach applied to `--template`: `con_id`-based
   `Binding`s exercise resolution, `--apps`/`--bindings`, and error messages end to end without
-  needing a live Sway session. Also covers `--template --dry-run`, the same two cases as
-  `tests/layout.rs`.
+  needing a live Sway session. Also covers `--template --dry-run` and `--template --validate`, the
+  same cases as `tests/layout.rs`.
 - `tests/live_sway.rs` — the odd one out: gated behind the `live-sway-tests` Cargo feature (so a
   plain `cargo test` skips it entirely) and needs a real, reachable Sway compositor, run via
   `scripts/run-live-sway-tests` rather than directly. Drives the compiled binary against real
@@ -540,6 +542,27 @@ step has an `id` — never rendered either, same reasoning as `container_id: 0`.
 continuously-numbered line per target/action across every step (matching the external review's own
 illustrative example); `--json` is a single `{"steps": [{"target": ..., "actions": [...]}, ...]}`
 object.
+
+### `--validate`
+
+Parses and validates a `--layout`/`--template` file without launching anything or touching Sway
+IPC, exiting 0 (`valid: N step(s)`, or `{"valid": true, "steps": N}` under `--json`) or 1 (the same
+`step N: <message>`/structured-`--json`-error shape every other runtime failure uses). Requires
+`--layout` or `--template` (the manual `Args::command().error(...)` check mirrors
+`--rollback-on-error`'s existing one exactly, same reasoning: this needs to fire in `main()`'s
+direct-CLI fallthrough path, since `--layout`/`--template` themselves always exit before reaching
+it).
+
+Turned out to need less new machinery than `--dry-run`: `LayoutStep::to_sway_launch()` already
+*is* the validation — height/width/position formats, target-field consistency, `target_id`
+resolution — with no Sway IPC call of its own (only `SwayAction::run()` touches the socket), so
+`run_steps_validate()` is just `run_steps()`'s loop with the `SwayLaunch`/`.run()` call dropped
+entirely: convert every step, propagate the first error, done. A `--template`'s own
+`--bindings`/`--apps` resolution (slot count, duplicate slots, binding correctness) already
+happens unconditionally before `run_steps()` is ever reached (`run_template()`'s own
+`template::resolve()` call) — by the time `--validate` sees `steps`, that part already succeeded,
+so there's nothing left for it to repeat. Uses the same synthetic-`target_id`-placeholder approach
+`run_steps_dry_run()` does, for the same reason.
 
 ### `--completions`
 

@@ -92,6 +92,12 @@ struct Args {
     #[clap(long, conflicts_with = "debug_events")]
     dry_run: bool,
 
+    /// Validate a --layout/--template file (and, for --template,
+    /// --bindings/--apps resolution) without launching anything or touching
+    /// Sway IPC. Requires --layout or --template
+    #[clap(long, conflicts_with = "debug_events")]
+    validate: bool,
+
     /// Timeout in seconds
     #[clap(short, long, default_value_t = 5)]
     timeout: u64,
@@ -109,7 +115,7 @@ struct Args {
         "command", "con_id", "existing", "app_id", "class", "split",
         "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
-        "layout", "template", "list_templates", "bindings", "apps", "rollback_on_error", "dry_run",
+        "layout", "template", "list_templates", "bindings", "apps", "rollback_on_error", "dry_run", "validate",
     ])]
     completions: Option<clap_complete::Shell>,
 
@@ -153,7 +159,7 @@ struct Args {
         "command", "con_id", "existing", "app_id", "class", "split",
         "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
-        "layout", "template", "completions", "bindings", "apps", "rollback_on_error", "dry_run",
+        "layout", "template", "completions", "bindings", "apps", "rollback_on_error", "dry_run", "validate",
     ])]
     list_templates: bool,
 
@@ -229,6 +235,15 @@ fn main() {
             .error(
                 ErrorKind::MissingRequiredArgument,
                 "--rollback-on-error requires --layout or --template",
+            )
+            .exit();
+    }
+
+    if args.validate && args.layout.is_none() && args.template.is_none() {
+        Args::command()
+            .error(
+                ErrorKind::MissingRequiredArgument,
+                "--validate requires --layout or --template",
             )
             .exit();
     }
@@ -609,6 +624,9 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
     if args.dry_run {
         run_steps_dry_run(steps, args);
     }
+    if args.validate {
+        run_steps_validate(steps, args);
+    }
 
     let default_timeout = time::Duration::from_secs(args.timeout);
     let default_wait_time = time::Duration::from_millis(args.wait_time);
@@ -723,6 +741,63 @@ fn run_steps_dry_run(steps: &[layout::LayoutStep], args: &Args) -> ! {
     }
 
     print_dry_run_steps(&dry_run_steps, args.json);
+    process::exit(0);
+}
+
+/// `--validate`'s handling for `--layout`/`--template`: converts every step
+/// to a `SwayLaunch` — exercising exactly the same parsing/validation
+/// `to_sway_launch()` already does for a real run (height/width/position
+/// formats, target-field consistency, `target_id` resolution) — without
+/// ever calling `.run()` or touching Sway IPC. A `--template`'s own
+/// `--bindings`/`--apps` resolution (slot count, duplicate slots, binding
+/// correctness) already happens unconditionally before `run_steps()` is
+/// ever reached (`run_template()`'s own `template::resolve()` call), so
+/// `--validate` doesn't need to repeat that separately — by the time
+/// `steps` reaches here, that part has already succeeded. Uses the same
+/// synthetic-`target_id`-placeholder approach `run_steps_dry_run()` does,
+/// for the same reason (nothing actually launches, so there's no real
+/// container id for a later step's `target_id` to resolve against).
+fn run_steps_validate(steps: &[layout::LayoutStep], args: &Args) -> ! {
+    let default_timeout = time::Duration::from_secs(args.timeout);
+    let default_wait_time = time::Duration::from_millis(args.wait_time);
+    let mut resolved_ids = HashMap::new();
+
+    for (index, step) in steps.iter().enumerate() {
+        if let Some(id) = step.id.as_deref() {
+            if resolved_ids.contains_key(id) {
+                fail(
+                    args.json,
+                    &format!(
+                        "step {}: id {:?} was already used by an earlier step",
+                        index + 1,
+                        id
+                    ),
+                );
+            }
+        }
+
+        if let Err(error) = step.to_sway_launch(
+            default_timeout,
+            default_wait_time,
+            args.verbose,
+            &resolved_ids,
+        ) {
+            fail(args.json, &format!("step {}: {}", index + 1, error));
+        }
+
+        if let Some(id) = step.id.as_deref() {
+            resolved_ids.insert(id.to_string(), index as i64);
+        }
+    }
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::json!({ "valid": true, "steps": steps.len() })
+        );
+    } else {
+        println!("valid: {} step(s)", steps.len());
+    }
     process::exit(0);
 }
 
