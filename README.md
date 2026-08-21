@@ -42,8 +42,8 @@ Requires a running Sway session — `sway-launch` talks to Sway over its IPC soc
     [Mark](#mark)
   - [Workspace](#workspace) · [Output](#output) · [Height and width](#height-and-width) ·
     [Position](#position) · [Split](#split) · [New column](#new-column) · [New row](#new-row)
-  - [Verbose](#verbose) · [JSON output](#json-output) · [Wait time](#wait-time) ·
-    [Debug events](#debug-events)
+  - [Verbose](#verbose) · [JSON output](#json-output) · [Dry run](#dry-run) ·
+    [Wait time](#wait-time) · [Debug events](#debug-events)
 
 ## Installation
 
@@ -92,6 +92,7 @@ Options:
       --output <OUTPUT>            Move new window to output (monitor)
       --position <POSITION>        Set position on new window. Either "center" or "<x>,<y>" in pixels (x/y may be negative)
       --scratchpad                 Move window to the scratchpad
+      --dry-run                    Print the planned sequence of Sway commands instead of running them — works with a direct command or --layout/--template. Never touches Sway IPC or launches anything
   -t, --timeout <TIMEOUT>          Timeout in seconds [default: 5]
   -w, --wait-time <WAIT_TIME>      Wait time in ms. Used for actions that do not have a corresponding Sway IPC event [default: 20]
   -d, --debug-events               Debug events. Output all Sway IPC events until stopped
@@ -662,6 +663,33 @@ $ sway-launch --json --con-id 999999 --floating
 
 `rolled_back` is only ever non-empty when `--rollback-on-error` (see "Layout files" above) actually
 closed something first.
+
+### Dry run
+
+Print the planned sequence of Sway commands instead of running them, numbered continuously across
+every step — never touches Sway IPC or launches anything, so it works even with no Sway session
+running at all. Works with a direct command or `--layout`/`--template`.
+
+```shell
+$ sway-launch --template master-triple-stack --apps code,foot,foot,foot --dry-run
+1. launch code
+2. splith
+3. launch foot
+4. move right
+5. splitv
+6. resize set width 30ppt
+7. launch foot
+8. launch foot
+```
+
+Every line is container-id-free by design: for a fresh command, there's no real window yet to name
+one for; for `--con-id`/`--existing`, showing the id on some lines and not others would be an
+inconsistent preview. `--json` prints a structured `{"steps": [{"target": "...", "actions":
+[...]}, ...]}` object instead.
+
+A `target_id` reference in a `--layout`/`--template` step still resolves during a dry run (so the
+plan doesn't error out partway through), but against a placeholder rather than a real container id,
+since nothing has actually launched — the placeholder is never shown in the output either way.
 
 ### Wait time
 

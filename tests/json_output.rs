@@ -73,6 +73,88 @@ fn rollback_on_error_without_layout_or_template_errors() {
 }
 
 #[test]
+fn dry_run_never_touches_the_socket_even_for_new_column_and_new_row() {
+    // --dry-run's whole point: NewColumn/NewRow normally need a live
+    // get_outputs()/get_tree() call (relocates_to_another_output()) even
+    // just to decide whether to include them, but --dry-run skips that
+    // check entirely -- confirmed here by combining --con-id (which alone
+    // never touches the socket) with --new-column/--new-row, which
+    // definitely would without --dry-run's check_relocation: false.
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--con-id", "42", "--new-column", "--new-row", "--dry-run"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        output.status.success(),
+        "sway-launch --dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(
+        stdout.trim(),
+        "1. target existing container\n2. move right\n3. move down"
+    );
+}
+
+#[test]
+fn dry_run_plain_output_is_a_numbered_list() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--con-id",
+            "42",
+            "--floating",
+            "--mark",
+            "pinned",
+            "--dry-run",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(
+        stdout.trim(),
+        "1. target existing container\n2. floating enable\n3. mark \"pinned\""
+    );
+}
+
+#[test]
+fn dry_run_json_output_is_a_structured_steps_array() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--con-id", "42", "--floating", "--dry-run", "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(
+        stdout.trim(),
+        "{\"steps\":[{\"actions\":[\"floating enable\"],\"target\":\"target existing container\"}]}"
+    );
+}
+
+#[test]
+fn dry_run_never_launches_the_command() {
+    // A --dry-run with a real command (not --con-id/--existing) must never
+    // actually exec it -- this uses a command that would create an
+    // unmistakable side effect if it ran, and confirms it didn't.
+    let marker_dir = std::env::temp_dir().join("sway-launch-dry-run-test-marker");
+    let _ = std::fs::remove_dir(&marker_dir);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--dry-run", &format!("mkdir {}", marker_dir.display())])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(output.status.success());
+    assert!(
+        !marker_dir.exists(),
+        "--dry-run should never actually run the given command"
+    );
+}
+
+#[test]
 fn con_id_verbose_diagnostics_go_to_stderr_not_stdout() {
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
         .args(["--con-id", "42", "--verbose"])
