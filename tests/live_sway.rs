@@ -792,6 +792,107 @@ fn new_column_does_not_relocate_a_nested_window_to_a_different_output() {
 }
 
 #[test]
+fn new_column_combined_with_workspace_lands_on_the_target_workspace_correctly() {
+    // Regression test for external-review.md's #14 investigation (see ISSUES.md/CLAUDE.md):
+    // SwayLaunch::run()'s fixed order runs NewColumn before Workspace, so
+    // `--new-column --workspace <target>` restructures the window relative
+    // to its *origin* workspace's siblings before moving it away. Confirmed
+    // live this is harmless, not a bug: whatever "move right" did on the
+    // origin workspace is entirely superseded once "move workspace"
+    // relocates the window elsewhere -- it lands as an ordinary new
+    // sibling in the target workspace's existing layout, and the origin
+    // workspace's other windows are left completely undisturbed.
+    let mut connection = connect();
+    let (origin_first, _origin_first_guard) =
+        launch_foot(&["--workspace", "live-sway-test-new-column-workspace-origin"]);
+    let (_origin_second, _origin_second_guard) =
+        launch_foot(&["--workspace", "live-sway-test-new-column-workspace-origin"]);
+    let (target_first, _target_first_guard) =
+        launch_foot(&["--workspace", "live-sway-test-new-column-workspace-target"]);
+
+    connection
+        .run_command("workspace live-sway-test-new-column-workspace-origin")
+        .expect("workspace switch should succeed");
+    let (moved_id, _moved_guard) = launch_foot(&[
+        "--new-column",
+        "--workspace",
+        "live-sway-test-new-column-workspace-target",
+    ]);
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        workspace_containing(&tree, moved_id, None),
+        Some("live-sway-test-new-column-workspace-target"),
+        "the window should end up on the target workspace, not stranded on its origin one"
+    );
+    assert_eq!(
+        workspace_containing(&tree, origin_first, None),
+        Some("live-sway-test-new-column-workspace-origin"),
+        "the origin workspace's own windows should be undisturbed"
+    );
+    assert_eq!(
+        workspace_containing(&tree, target_first, None),
+        Some("live-sway-test-new-column-workspace-target"),
+        "the target workspace's own pre-existing window should still be there too"
+    );
+}
+
+#[test]
+fn new_column_output_guard_still_applies_when_combined_with_output() {
+    // Companion to the workspace case above: when --new-column and --output
+    // are combined in one invocation and the window is at the trailing edge
+    // of an axis-matched, multi-output-eligible workspace,
+    // relocates_to_another_output() should still skip the (redundant, and
+    // in a single-output world dangerous) "move right" exactly as it does
+    // when --new-column runs alone -- confirmed live this combination
+    // doesn't bypass or double up on the existing guard.
+    let mut connection = connect();
+    let outputs_before: Vec<String> = connection
+        .get_outputs()
+        .expect("get_outputs should succeed")
+        .into_iter()
+        .map(|output| output.name)
+        .collect();
+    connection
+        .run_command("create_output")
+        .expect("create_output should succeed")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("create_output should succeed");
+    let new_output = connection
+        .get_outputs()
+        .expect("get_outputs should succeed")
+        .into_iter()
+        .map(|output| output.name)
+        .find(|name| !outputs_before.contains(name))
+        .expect("create_output should have added a new output");
+
+    let (first_id, _first_guard) =
+        launch_foot(&["--workspace", "live-sway-test-new-column-output-combo"]);
+    connection
+        .run_command("workspace live-sway-test-new-column-output-combo")
+        .expect("workspace switch should succeed");
+    let tree_before_first = connection.get_tree().expect("get_tree should succeed");
+    let origin_output = output_containing(&tree_before_first, first_id, None)
+        .expect("first window should be found in the tree")
+        .to_string();
+
+    let (second_id, _second_guard) = launch_foot(&["--new-column", "--output", &new_output]);
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        output_containing(&tree, second_id, None),
+        Some(new_output.as_str()),
+        "the window should end up on the requested output, same as --output alone"
+    );
+    assert_eq!(
+        output_containing(&tree, first_id, None),
+        Some(origin_output.as_str()),
+        "the first window should stay on its original output, undisturbed"
+    );
+}
+
+#[test]
 fn fullscreen_enables_fullscreen_mode() {
     let mut connection = connect();
     let (container_id, _guard) = launch_foot(&["--fullscreen"]);

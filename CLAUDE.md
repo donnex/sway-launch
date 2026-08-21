@@ -391,6 +391,20 @@ the window by later (e.g. `swaymsg 'mark dropdown-term scratchpad show'`), the c
 final container id is printed to stdout (`main.rs`, as a bare integer, or as `{"container_id": N}`
 under `--json`) — this is what makes commands chainable/scriptable (see README examples).
 
+`NewColumn`/`NewRow` running *before* `Workspace`/`Output` in this order means `--new-column
+--workspace 3` (or `--new-row --output ...`) restructures the window relative to its *origin*
+workspace's siblings before the subsequent move relocates it — an external review flagged this as a
+potential semantic surprise (the window arguably "should" restructure on the target workspace, not
+the origin one). Investigated live rather than assumed: confirmed harmless in every case tried
+(solo origin workspace, non-solo origin workspace, and the multi-output case where
+`relocates_to_another_output()` above already applies) — whatever `move right`/`move down` did on
+the origin workspace is entirely superseded once `move workspace`/`move container to output`
+relocates the window elsewhere, so it always lands as an ordinary new sibling in the target's
+existing layout with the origin workspace's other windows completely undisturbed. No reorder
+needed. Confirmed by `tests/live_sway.rs`'s
+`new_column_combined_with_workspace_lands_on_the_target_workspace_correctly` and
+`new_column_output_guard_still_applies_when_combined_with_output`.
+
 Before running `NewColumn`/`NewRow`, `run()` calls
 `relocates_to_another_output(container_id, direction)`, which checks `get_outputs()` (skipping the
 guard entirely when there's only one output) and, if more than one exists, `get_tree()` +
