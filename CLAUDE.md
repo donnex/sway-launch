@@ -75,7 +75,8 @@ The crate is four source files plus five integration test files:
 - `tests/template.rs` — the same headless approach applied to `--template`: `con_id`-based
   `Binding`s exercise resolution, `--apps`/`--bindings`, and error messages end to end without
   needing a live Sway session. Also covers `--template --dry-run` and `--template --validate`, the
-  same cases as `tests/layout.rs`.
+  same cases as `tests/layout.rs`, plus `--show-template` (built-in name, file path, `--json`,
+  unknown-name error, and its conflicts with a command/`--template`).
 - `tests/live_sway.rs` — the odd one out: gated behind the `live-sway-tests` Cargo feature (so a
   plain `cargo test` skips it entirely) and needs a real, reachable Sway compositor, run via
   `scripts/run-live-sway-tests` rather than directly. Drives the compiled binary against real
@@ -711,7 +712,7 @@ has a known history of interacting badly with `#[serde(deny_unknown_fields)]` on
 this project's explicit typo-catching regression tests (see `parse_rejects_misspelled_step_field`
 in both `layout.rs` and `template.rs`).
 
-### Built-in templates (`--template <name>`, `--list-templates`)
+### Built-in templates (`--template <name>`, `--list-templates`, `--show-template`)
 
 `--template`'s argument can be either a path to a template file ending in `.toml` (the original
 behavior above) or a bare name with no extension, resolved against a built-in copy of every file
@@ -752,6 +753,23 @@ extension), alongside the existing `every_shipped_template_resolves_and_launches
 (which still drives every file by its `.toml` path, unchanged) — proving the embedded copy a bare
 name resolves to is the genuine, working template content, not just that the lookup compiles.
 
+`--show-template <NAME_OR_PATH>` (`main.rs`'s `print_template_contents()`) is a third standalone
+mode alongside `--list-templates`: prints one template's raw TOML and exits, without running it —
+useful for inspecting a built-in's exact shape before binding apps to it, or diffing it against a
+customized copy. Reuses `resolve_template_contents()` unchanged, so it accepts the exact same
+`NAME_OR_PATH` `--template` itself does (a built-in name or a `.toml`-suffixed file path) with no
+separate resolution logic to keep in sync. `--json` prints `{"name": ..., "contents": "..."}`
+rather than the bare TOML text, `name` echoing back the argument as given (not a canonicalized
+path) since it's just an identifying label for the caller, not something meant to be re-parsed.
+Like `--list-templates`/`--completions`, it never touches Sway IPC, so it's checked and
+short-circuits right after `--list-templates`, before the `--layout`/`--template` dispatch, and
+needs no `tests/live_sway.rs` coverage — the same reasoning `--completions` is exempt for above.
+Covered headlessly by `tests/template.rs`: `show_template_prints_a_builtin_s_raw_toml`,
+`show_template_prints_a_file_s_raw_toml`, `show_template_json_output_is_a_structured_object`,
+`show_template_unknown_builtin_name_errors_clearly`, `show_template_conflicts_with_a_command`
+(it conflicts with a positional command the same way `--list-templates` does, rather than silently
+ignoring one), and `show_template_conflicts_with_template`.
+
 ## Example layout scripts
 
 `examples/` splits into two subdirectories by what each file actually is, not just topic; a third
@@ -785,7 +803,7 @@ an application: spelled-out count words for even splits/grids (`dual-row.toml`,
 `triple-column.toml`, `six-grid.toml`, ...) and descriptive compound names for special-purpose
 shapes (`master-dual-stack.toml`, `sidebar-left.toml`, `floating-overlay.toml`, ...). Every file
 here is also embedded into the binary as a built-in `--template <name>` — see "Built-in templates
-(`--template <name>`, `--list-templates`)" under "`--template`" above for how. It lives at the repo
+(`--template <name>`, `--list-templates`, `--show-template`)" under "`--template`" above for how. It lives at the repo
 root rather than under `examples/` precisely because of that: once a directory's contents are
 compiled into the shipped binary, calling it merely an "example" undersells it — unlike
 `examples/layouts/` and `examples/scripts/`, which really are just illustrative and never embedded.

@@ -621,6 +621,91 @@ fn list_templates_json_output_is_a_structured_array() {
 }
 
 #[test]
+fn show_template_prints_a_builtin_s_raw_toml() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--show-template", "quad-grid"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert!(stdout.contains("quad-terminals.toml's shape."));
+    assert!(stdout.contains("slot = \"top-left\""));
+}
+
+#[test]
+fn show_template_prints_a_file_s_raw_toml() {
+    let template = TempToml::write("show-template-file", "[[step]]\nslot = \"editor\"\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--show-template", template.to_str().unwrap()])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(stdout, "[[step]]\nslot = \"editor\"\n");
+}
+
+#[test]
+fn show_template_json_output_is_a_structured_object() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--show-template", "quad-grid", "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("output should be valid JSON");
+    assert_eq!(parsed["name"], "quad-grid");
+    assert!(parsed["contents"]
+        .as_str()
+        .expect("contents should be a string")
+        .contains("slot = \"top-left\""));
+}
+
+#[test]
+fn show_template_unknown_builtin_name_errors_clearly() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--show-template", "not-a-real-template"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("not-a-real-template"));
+    assert!(stderr.contains("--list-templates"));
+}
+
+#[test]
+fn show_template_conflicts_with_a_command() {
+    // --show-template is a standalone mode, same as --list-templates: it
+    // must never launch/act on any window, so it conflicts with a positional
+    // command outright rather than silently ignoring one.
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--show-template", "quad-grid", "foot"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+}
+
+#[test]
+fn show_template_conflicts_with_template() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--show-template", "quad-grid", "--template", "quad-grid"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+}
+
+#[test]
 fn template_conflicts_with_layout() {
     let template = TempToml::write("conflicts-template", "[[step]]\nslot = \"editor\"\n");
 

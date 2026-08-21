@@ -116,6 +116,7 @@ struct Args {
         "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
         "layout", "template", "list_templates", "bindings", "apps", "rollback_on_error", "dry_run", "validate",
+        "show_template",
     ])]
     completions: Option<clap_complete::Shell>,
 
@@ -160,8 +161,21 @@ struct Args {
         "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
         "layout", "template", "completions", "bindings", "apps", "rollback_on_error", "dry_run", "validate",
+        "show_template",
     ])]
     list_templates: bool,
+
+    /// Print a --template's raw TOML and exit, without running it. Same
+    /// NAME_OR_PATH resolution as --template: a built-in name (see
+    /// --list-templates), or a path ending in .toml. With --json, prints
+    /// {"name": ..., "contents": "..."}
+    #[clap(long, value_name = "NAME_OR_PATH", conflicts_with_all = [
+        "command", "con_id", "existing", "app_id", "class", "split",
+        "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
+        "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
+        "layout", "template", "completions", "bindings", "apps", "rollback_on_error", "dry_run", "validate",
+    ])]
+    show_template: Option<PathBuf>,
 
     /// Bindings file supplying each --template slot's application identity.
     /// Requires --template; conflicts with --apps
@@ -200,6 +214,11 @@ fn main() {
 
     if args.list_templates {
         print_builtin_templates(args.json);
+        process::exit(0);
+    }
+
+    if let Some(show_template_arg) = &args.show_template {
+        print_template_contents(show_template_arg, args.json);
         process::exit(0);
     }
 
@@ -517,6 +536,28 @@ fn print_builtin_templates(json: bool) {
     for template in &templates {
         println!("{:<name_width$}  {}", template.name, template.description);
     }
+}
+
+/// The `--show-template` standalone mode: resolves its argument the exact
+/// same way `--template` itself does (via `resolve_template_contents()`),
+/// then prints the raw TOML instead of running it. Doesn't touch Sway IPC,
+/// so it's checked and short-circuits right after `--list-templates`, same
+/// as `--layout`/`--template`.
+fn print_template_contents(template_arg: &Path, json: bool) {
+    let contents = match resolve_template_contents(template_arg) {
+        Ok(contents) => contents,
+        Err(error) => fail(json, &error),
+    };
+
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({ "name": template_arg.to_string_lossy(), "contents": contents })
+        );
+        return;
+    }
+
+    print!("{contents}");
 }
 
 /// Reads and parses a `--template` file, resolves it against `--bindings`/

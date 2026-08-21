@@ -74,40 +74,41 @@ Arguments:
   [COMMAND]  Command to execute
 
 Options:
-  -a, --app-id <APP_ID>            app_id match. With --existing, matches an already-open window instead of the newly launched one
-  -c, --class <CLASS>              class match. With --existing, matches an already-open window instead of the newly launched one
-      --con-id <CON_ID>            Act on an already-open window with this container id, instead of launching a new one
-      --existing                   Act on an already-open window found via --app-id/--class, instead of launching a new one
-  -s, --split <SPLIT>              Change split for new window [possible values: v, h]
-  -f, --floating                   Make new window floating
-      --sticky                     Make new window sticky (shows on all workspaces)
-      --fullscreen                 Make new window fullscreen
-      --focus                      Focus new window
-  -m, --mark <MARK>                Add mark to new window
-  -n, --new-column                 Move window to new column (move right)
-      --height <HEIGHT>            Set height on new window
-      --width <WIDTH>              Set width on new window
-  -r, --new-row                    Move window to new row (move down)
-      --workspace <WORKSPACE>      Move new window to workspace
-      --output <OUTPUT>            Move new window to output (monitor)
-      --position <POSITION>        Set position on new window. Either "center" or "<x>,<y>" in pixels (x/y may be negative)
-      --scratchpad                 Move window to the scratchpad
-      --dry-run                    Print the planned sequence of Sway commands instead of running them — works with a direct command or --layout/--template. Never touches Sway IPC or launches anything
-      --validate                   Validate a --layout/--template file (and, for --template, --bindings/--apps resolution) without launching anything or touching Sway IPC. Requires --layout or --template
-  -t, --timeout <TIMEOUT>          Timeout in seconds [default: 5]
-  -w, --wait-time <WAIT_TIME>      Wait time in ms. Used for actions that do not have a corresponding Sway IPC event [default: 20]
-  -d, --debug-events               Debug events. Output all Sway IPC events until stopped
-      --completions <COMPLETIONS>  Generate a shell completion script and print it to stdout [possible values: bash, elvish, fish, powershell, zsh]
-  -v, --verbose                    Verbose output
-      --json                       Print the result as a JSON object instead of a bare container id
-      --layout <LAYOUT>            Run a declarative TOML layout file instead of a single command; see README.md for the schema. Each step is the equivalent of one sway-launch invocation's flags, so this conflicts with every per-window flag below, which would otherwise apply to no specific step
-      --template <TEMPLATE>        Run a reusable declarative TOML layout template instead of a single command; see README.md for the schema. Steps declare a `slot` instead of an application, resolved via --bindings or --apps. Either a path to a template file ending in .toml, or a built-in template name with no extension (see --list-templates). Conflicts with --layout and every per-window flag, same reasoning as --layout
-      --list-templates             List built-in --template names and exit
-      --bindings <BINDINGS>        Bindings file supplying each --template slot's application identity. Requires --template; conflicts with --apps
-      --apps <APPS>                Comma-separated list of commands to launch into --template's slots, in the order they first appear in the template. Requires --template; conflicts with --bindings
-      --rollback-on-error          If a later --layout/--template step fails, kill every window this invocation itself launched by an earlier, already-completed step (not one it merely retargeted via con_id/existing/target_id), rather than leaving them open. Requires --layout or --template
-  -h, --help                       Print help
-  -V, --version                    Print version
+  -a, --app-id <APP_ID>               app_id match. With --existing, matches an already-open window instead of the newly launched one
+  -c, --class <CLASS>                 class match. With --existing, matches an already-open window instead of the newly launched one
+      --con-id <CON_ID>               Act on an already-open window with this container id, instead of launching a new one
+      --existing                      Act on an already-open window found via --app-id/--class, instead of launching a new one
+  -s, --split <SPLIT>                 Change split for new window [possible values: v, h]
+  -f, --floating                      Make new window floating
+      --sticky                        Make new window sticky (shows on all workspaces)
+      --fullscreen                    Make new window fullscreen
+      --focus                         Focus new window
+  -m, --mark <MARK>                   Add mark to new window
+  -n, --new-column                    Move window to new column (move right)
+      --height <HEIGHT>               Set height on new window
+      --width <WIDTH>                 Set width on new window
+  -r, --new-row                       Move window to new row (move down)
+      --workspace <WORKSPACE>         Move new window to workspace
+      --output <OUTPUT>               Move new window to output (monitor)
+      --position <POSITION>           Set position on new window. Either "center" or "<x>,<y>" in pixels (x/y may be negative)
+      --scratchpad                    Move window to the scratchpad
+      --dry-run                       Print the planned sequence of Sway commands instead of running them — works with a direct command or --layout/--template. Never touches Sway IPC or launches anything
+      --validate                      Validate a --layout/--template file (and, for --template, --bindings/--apps resolution) without launching anything or touching Sway IPC. Requires --layout or --template
+  -t, --timeout <TIMEOUT>             Timeout in seconds [default: 5]
+  -w, --wait-time <WAIT_TIME>         Wait time in ms. Used for actions that do not have a corresponding Sway IPC event [default: 20]
+  -d, --debug-events                  Debug events. Output all Sway IPC events until stopped
+      --completions <COMPLETIONS>     Generate a shell completion script and print it to stdout [possible values: bash, elvish, fish, powershell, zsh]
+  -v, --verbose                       Verbose output
+      --json                          Print the result as a JSON object instead of a bare container id
+      --layout <LAYOUT>               Run a declarative TOML layout file instead of a single command; see README.md for the schema. Each step is the equivalent of one sway-launch invocation's flags, so this conflicts with every per-window flag below, which would otherwise apply to no specific step
+      --template <TEMPLATE>           Run a reusable declarative TOML layout template instead of a single command; see README.md for the schema. Steps declare a `slot` instead of an application, resolved via --bindings or --apps. Either a path to a template file ending in .toml, or a built-in template name with no extension (see --list-templates). Conflicts with --layout and every per-window flag, same reasoning as --layout
+      --list-templates                List built-in --template names and exit
+      --show-template <NAME_OR_PATH>  Print a --template's raw TOML and exit, without running it. Same NAME_OR_PATH resolution as --template: a built-in name (see --list-templates), or a path ending in .toml. With --json, prints {"name": ..., "contents": "..."}
+      --bindings <BINDINGS>           Bindings file supplying each --template slot's application identity. Requires --template; conflicts with --apps
+      --apps <APPS>                   Comma-separated list of commands to launch into --template's slots, in the order they first appear in the template. Requires --template; conflicts with --bindings
+      --rollback-on-error             If a later --layout/--template step fails, kill every window this invocation itself launched by an earlier, already-completed step (not one it merely retargeted via con_id/existing/target_id), rather than leaving them open. Requires --layout or --template
+  -h, --help                          Print help
+  -V, --version                       Print version
 ```
 
 ## Quickstart
@@ -401,6 +402,16 @@ instead, so a built-in name and a same-named local template file never collide. 
 ```shell
 sway-launch --template quad-grid --apps foot,firefox,code,thunar
 ```
+
+To inspect a built-in's exact shape before binding apps to it, `--show-template <NAME_OR_PATH>`
+prints its raw TOML and exits without running it — the same `NAME_OR_PATH` resolution `--template`
+itself uses, so it works on a built-in name or a local `.toml` file path alike:
+
+```shell
+sway-launch --show-template quad-grid
+```
+
+Add `--json` for `{"name": "quad-grid", "contents": "..."}` instead of the bare TOML text.
 
 The library below has a small set of other app-agnostic shapes ready to apply to any application
 via `--apps`/`--bindings`. Each file's own header comment has a ready-to-run `--apps` example.
