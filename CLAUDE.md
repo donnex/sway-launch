@@ -1262,7 +1262,7 @@ after being asked. Don't flag it in a future content-policy review, and don't us
 for adding other real URLs without the same explicit confirmation.
 
 **Approved exception:** `README.md:8`/`CLAUDE.md:7` (`https://swaywm.org/`, the window manager
-this tool is built for), `CLAUDE.md:1123` (`https://cli.github.com/`, the `gh` CLI's own site), and
+this tool is built for), `CLAUDE.md:1296` (`https://cli.github.com/`, the `gh` CLI's own site), and
 `Cargo.toml:9` (`https://doc.rust-lang.org/cargo/reference/manifest.html`, `cargo init`'s
 boilerplate "see more keys" comment pointing at Cargo's own manifest reference docs) are real
 URLs, but each is a necessary reference to the specific upstream project/tool the surrounding text
@@ -1283,12 +1283,20 @@ regenerating either file with different URLs needs no re-confirmation and should
 future content-policy review.
 
 **Approved exception:** `CHANGELOG.md`'s header and this file's "Changelog" section
-(`CLAUDE.md:627`) link to `https://keepachangelog.com/en/1.1.0/` and
+(`CLAUDE.md:734`) link to `https://keepachangelog.com/en/1.1.0/` and
 `https://semver.org/spec/v2.0.0.html`. Both are real URLs, but each is a necessary reference to the
 specific upstream spec the surrounding text is about, the same reasoning as the `swaywm.org`/
 `cli.github.com`/`doc.rust-lang.org` exception above — the user explicitly signed off on these
 after being asked (2026-08-20). Don't flag these two in a future content-policy review, and don't
 use this as precedent for adding other real URLs without the same explicit confirmation.
+
+**Approved exception:** `LICENSE:3`'s `Copyright (c) 2026, donnex` uses the maintainer's real
+handle. Unlike the placeholder-name rule above, this isn't an illustrative example — it's the
+actual copyright holder of this actual repository, the same self-referential reasoning as the
+`github.com/donnex/sway-launch` URL exceptions above (a placeholder name in a real LICENSE file
+would be legally meaningless). The user explicitly signed off on this after being asked
+(2026-08-21). Don't flag it in a future content-policy review, and don't use this as precedent for
+writing any other real name without the same explicit confirmation.
 
 ## Issues
 
