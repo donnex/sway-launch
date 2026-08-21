@@ -3,6 +3,11 @@
 #   sway-launch --template floating-overlay --apps code,foot
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
+#
+# position = "center" was added to overlay so it lands somewhere
+# deterministic every run — without it, overlay landed wherever Sway's own
+# default floating placement happened to put it, the one shape in this
+# library whose final geometry wasn't fully reproducible run to run.
 
 [[step]]
 slot = "main"
@@ -12,3 +17,4 @@ slot = "overlay"
 floating = true
 width = "700px"
 height = "450px"
+position = "center"
