@@ -10,6 +10,10 @@
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
 
+[template]
+description = "Three windows stacked in a single column."
+category = "Grid"
+
 [[step]]
 slot = "top"
 split = "v"

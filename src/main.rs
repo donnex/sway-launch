@@ -521,7 +521,11 @@ fn print_builtin_templates(json: bool) {
         let templates: Vec<_> = templates
             .iter()
             .map(|template| {
-                serde_json::json!({ "name": template.name, "description": template.description })
+                serde_json::json!({
+                    "name": template.name,
+                    "category": template.category,
+                    "description": template.description,
+                })
             })
             .collect();
         println!("{}", serde_json::json!({ "templates": templates }));
@@ -533,8 +537,16 @@ fn print_builtin_templates(json: bool) {
         .map(|template| template.name.len())
         .max()
         .unwrap_or(0);
+    let category_width = templates
+        .iter()
+        .map(|template| template.category.len())
+        .max()
+        .unwrap_or(0);
     for template in &templates {
-        println!("{:<name_width$}  {}", template.name, template.description);
+        println!(
+            "{:<name_width$}  {:<category_width$}  {}",
+            template.name, template.category, template.description
+        );
     }
 }
 

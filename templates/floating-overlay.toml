@@ -9,6 +9,10 @@
 # default floating placement happened to put it, the one shape in this
 # library whose final geometry wasn't fully reproducible run to run.
 
+[template]
+description = "A tiled main window, with a small floating window on top of it."
+category = "Floating"
+
 [[step]]
 slot = "main"
 

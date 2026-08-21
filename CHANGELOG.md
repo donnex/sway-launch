@@ -42,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   action that actually ran, in order); `--layout`/`--template` now also reports `"containers"` (a
   map from each named step's `id`/`slot` to its container id). No compatibility shim — every field
   from the previous shape is still present, just alongside the new ones.
+- Every `--template` file now requires a `[template]` table with `description` and `category`
+  fields, replacing the old convention of scraping the description from the file's first header
+  comment line. `--list-templates`/`--show-template --json` now also report each template's
+  `category`. This is a breaking change for a hand-authored `--template <file>.toml` without the
+  table — add one (see README.md's "Templates" section) to keep it working. Every built-in template
+  under `templates/` has been migrated to the new format.
 - `floating-overlay` template's overlay window is now explicitly centered (`position = "center"`),
   so it lands somewhere deterministic every run instead of wherever Sway's own default floating
   placement happened to put it.

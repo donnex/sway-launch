@@ -1249,7 +1249,8 @@ fn template_apps_resolve_to_real_windows() {
     let mut connection = connect();
     let path = TempToml::write(
         "template",
-        "[[step]]\nslot = \"first\"\n\n\
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n\
+         [[step]]\nslot = \"first\"\n\n\
          [[step]]\nslot = \"second\"\n\n\
          [[step]]\ntarget_id = \"first\"\nmark = \"live-sway-test-template\"\n",
     );
@@ -2713,7 +2714,8 @@ fn bindings_file_resolves_existing_and_command_slots_to_real_windows() {
 
     let template_path = TempToml::write(
         "bindings-template",
-        "[[step]]\nslot = \"existing_window\"\nmark = \"live-sway-test-bindings-existing\"\n\n\
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n\
+         [[step]]\nslot = \"existing_window\"\nmark = \"live-sway-test-bindings-existing\"\n\n\
          [[step]]\nslot = \"primary\"\nmark = \"live-sway-test-bindings-primary\"\n",
     );
     let bindings_path = TempToml::write(

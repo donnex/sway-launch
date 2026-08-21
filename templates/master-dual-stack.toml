@@ -11,6 +11,10 @@
 # slot instead reshapes both, since sway redistributes the space between
 # them.
 
+[template]
+description = "One large main window on the left, two smaller windows stacked in a column on the right."
+category = "Master/stack"
+
 [[step]]
 slot = "main"
 split = "h"

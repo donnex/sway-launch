@@ -13,6 +13,10 @@
 # horizontal sibling beside it — converting the workspace from "three
 # windows stacked" into "stack column | main" side by side.
 
+[template]
+description = "A 2-window stack on the left, one large main window on the right."
+category = "Master/stack"
+
 [[step]]
 slot = "stack-top"
 split = "v"

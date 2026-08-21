@@ -39,7 +39,7 @@ impl Drop for TempToml {
 fn template_resolves_via_bindings_file_end_to_end() {
     let template = TempToml::write(
         "resolve-bindings-template",
-        "[[step]]\nslot = \"editor\"\n\n[[step]]\nslot = \"terminal\"\n",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n\n[[step]]\nslot = \"terminal\"\n",
     );
     let bindings = TempToml::write(
         "resolve-bindings-bindings",
@@ -70,7 +70,7 @@ fn template_resolves_via_bindings_file_end_to_end() {
 fn template_dry_run_prints_a_continuously_numbered_plan_via_apps() {
     let template = TempToml::write(
         "dry-run-apps-template",
-        "[[step]]\nslot = \"editor\"\nsplit = \"h\"\n\n[[step]]\nslot = \"terminal\"\nnew_column = true\n",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\nsplit = \"h\"\n\n[[step]]\nslot = \"terminal\"\nnew_column = true\n",
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
@@ -100,7 +100,7 @@ fn template_dry_run_prints_a_continuously_numbered_plan_via_apps() {
 fn template_dry_run_resolves_target_id_without_launching_anything() {
     let template = TempToml::write(
         "dry-run-target-id-template",
-        "[[step]]\nslot = \"editor\"\n\n[[step]]\ntarget_id = \"editor\"\nwidth = \"70ppt\"\n",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n\n[[step]]\ntarget_id = \"editor\"\nwidth = \"70ppt\"\n",
     );
     let bindings = TempToml::write(
         "dry-run-target-id-bindings",
@@ -134,7 +134,7 @@ fn template_dry_run_resolves_target_id_without_launching_anything() {
 fn template_dry_run_json_output_is_a_structured_steps_array() {
     let template = TempToml::write(
         "dry-run-json-template",
-        "[[step]]\nslot = \"editor\"\nfocus = true\n",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\nfocus = true\n",
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
@@ -161,7 +161,7 @@ fn template_dry_run_json_output_is_a_structured_steps_array() {
 fn template_validate_reports_success_without_launching_anything() {
     let template = TempToml::write(
         "validate-ok-template",
-        "[[step]]\nslot = \"editor\"\n\n[[step]]\nslot = \"terminal\"\n",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n\n[[step]]\nslot = \"terminal\"\n",
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
@@ -188,7 +188,7 @@ fn template_validate_reports_success_without_launching_anything() {
 fn template_validate_reports_a_step_error() {
     let template = TempToml::write(
         "validate-bad-template",
-        "[[step]]\nslot = \"editor\"\nheight = \"notasize\"\n",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\nheight = \"notasize\"\n",
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
@@ -212,7 +212,7 @@ fn template_validate_reports_a_step_error() {
 fn template_target_id_references_an_earlier_slot() {
     let template = TempToml::write(
         "target-id-template",
-        "[[step]]\nslot = \"editor\"\n\n[[step]]\ntarget_id = \"editor\"\n",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n\n[[step]]\ntarget_id = \"editor\"\n",
     );
     let bindings = TempToml::write(
         "target-id-bindings",
@@ -242,7 +242,7 @@ fn template_target_id_references_an_earlier_slot() {
 fn template_apps_count_mismatch_names_the_missing_slots() {
     let template = TempToml::write(
         "apps-mismatch-template",
-        "[[step]]\nslot = \"editor\"\n\n[[step]]\nslot = \"terminal\"\n",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n\n[[step]]\nslot = \"terminal\"\n",
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
@@ -265,7 +265,7 @@ fn template_rejects_two_steps_sharing_a_slot_name() {
     // mistake), so the error text this asserts on changed accordingly.
     let template = TempToml::write(
         "duplicate-slot-template",
-        "[[step]]\nslot = \"editor\"\n\n[[step]]\nslot = \"editor\"\n",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n\n[[step]]\nslot = \"editor\"\n",
     );
     let bindings = TempToml::write(
         "duplicate-slot-bindings",
@@ -291,7 +291,7 @@ fn template_rejects_two_steps_sharing_a_slot_name() {
 
 #[test]
 fn template_rejects_missing_binding() {
-    let template = TempToml::write("missing-binding-template", "[[step]]\nslot = \"editor\"\n");
+    let template = TempToml::write("missing-binding-template", "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n");
     let bindings = TempToml::write("missing-binding-bindings", "");
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
@@ -311,7 +311,7 @@ fn template_rejects_missing_binding() {
 
 #[test]
 fn template_rejects_unused_binding() {
-    let template = TempToml::write("unused-binding-template", "[[step]]\nslot = \"editor\"\n");
+    let template = TempToml::write("unused-binding-template", "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n");
     let bindings = TempToml::write(
         "unused-binding-bindings",
         "[[binding]]\nslot = \"editor\"\ncon_id = 42\n\n\
@@ -337,7 +337,7 @@ fn template_rejects_unused_binding() {
 fn template_rejects_misspelled_step_field() {
     let template = TempToml::write(
         "misspelled-field-template",
-        "[[step]]\nslot = \"editor\"\nflaoting = true\n",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\nflaoting = true\n",
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
@@ -381,7 +381,7 @@ fn template_missing_file_errors() {
 fn template_bindings_malformed_toml_errors() {
     let template = TempToml::write(
         "malformed-bindings-template",
-        "[[step]]\nslot = \"editor\"\n",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n",
     );
     let bindings = TempToml::write("malformed-bindings-bindings", "this is not toml [[[");
 
@@ -400,7 +400,7 @@ fn template_bindings_malformed_toml_errors() {
 
 #[test]
 fn template_bindings_missing_file_errors() {
-    let template = TempToml::write("missing-bindings-template", "[[step]]\nslot = \"editor\"\n");
+    let template = TempToml::write("missing-bindings-template", "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n");
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
         .args([
@@ -419,7 +419,7 @@ fn template_bindings_missing_file_errors() {
 
 #[test]
 fn template_requires_bindings_or_apps() {
-    let template = TempToml::write("requires-binding-source", "[[step]]\nslot = \"editor\"\n");
+    let template = TempToml::write("requires-binding-source", "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n");
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
         .args(["--template", template.to_str().unwrap()])
@@ -468,7 +468,7 @@ fn template_bindings_without_template_flag_errors() {
 fn template_apps_rejects_an_empty_entry() {
     let template = TempToml::write(
         "apps-empty-entry-template",
-        "[[step]]\nslot = \"editor\"\n\n[[step]]\nslot = \"terminal\"\n",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n\n[[step]]\nslot = \"terminal\"\n",
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
@@ -485,7 +485,7 @@ fn template_apps_rejects_an_empty_entry() {
 fn template_rejects_binding_with_app_id_and_class_together() {
     let template = TempToml::write(
         "binding-app-id-and-class-template",
-        "[[step]]\nslot = \"editor\"\n",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n",
     );
     let bindings = TempToml::write(
         "binding-app-id-and-class-bindings",
@@ -596,7 +596,9 @@ fn list_templates_prints_known_names_and_descriptions() {
     );
     let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
     assert!(stdout.contains("quad-grid"));
-    assert!(stdout.contains("quad-terminals.toml's shape."));
+    assert!(stdout
+        .contains("An equally sized 2x2 grid, two rows of two, with no application baked in."));
+    assert!(stdout.contains("Grid"));
     assert!(stdout.contains("sidebar-left-dual-stack"));
 }
 
@@ -615,9 +617,9 @@ fn list_templates_json_output_is_a_structured_array() {
         .as_array()
         .expect("templates should be an array");
     assert!(templates.len() >= 18);
-    assert!(templates
-        .iter()
-        .any(|entry| entry["name"] == "quad-grid" && entry["description"].is_string()));
+    assert!(templates.iter().any(|entry| entry["name"] == "quad-grid"
+        && entry["description"].is_string()
+        && entry["category"] == "Grid"));
 }
 
 #[test]
@@ -707,7 +709,7 @@ fn show_template_conflicts_with_template() {
 
 #[test]
 fn template_conflicts_with_layout() {
-    let template = TempToml::write("conflicts-template", "[[step]]\nslot = \"editor\"\n");
+    let template = TempToml::write("conflicts-template", "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n");
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
         .args([

@@ -10,6 +10,10 @@
 # instead of three equal columns (same reasoning as master-triple-stack.toml's
 # stack-top, rotated to top/bottom here; confirmed live).
 
+[template]
+description = "One large main window on top, three smaller windows split side by side below it."
+category = "Master/stack"
+
 [[step]]
 slot = "main"
 split = "v"
