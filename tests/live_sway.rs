@@ -2501,7 +2501,9 @@ fn position_center_centers_a_floating_window() {
 fn json_output_for_a_real_exec_is_a_clean_container_id_object() {
     // con_id_json_output_is_a_clean_json_object in tests/json_output.rs
     // covers --json's formatting for --con-id, which never touches the
-    // socket; this covers the same formatting for a real exec+match.
+    // socket; this covers the same formatting for a real exec+match, with
+    // no other action flags -- confirming "actions" is empty when nothing
+    // else ran, same as the headless --con-id-alone case.
     let output = sway_launch_command()
         .args(["--app-id", "foot", "--timeout", "10", "--json", "foot"])
         .output()
@@ -2513,13 +2515,57 @@ fn json_output_for_a_real_exec_is_a_clean_container_id_object() {
     );
 
     let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
-    let trimmed = stdout.trim();
-    let container_id: i64 = trimmed
-        .strip_prefix("{\"container_id\":")
-        .and_then(|rest| rest.strip_suffix('}'))
-        .unwrap_or_else(|| panic!("unexpected --json output: {trimmed:?}"))
-        .parse()
-        .unwrap_or_else(|_| panic!("--json container_id should be an integer: {trimmed:?}"));
+    let json: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("--json output should be valid JSON");
+    let container_id = json["container_id"]
+        .as_i64()
+        .unwrap_or_else(|| panic!("expected an integer container_id, got {json:?}"));
+    assert_eq!(
+        json["actions"],
+        serde_json::json!([]),
+        "no action flags were passed, so actions should be empty: {json:?}"
+    );
+    let _guard = KillOnDrop(container_id);
+}
+
+#[test]
+fn json_output_lists_the_actions_that_actually_ran() {
+    // Companion to the test above: with real action flags, "actions"
+    // should list each one's sway_command_verb() text, in the fixed order
+    // SwayLaunch::run() always applies them (Floating before Mark here).
+    let output = sway_launch_command()
+        .args([
+            "--app-id",
+            "foot",
+            "--timeout",
+            "10",
+            "--wait-time",
+            "100",
+            "--floating",
+            "--mark",
+            "live-sway-test-json-actions",
+            "--json",
+            "foot",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    let json: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("--json output should be valid JSON");
+    let container_id = json["container_id"]
+        .as_i64()
+        .unwrap_or_else(|| panic!("expected an integer container_id, got {json:?}"));
+    assert_eq!(
+        json["actions"],
+        serde_json::json!(["floating enable", "mark \"live-sway-test-json-actions\""]),
+        "actions should list what actually ran, in order: {json:?}"
+    );
     let _guard = KillOnDrop(container_id);
 }
 

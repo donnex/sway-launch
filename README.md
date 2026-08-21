@@ -647,11 +647,21 @@ Confirmed via poll (container id: 437)
 ### JSON output
 
 Print the result as a JSON object instead of a bare container id, for scripts that want structured
-output.
+output. `actions` lists every action that actually ran, in order — the same text `--dry-run` would
+have printed for that action, confirming what happened, not just the final container id.
 
 ```shell
-$ sway-launch --json foot
-{"container_id":437}
+$ sway-launch --json --floating --mark pinned foot
+{"actions":["floating enable","mark \"pinned\""],"container_id":437}
+```
+
+For `--layout`/`--template`, `container_ids` lists every step's container id positionally, and
+`containers` maps each *named* step (one with `id` set, or a template `slot`, which resolves to the
+same name) to its container id — steps without a name only appear in `container_ids`:
+
+```shell
+$ sway-launch --template quad-grid --apps foot,foot,code,foot --json
+{"container_ids":[437,438,439,440],"containers":{"bottom-left":439,"bottom-right":440,"top-left":437,"top-right":438}}
 ```
 
 This also applies to errors — a failure prints a JSON object to stderr instead of a plain-text

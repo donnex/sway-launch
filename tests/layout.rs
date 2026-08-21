@@ -226,7 +226,30 @@ fn layout_json_output_is_a_single_array() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
-    assert_eq!(stdout.trim(), "{\"container_ids\":[42,91]}");
+    assert_eq!(
+        stdout.trim(),
+        "{\"container_ids\":[42,91],\"containers\":{}}"
+    );
+}
+
+#[test]
+fn layout_json_output_maps_named_steps_in_containers() {
+    let path = TempToml::write(
+        "json-output-containers",
+        "[[step]]\ncon_id = 42\nid = \"editor\"\n\n[[step]]\ncon_id = 91\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap(), "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(
+        stdout.trim(),
+        "{\"container_ids\":[42,91],\"containers\":{\"editor\":42}}"
+    );
 }
 
 #[test]
