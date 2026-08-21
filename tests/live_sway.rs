@@ -956,6 +956,54 @@ fn con_id_and_existing_target_an_already_open_window() {
 }
 
 #[test]
+fn rollback_on_error_kills_earlier_launched_windows_when_a_later_step_fails() {
+    // Regression test for --rollback-on-error: without it, an earlier
+    // step's real window stays open when a later step fails; with it,
+    // run_steps() kills every window this invocation itself launched
+    // before reporting the failure. The second step targets a con_id that
+    // was never opened, so --mark against it fails reliably and
+    // immediately ("No matching node.") without launching anything of its
+    // own to roll back.
+    let mut connection = connect();
+    connection
+        .run_command("[app_id=foot] kill")
+        .expect("kill should succeed");
+
+    let path = TempToml::write(
+        "rollback",
+        "[[step]]\ncommand = \"foot\"\napp_id = \"foot\"\n\n\
+         [[step]]\ncon_id = 999999999\nmark = \"x\"\n",
+    );
+
+    let output = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--rollback-on-error",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        !output.status.success(),
+        "sway-launch should fail on the bad second step"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        stderr.contains("\"rolled_back\"") && !stderr.contains("\"rolled_back\":[]"),
+        "expected a non-empty rolled_back list reported in the JSON error: {stderr:?}"
+    );
+
+    std::thread::sleep(Duration::from_millis(300));
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        count_app_id_windows(&tree, "foot"),
+        0,
+        "the first step's window should have been killed by --rollback-on-error"
+    );
+}
+
+#[test]
 fn layout_target_id_references_an_earlier_steps_real_window() {
     let mut connection = connect();
     let path = TempToml::write(

@@ -257,3 +257,55 @@ fn layout_rejects_duplicate_step_ids() {
     assert!(stderr.contains("step 2"));
     assert!(stderr.contains("first"));
 }
+
+#[test]
+fn layout_json_error_output_is_a_structured_object() {
+    let path = TempToml::write(
+        "json-error",
+        "[[step]]\nid = \"first\"\ncon_id = 42\n\n[[step]]\nid = \"first\"\ncon_id = 91\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap(), "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(
+        stderr.trim_start().starts_with('{') && stderr.contains("\"error\""),
+        "expected a JSON error object, got {stderr:?}"
+    );
+    assert!(stderr.contains("step 2"));
+}
+
+#[test]
+fn layout_rollback_on_error_reports_empty_rollback_when_nothing_was_launched() {
+    // con_id-only steps are never rolled back (they retarget a pre-existing
+    // window, not one this invocation launched) — proves --rollback-on-error
+    // doesn't error/panic and reports an empty rollback list in that case,
+    // headlessly. The actual "kills a real launched window" behavior needs
+    // a live Sway session — see tests/live_sway.rs's
+    // rollback_on_error_kills_earlier_launched_windows_when_a_later_step_fails.
+    let path = TempToml::write(
+        "rollback-empty",
+        "[[step]]\nid = \"first\"\ncon_id = 42\n\n[[step]]\nid = \"first\"\ncon_id = 91\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--rollback-on-error",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(
+        stderr.contains("\"rolled_back\":[]"),
+        "expected an empty rollback list since neither step launched a window: {stderr:?}"
+    );
+}

@@ -1136,6 +1136,14 @@ fn run_sway_command(command: &str) -> Result<(), String> {
     first_outcome_error(outcomes, command)
 }
 
+/// Kills `container_id` via `[con_id] kill`. Used by `main.rs`'s
+/// `--rollback-on-error`: best-effort cleanup of a window this invocation
+/// itself launched earlier in the same `--layout`/`--template` run, once a
+/// later step fails.
+pub fn kill_container(container_id: i64) -> Result<(), String> {
+    run_sway_command(&format!("[con_id={}] kill", container_id))
+}
+
 /// Sway splits a command string into multiple sub-commands on unquoted
 /// `,`/`;`, so `run_command()` can return more than one outcome for a single
 /// call. Report the first failure found among all of them, rather than only

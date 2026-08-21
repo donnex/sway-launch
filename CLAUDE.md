@@ -112,6 +112,13 @@ The crate is four source files plus five integration test files:
   `scratchpad_is_a_no_op_when_already_in_the_scratchpad`; `--existing`'s reach into the scratchpad
   (documented in README.md's "Target an existing window" section, previously exercised only
   manually, never regression-tested here) is covered by `existing_matches_a_window_in_the_scratchpad`.
+  `--rollback-on-error` is covered by
+  `rollback_on_error_kills_earlier_launched_windows_when_a_later_step_fails` — the "requires
+  `--layout`/`--template`" check and the `--json` error-output shape (`fail()`/
+  `fail_with_rollback()` in `main.rs`) are both con_id-only and headless, so those live in
+  `tests/json_output.rs`/`tests/layout.rs` instead (`rollback_on_error_without_layout_or_template_errors`,
+  `con_id_json_error_output_is_a_structured_object`, `layout_json_error_output_is_a_structured_object`,
+  `layout_rollback_on_error_reports_empty_rollback_when_nothing_was_launched`).
 
   **This file's coverage must stay complete, not just present.** It's the one place anything
   IPC-touching actually gets exercised against real Sway, and — same as `.github/workflows/`'s
@@ -403,6 +410,17 @@ diagnostic/debug `println!` behind `if self.verbose()` in `sway_launch.rs` is `e
 `SwayLaunch::debug_events()`: its event dump *is* the command's actual output in that mode, so it
 stays on stdout.
 
+Errors always go to stderr regardless of `--json` (`main.rs`'s `fail()`/`fail_with_rollback()`), but
+their *shape* on stderr does follow `--json`: a `{"error": "...", "rolled_back": [...]}` object
+instead of a plain-text line, mirroring the structured `{"container_id": ...}`/
+`{"container_ids": [...]}` success shapes rather than leaving a `--json` caller to also parse
+plain-text stderr on failure. `rolled_back` is only ever non-empty when `run_steps()`'s
+`--rollback-on-error` (see "`--layout`" below) actually killed something first — every other error
+path passes an empty slice. This is deliberately scoped to *runtime* failures (file I/O, TOML
+parsing, a `SwayLaunch`/step actually failing against Sway) — a bad CLI invocation
+(missing/conflicting flags, `Args::command().error(...).exit()`) is still reported via clap's own
+usage-error formatting regardless of `--json`, the same as `--help` itself isn't JSON either.
+
 ### `--debug-events`
 
 `SwayLaunch::debug_events()` subscribes to all Sway IPC event types and prints every event until
@@ -443,6 +461,35 @@ successfully, if it has an `id`, inserts `id → container_id`. `to_sway_launch(
 (`Target::ConId(*id)`) or errors clearly if not found — both `id` and `target_id` are layout-only,
 with no CLI flag equivalent, since a single `sway-launch` invocation only ever has one step to
 name or reference.
+
+**`--rollback-on-error`**: `run_steps()` stops at the first error by default, leaving whatever
+earlier steps already launched open — `--rollback-on-error` (requires `--layout` or `--template`,
+manually checked in `main()` the same way `--bindings`/`--apps` requires `--template`, for the same
+`clap` `requires`-reliability reason documented under "`--template`" below) makes that cleanup
+automatic instead. `run_steps()` tracks `launched_container_ids: Vec<i64>` alongside
+`container_ids` — only ids a step resolved via `Target::Exec`, never one retargeted via
+`con_id`/`existing`/`target_id`, since those windows already existed before this invocation started
+and weren't this run's to close. Read directly off the step's own `command` field
+(`step.command.is_some()`) rather than matching the resolved `SwayLaunch`'s `target` — equivalent,
+since `to_sway_launch()` having just succeeded guarantees exactly one of
+`command`/`con_id`/`existing`/`target_id` was set, but avoids a local `sway_launch` binding
+shadowing the `sway_launch` module path in the same scope. On any failure — an id collision, a step failing to convert, or a
+step's own `.run()` failing — `fail_step()` calls `rollback()` first (if the flag is set), which
+best-effort `[con_id] kill`s every tracked id, most-recently-launched first, via the new
+`sway_launch::kill_container()` (a thin `pub` wrapper around the existing private
+`run_sway_command()`, added specifically so `main.rs` can reach it — every other Sway-IPC-touching
+function in `sway_launch.rs` stays private, called only from within that module). A kill that
+itself fails (e.g. the window already closed on its own) is logged and skipped rather than treated
+as fatal — it doesn't stop the rest of the rollback, and the original step failure stays the error
+actually reported. `fail_step()` is shared by all three failure branches specifically so an id
+collision or conversion error on step *N* still rolls back steps *1..N-1*'s real windows, not just
+a failure inside `SwayAction::run()` itself. Not handled: a step whose *own* window launched
+successfully but a later action *within that same step* then failed — `SwayLaunch::run()`'s
+`Result<i64, String>` doesn't carry a container id on the error path, so there's nothing for
+`run_steps()` to roll back in that specific case; accepted as a known gap rather than reworking
+`SwayLaunch::run()`'s error type for it, since it needs `resolve_container_id()` to have already
+succeeded on the *failing* step itself, a narrower window than the earlier-steps case this feature
+was written for.
 
 ### `--template`
 
@@ -738,7 +785,7 @@ comments, name things clearly instead" style). Two rule-specific overrides:
   - This project's agreed target: cover every pure/logic function (command-string building, event
     dispatch tables, window-match logic, CLI argument validation/parsing) via `cargo test`. The
     functions that open, read, or write the Sway IPC socket directly (`new_connection`,
-    `event_loop`, `run_sway_command`'s connection call, `run_wait_time`,
+    `event_loop`, `run_sway_command`'s connection call, `kill_container`, `run_wait_time`,
     `run_wait_matching_events`, `run_wait_matching_exec_event`, `run_poll_then_fallback`,
     `container_exists`, `parent_node_layout`, `node_by_id`, `find_container_node`,
     `container_is_in_scratchpad`,
