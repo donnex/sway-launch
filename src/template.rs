@@ -128,10 +128,18 @@ pub fn parse_bindings(contents: &str) -> Result<Bindings, String> {
 /// type, so nothing downstream (`to_sway_launch()`, `run_steps()`) needs to
 /// know a template was ever involved. A `slot` step's `id` is set to its
 /// slot name, so a later `target_id` step can reference it via the same
-/// mechanism named layout steps already use — including the same "id
-/// already used by an earlier step" duplicate check a repeated `slot` name
-/// would trip at run time, so `resolve()` doesn't need its own duplicate-slot
-/// check for that case.
+/// mechanism named layout steps already use.
+///
+/// A repeated `slot` name is rejected here directly, with a template-shaped
+/// error naming the slot — this used to be left for `run_steps()`'s generic
+/// "id already used by an earlier step" check to catch instead, which is
+/// technically correct but describes an implementation detail (a
+/// resolved-layout-step id collision) rather than the actual template
+/// authoring mistake a user made. `used_slots` already exists to track which
+/// bindings get consumed (see the "unused binding" check below); its own
+/// `insert()` return value already distinguishes "first time seeing this
+/// slot" from "already used," so no separate check/data structure is
+/// needed.
 pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutStep>, String> {
     let mut bindings_by_slot = HashMap::new();
     for binding in &bindings.binding {
@@ -175,8 +183,16 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
                         slot
                     ));
                 }
+                if binding.app_id.is_some() && binding.class.is_some() {
+                    return Err(format!(
+                        "binding for slot {:?} must set only one of: app_id, class",
+                        slot
+                    ));
+                }
 
-                used_slots.insert(slot);
+                if !used_slots.insert(slot) {
+                    return Err(format!("template: slot {:?} is used more than once", slot));
+                }
                 (
                     Some(slot.to_string()),
                     None,
@@ -293,6 +309,24 @@ mod tests {
     }
 
     #[test]
+    fn resolve_rejects_two_steps_sharing_a_slot_name() {
+        let template = Template {
+            step: vec![minimal_step(), minimal_step()],
+        };
+        let bindings = Bindings {
+            binding: vec![minimal_binding()],
+        };
+        let error = resolve(&template, &bindings)
+            .err()
+            .expect("two steps sharing a slot should error");
+        assert!(
+            error.contains("editor") && error.contains("more than once"),
+            "error should name the offending slot and describe the actual mistake: {:?}",
+            error
+        );
+    }
+
+    #[test]
     fn resolve_fills_in_the_binding_and_sets_id_to_the_slot_name() {
         let mut step = minimal_step();
         step.floating = true;
@@ -370,6 +404,27 @@ mod tests {
         let error = resolve(&template, &bindings)
             .err()
             .expect("binding with command and con_id together should error");
+        assert!(error.contains("editor"));
+    }
+
+    #[test]
+    fn resolve_errors_on_binding_with_app_id_and_class_together() {
+        let template = Template {
+            step: vec![minimal_step()],
+        };
+        let bindings = Bindings {
+            binding: vec![Binding {
+                slot: "editor".to_string(),
+                command: Some("foot".to_string()),
+                con_id: None,
+                existing: false,
+                app_id: Some("foot".to_string()),
+                class: Some("Foot".to_string()),
+            }],
+        };
+        let error = resolve(&template, &bindings)
+            .err()
+            .expect("binding with app_id and class together should error");
         assert!(error.contains("editor"));
     }
 
