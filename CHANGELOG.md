@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--sticky` flag (and the matching `--layout`/`--template` step field) to make a window show on
   every workspace instead of just the one it was launched on. Works regardless of floating state,
   pairs well with `--floating`.
+- `--dry-run`: prints the planned sequence of Sway commands instead of running them, numbered
+  continuously across every step — never touches Sway IPC or launches anything. Works with a direct
+  command or `--layout`/`--template`; `--json` prints a structured `{"steps": [...]}` object.
 
 ### Changed
 

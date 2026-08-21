@@ -64,12 +64,16 @@ The crate is four source files plus five integration test files:
   `main()`, which a unit test can't call into directly.
 - `tests/json_output.rs` — asserts `main()`'s actual stdout/stderr behavior (`--json` output,
   `--verbose` diagnostics going to stderr) by driving the compiled binary with `--con-id`, the one
-  target mode that never touches the Sway socket, so this runs headless in CI.
+  target mode that never touches the Sway socket, so this runs headless in CI. Also covers
+  `--dry-run`'s direct-CLI path — `--dry-run` never touches Sway IPC by design (see "`--dry-run`"
+  below), so unlike most other flags it doesn't need `--con-id` specifically to stay headless.
 - `tests/layout.rs` — asserts `--layout`'s end-to-end behavior (file reading, TOML parsing, step
-  iteration, `--json` output, error messages) the same way, using `con_id`-only steps.
+  iteration, `--json` output, error messages) the same way, using `con_id`-only steps. Also covers
+  `--layout --dry-run`, including the `target_id`-placeholder-resolution case.
 - `tests/template.rs` — the same headless approach applied to `--template`: `con_id`-based
   `Binding`s exercise resolution, `--apps`/`--bindings`, and error messages end to end without
-  needing a live Sway session.
+  needing a live Sway session. Also covers `--template --dry-run`, the same two cases as
+  `tests/layout.rs`.
 - `tests/live_sway.rs` — the odd one out: gated behind the `live-sway-tests` Cargo feature (so a
   plain `cargo test` skips it entirely) and needs a real, reachable Sway compositor, run via
   `scripts/run-live-sway-tests` rather than directly. Drives the compiled binary against real
@@ -482,9 +486,11 @@ is no persistent/shared connection across actions.
 stdout is reserved for that one result value (bare id or the `--json` object) and nothing else, so
 `container_id="$(sway-launch ...)"`-style capture always gets exactly one clean line. Every
 diagnostic/debug `println!` behind `if self.verbose()` in `sway_launch.rs` is `eprintln!`, not
-`println!`, for this reason — `--verbose` output goes to stderr. The one exception is
-`SwayLaunch::debug_events()`: its event dump *is* the command's actual output in that mode, so it
-stays on stdout.
+`println!`, for this reason — `--verbose` output goes to stderr. Two exceptions:
+`SwayLaunch::debug_events()`'s event dump and `--dry-run`'s planned-command listing are each the
+command's actual output in that mode, so both stay on stdout — neither is meant to be captured as a
+single clean value the way a real run's container id is, so the "exactly one line" property simply
+doesn't apply to them.
 
 Errors always go to stderr regardless of `--json` (`main.rs`'s `fail()`/`fail_with_rollback()`), but
 their *shape* on stderr does follow `--json`: a `{"error": "...", "rolled_back": [...]}` object
@@ -501,6 +507,39 @@ usage-error formatting regardless of `--json`, the same as `--help` itself isn't
 
 `SwayLaunch::debug_events()` subscribes to all Sway IPC event types and prints every event until
 killed. Useful for discovering event shapes when adding a new action.
+
+### `--dry-run`
+
+Prints the planned sequence of Sway commands instead of running them, never touching Sway IPC or
+launching anything — the review's suggestion, and the reason Phase 2's `build_actions()`/
+`sway_command()` split (see "Orchestration" above and the `sway_command()` bullet under "Core
+model" above) was worth doing first: both were designed with this in mind, not retrofitted for it.
+
+`SwayLaunch::build_actions_for_preview()` calls `build_actions(0, false)` — the `false` is
+`check_relocation`, a new parameter on `build_actions()` that, when `false`, skips
+`relocates_to_another_output()`'s live `get_outputs()`/`get_tree()` call entirely and always
+includes `NewColumn`/`NewRow` in the plan. `run()` itself passes `true` (unchanged behavior — it's
+about to run the action for real, so it needs the real answer); a preview has no real
+`container_id` yet (nothing has launched) to check the guard against anyway, so skipping it is what
+makes previewing fully IPC-free, not just IPC-light. The placeholder `container_id: 0` passed to
+`build_actions()` is never actually shown: `main.rs`'s dry-run printing calls
+`SwayAction::sway_command_verb()` (new — `sway_command()`'s own building block, `sway_command()`
+itself now just `format!("[con_id={}] {}", container_id, self.sway_command_verb())` for every
+variant except `Exec`, which has no target container yet either way), not `sway_command()`, so the
+placeholder id is constructed but never rendered anywhere.
+
+`main.rs`'s `DryRunStep { target, actions }` is the shared preview representation for both the
+direct-CLI path and `run_steps_dry_run()` (`--layout`/`--template`, dispatched from `run_steps()`
+before any real execution begins) — `describe_target()` renders `SwayLaunch.target` as `"launch
+<command>"`/`"target existing container"`/`"target existing window (app_id=...)"`, deliberately
+never naming a container id even for `Target::ConId` (its id *is* already known, but showing it on
+that one target mode while every action line stays id-free would be an inconsistent preview
+format). `run_steps_dry_run()` still needs `to_sway_launch()`'s `target_id` lookups to resolve, so
+a step's own 1-based index is inserted into `resolved_ids` as a synthetic placeholder wherever a
+step has an `id` — never rendered either, same reasoning as `container_id: 0`. Plain output is one
+continuously-numbered line per target/action across every step (matching the external review's own
+illustrative example); `--json` is a single `{"steps": [{"target": ..., "actions": [...]}, ...]}`
+object.
 
 ### `--completions`
 

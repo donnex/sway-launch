@@ -67,6 +67,97 @@ fn template_resolves_via_bindings_file_end_to_end() {
 }
 
 #[test]
+fn template_dry_run_prints_a_continuously_numbered_plan_via_apps() {
+    let template = TempToml::write(
+        "dry-run-apps-template",
+        "[[step]]\nslot = \"editor\"\nsplit = \"h\"\n\n[[step]]\nslot = \"terminal\"\nnew_column = true\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            template.to_str().unwrap(),
+            "--apps",
+            "code,foot",
+            "--dry-run",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        output.status.success(),
+        "sway-launch --template --dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(
+        stdout,
+        "1. launch code\n2. splith\n3. launch foot\n4. move right\n"
+    );
+}
+
+#[test]
+fn template_dry_run_resolves_target_id_without_launching_anything() {
+    let template = TempToml::write(
+        "dry-run-target-id-template",
+        "[[step]]\nslot = \"editor\"\n\n[[step]]\ntarget_id = \"editor\"\nwidth = \"70ppt\"\n",
+    );
+    let bindings = TempToml::write(
+        "dry-run-target-id-bindings",
+        "[[binding]]\nslot = \"editor\"\ncommand = \"code\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            template.to_str().unwrap(),
+            "--bindings",
+            bindings.to_str().unwrap(),
+            "--dry-run",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        output.status.success(),
+        "sway-launch --template --dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(
+        stdout,
+        "1. launch code\n2. target existing container\n3. resize set width 70ppt\n"
+    );
+}
+
+#[test]
+fn template_dry_run_json_output_is_a_structured_steps_array() {
+    let template = TempToml::write(
+        "dry-run-json-template",
+        "[[step]]\nslot = \"editor\"\nfocus = true\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            template.to_str().unwrap(),
+            "--apps",
+            "code",
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(
+        stdout.trim(),
+        "{\"steps\":[{\"actions\":[\"focus\"],\"target\":\"launch code\"}]}"
+    );
+}
+
+#[test]
 fn template_target_id_references_an_earlier_slot() {
     let template = TempToml::write(
         "target-id-template",

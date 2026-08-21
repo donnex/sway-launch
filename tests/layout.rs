@@ -52,6 +52,96 @@ fn layout_plain_output_prints_one_container_id_per_step() {
 }
 
 #[test]
+fn layout_dry_run_prints_a_continuously_numbered_plan() {
+    let path = TempToml::write(
+        "dry-run",
+        "[[step]]\ncommand = \"code\"\nsplit = \"h\"\n\n[[step]]\ncon_id = 91\nfloating = true\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap(), "--dry-run"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        output.status.success(),
+        "sway-launch --layout --dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(
+        stdout,
+        "1. launch code\n2. splith\n3. target existing container\n4. floating enable\n"
+    );
+}
+
+#[test]
+fn layout_dry_run_resolves_target_id_without_launching_anything() {
+    // The interesting case: a target_id step references an earlier step's
+    // id, which normally resolves to a real container id run_steps()
+    // learned by actually launching that step — --dry-run never launches
+    // anything, so to_sway_launch()'s target_id lookup has to resolve
+    // against a synthetic placeholder instead. This confirms that
+    // resolution still succeeds (no error) rather than failing with
+    // "target_id not found".
+    let path = TempToml::write(
+        "dry-run-target-id",
+        "[[step]]\ncommand = \"code\"\nid = \"editor\"\n\n[[step]]\ntarget_id = \"editor\"\nwidth = \"70ppt\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap(), "--dry-run"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        output.status.success(),
+        "sway-launch --layout --dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(
+        stdout,
+        "1. launch code\n2. target existing container\n3. resize set width 70ppt\n"
+    );
+}
+
+#[test]
+fn layout_dry_run_json_output_is_a_structured_steps_array() {
+    let path = TempToml::write("dry-run-json", "[[step]]\ncon_id = 42\nfocus = true\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap(), "--dry-run", "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(
+        stdout.trim(),
+        "{\"steps\":[{\"actions\":[\"focus\"],\"target\":\"target existing container\"}]}"
+    );
+}
+
+#[test]
+fn layout_dry_run_reports_a_step_error_without_running_earlier_steps() {
+    let path = TempToml::write(
+        "dry-run-step-error",
+        "[[step]]\ncon_id = 42\n\n[[step]]\nheight = \"notasize\"\ncon_id = 91\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap(), "--dry-run"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("step 2"));
+    assert!(stderr.contains("height"));
+}
+
+#[test]
 fn layout_json_output_is_a_single_array() {
     let path = TempToml::write(
         "json-output",

@@ -86,6 +86,12 @@ struct Args {
     #[clap(long)]
     scratchpad: bool,
 
+    /// Print the planned sequence of Sway commands instead of running them —
+    /// works with a direct command or --layout/--template. Never touches
+    /// Sway IPC or launches anything
+    #[clap(long, conflicts_with = "debug_events")]
+    dry_run: bool,
+
     /// Timeout in seconds
     #[clap(short, long, default_value_t = 5)]
     timeout: u64,
@@ -103,7 +109,7 @@ struct Args {
         "command", "con_id", "existing", "app_id", "class", "split",
         "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
-        "layout", "template", "list_templates", "bindings", "apps", "rollback_on_error",
+        "layout", "template", "list_templates", "bindings", "apps", "rollback_on_error", "dry_run",
     ])]
     completions: Option<clap_complete::Shell>,
 
@@ -147,7 +153,7 @@ struct Args {
         "command", "con_id", "existing", "app_id", "class", "split",
         "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
-        "layout", "template", "completions", "bindings", "apps", "rollback_on_error",
+        "layout", "template", "completions", "bindings", "apps", "rollback_on_error", "dry_run",
     ])]
     list_templates: bool,
 
@@ -280,6 +286,11 @@ fn main() {
         verbose: args.verbose,
     };
 
+    if args.dry_run {
+        print_dry_run_steps(&[dry_run_step(&sway_launch)], args.json);
+        process::exit(0);
+    }
+
     if args.debug_events {
         match sway_launch.debug_events() {
             Ok(_) => process::exit(0),
@@ -333,6 +344,75 @@ fn fail_with_rollback(json: bool, message: &str, rolled_back: &[i64]) -> ! {
         }
     }
     process::exit(1);
+}
+
+/// One step's `--dry-run` preview: its target description plus every
+/// planned action's verb, in order. Shared representation for both the
+/// direct-CLI path and `--layout`/`--template`'s `run_steps_dry_run()`, so
+/// both print identically and share one JSON shape.
+struct DryRunStep {
+    target: String,
+    actions: Vec<String>,
+}
+
+/// A one-line description of what a `SwayLaunch`'s `target` would do,
+/// deliberately never naming a container id — for `Target::Exec`/
+/// `Target::Existing`, there isn't a real one yet (nothing has launched);
+/// for `Target::ConId`, the id is already known, but showing it here while
+/// every action line below stays id-free (see
+/// `SwayAction::sway_command_verb()`) would be an inconsistent preview
+/// format for one target mode only.
+fn describe_target(target: &sway_launch::Target, app_id_match: &str, class_match: &str) -> String {
+    match target {
+        sway_launch::Target::Exec { command } => format!("launch {}", command),
+        sway_launch::Target::ConId(_) => "target existing container".to_string(),
+        sway_launch::Target::Existing if !app_id_match.is_empty() => {
+            format!("target existing window (app_id={:?})", app_id_match)
+        }
+        sway_launch::Target::Existing => {
+            format!("target existing window (class={:?})", class_match)
+        }
+    }
+}
+
+fn dry_run_step(sway_launch: &sway_launch::SwayLaunch) -> DryRunStep {
+    DryRunStep {
+        target: describe_target(
+            &sway_launch.target,
+            sway_launch.app_id_match,
+            sway_launch.class_match,
+        ),
+        actions: sway_launch
+            .build_actions_for_preview()
+            .iter()
+            .map(sway_launch::SwayAction::sway_command_verb)
+            .collect(),
+    }
+}
+
+/// Prints every `DryRunStep` as a continuously-numbered plain-text list
+/// (target line included as one of the numbered items), or as a single
+/// `{"steps": [{"target": ..., "actions": [...]}, ...]}` object under
+/// `--json`.
+fn print_dry_run_steps(steps: &[DryRunStep], json: bool) {
+    if json {
+        let steps: Vec<_> = steps
+            .iter()
+            .map(|step| serde_json::json!({ "target": step.target, "actions": step.actions }))
+            .collect();
+        println!("{}", serde_json::json!({ "steps": steps }));
+        return;
+    }
+
+    let mut n = 1;
+    for step in steps {
+        println!("{}. {}", n, step.target);
+        n += 1;
+        for action in &step.actions {
+            println!("{}. {}", n, action);
+            n += 1;
+        }
+    }
 }
 
 /// Reads and parses a `--layout` file, then hands its steps to `run_steps()`.
@@ -526,6 +606,10 @@ fn bindings_from_apps(
 /// of main()'s error-handling style. Shared by `run_layout()` and
 /// `run_template()`, since a resolved template is just more layout steps.
 fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
+    if args.dry_run {
+        run_steps_dry_run(steps, args);
+    }
+
     let default_timeout = time::Duration::from_secs(args.timeout);
     let default_wait_time = time::Duration::from_millis(args.wait_time);
     let mut container_ids = Vec::new();
@@ -587,6 +671,58 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
         println!("{}", serde_json::json!({ "container_ids": container_ids }));
     }
 
+    process::exit(0);
+}
+
+/// `run_steps()`'s `--dry-run` handling: converts every step to a
+/// `SwayLaunch` and prints its planned actions (via `print_dry_run_steps()`),
+/// continuing the numbering across steps, without ever calling `.run()` or
+/// touching Sway IPC. A step's own `id`/`target_id` chain still needs *some*
+/// value to resolve `target_id` lookups against — since nothing actually
+/// launches, there's no real container id yet, so each step's own 1-based
+/// index is used as a synthetic placeholder; that placeholder is never
+/// printed (`dry_run_step()`'s target/action text never names a container
+/// id at all), it only exists to keep `to_sway_launch()`'s `target_id`
+/// lookups from failing on a step that legitimately references an earlier
+/// one.
+fn run_steps_dry_run(steps: &[layout::LayoutStep], args: &Args) -> ! {
+    let default_timeout = time::Duration::from_secs(args.timeout);
+    let default_wait_time = time::Duration::from_millis(args.wait_time);
+    let mut resolved_ids = HashMap::new();
+    let mut dry_run_steps = Vec::new();
+
+    for (index, step) in steps.iter().enumerate() {
+        if let Some(id) = step.id.as_deref() {
+            if resolved_ids.contains_key(id) {
+                fail(
+                    args.json,
+                    &format!(
+                        "step {}: id {:?} was already used by an earlier step",
+                        index + 1,
+                        id
+                    ),
+                );
+            }
+        }
+
+        let sway_launch = match step.to_sway_launch(
+            default_timeout,
+            default_wait_time,
+            args.verbose,
+            &resolved_ids,
+        ) {
+            Ok(sway_launch) => sway_launch,
+            Err(error) => fail(args.json, &format!("step {}: {}", index + 1, error)),
+        };
+
+        dry_run_steps.push(dry_run_step(&sway_launch));
+
+        if let Some(id) = step.id.as_deref() {
+            resolved_ids.insert(id.to_string(), index as i64);
+        }
+    }
+
+    print_dry_run_steps(&dry_run_steps, args.json);
     process::exit(0);
 }
 
