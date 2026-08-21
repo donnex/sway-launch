@@ -250,6 +250,62 @@ fn floating_with_width_and_height_applies_all_three() {
 }
 
 #[test]
+fn sticky_sets_the_sticky_flag_even_on_a_tiled_window() {
+    // Confirmed live (manual investigation, not automated here since it's a
+    // one-off design finding rather than a regression risk): unlike
+    // Position, which Sway rejects outright against a tiled window, `sticky
+    // enable` succeeds unconditionally regardless of floating state — the
+    // window here is deliberately left tiled (no --floating) to assert that
+    // finding rather than assume it.
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&["--sticky"]);
+
+    let node = get_node(&mut connection, container_id);
+    assert!(!node_is_floating(&node), "window should still be tiled");
+    assert!(node.sticky, "window should be marked sticky");
+}
+
+#[test]
+fn sticky_confirms_via_poll_well_under_a_large_wait_time() {
+    // Mirrors split_confirms_via_poll_well_under_a_large_wait_time: Sticky
+    // has no dedicated WindowChange event (confirmed live — see
+    // matching_window_change_events()'s Sticky arm), so it's a wait-time
+    // action confirmed via SwayAction::poll_matches() polling the
+    // container's own `sticky` field. A --wait-time well above the poll
+    // grace period, with an assertion comfortably under 2 * --wait-time, is
+    // what makes "confirmed via poll" observable rather than falling back
+    // to a second full sleep.
+    let (container_id, _guard) = launch_foot(&[]);
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--sticky",
+            "--wait-time",
+            "2000",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --sticky failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(2500),
+        "--sticky took {:?} against a 2000ms --wait-time (fallback would take ~4000ms), \
+         suggesting it fell back to sleeping instead of confirming via poll",
+        started.elapsed()
+    );
+
+    let mut connection = connect();
+    let node = get_node(&mut connection, container_id);
+    assert!(node.sticky, "window should be marked sticky");
+}
+
+#[test]
 fn mark_applies_the_given_mark() {
     let mut connection = connect();
     let (container_id, _guard) = launch_foot(&["--mark", "live-sway-test-mark"]);

@@ -65,6 +65,8 @@ pub struct TemplateStep {
     #[serde(default)]
     pub floating: bool,
     #[serde(default)]
+    pub sticky: bool,
+    #[serde(default)]
     pub fullscreen: bool,
     #[serde(default)]
     pub focus: bool,
@@ -198,6 +200,7 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
             class,
             split: step.split,
             floating: step.floating,
+            sticky: step.sticky,
             fullscreen: step.fullscreen,
             focus: step.focus,
             mark: step.mark.clone(),
@@ -241,6 +244,7 @@ mod tests {
             target_id: None,
             split: None,
             floating: false,
+            sticky: false,
             fullscreen: false,
             focus: false,
             mark: None,
