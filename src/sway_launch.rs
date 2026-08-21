@@ -198,6 +198,11 @@ enum SwayAction<'a> {
         verbose: bool,
         wait_time: time::Duration,
     },
+    Scratchpad {
+        container_id: i64,
+        verbose: bool,
+        timeout: time::Duration,
+    },
 }
 
 impl fmt::Display for SwayAction<'_> {
@@ -301,6 +306,9 @@ impl fmt::Display for SwayAction<'_> {
                     container_id, position
                 )
             }
+            SwayAction::Scratchpad { container_id, .. } => {
+                write!(f, "Scratchpad (container_id: {})", container_id)
+            }
         }
     }
 }
@@ -387,6 +395,9 @@ impl SwayAction<'_> {
                     container_id, position_command
                 )
             }
+            SwayAction::Scratchpad { container_id, .. } => {
+                format!("[con_id={}] move scratchpad", container_id)
+            }
         }
     }
 
@@ -404,7 +415,8 @@ impl SwayAction<'_> {
             | SwayAction::Mark { verbose, .. }
             | SwayAction::Height { verbose, .. }
             | SwayAction::Width { verbose, .. }
-            | SwayAction::Position { verbose, .. } => verbose,
+            | SwayAction::Position { verbose, .. }
+            | SwayAction::Scratchpad { verbose, .. } => verbose,
         }
     }
 
@@ -418,7 +430,8 @@ impl SwayAction<'_> {
             | SwayAction::Focus { timeout, .. }
             | SwayAction::Workspace { timeout, .. }
             | SwayAction::Output { timeout, .. }
-            | SwayAction::Mark { timeout, .. } => timeout,
+            | SwayAction::Mark { timeout, .. }
+            | SwayAction::Scratchpad { timeout, .. } => timeout,
             SwayAction::Split { wait_time, .. }
             | SwayAction::NewColumn { wait_time, .. }
             | SwayAction::NewRow { wait_time, .. }
@@ -441,7 +454,8 @@ impl SwayAction<'_> {
             | SwayAction::Mark { container_id, .. }
             | SwayAction::Height { container_id, .. }
             | SwayAction::Width { container_id, .. }
-            | SwayAction::Position { container_id, .. } => Some(container_id),
+            | SwayAction::Position { container_id, .. }
+            | SwayAction::Scratchpad { container_id, .. } => Some(container_id),
             SwayAction::Exec { .. } => None,
         }
     }
@@ -498,6 +512,19 @@ impl SwayAction<'_> {
             | SwayAction::Height { .. }
             | SwayAction::Width { .. }
             | SwayAction::Position { .. } => None,
+            // "move scratchpad" reparents the container into the special
+            // __i3_scratch workspace, which — like Workspace/Output above —
+            // fires WindowChange::Move. Confirmed live: for a previously
+            // *tiled* window, Sway also auto-floats it first, firing a
+            // WindowChange::Floating event before the Move — matches_window_event()
+            // simply doesn't match that one (its change type isn't in this
+            // list) and the loop keeps waiting for the Move that follows.
+            // Re-scratchpadding an already-scratchpadded window is a no-op
+            // that fires no event at all (confirmed live), so
+            // already_at_target() below checks for and short-circuits that
+            // case the same way it does for Workspace/Output/Floating/
+            // Fullscreen/Focus.
+            SwayAction::Scratchpad { .. } => Some(vec![WindowChange::Move]),
         }
     }
 
@@ -541,8 +568,14 @@ impl SwayAction<'_> {
     /// `find_container_node()`'s own `floating`/`fullscreen_mode`/`focused`
     /// fields. `Mark` was checked live too and found *not* to need this:
     /// re-applying a mark the container already has still fires
-    /// `WindowChange::Mark`, unlike these three. Every other action falls
-    /// through to `None` unconditionally, which this never touches.
+    /// `WindowChange::Mark`, unlike these three. `Scratchpad` was found to
+    /// need it as well — re-running `[con_id] move scratchpad` on a window
+    /// already in the scratchpad fires no event at all, confirmed live —
+    /// checked via `container_is_in_scratchpad()` (ancestor workspace name,
+    /// not `floating`, since a scratchpad window also reports as floating
+    /// for the unrelated reason `matching_window_change_events()`'s doc
+    /// comment covers). Every other action falls through to `None`
+    /// unconditionally, which this never touches.
     fn already_at_target(&self) -> Result<Option<i64>, String> {
         match self {
             SwayAction::Workspace {
@@ -579,6 +612,13 @@ impl SwayAction<'_> {
                 match self::find_container_node(*container_id)? {
                     Some(node) if node.focused => Ok(Some(*container_id)),
                     _ => Ok(None),
+                }
+            }
+            SwayAction::Scratchpad { container_id, .. } => {
+                if self::container_is_in_scratchpad(*container_id)? {
+                    Ok(Some(*container_id))
+                } else {
+                    Ok(None)
                 }
             }
             _ => Ok(None),
@@ -1350,6 +1390,63 @@ fn node_is_floating(node: &Node) -> bool {
         )
 }
 
+/// Whether `node` is currently in the scratchpad, per its own
+/// `scratchpad_state` field. `Some(ScratchpadState::None)` means an ordinary
+/// window (present but "no scratchpad state", not the same as the field
+/// being absent/`None` outright — both fold into "not in the scratchpad"
+/// here) and `Some(ScratchpadState::Fresh)`/`Some(ScratchpadState::Changed)`
+/// means one that's actually been moved there, confirmed live. Deliberately
+/// not `node_is_floating()`: a window Sway auto-floats as part of moving it
+/// to the scratchpad (see `SwayAction::matching_window_change_events()`'s
+/// doc comment on `Scratchpad`) would otherwise be misreported as already in
+/// the scratchpad the moment it's floating, before it actually is.
+///
+/// A CI-failure investigation found this field alone isn't reliable enough
+/// to gate `already_at_target()` on, though: Sway 1.9 (still what `apt`
+/// installs on Ubuntu 24.04/CI) leaves `scratchpad_state` at
+/// `Some(ScratchpadState::None)` even for a container genuinely in the
+/// scratchpad — the same kind of version-dependent gap `node_is_floating()`'s
+/// doc comment documents for the `floating` field, just not caught locally
+/// beforehand since this project's own dev/CI environments so far have only
+/// ever run Sway 1.11, where the field *is* populated correctly. Kept as a
+/// secondary, OR'd check in `container_is_in_scratchpad()` below, alongside
+/// the version-independent ancestor-workspace-name check that function uses
+/// as its primary signal.
+fn node_is_in_scratchpad(node: &Node) -> bool {
+    !matches!(
+        node.scratchpad_state,
+        None | Some(swayipc::ScratchpadState::None)
+    )
+}
+
+/// Whether `container_id` is currently in Sway's scratchpad, given an
+/// already-fetched `tree`. Checks the container's ancestor workspace name
+/// first: the scratchpad is always the fixed internal workspace Sway names
+/// `__i3_scratch`, confirmed live to be populated reliably on both Sway 1.9
+/// and 1.11 — unlike `node_is_in_scratchpad()`'s own `scratchpad_state`
+/// field check (see that function's doc comment), which is kept here only
+/// as a secondary, redundant signal.
+fn tree_shows_container_in_scratchpad(tree: &Node, container_id: i64) -> bool {
+    let in_scratchpad_workspace =
+        self::find_containing_name(tree, container_id, NodeType::Workspace, None).as_deref()
+            == Some("__i3_scratch");
+    let node_flagged = self::find_node(tree, container_id).is_some_and(self::node_is_in_scratchpad);
+    in_scratchpad_workspace || node_flagged
+}
+
+/// `tree_shows_container_in_scratchpad()`, fetching the tree itself. Used by
+/// `SwayAction::already_at_target()`'s `Scratchpad` arm.
+fn container_is_in_scratchpad(container_id: i64) -> Result<bool, String> {
+    let tree = match self::new_connection()?.get_tree() {
+        Ok(tree) => tree,
+        Err(error) => return Err(error.to_string()),
+    };
+    Ok(self::tree_shows_container_in_scratchpad(
+        &tree,
+        container_id,
+    ))
+}
+
 /// Recursively walks `node` tracking the name of the nearest ancestor whose
 /// `node_type` matches `kind`, returning that name once `con_id` is found —
 /// e.g. with `kind: NodeType::Workspace`, the name of the workspace
@@ -1736,6 +1833,7 @@ pub struct SwayLaunch<'a> {
     pub height: Option<&'a str>,
     pub width: Option<&'a str>,
     pub position: Option<&'a str>,
+    pub scratchpad: bool,
 
     pub verbose: bool,
     pub timeout: time::Duration,
@@ -1915,6 +2013,14 @@ impl SwayLaunch<'_> {
             SwayAction::Mark {
                 container_id,
                 mark: self.mark,
+                verbose: self.verbose,
+                timeout: self.timeout,
+            }
+            .run()?;
+        }
+        if self.scratchpad {
+            SwayAction::Scratchpad {
+                container_id,
                 verbose: self.verbose,
                 timeout: self.timeout,
             }
@@ -2374,6 +2480,16 @@ mod tests {
         assert_eq!(action.sway_command(), "[con_id=42] move position 100 200");
     }
 
+    #[test]
+    fn sway_command_scratchpad() {
+        let action = SwayAction::Scratchpad {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(action.sway_command(), "[con_id=42] move scratchpad");
+    }
+
     // SwayAction::Display
 
     #[test]
@@ -2536,6 +2652,16 @@ mod tests {
         );
     }
 
+    #[test]
+    fn display_scratchpad() {
+        let action = SwayAction::Scratchpad {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(action.to_string(), "Scratchpad (container_id: 42)");
+    }
+
     // SwayAction accessors
 
     #[test]
@@ -2669,6 +2795,19 @@ mod tests {
         let action = SwayAction::Output {
             container_id: 42,
             output: "HDMI-A-1",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(
+            action.matching_window_change_events(),
+            Some(vec![WindowChange::Move])
+        );
+    }
+
+    #[test]
+    fn scratchpad_matches_move_window_change() {
+        let action = SwayAction::Scratchpad {
+            container_id: 42,
             verbose: false,
             timeout: time::Duration::from_secs(5),
         };
@@ -3103,6 +3242,20 @@ mod tests {
     }
 
     #[test]
+    fn scratchpad_matches_on_container_id() {
+        let action = SwayAction::Scratchpad {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        let event = window_event("move", 42, None, None);
+        assert!(matches!(
+            action.matches_window_event(&event),
+            Ok(WindowEventMatch::WindowContainerIdMatch)
+        ));
+    }
+
+    #[test]
     fn non_exec_action_rejects_different_container_id() {
         let action = SwayAction::Floating {
             container_id: 42,
@@ -3442,6 +3595,74 @@ mod tests {
     fn node_is_floating_false_for_a_plain_tiled_node() {
         let node = node_with_floating_state("con", None);
         assert!(!node_is_floating(&node));
+    }
+
+    // node_is_in_scratchpad
+
+    fn node_with_scratchpad_state(state: Option<&str>) -> Node {
+        let mut value = leaf_node_value(10, Some("foot"), None);
+        if let Some(state) = state {
+            value["scratchpad_state"] = serde_json::json!(state);
+        }
+        serde_json::from_value(value).expect("valid Node test fixture")
+    }
+
+    #[test]
+    fn node_is_in_scratchpad_false_when_the_field_is_absent() {
+        let node = node_with_scratchpad_state(None);
+        assert!(!node_is_in_scratchpad(&node));
+    }
+
+    #[test]
+    fn node_is_in_scratchpad_false_for_scratchpad_state_none() {
+        // Present but "no scratchpad state" — an ordinary window, not one
+        // in the scratchpad.
+        let node = node_with_scratchpad_state(Some("none"));
+        assert!(!node_is_in_scratchpad(&node));
+    }
+
+    #[test]
+    fn node_is_in_scratchpad_true_for_fresh() {
+        let node = node_with_scratchpad_state(Some("fresh"));
+        assert!(node_is_in_scratchpad(&node));
+    }
+
+    #[test]
+    fn node_is_in_scratchpad_true_for_changed() {
+        let node = node_with_scratchpad_state(Some("changed"));
+        assert!(node_is_in_scratchpad(&node));
+    }
+
+    // tree_shows_container_in_scratchpad
+
+    #[test]
+    fn tree_shows_container_in_scratchpad_true_via_ancestor_workspace_name() {
+        // Regression test for a CI failure against Sway 1.9 (still what
+        // `apt` installs on Ubuntu 24.04/CI): scratchpad_state stays
+        // Some(ScratchpadState::None) there even for a genuinely
+        // scratchpadded window, so this must detect the scratchpad via the
+        // ancestor workspace name alone, with no scratchpad_state set at
+        // all on the leaf node.
+        let leaf = leaf_node_value(10, Some("foot"), None);
+        let tree = workspace_node_tree(2, "__i3_scratch", vec![leaf], vec![]);
+        assert!(tree_shows_container_in_scratchpad(&tree, 10));
+    }
+
+    #[test]
+    fn tree_shows_container_in_scratchpad_true_via_scratchpad_state_fallback() {
+        // The node's own scratchpad_state is still honored as a secondary,
+        // redundant signal, independent of the ancestor workspace name.
+        let mut leaf = leaf_node_value(10, Some("foot"), None);
+        leaf["scratchpad_state"] = serde_json::json!("fresh");
+        let tree = workspace_node_tree(2, "1", vec![leaf], vec![]);
+        assert!(tree_shows_container_in_scratchpad(&tree, 10));
+    }
+
+    #[test]
+    fn tree_shows_container_in_scratchpad_false_for_an_ordinary_window() {
+        let leaf = leaf_node_value(10, Some("foot"), None);
+        let tree = workspace_node_tree(2, "1", vec![leaf], vec![]);
+        assert!(!tree_shows_container_in_scratchpad(&tree, 10));
     }
 
     // compute_center_position

@@ -47,6 +47,8 @@ pub struct LayoutStep {
     pub height: Option<String>,
     pub width: Option<String>,
     pub position: Option<String>,
+    #[serde(default)]
+    pub scratchpad: bool,
 
     pub timeout: Option<u64>,
     pub wait_time: Option<u64>,
@@ -160,6 +162,7 @@ impl LayoutStep {
             height: self.height.as_deref(),
             width: self.width.as_deref(),
             position: self.position.as_deref(),
+            scratchpad: self.scratchpad,
             timeout: self
                 .timeout
                 .map(time::Duration::from_secs)
@@ -254,6 +257,7 @@ mod tests {
             height: None,
             width: None,
             position: None,
+            scratchpad: false,
             timeout: None,
             wait_time: None,
         }
