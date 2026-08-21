@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--show-template <NAME_OR_PATH>`: prints a `--template`'s raw TOML and exits, without running it
   — the same built-in-name-or-file-path resolution `--template` itself uses. `--json` prints
   `{"name": ..., "contents": "..."}`.
+- A `--template` file may now declare an optional `[layout]` table (`workspace`/`output`) applied
+  to every step that doesn't set its own — pins the whole template to a specific workspace/output
+  instead of always operating on whatever's currently focused when it runs. A step's own
+  `workspace`/`output` still wins when set, applied per field.
 
 ### Changed
 
