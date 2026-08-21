@@ -9,6 +9,10 @@
 # slot (sidebar) can't be resized directly — sizing the second slot instead
 # reshapes both, since sway redistributes the space between them.
 
+[template]
+description = "A narrow sidebar on the left, a wide main window on the right."
+category = "Sidebar"
+
 [[step]]
 slot = "sidebar"
 split = "h"

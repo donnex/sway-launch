@@ -4,6 +4,10 @@
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
 
+[template]
+description = "A single floating window, centered on the current workspace."
+category = "Floating"
+
 [[step]]
 slot = "window"
 floating = true

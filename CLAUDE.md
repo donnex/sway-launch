@@ -737,15 +737,39 @@ value that happens to share a real built-in's name still fails as a file read, n
 
 `--list-templates` (`main.rs`'s `print_builtin_templates()`) is a standalone mode — doesn't touch
 Sway IPC, so it's checked and short-circuits right after `--completions`, before the `--layout`/
-`--template` dispatch — printing every built-in's name and a one-line description
-(`template::builtin_templates()`: each file's *first* header-comment line, stripped of its leading
-`#` and space), sorted by name, or (`--json`) the same as a `{"templates": [...]}` array. Because this
-description is extracted programmatically, every template file's header comment must lead with one
-complete, self-contained sentence (ending in `.`) before any further rationale — several existing
-headers didn't (a single sentence wrapped across the first two lines) and were rewritten alongside
-this feature so `--list-templates` never prints a sentence truncated mid-thought;
-`template.rs`'s `builtin_templates_every_description_is_a_complete_sentence` test guards against
-this regressing, so keep it true of any new template file's header too.
+`--template` dispatch — printing every built-in's name, category, and one-line description
+(`template::builtin_templates()`, sourced from the file's own required `[template]` table — see
+below), sorted by name, or (`--json`) the same as a `{"templates": [...]}` array (each entry
+`{"name": ..., "category": ..., "description": ...}`).
+
+**Every template file's `[template]` table** (`Template.template: TemplateMetadata`, `description`
+and `category`, both plain `String`s, both required — `#[serde(deny_unknown_fields)]` on
+`TemplateMetadata` too, so a typo'd key errors the same way a misspelled step field does) is the
+single source of truth `builtin_templates()` reads from — replacing an earlier convention where the
+description was scraped from the file's first header-comment line instead. That convention broke
+down once a description needed to be machine-readable independent of a file's prose (`--show-template
+--json`'s `"contents"` field, category grouping) rather than just eyeballed; a required table is
+explicit and `deny_unknown_fields`-checked, where a magic "first comment line" convention was easy
+to violate silently (a header that opens with rationale instead of a description, or wraps its
+first sentence across two lines) with no error, only a bad `--list-templates` line discovered by
+chance. `category` groups a template alongside similarly-shaped ones in README.md's "Templates"
+table (`"Grid"`, `"Master/stack"`, `"Sidebar"`, `"Floating"`, `"Multi-workspace/output"`,
+`"Retargeting"` today — not a closed enum, so a new category needs no code change, only a new
+string and a new README.md table section). Required on every template file, including one a user
+writes themselves for their own `--template <file>.toml` use, not just the shipped built-ins — a
+deliberate breaking change from the prior convention (no compatibility shim), matching this
+project's broader "no version has shipped yet, so there's no real compatibility surface to
+preserve" stance for in-progress work on this branch. `builtin_templates()` parses each shipped
+file in full via the same `parse()` every other path uses, rather than re-implementing a
+lighter-weight scrape — a shipped file that fails to parse, or is missing the table, is a bug in
+this repo's own content, not a runtime condition to handle gracefully, so it panics with the
+file's name rather than silently dropping it from the `--list-templates` output. `description`
+must still be a complete, self-contained sentence (ending in `.`) — `template.rs`'s
+`builtin_templates_every_description_is_a_complete_sentence` test guards this, and
+`builtin_templates_every_category_is_non_empty` guards `category` similarly. Every one of the 27
+shipped `templates/*.toml` files was migrated to this table in the same change that added it, per
+this file's "Screenshots" section discipline of never leaving shipped content half-migrated to a
+new schema.
 
 `tests/live_sway.rs`'s `builtin_template_name_resolves_and_launches_without_a_toml_extension`
 drives the built-in dispatch path against a real compositor (`--template quad-grid`, no path or

@@ -11,6 +11,10 @@
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
 
+[template]
+description = "An equally sized 4x2 grid, two rows of four, with no application baked in."
+category = "Grid"
+
 [[step]]
 slot = "top-1"
 split = "h"

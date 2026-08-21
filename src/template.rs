@@ -10,11 +10,12 @@ use std::collections::{HashMap, HashSet};
 /// nothing to keep in sync between the two.
 static BUILTIN_TEMPLATES: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/templates");
 
-/// A built-in template's name and one-line description (its file's first
-/// header comment line), as listed by `--list-templates`.
+/// A built-in template's name, description, and category (from its file's
+/// `[template]` table), as listed by `--list-templates`.
 pub struct BuiltinTemplate {
     pub name: &'static str,
-    pub description: &'static str,
+    pub description: String,
+    pub category: String,
 }
 
 /// Looks up a built-in template's raw TOML contents by name (no `.toml`
@@ -25,15 +26,29 @@ pub fn builtin(name: &str) -> Option<&'static str> {
         .and_then(|file| file.contents_utf8())
 }
 
-/// Every built-in template's name and description, sorted by name, for
-/// `--list-templates`.
+/// Every built-in template's name, description, and category, sorted by
+/// name, for `--list-templates`. Parses each shipped file in full (rather
+/// than the old convention of scanning its first header-comment line) to
+/// read the required `[template]` table — a shipped file that fails to
+/// parse, or is missing that table, is a bug in this repo's own template
+/// content, not a runtime condition to handle gracefully, so it panics
+/// rather than silently dropping the template from the list.
 pub fn builtin_templates() -> Vec<BuiltinTemplate> {
     let mut templates: Vec<BuiltinTemplate> = BUILTIN_TEMPLATES
         .files()
         .filter_map(|file| {
             let name = file.path().file_stem()?.to_str()?;
-            let description = file.contents_utf8()?.lines().next()?.strip_prefix("# ")?;
-            Some(BuiltinTemplate { name, description })
+            let contents = file
+                .contents_utf8()
+                .unwrap_or_else(|| panic!("built-in template {name:?} is not valid UTF-8"));
+            let template = parse(contents).unwrap_or_else(|error| {
+                panic!("built-in template {name:?} failed to parse: {error}")
+            });
+            Some(BuiltinTemplate {
+                name,
+                description: template.template.description,
+                category: template.template.category,
+            })
         })
         .collect();
     templates.sort_unstable_by_key(|template| template.name);
@@ -48,8 +63,29 @@ pub fn builtin_templates() -> Vec<BuiltinTemplate> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Template {
+    pub template: TemplateMetadata,
     #[serde(default)]
     pub step: Vec<TemplateStep>,
+}
+
+/// A template file's required `[template]` table: a one-line `description`
+/// (shown by `--list-templates`/`--show-template --json`; must be a
+/// complete, self-contained sentence ending in `.` — see
+/// `builtin_templates_every_description_is_a_complete_sentence` below) and a
+/// `category` grouping it alongside similarly-shaped templates in
+/// README.md's "Templates" table (e.g. `"Grid"`, `"Master/stack"`,
+/// `"Sidebar"`, `"Floating"`, `"Multi-workspace/output"`, `"Retargeting"` —
+/// not a closed enum, since a new category can appear alongside new
+/// template shapes without a code change). Required on every template file,
+/// including one a user writes themselves — this replaced the old
+/// "first header-comment line = description" convention entirely, rather
+/// than falling back to it when the table is absent, so there's exactly one
+/// source of truth and no silent divergence between the two.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TemplateMetadata {
+    pub description: String,
+    pub category: String,
 }
 
 #[derive(Deserialize)]
@@ -277,6 +313,20 @@ mod tests {
         }
     }
 
+    fn minimal_metadata() -> TemplateMetadata {
+        TemplateMetadata {
+            description: "A test template.".to_string(),
+            category: "Test".to_string(),
+        }
+    }
+
+    fn minimal_template(step: Vec<TemplateStep>) -> Template {
+        Template {
+            template: minimal_metadata(),
+            step,
+        }
+    }
+
     fn minimal_binding() -> Binding {
         Binding {
             slot: "editor".to_string(),
@@ -292,7 +342,7 @@ mod tests {
     fn resolve_rejects_step_without_slot_or_target_id() {
         let mut step = minimal_step();
         step.slot = None;
-        let template = Template { step: vec![step] };
+        let template = minimal_template(vec![step]);
         let bindings = Bindings { binding: vec![] };
         assert!(resolve(&template, &bindings).is_err());
     }
@@ -301,7 +351,7 @@ mod tests {
     fn resolve_rejects_slot_and_target_id_together() {
         let mut step = minimal_step();
         step.target_id = Some("editor".to_string());
-        let template = Template { step: vec![step] };
+        let template = minimal_template(vec![step]);
         let bindings = Bindings {
             binding: vec![minimal_binding()],
         };
@@ -310,9 +360,7 @@ mod tests {
 
     #[test]
     fn resolve_rejects_two_steps_sharing_a_slot_name() {
-        let template = Template {
-            step: vec![minimal_step(), minimal_step()],
-        };
+        let template = minimal_template(vec![minimal_step(), minimal_step()]);
         let bindings = Bindings {
             binding: vec![minimal_binding()],
         };
@@ -331,7 +379,7 @@ mod tests {
         let mut step = minimal_step();
         step.floating = true;
         step.mark = Some("pinned".to_string());
-        let template = Template { step: vec![step] };
+        let template = minimal_template(vec![step]);
         let bindings = Bindings {
             binding: vec![minimal_binding()],
         };
@@ -346,9 +394,7 @@ mod tests {
 
     #[test]
     fn resolve_errors_on_missing_binding() {
-        let template = Template {
-            step: vec![minimal_step()],
-        };
+        let template = minimal_template(vec![minimal_step()]);
         let bindings = Bindings { binding: vec![] };
         let error = resolve(&template, &bindings)
             .err()
@@ -358,9 +404,7 @@ mod tests {
 
     #[test]
     fn resolve_errors_on_binding_with_no_target_field_naming_the_slot() {
-        let template = Template {
-            step: vec![minimal_step()],
-        };
+        let template = minimal_template(vec![minimal_step()]);
         let bindings = Bindings {
             binding: vec![Binding {
                 slot: "editor".to_string(),
@@ -388,9 +432,7 @@ mod tests {
 
     #[test]
     fn resolve_errors_on_binding_with_command_and_con_id_together() {
-        let template = Template {
-            step: vec![minimal_step()],
-        };
+        let template = minimal_template(vec![minimal_step()]);
         let bindings = Bindings {
             binding: vec![Binding {
                 slot: "editor".to_string(),
@@ -409,9 +451,7 @@ mod tests {
 
     #[test]
     fn resolve_errors_on_binding_with_app_id_and_class_together() {
-        let template = Template {
-            step: vec![minimal_step()],
-        };
+        let template = minimal_template(vec![minimal_step()]);
         let bindings = Bindings {
             binding: vec![Binding {
                 slot: "editor".to_string(),
@@ -430,7 +470,7 @@ mod tests {
 
     #[test]
     fn resolve_errors_on_unused_binding() {
-        let template = Template { step: vec![] };
+        let template = minimal_template(vec![]);
         let bindings = Bindings {
             binding: vec![minimal_binding()],
         };
@@ -442,9 +482,7 @@ mod tests {
 
     #[test]
     fn resolve_errors_on_duplicate_slot_within_bindings() {
-        let template = Template {
-            step: vec![minimal_step()],
-        };
+        let template = minimal_template(vec![minimal_step()]);
         let bindings = Bindings {
             binding: vec![minimal_binding(), minimal_binding()],
         };
@@ -459,7 +497,7 @@ mod tests {
         let mut step = minimal_step();
         step.slot = None;
         step.target_id = Some("editor".to_string());
-        let template = Template { step: vec![step] };
+        let template = minimal_template(vec![step]);
         let bindings = Bindings { binding: vec![] };
 
         let resolved = resolve(&template, &bindings).expect("valid template should resolve");
@@ -475,6 +513,10 @@ mod tests {
     fn parse_reads_a_representative_template() {
         let template = parse(
             r#"
+            [template]
+            description = "A test template."
+            category = "Test"
+
             [[step]]
             slot = "editor"
             floating = true
@@ -491,9 +533,38 @@ mod tests {
         // deny_unknown_fields must catch typos here too.
         let result = parse(
             r#"
+            [template]
+            description = "A test template."
+            category = "Test"
+
             [[step]]
             slot = "editor"
             flaoting = true
+            "#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_rejects_a_template_missing_the_template_table() {
+        let result = parse(
+            r#"
+            [[step]]
+            slot = "editor"
+            "#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_rejects_a_template_table_missing_category() {
+        let result = parse(
+            r#"
+            [template]
+            description = "A test template."
+
+            [[step]]
+            slot = "editor"
             "#,
         );
         assert!(result.is_err());
@@ -577,6 +648,17 @@ mod tests {
                 "{:?}'s description should be a complete sentence, got {:?}",
                 template.name,
                 template.description
+            );
+        }
+    }
+
+    #[test]
+    fn builtin_templates_every_category_is_non_empty() {
+        for template in builtin_templates() {
+            assert!(
+                !template.category.trim().is_empty(),
+                "{:?}'s category should be non-empty",
+                template.name
             );
         }
     }

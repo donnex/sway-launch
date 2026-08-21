@@ -16,6 +16,10 @@
 # 360/180/180-style stack instead of three equal rows (confirmed live;
 # see six-grid.toml's own header comment for the same fix).
 
+[template]
+description = "One large main window on the left, three smaller windows stacked in a column on the right."
+category = "Master/stack"
+
 [[step]]
 slot = "main"
 split = "h"
