@@ -38,6 +38,10 @@ struct Args {
     #[clap(short, long)]
     floating: bool,
 
+    /// Make new window sticky (shows on all workspaces)
+    #[clap(long)]
+    sticky: bool,
+
     /// Make new window fullscreen
     #[clap(long)]
     fullscreen: bool,
@@ -97,7 +101,7 @@ struct Args {
     /// Generate a shell completion script and print it to stdout
     #[clap(long, value_enum, conflicts_with_all = [
         "command", "con_id", "existing", "app_id", "class", "split",
-        "floating", "fullscreen", "focus", "mark", "new_column", "new_row",
+        "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
         "layout", "template", "list_templates", "bindings", "apps", "rollback_on_error",
     ])]
@@ -118,7 +122,7 @@ struct Args {
     /// step
     #[clap(long, conflicts_with_all = [
         "command", "con_id", "existing", "app_id", "class", "split",
-        "floating", "fullscreen", "focus", "mark", "new_column", "new_row",
+        "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
         "bindings", "apps",
     ])]
@@ -132,7 +136,7 @@ struct Args {
     /// every per-window flag, same reasoning as --layout
     #[clap(long, conflicts_with_all = [
         "command", "con_id", "existing", "app_id", "class", "split",
-        "floating", "fullscreen", "focus", "mark", "new_column", "new_row",
+        "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
         "layout",
     ])]
@@ -141,7 +145,7 @@ struct Args {
     /// List built-in --template names and exit
     #[clap(long, conflicts_with_all = [
         "command", "con_id", "existing", "app_id", "class", "split",
-        "floating", "fullscreen", "focus", "mark", "new_column", "new_row",
+        "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
         "layout", "template", "completions", "bindings", "apps", "rollback_on_error",
     ])]
@@ -259,6 +263,7 @@ fn main() {
         class_match: &class_match,
         split: args.split,
         floating: args.floating,
+        sticky: args.sticky,
         fullscreen: args.fullscreen,
         focus: args.focus,
         mark: &args.mark.unwrap_or_default(),
@@ -727,6 +732,18 @@ mod tests {
         let args = Args::try_parse_from(["sway-launch", "foot"]).unwrap();
         assert_eq!(args.app_id, None);
         assert_eq!(args.class, None);
+    }
+
+    #[test]
+    fn args_accepts_sticky_flag() {
+        let args = Args::try_parse_from(["sway-launch", "--sticky", "foot"]).unwrap();
+        assert!(args.sticky);
+    }
+
+    #[test]
+    fn args_rejects_sticky_and_layout_together() {
+        let result = Args::try_parse_from(["sway-launch", "--sticky", "--layout", "x.toml"]);
+        assert!(result.is_err());
     }
 
     #[test]

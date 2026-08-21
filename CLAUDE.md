@@ -103,6 +103,8 @@ The crate is four source files plus five integration test files:
   XWayland/X11 client (a real window's `WM_CLASS`) to match against, and no such client (e.g.
   `xterm`) has been available in this project's dev/CI environments so far — `--class` stays
   unit-test-only (`window_class_match`, `matches_window_event`'s class arm) until one is.
+  `--sticky` is covered by `sticky_sets_the_sticky_flag_even_on_a_tiled_window`/
+  `sticky_confirms_via_poll_well_under_a_large_wait_time`.
   `--debug-events` (which runs until killed, unlike everything else here) is covered by
   `debug_events_prints_a_real_window_event`, spawned as a background child via the `KillChildOnDrop`
   guard (mirrors `KillOnDrop`, but for a `Child` rather than a container id) with its stdout read on
@@ -138,9 +140,9 @@ harness — that's why these live here instead of as `#[cfg(test)]` modules in `
 
 ### Core model: `SwayAction`
 
-Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`, `Fullscreen`,
-`Focus`, `NewColumn`, `NewRow`, `Workspace`, `Output`, `Mark`, `Height`, `Width`, `Position`,
-`Scratchpad`). Each variant knows how to:
+Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`, `Sticky`,
+`Fullscreen`, `Focus`, `NewColumn`, `NewRow`, `Workspace`, `Output`, `Mark`, `Height`, `Width`,
+`Position`, `Scratchpad`). Each variant knows how to:
 
 - render itself as a `swaymsg` command string (`sway_command()`) — `Mark`'s, `Workspace`'s, and
   `Output`'s values are wrapped through `quote_sway_string()` before interpolation, since Sway's
@@ -247,10 +249,14 @@ Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`,
   `tests/live_sway.rs`'s `concurrent_exec_invocations_do_not_collide_on_the_same_container_id`
   (0 collisions across 90 manual trials during development, versus every trial colliding before
   this) and `exec_falls_back_to_a_content_match_when_its_own_process_already_exited`.
-- **No event exists in Sway IPC for it** (`Split`, `NewColumn`, `NewRow`, `Height`, `Width`,
-  `Position`) → `run_wait_time()`: sleeps for `--wait-time` *before* sending the command
+- **No event exists in Sway IPC for it** (`Split`, `Sticky`, `NewColumn`, `NewRow`, `Height`,
+  `Width`, `Position`) → `run_wait_time()`: sleeps for `--wait-time` *before* sending the command
   unconditionally (there's no signal yet to poll for), then sends it, since Sway doesn't emit an
-  event to confirm any of these. `Position` has no dedicated event because moving a floating window
+  event to confirm any of these. `Sticky` was confirmed live to have no dedicated `WindowChange`
+  variant at all — subscribing to window events while toggling `sticky enable`/`sticky disable`
+  against a live container fired nothing, unlike `Floating`/`Fullscreen`/`Focus` above, each of
+  which has its own variant — so it was never a candidate for the event-confirmed path to begin
+  with. `Position` has no dedicated event because moving a floating window
   doesn't reparent it in the tree. `NewColumn`/`NewRow` (`move right`/`move down`) used to be
   event-confirmed via `WindowChange::Move`, but live-Sway testing showed `move right` doesn't fire
   that event when the window is already at the tree's rightmost position — the ordinary two-window
@@ -272,7 +278,7 @@ Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`,
   still required for 1.9 — don't remove it on the strength of testing against a newer Sway alone.
 
   After sending the command, what happens next depends on `SwayAction::poll_matches()`, which now
-  has a matcher for every one of these six variants (per
+  has a matcher for every one of these seven variants (per
   `docs/plan-poll-based-wait-time-actions.md`, now fully landed): `run_wait_time()` hands off to
   `run_poll_then_fallback()`, which polls `get_tree()` every `WAIT_TIME_POLL_INTERVAL` for up to
   `WAIT_TIME_POLL_GRACE` for `poll_matches()` to confirm, returning immediately once it does (the
@@ -330,6 +336,17 @@ Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`,
     back to `rect.x`/`rect.y` whenever `deco_rect` is unset (both `width`/`height` zero), the same
     dual-formula-tolerance shape as `width_matches()` above for a different geometry quirk. Confirmed
     live by `tests/live_sway.rs`'s `position_confirms_via_poll_for_a_fullscreen_window`.
+  - **`Sticky`** — a direct read of the container's own `sticky` field on `Node` (via
+    `node_by_id()`), unlike `Floating`'s `node_type`/`floating`-field split (see
+    `node_is_floating()`'s doc comment) — confirmed live that `sticky` is a plain `bool` with no
+    Sway-1.9/1.11 quirk found, and that `sticky enable` sets it directly and immediately,
+    regardless of the container's floating state (it succeeds — and the field flips — even against
+    a still-*tiled* window, confirmed live by deliberately not floating it first; Sway's own docs
+    describe sticky as floating-only, but that wasn't observed as an enforced restriction here).
+    No known no-op case, same as `Split` — re-applying an already-set sticky state matches on the
+    very first poll. Confirmed live by `tests/live_sway.rs`'s
+    `sticky_sets_the_sticky_flag_even_on_a_tiled_window` and
+    `sticky_confirms_via_poll_well_under_a_large_wait_time`.
   - **`NewColumn`/`NewRow`** — the one pair with no fixed target to check against (a successful move
     can land the window almost anywhere in the tree), so these are the only variants that also use
     `poll_baseline()`: `run_wait_time()` snapshots the container's own `rect` (via `node_by_id()`)
@@ -360,9 +377,13 @@ Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`,
   one (documented for the user in README.md's "Target an existing window" section).
 
 `run()` then conditionally runs the other actions in a fixed order (`NewColumn` → `NewRow` →
-`Workspace` → `Output` → `Split` → `Floating` → `Fullscreen` → `Focus` → `Height` → `Width` →
-`Position` → `Mark` → `Scratchpad`) based on which CLI flags were set, each against that same
-`container_id`. `Scratchpad` runs last deliberately — it's the one action that hides the window
+`Workspace` → `Output` → `Split` → `Floating` → `Sticky` → `Fullscreen` → `Focus` → `Height` →
+`Width` → `Position` → `Mark` → `Scratchpad`) based on which CLI flags were set, each against that
+same `container_id`. `Sticky` runs immediately after `Floating` — a conventional pairing (sticky is
+most useful on a small floating utility window), not a hard dependency: live testing confirmed
+`--sticky` alone, with no `--floating`, works identically (see `SwayAction::poll_matches()`'s
+`Sticky` arm above), so this ordering is about grouping related flags together, not about one
+requiring the other to run first. `Scratchpad` runs last deliberately — it's the one action that hides the window
 away, so every other action (size, position, mark) gets a chance to apply to it first while it's
 still visible/tiled, and a `--mark` set earlier in the same invocation is still there to retarget
 the window by later (e.g. `swaymsg 'mark dropdown-term scratchpad show'`), the classic
