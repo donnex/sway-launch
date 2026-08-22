@@ -2017,12 +2017,20 @@ impl<'a> SwayLaunch<'a> {
     /// meaningful answer anyway, and skipping it entirely is what makes
     /// previewing fully IPC-free — `NewColumn`/`NewRow` are always included
     /// in a preview when the flag is set, same as every other action.
+    ///
+    /// The second element of the returned tuple is every action the guard
+    /// above skipped, alongside why — `--verbose` already logged this via
+    /// `eprintln!` before this existed; this is what lets `run()` also
+    /// surface it in `RunOutcome`/`--json`, instead of a skip being visible
+    /// only in a `--verbose` log line. Always empty when `check_relocation`
+    /// is `false` (a preview has nothing to actually check).
     fn build_actions(
         &self,
         container_id: i64,
         check_relocation: bool,
-    ) -> Result<Vec<SwayAction<'a>>, String> {
+    ) -> Result<(Vec<SwayAction<'a>>, Vec<SkippedAction>), String> {
         let mut actions = Vec::new();
+        let mut skipped = Vec::new();
 
         if self.new_column {
             if check_relocation
@@ -2037,6 +2045,10 @@ impl<'a> SwayLaunch<'a> {
                         container_id
                     );
                 }
+                skipped.push(SkippedAction {
+                    action: "new_column",
+                    reason: "trailing_workspace_edge",
+                });
             } else {
                 actions.push(SwayAction::NewColumn {
                     container_id,
@@ -2058,6 +2070,10 @@ impl<'a> SwayLaunch<'a> {
                         container_id
                     );
                 }
+                skipped.push(SkippedAction {
+                    action: "new_row",
+                    reason: "trailing_workspace_edge",
+                });
             } else {
                 actions.push(SwayAction::NewRow {
                     container_id,
@@ -2158,7 +2174,7 @@ impl<'a> SwayLaunch<'a> {
             });
         }
 
-        Ok(actions)
+        Ok((actions, skipped))
     }
 
     /// The `--dry-run` entry point: every `SwayAction` this `SwayLaunch`
@@ -2168,11 +2184,16 @@ impl<'a> SwayLaunch<'a> {
     /// is what makes that possible. Infallible (`build_actions()` only
     /// ever errors via the relocation check this skips), so callers don't
     /// need to handle a `--dry-run` preview failing the way a real `run()`
-    /// can.
+    /// can. The skipped-actions half of `build_actions()`'s return value is
+    /// always empty here (`check_relocation: false` never populates it), so
+    /// it's discarded rather than threaded through a preview that has
+    /// nothing to report.
     pub fn build_actions_for_preview(&self) -> Vec<SwayAction<'a>> {
-        self.build_actions(0, false).expect(
-            "check_relocation: false means build_actions() makes no IPC call, so it can't fail",
-        )
+        self.build_actions(0, false)
+            .expect(
+                "check_relocation: false means build_actions() makes no IPC call, so it can't fail",
+            )
+            .0
     }
 
     pub fn run(&self) -> Result<RunOutcome, String> {
@@ -2182,8 +2203,9 @@ impl<'a> SwayLaunch<'a> {
             eprintln!("Target container id: {}", container_id);
         }
 
+        let (planned_actions, skipped) = self.build_actions(container_id, true)?;
         let mut actions = Vec::new();
-        for action in self.build_actions(container_id, true)? {
+        for action in planned_actions {
             actions.push(action.sway_command_verb());
             action.run()?;
         }
@@ -2191,6 +2213,7 @@ impl<'a> SwayLaunch<'a> {
         Ok(RunOutcome {
             container_id,
             actions,
+            skipped,
         })
     }
 }
@@ -2204,9 +2227,29 @@ impl<'a> SwayLaunch<'a> {
 /// not a partial one — there's no per-action "confirmed"/"failed" status to
 /// report here, because a failed action never returns at all; it's
 /// reported as `run()`'s `Err` instead, same as before this existed.
+/// `skipped` is every `NewColumn`/`NewRow` `build_actions()` chose not to
+/// include at all (the multi-output relocation guard — see its own doc
+/// comment) — previously visible only via a `--verbose` log line, now also
+/// reported structurally so a `--json` caller can see it too.
 pub struct RunOutcome {
     pub container_id: i64,
     pub actions: Vec<String>,
+    pub skipped: Vec<SkippedAction>,
+}
+
+/// One action `SwayLaunch::build_actions()` decided not to include in the
+/// plan, and why. `action`/`reason` are short, stable, machine-readable
+/// identifiers (not prose) — snake_case tokens meant to be matched on by a
+/// script, the same spirit as `SwayAction::sway_command_verb()`'s stable
+/// text, not a human-facing message (that's what the existing `--verbose`
+/// `eprintln!` next to each skip is for). Only one skip mechanism exists
+/// today (the multi-output relocation guard), so `reason` is a plain
+/// `&'static str` rather than an enum — revisit if a second one ever
+/// appears.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SkippedAction {
+    pub action: &'static str,
+    pub reason: &'static str,
 }
 
 #[cfg(test)]
@@ -4299,10 +4342,11 @@ mod tests {
     #[test]
     fn build_actions_is_empty_when_no_flags_are_set() {
         let sway_launch = minimal_sway_launch();
-        let actions = sway_launch
+        let (actions, skipped) = sway_launch
             .build_actions(42, true)
             .expect("no flags set means no IPC call at all, so this can't fail");
         assert!(actions.is_empty());
+        assert!(skipped.is_empty());
     }
 
     #[test]
@@ -4331,9 +4375,10 @@ mod tests {
         sway_launch.mark = "pinned";
         sway_launch.scratchpad = true;
 
-        let actions = sway_launch
+        let (actions, skipped) = sway_launch
             .build_actions(42, true)
             .expect("none of these flags touch IPC while building the plan");
+        assert!(skipped.is_empty());
 
         let kinds: Vec<&str> = actions
             .iter()
@@ -4378,7 +4423,7 @@ mod tests {
     #[test]
     fn build_actions_omits_mark_when_empty() {
         let sway_launch = minimal_sway_launch();
-        let actions = sway_launch
+        let (actions, _skipped) = sway_launch
             .build_actions(42, true)
             .expect("no flags set means no IPC call at all, so this can't fail");
         assert!(!actions
@@ -4416,7 +4461,7 @@ mod tests {
         let mut sway_launch = minimal_sway_launch();
         sway_launch.new_column = true;
         sway_launch.new_row = true;
-        let actions = sway_launch
+        let (actions, skipped) = sway_launch
             .build_actions(42, false)
             .expect("check_relocation: false makes no IPC call, so this can't fail");
         assert!(actions
@@ -4425,6 +4470,7 @@ mod tests {
         assert!(actions
             .iter()
             .any(|action| matches!(action, SwayAction::NewRow { .. })));
+        assert!(skipped.is_empty());
     }
 
     // SwayLaunch::build_actions_for_preview

@@ -654,7 +654,9 @@ On a multi-monitor setup, this can be silently skipped — not delayed, not erro
 run — whenever the window is already the trailing (rightmost) child of a workspace laid out
 horizontally: Sway's own `move right` would otherwise relocate the window to the next output
 instead of restructuring it in place, and `sway-launch` skips the command rather than doing that
-silently on your behalf. Run with `--verbose` to see when this happens.
+silently on your behalf. Run with `--verbose` to see when this happens, or check `--json`'s
+`skipped` field (see [JSON output](#json-output) below) for a machine-readable signal instead of
+parsing a log line.
 
 ### New row
 
@@ -706,20 +708,24 @@ Confirmed via poll (container id: 437)
 
 Print the result as a JSON object instead of a bare container id, for scripts that want structured
 output. `actions` lists every action that actually ran, in order — the same text `--dry-run` would
-have printed for that action, confirming what happened, not just the final container id.
+have printed for that action, confirming what happened, not just the final container id. `skipped`
+lists any action that was silently no-oped instead of run — currently only `--new-column`/
+`--new-row`'s multi-output relocation guard (see "New column"/"New row" below) produces one, each
+entry naming the `action` and a machine-readable `reason`:
 
 ```shell
 $ sway-launch --json --floating --mark pinned foot
-{"actions":["floating enable","mark \"pinned\""],"container_id":437}
+{"actions":["floating enable","mark \"pinned\""],"container_id":437,"skipped":[]}
 ```
 
-For `--layout`/`--template`, `container_ids` lists every step's container id positionally, and
+For `--layout`/`--template`, `container_ids` lists every step's container id positionally,
 `containers` maps each *named* step (one with `id` set, or a template `slot`, which resolves to the
-same name) to its container id — steps without a name only appear in `container_ids`:
+same name) to its container id — steps without a name only appear in `container_ids` — and
+`skipped` aggregates every step's skipped actions, each also tagged with its 1-based `step` number:
 
 ```shell
 $ sway-launch --template quad-grid --apps foot,foot,code,foot --json
-{"container_ids":[437,438,439,440],"containers":{"bottom-left":439,"bottom-right":440,"top-left":437,"top-right":438}}
+{"container_ids":[437,438,439,440],"containers":{"bottom-left":439,"bottom-right":440,"top-left":437,"top-right":438},"skipped":[]}
 ```
 
 This also applies to errors — a failure prints a JSON object to stderr instead of a plain-text
