@@ -1,0 +1,31 @@
+# One large main window on the left, two smaller windows stacked in a column on the right (60%/40%).
+# master-dual-stack.toml with a wider stack (40% instead of 35%) — better
+# suited to browser/documentation/chat-style pairing than the narrower
+# IDE-oriented ratio.
+# Run with, e.g.:
+#   sway-launch --template master-dual-stack-wide --apps code,foot,foot
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+#
+# The stack's width is set on stack-top rather than main: resizing a
+# window is a no-op while it's still the workspace's only window, so the
+# first-launched slot (main) can't be resized directly — sizing the second
+# slot instead reshapes both, since sway redistributes the space between
+# them.
+
+[template]
+description = "One large main window on the left, two smaller windows stacked in a column on the right (60%/40%)."
+category = "Master/stack"
+
+[[step]]
+slot = "main"
+split = "h"
+
+[[step]]
+slot = "stack-top"
+new_column = true
+split = "v"
+width = "40ppt"
+
+[[step]]
+slot = "stack-bottom"
