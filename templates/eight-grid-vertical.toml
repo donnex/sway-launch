@@ -1,0 +1,51 @@
+# An equally sized 2x4 grid, four rows of two, with no application baked in.
+# eight-grid.toml rotated: two columns instead of four, four rows instead of
+# two — the same shape-extension idea as six-grid-vertical.toml, one row
+# taller. Row slots are numbered (row1..row4) rather than named, the same
+# convention eight-grid.toml itself uses for its own four columns, since
+# there's no clean word for a fourth position the way top/middle/bottom
+# covers three. Only the first window of each row gets an explicit
+# split="h" — giving the second window its own split call too would nest it
+# inside the first window's half instead of joining a single flat row,
+# producing an uneven split instead of two equal columns (same fix
+# six-grid.toml's own header comment describes).
+# Run with, e.g.:
+#   sway-launch --template eight-grid-vertical \
+#     --apps foot,foot,foot,foot,foot,foot,foot,foot
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+
+[template]
+description = "An equally sized 2x4 grid, four rows of two, with no application baked in."
+category = "Grid"
+
+[[step]]
+slot = "row1-left"
+split = "h"
+
+[[step]]
+slot = "row1-right"
+
+[[step]]
+slot = "row2-left"
+new_row = true
+split = "h"
+
+[[step]]
+slot = "row2-right"
+
+[[step]]
+slot = "row3-left"
+new_row = true
+split = "h"
+
+[[step]]
+slot = "row3-right"
+
+[[step]]
+slot = "row4-left"
+new_row = true
+split = "h"
+
+[[step]]
+slot = "row4-right"
