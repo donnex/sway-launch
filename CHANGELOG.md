@@ -39,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `master-triple-stack-left` rotated (stack on top, main window below).
 - `dashboard` built-in template — `dual-sidebars` with a wider main window (20%/60%/20% instead of
   50%/25%/25%).
+- `master-dual-stack-wide` built-in template — `master-dual-stack` with a wider stack (60%/40%
+  instead of ~65%/35%), better suited to browser/documentation/chat-style pairing than the
+  narrower IDE-oriented ratio.
 
 ### Changed
 
