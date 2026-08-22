@@ -1,0 +1,39 @@
+# An equally sized 2x3 grid, three rows of two, with no application baked in.
+# six-grid.toml rotated: two columns instead of three, three rows instead of
+# two — the same technique nine-grid.toml uses for its own third row, just
+# with two slots per row instead of three. Only the first window of each row
+# gets an explicit split="h" — giving the second window its own split call
+# too would nest it inside the first window's half instead of joining a
+# single flat row, producing an uneven split instead of two equal columns
+# (same fix six-grid.toml's own header comment describes).
+# Run with, e.g.:
+#   sway-launch --template six-grid-vertical --apps foot,firefox,code,thunar,chromium,foot
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+
+[template]
+description = "An equally sized 2x3 grid, three rows of two, with no application baked in."
+category = "Grid"
+
+[[step]]
+slot = "top-left"
+split = "h"
+
+[[step]]
+slot = "top-right"
+
+[[step]]
+slot = "middle-left"
+new_row = true
+split = "h"
+
+[[step]]
+slot = "middle-right"
+
+[[step]]
+slot = "bottom-left"
+new_row = true
+split = "h"
+
+[[step]]
+slot = "bottom-right"

@@ -1,0 +1,32 @@
+# A 2-window stack on top, one large main window below it.
+# master-dual-stack-left.toml rotated 90 degrees: the stack forms first as a
+# horizontal row (stack-left/stack-right side by side) instead of a vertical
+# column, then main joins via new_row ("move down") instead of new_column,
+# pulling it out of the row and into a new vertical sibling below it —
+# converting the workspace from "two windows side by side" into "stack row /
+# main" stacked top to bottom. main's height is set (not the stack's),
+# mirroring master-dual-stack-left.toml's own choice to size main rather
+# than the stack: resizing a window is a no-op while it's still the
+# workspace's only window, so the first-formed group (the stack) can't be
+# resized directly at that point — sizing main, which forms second, reshapes
+# both since sway redistributes the space between them.
+# Run with, e.g.:
+#   sway-launch --template master-dual-stack-top --apps foot,foot,code
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+
+[template]
+description = "A 2-window stack on top, one large main window below it."
+category = "Master/stack"
+
+[[step]]
+slot = "stack-left"
+split = "h"
+
+[[step]]
+slot = "stack-right"
+
+[[step]]
+slot = "main"
+new_row = true
+height = "65ppt"

@@ -33,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to every step that doesn't set its own — pins the whole template to a specific workspace/output
   instead of always operating on whatever's currently focused when it runs. A step's own
   `workspace`/`output` still wins when set, applied per field.
+- `six-grid-vertical`/`eight-grid-vertical` built-in templates — `six-grid`/`eight-grid` rotated
+  (two columns instead of three/four, three/four rows instead of two).
+- `master-dual-stack-top`/`master-triple-stack-top` built-in templates — `master-dual-stack-left`/
+  `master-triple-stack-left` rotated (stack on top, main window below).
+- `dashboard` built-in template — `dual-sidebars` with a wider main window (20%/60%/20% instead of
+  50%/25%/25%).
 
 ### Changed
 

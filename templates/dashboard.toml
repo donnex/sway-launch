@@ -1,0 +1,37 @@
+# A wide main window flanked by one narrow sidebar on each side (20%/60%/20% width).
+# dual-sidebars.toml's shape with a wider main window (60% instead of 50%,
+# leaving 20% per sidebar instead of 25%) — a dashboard-style layout where
+# the side panels are meant to stay narrow and secondary rather than
+# roughly half the screen each.
+# Run with, e.g.:
+#   sway-launch --template dashboard --apps foot,code,foot
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+#
+# main's width is set in a trailing target_id step, after both sidebars
+# already exist, rather than on main's own step right after it launches —
+# same reasoning as dual-sidebars.toml's own header comment: with all three
+# windows as flat siblings of the workspace, resizing main right after
+# sidebar-right's own step still gets redistributed back to equal thirds
+# once sidebar-right's step itself runs, so resizing main only after every
+# sibling already exists avoids that.
+
+[template]
+description = "A wide main window flanked by one narrow sidebar on each side (20%/60%/20% width)."
+category = "Master/stack"
+
+[[step]]
+slot = "sidebar-left"
+split = "h"
+
+[[step]]
+slot = "main"
+new_column = true
+
+[[step]]
+slot = "sidebar-right"
+new_column = true
+
+[[step]]
+target_id = "main"
+width = "60ppt"
