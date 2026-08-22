@@ -766,10 +766,24 @@ value that happens to share a real built-in's name still fails as a file read, n
 
 `--list-templates` (`main.rs`'s `print_builtin_templates()`) is a standalone mode — doesn't touch
 Sway IPC, so it's checked and short-circuits right after `--completions`, before the `--layout`/
-`--template` dispatch — printing every built-in's name, category, and one-line description
-(`template::builtin_templates()`, sourced from the file's own required `[template]` table — see
-below), sorted by name, or (`--json`) the same as a `{"templates": [...]}` array (each entry
-`{"name": ..., "category": ..., "description": ...}`).
+`--template` dispatch — printing every built-in's name, category, one-line description, and slot
+info (`template::builtin_templates()`, sourced from the file's own required `[template]` table —
+see below), sorted by name, or (`--json`) the same as a `{"templates": [...]}` array. `--json`'s
+entry shape is `{"name": ..., "category": ..., "description": ..., "slots": ..., "slot_names":
+[...]}`; plain output appends the same info as `(N slot(s): name, name, ...)` after the
+description on each line (singular `"slot"` for exactly one, per user decision 2026-08-22 — tried
+`--json`-only first, matching where `category` itself was added, but decided the full listing
+should carry it too, accepting that a many-slot grid's line runs long as the tradeoff).
+`slot_names` is every distinct `slot` name a template's steps declare, in first-appearance order —
+the same order `--apps` zips its own comma-separated list against — via a new shared
+`template::distinct_slot_names()` helper that `bindings_from_apps()` (see below) now also calls
+instead of duplicating the same loop, so the two can never silently disagree on what "slot order"
+means. `slots` is simply `slot_names.len()`. Covered headlessly by `tests/template.rs`'s
+`list_templates_json_output_reports_slots_and_slot_names`,
+`list_templates_plain_output_includes_slot_count_and_names`, and
+`list_templates_plain_output_uses_singular_slot_for_a_single_slot_template`, and by `template.rs`'s
+`builtin_templates_reports_slots_and_slot_names_matching_the_apps_ordering` and
+`distinct_slot_names_deduplicates_and_ignores_target_id_steps` unit tests.
 
 **Every template file's `[template]` table** (`Template.template: TemplateMetadata`, `description`
 and `category`, both plain `String`s, both required — `#[serde(deny_unknown_fields)]` on
