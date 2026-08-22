@@ -228,7 +228,7 @@ fn layout_json_output_is_a_single_array() {
     let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
     assert_eq!(
         stdout.trim(),
-        "{\"container_ids\":[42,91],\"containers\":{}}"
+        "{\"container_ids\":[42,91],\"containers\":{},\"skipped\":[]}"
     );
 }
 
@@ -248,7 +248,7 @@ fn layout_json_output_maps_named_steps_in_containers() {
     let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
     assert_eq!(
         stdout.trim(),
-        "{\"container_ids\":[42,91],\"containers\":{\"editor\":42}}"
+        "{\"container_ids\":[42,91],\"containers\":{\"editor\":42},\"skipped\":[]}"
     );
 }
 

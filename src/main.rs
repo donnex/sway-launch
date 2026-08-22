@@ -340,6 +340,7 @@ fn main() {
                     serde_json::json!({
                         "container_id": outcome.container_id,
                         "actions": outcome.actions,
+                        "skipped": skipped_actions_json(&outcome.skipped),
                     })
                 );
             } else {
@@ -348,6 +349,43 @@ fn main() {
         }
         Err(error) => fail(args.json, &error),
     };
+}
+
+/// Renders a single invocation's `RunOutcome.skipped` as `--json`'s
+/// `"skipped"` array (`[{"action": ..., "reason": ...}, ...]`). `run_steps()`
+/// (`--layout`/`--template`) doesn't reuse this — it needs each entry
+/// tagged with a 1-based step number too (there can be several steps, not
+/// just one invocation) — see `step_skipped_actions_json()` below.
+fn skipped_actions_json(skipped: &[sway_launch::SkippedAction]) -> serde_json::Value {
+    serde_json::json!(skipped
+        .iter()
+        .map(|skipped| serde_json::json!({ "action": skipped.action, "reason": skipped.reason }))
+        .collect::<Vec<_>>())
+}
+
+/// `run_steps()`'s per-step counterpart to `skipped_actions_json()`: the
+/// same `{"action": ..., "reason": ...}` shape, plus a `"step"` field (the
+/// step's 1-based number, matching the `"step {}: ..."` convention every
+/// other per-step error message in this file already uses) so a skip is
+/// traceable to which step produced it across a multi-step `--layout`/
+/// `--template` run. A small pure function specifically so the step-number
+/// arithmetic (`index + 1`) is unit-testable headlessly with a synthetic
+/// `SkippedAction`, without needing to actually trigger a live skip (only
+/// reachable via a real multi-output Sway session) just to verify it.
+fn step_skipped_actions_json(
+    step_index: usize,
+    skipped: Vec<sway_launch::SkippedAction>,
+) -> Vec<serde_json::Value> {
+    skipped
+        .into_iter()
+        .map(|skipped| {
+            serde_json::json!({
+                "step": step_index + 1,
+                "action": skipped.action,
+                "reason": skipped.reason,
+            })
+        })
+        .collect()
 }
 
 /// Reports a runtime failure — file I/O, TOML parsing, or the
@@ -695,6 +733,10 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
     // not ones it merely retargeted via con_id/existing/target_id — see
     // fail_step()'s doc comment.
     let mut launched_container_ids = Vec::new();
+    // Every skipped NewColumn/NewRow across every step, each tagged with
+    // its 1-based step number (steps.len() can be several, unlike a single
+    // direct-CLI invocation) — see skipped_actions_json()'s doc comment.
+    let mut skipped = Vec::new();
 
     for (index, step) in steps.iter().enumerate() {
         if let Some(id) = step.id.as_deref() {
@@ -739,6 +781,7 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
                 if let Some(id) = step.id.as_deref() {
                     resolved_ids.insert(id.to_string(), outcome.container_id);
                 }
+                skipped.extend(step_skipped_actions_json(index, outcome.skipped));
             }
             Err(error) => fail_step(args, &launched_container_ids, index, error),
         }
@@ -750,6 +793,7 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
             serde_json::json!({
                 "container_ids": container_ids,
                 "containers": resolved_ids,
+                "skipped": skipped,
             })
         );
     }
@@ -1072,5 +1116,46 @@ mod tests {
     fn json_result_serializes_container_id() {
         let value = serde_json::json!({ "container_id": 42 });
         assert_eq!(value.to_string(), "{\"container_id\":42}");
+    }
+
+    #[test]
+    fn skipped_actions_json_renders_action_and_reason_with_no_step_field() {
+        let skipped = [sway_launch::SkippedAction {
+            action: "new_column",
+            reason: "trailing_workspace_edge",
+        }];
+        assert_eq!(
+            skipped_actions_json(&skipped),
+            serde_json::json!([{ "action": "new_column", "reason": "trailing_workspace_edge" }])
+        );
+    }
+
+    #[test]
+    fn step_skipped_actions_json_tags_each_entry_with_a_1_based_step_number() {
+        // Regression test for the exact off-by-one that would be invisible
+        // against a real skip on a --layout's first step: step_index is
+        // 0-based (an iterator position), but the reported "step" must be
+        // 1-based, matching every other per-step error message in this
+        // file's own "step {}: ..." convention. Uses a synthetic
+        // SkippedAction rather than a real live skip (only reachable via a
+        // multi-output Sway session) specifically so this arithmetic is
+        // verifiable headlessly.
+        let skipped = vec![sway_launch::SkippedAction {
+            action: "new_row",
+            reason: "trailing_workspace_edge",
+        }];
+        assert_eq!(
+            step_skipped_actions_json(1, skipped),
+            vec![serde_json::json!({
+                "step": 2,
+                "action": "new_row",
+                "reason": "trailing_workspace_edge",
+            })]
+        );
+    }
+
+    #[test]
+    fn step_skipped_actions_json_is_empty_for_no_skips() {
+        assert!(step_skipped_actions_json(0, Vec::new()).is_empty());
     }
 }
