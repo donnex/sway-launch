@@ -637,7 +637,20 @@ fn new_column_does_not_relocate_a_solo_window_to_a_different_output() {
     // its workspace can otherwise relocate the whole workspace to the next
     // output in that direction, rather than a same-workspace no-op.
     // SwayLaunch::run() guards against this via relocates_to_another_output();
-    // this proves the guard actually prevents the relocation.
+    // this proves the guard actually prevents the relocation. Also asserts
+    // on --json's "skipped" field (RunOutcome.skipped) rather than adding a
+    // second, near-identical test with its own create_output call: this
+    // headless backend was confirmed live (manual probing, isolated from
+    // any other test activity) to crash deterministically and unrecoverably
+    // on its *8th* create_output call, and this file's tests already sit at
+    // exactly 7 such calls — every one already at its limit, no budget left
+    // for a new dedicated setup. Reusing an *existing* output instead of a
+    // fresh one was tried first and rejected: the guard's escalation is
+    // directional (whether "move right" actually crosses into another
+    // output depends on Sway's own output arrangement and which output
+    // happens to be focused), so reusing whatever an unrelated earlier
+    // test left behind doesn't reliably reproduce the same scenario a
+    // dedicated, freshly created output does.
     let mut connection = connect();
     connection
         .run_command("create_output")
@@ -653,12 +666,17 @@ fn new_column_does_not_relocate_a_solo_window_to_a_different_output() {
         .to_string();
 
     let output = sway_launch_command()
-        .args(["--con-id", &container_id.to_string(), "--new-column"])
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--new-column",
+            "--json",
+        ])
         .output()
         .expect("failed to run sway-launch binary");
     assert!(
         output.status.success(),
-        "sway-launch --new-column failed: {}",
+        "sway-launch --new-column --json failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
@@ -668,6 +686,20 @@ fn new_column_does_not_relocate_a_solo_window_to_a_different_output() {
         output_after,
         Some(output_before.as_str()),
         "a solo window's --new-column should not relocate it to a different output"
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    let json: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("--json output should be valid JSON");
+    assert_eq!(
+        json["skipped"],
+        serde_json::json!([{ "action": "new_column", "reason": "trailing_workspace_edge" }]),
+        "expected the skipped new_column action reported: {json:?}"
+    );
+    assert_eq!(
+        json["actions"],
+        serde_json::json!([]),
+        "the skipped action must not also appear in actions: {json:?}"
     );
 }
 

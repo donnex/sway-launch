@@ -486,7 +486,40 @@ When flagged, the action is skipped (logged under `--verbose`) rather than run, 
 cross-monitor relocation for a silent no-op — confirmed by `tests/live_sway.rs`'s
 `new_column_does_not_relocate_a_solo_window_to_a_different_output`,
 `new_column_does_not_relocate_a_non_solo_window_at_the_trailing_edge`, and (the nested case)
-`new_column_does_not_relocate_a_nested_window_to_a_different_output`.
+`new_column_does_not_relocate_a_nested_window_to_a_different_output`. A skip is also structurally
+reported, not just logged: `build_actions()` returns `(Vec<SwayAction<'a>>, Vec<SkippedAction>)`
+instead of a bare `Vec<SwayAction<'a>>` — `SkippedAction { action, reason }` holds short,
+stable, machine-readable `&'static str` identifiers (`"new_column"`/`"new_row"`,
+`"trailing_workspace_edge"`), not a human-facing message (that's still what the `--verbose`
+`eprintln!` next to each skip is for). `RunOutcome` gained a matching `skipped: Vec<SkippedAction>`
+field, populated in `run()` alongside `actions`; `main.rs` renders it as `--json`'s `"skipped"`
+array (`skipped_actions_json()` for a single invocation, `step_skipped_actions_json()` for
+`run_steps()`, which additionally tags each entry with a 1-based `"step"` number — the same
+`"step {}: ..."` convention every other per-step error in that file already uses). Previously a
+skip was visible only via a `--verbose` log line, invisible to a `--json` caller; this closes that
+gap without changing the log line at all. `build_actions_for_preview()` (`--dry-run`) discards the
+skipped half of the tuple — always empty there anyway, since `check_relocation: false` never
+populates it. Only one skip mechanism exists today, so `SkippedAction.reason` is a plain
+`&'static str` rather than an enum; revisit if a second one ever appears.
+`step_skipped_actions_json()`'s step-number arithmetic (`step_index + 1`) is unit-tested headlessly
+with a synthetic `SkippedAction` (`main.rs`'s
+`step_skipped_actions_json_tags_each_entry_with_a_1_based_step_number`) rather than only via a real
+skip, which needs a live multi-output Sway session to trigger at all — isolating the off-by-one
+risk from the live-only trigger condition. Confirmed live end to end (a real skip surfacing
+correctly in real `--json` output) by extending
+`new_column_does_not_relocate_a_solo_window_to_a_different_output` itself, rather than adding a new
+test with its own `create_output` call: this project's headless Sway backend was found live
+(manual probing, isolated from any other test activity) to crash deterministically and
+unrecoverably on its *8th* `create_output` call within one compositor session, and
+`tests/live_sway.rs` already sits at exactly 7 such calls across its existing tests — no budget
+left for a new one. Reusing an *existing* output instead of creating a fresh one was tried and
+rejected: the guard's escalation is directional (whether `move right` actually crosses into
+another output depends on Sway's own output arrangement and which output is currently focused), so
+reusing whatever an unrelated earlier test left behind didn't reliably reproduce the scenario a
+dedicated, freshly created output does — confirmed by first trying exactly that and observing the
+guard silently not firing. Any *future* test needing a second output should budget for this the
+same way: extend an existing `create_output`-using test rather than defaulting to a new one, unless
+genuinely unavoidable.
 
 Each Sway IPC call opens its own fresh `Connection` (`new_connection()` in `sway_launch.rs`) — there
 is no persistent/shared connection across actions.
@@ -530,13 +563,16 @@ showed, because a failed action never reaches the `Ok` return at all; it's `run(
 exactly as before this existed. Plain (non-`--json`) output is unaffected — still just the bare
 `container_id`.
 
-A single invocation's `--json` output is now `{"container_id": N, "actions": [...]}`. `run_steps()`
-(`--layout`/`--template`) already tracked a `resolved_ids: HashMap<String, i64>` of every named
-step's (`id`, or a template `slot`, which resolves to the same name — see "`--template`" below)
-container id, purely to resolve later `target_id` references — that same map is now serialized
-directly as `--json`'s new `"containers"` field, alongside the existing `"container_ids"` array
-(every step's id positionally, named or not). No new bookkeeping was needed for this specifically
-because `resolved_ids` already existed for an unrelated reason.
+A single invocation's `--json` output is now `{"container_id": N, "actions": [...], "skipped":
+[...]}`. `run_steps()` (`--layout`/`--template`) already tracked a `resolved_ids: HashMap<String,
+i64>` of every named step's (`id`, or a template `slot`, which resolves to the same name — see
+"`--template`" below) container id, purely to resolve later `target_id` references — that same map
+is now serialized directly as `--json`'s new `"containers"` field, alongside the existing
+`"container_ids"` array (every step's id positionally, named or not). No new bookkeeping was
+needed for this specifically because `resolved_ids` already existed for an unrelated reason.
+`"skipped"` (`[{"action": ..., "reason": ...}, ...]`, or, for `run_steps()`, each entry also tagged
+with a 1-based `"step"`) was added later, alongside `RunOutcome.skipped` — see
+`relocates_to_another_output()`'s doc comment above for the full design.
 
 ### `--debug-events`
 

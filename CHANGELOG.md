@@ -70,3 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   zips its own comma-separated list against — appended to each line as `(N slot(s): name, name,
   ...)` in plain output, or as separate `slots`/`slot_names` fields under `--json`, so a script can
   size or pre-fill `--apps`/a `--bindings` file without parsing the template's TOML itself.
+- `--json`'s success output now also reports `"skipped"`: any `--new-column`/`--new-row` action
+  that was silently no-oped by the multi-output relocation guard instead of run (previously visible
+  only via a `--verbose` log line), each entry naming the `action` and a machine-readable `reason`.
+  `--layout`/`--template`'s `"skipped"` additionally tags each entry with its 1-based `step` number.
