@@ -331,6 +331,13 @@ window existed before this run and isn't this run's to close. Requires `--layout
 With `--json`, the error object includes which container ids were closed:
 `{"error": "...", "rolled_back": [123, 456]}`.
 
+This is **window-launch rollback**, not transactional rollback: it undoes *launches*, not
+*actions*. A `move`/`resize`/`mark`/etc. an earlier step applied to a `con_id`/`existing`/
+`target_id`-retargeted window is never reverted — that window is never eligible for rollback at
+all (see above), so any changes an earlier step made to it stay applied even after a later step
+fails. There's no mechanism that tracks or reverses individual mutations, only whether this
+invocation is the one that created the window in the first place.
+
 ### Templates
 
 A `--layout` file bakes a specific application into every step (`command`/`app_id`), which means
