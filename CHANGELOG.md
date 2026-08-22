@@ -66,3 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Two `--template` steps sharing the same `slot` name now error immediately with a message naming
   the slot (`template: slot "..." is used more than once`), instead of a generic, implementation-detail-flavored
   "id already used by an earlier step" message.
+- `--list-templates` now also reports each template's slot count and names, in the order `--apps`
+  zips its own comma-separated list against — appended to each line as `(N slot(s): name, name,
+  ...)` in plain output, or as separate `slots`/`slot_names` fields under `--json`, so a script can
+  size or pre-fill `--apps`/a `--bindings` file without parsing the template's TOML itself.
