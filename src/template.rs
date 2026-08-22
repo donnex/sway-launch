@@ -10,12 +10,17 @@ use std::collections::{HashMap, HashSet};
 /// nothing to keep in sync between the two.
 static BUILTIN_TEMPLATES: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/templates");
 
-/// A built-in template's name, description, and category (from its file's
-/// `[template]` table), as listed by `--list-templates`.
+/// A built-in template's name, description, category (from its file's
+/// `[template]` table), and slot info, as listed by `--list-templates`.
+/// `slots`/`slot_names` are `--json`-only (see `main.rs`'s
+/// `print_builtin_templates()`) — plain output stays the three-column
+/// name/category/description table it always was.
 pub struct BuiltinTemplate {
     pub name: &'static str,
     pub description: String,
     pub category: String,
+    pub slots: usize,
+    pub slot_names: Vec<String>,
 }
 
 /// Looks up a built-in template's raw TOML contents by name (no `.toml`
@@ -26,13 +31,31 @@ pub fn builtin(name: &str) -> Option<&'static str> {
         .and_then(|file| file.contents_utf8())
 }
 
-/// Every built-in template's name, description, and category, sorted by
-/// name, for `--list-templates`. Parses each shipped file in full (rather
-/// than the old convention of scanning its first header-comment line) to
-/// read the required `[template]` table — a shipped file that fails to
-/// parse, or is missing that table, is a bug in this repo's own template
-/// content, not a runtime condition to handle gracefully, so it panics
-/// rather than silently dropping the template from the list.
+/// The distinct slot names a template's steps declare, in first-appearance
+/// order — the same order `--apps` zips its own comma-separated list
+/// against. Shared by `main.rs`'s `bindings_from_apps()` (which needs this
+/// exact order to zip `--apps` correctly) and `builtin_templates()` below
+/// (which reports it via `--list-templates --json`), so the two never
+/// silently disagree on what "slot order" means.
+pub fn distinct_slot_names(template: &Template) -> Vec<&str> {
+    let mut slots = Vec::new();
+    for step in &template.step {
+        if let Some(slot) = step.slot.as_deref() {
+            if !slots.contains(&slot) {
+                slots.push(slot);
+            }
+        }
+    }
+    slots
+}
+
+/// Every built-in template's name, description, category, and slot info,
+/// sorted by name, for `--list-templates`. Parses each shipped file in full
+/// (rather than the old convention of scanning its first header-comment
+/// line) to read the required `[template]` table — a shipped file that
+/// fails to parse, or is missing that table, is a bug in this repo's own
+/// template content, not a runtime condition to handle gracefully, so it
+/// panics rather than silently dropping the template from the list.
 pub fn builtin_templates() -> Vec<BuiltinTemplate> {
     let mut templates: Vec<BuiltinTemplate> = BUILTIN_TEMPLATES
         .files()
@@ -44,10 +67,16 @@ pub fn builtin_templates() -> Vec<BuiltinTemplate> {
             let template = parse(contents).unwrap_or_else(|error| {
                 panic!("built-in template {name:?} failed to parse: {error}")
             });
+            let slot_names: Vec<String> = distinct_slot_names(&template)
+                .into_iter()
+                .map(str::to_string)
+                .collect();
             Some(BuiltinTemplate {
                 name,
                 description: template.template.description,
                 category: template.template.category,
+                slots: slot_names.len(),
+                slot_names,
             })
         })
         .collect();
@@ -807,5 +836,40 @@ mod tests {
                 template.name
             );
         }
+    }
+
+    #[test]
+    fn builtin_templates_reports_slots_and_slot_names_matching_the_apps_ordering() {
+        // quad-grid.toml's slots, in file order -- pins the exact contract
+        // --list-templates --json's "slots"/"slot_names" fields promise:
+        // slots is the count, slot_names is that same order --apps zips
+        // against (bindings_from_apps() uses the identical
+        // distinct_slot_names() helper, so this also indirectly confirms
+        // the two never disagree).
+        let templates = builtin_templates();
+        let quad_grid = templates
+            .iter()
+            .find(|template| template.name == "quad-grid")
+            .expect("quad-grid should be a built-in template");
+        assert_eq!(quad_grid.slots, 4);
+        assert_eq!(
+            quad_grid.slot_names,
+            vec!["top-left", "top-right", "bottom-left", "bottom-right"]
+        );
+    }
+
+    #[test]
+    fn distinct_slot_names_deduplicates_and_ignores_target_id_steps() {
+        let mut editor_step = minimal_step();
+        editor_step.slot = Some("editor".to_string());
+        let mut repeated_step = minimal_step();
+        repeated_step.slot = Some("editor".to_string());
+        let mut target_id_step = minimal_step();
+        target_id_step.slot = None;
+        target_id_step.target_id = Some("editor".to_string());
+
+        let template = minimal_template(vec![editor_step, repeated_step, target_id_step]);
+
+        assert_eq!(distinct_slot_names(&template), vec!["editor"]);
     }
 }

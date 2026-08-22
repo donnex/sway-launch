@@ -525,6 +525,8 @@ fn print_builtin_templates(json: bool) {
                     "name": template.name,
                     "category": template.category,
                     "description": template.description,
+                    "slots": template.slots,
+                    "slot_names": template.slot_names,
                 })
             })
             .collect();
@@ -544,8 +546,13 @@ fn print_builtin_templates(json: bool) {
         .unwrap_or(0);
     for template in &templates {
         println!(
-            "{:<name_width$}  {:<category_width$}  {}",
-            template.name, template.category, template.description
+            "{:<name_width$}  {:<category_width$}  {} ({} slot{}: {})",
+            template.name,
+            template.category,
+            template.description,
+            template.slots,
+            if template.slots == 1 { "" } else { "s" },
+            template.slot_names.join(", ")
         );
     }
 }
@@ -626,14 +633,7 @@ fn bindings_from_apps(
     parsed_template: &template::Template,
     apps: &str,
 ) -> Result<template::Bindings, String> {
-    let mut slots = Vec::new();
-    for step in &parsed_template.step {
-        if let Some(slot) = step.slot.as_deref() {
-            if !slots.contains(&slot) {
-                slots.push(slot);
-            }
-        }
-    }
+    let slots = template::distinct_slot_names(parsed_template);
 
     let apps: Vec<&str> = apps.split(',').map(str::trim).collect();
     if apps.len() != slots.len() {

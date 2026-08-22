@@ -428,8 +428,18 @@ binary itself as a *built-in template* — `--template <name>` (no `.toml` exten
 `--template quad-grid`) resolves that name against the embedded copy, so using one doesn't require
 cloning this repo or downloading anything. A value ending in `.toml` is always read from disk
 instead, so a built-in name and a same-named local template file never collide. Run
-`sway-launch --list-templates` to print every built-in name with its category and one-line
-description (add `--json` for structured output).
+`sway-launch --list-templates` to print every built-in name with its category, one-line
+description, and slot names (in the order `--apps` zips its own comma-separated list against):
+
+```shell
+$ sway-launch --list-templates
+dual-row     Grid  Two windows side by side in a single row. (2 slots: left, right)
+...
+```
+
+`--json` reports the same slot info structurally as `slots` (the count) and `slot_names` (the
+array), so a script can size or pre-fill `--apps`/a `--bindings` file without parsing the
+template's TOML itself.
 
 ```shell
 sway-launch --template quad-grid --apps foot,firefox,code,thunar

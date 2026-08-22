@@ -683,6 +683,69 @@ fn list_templates_json_output_is_a_structured_array() {
 }
 
 #[test]
+fn list_templates_json_output_reports_slots_and_slot_names() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--list-templates", "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("output should be valid JSON");
+    let templates = parsed["templates"]
+        .as_array()
+        .expect("templates should be an array");
+    let quad_grid = templates
+        .iter()
+        .find(|entry| entry["name"] == "quad-grid")
+        .expect("quad-grid should be a built-in template");
+    assert_eq!(quad_grid["slots"], 4);
+    assert_eq!(
+        quad_grid["slot_names"],
+        serde_json::json!(["top-left", "top-right", "bottom-left", "bottom-right"])
+    );
+}
+
+#[test]
+fn list_templates_plain_output_includes_slot_count_and_names() {
+    // Per user decision 2026-08-22: plain output also reports slot info,
+    // matching --json rather than staying description-only. Checks
+    // quad-grid's own line specifically (rather than scanning the whole
+    // listing for the substring "slot", which would false-positive on
+    // retarget-by-slot's name/description).
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--list-templates"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    let quad_grid_line = stdout
+        .lines()
+        .find(|line| line.starts_with("quad-grid "))
+        .expect("quad-grid should be listed");
+    assert!(quad_grid_line.contains("(4 slots: top-left, top-right, bottom-left, bottom-right)"));
+}
+
+#[test]
+fn list_templates_plain_output_uses_singular_slot_for_a_single_slot_template() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--list-templates"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    let floating_centered_line = stdout
+        .lines()
+        .find(|line| line.starts_with("floating-centered "))
+        .expect("floating-centered should be listed");
+    assert!(floating_centered_line.contains("(1 slot: window)"));
+    assert!(!floating_centered_line.contains("1 slots"));
+}
+
+#[test]
 fn show_template_prints_a_builtin_s_raw_toml() {
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
         .args(["--show-template", "quad-grid"])
