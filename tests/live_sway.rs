@@ -1213,6 +1213,63 @@ fn rollback_on_error_kills_earlier_launched_windows_when_a_later_step_fails() {
 }
 
 #[test]
+fn rollback_on_error_handles_a_launched_window_that_already_closed_itself() {
+    // Regression test: if step 1's launched window closes on its own before
+    // a later step's failure triggers --rollback-on-error, rollback()'s own
+    // kill_container() call against that already-gone container must not be
+    // treated as fatal -- main.rs's rollback() doc comment already says a
+    // kill failure (e.g. the window already closed) is logged and skipped,
+    // not fatal, but this exact scenario had no dedicated test.
+    //
+    // Step 1 launches a foot window running a shell that exits after a
+    // short sleep, closing the window on its own. Step 2 retargets that
+    // same window (via target_id) with a NewColumn action and a large
+    // wait_time -- run_wait_time() sleeps *before* its container_exists()
+    // check (not after), so by the time that check runs the window is
+    // reliably already gone, failing step 2 deterministically without any
+    // race against an external kill.
+    let path = TempToml::write(
+        "rollback-exit",
+        "[[step]]\n\
+         id = \"app\"\n\
+         command = \"foot -e sh -c 'sleep 0.3'\"\n\
+         app_id = \"foot\"\n\n\
+         [[step]]\n\
+         target_id = \"app\"\n\
+         new_column = true\n\
+         wait_time = 1200\n",
+    );
+
+    let output = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--rollback-on-error",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        !output.status.success(),
+        "sway-launch should fail once step 2 finds its target already closed"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        stderr.contains("no longer exists"),
+        "expected step 2's error to name the already-closed container: {stderr:?}"
+    );
+    // Rollback attempted to close the already-gone window as part of
+    // --rollback-on-error, but there's nothing left to kill -- confirming
+    // that attempt was logged and skipped (not fatal, didn't hang) rather
+    // than counted as a successful rollback.
+    assert!(
+        stderr.contains("\"rolled_back\":[]"),
+        "the already-closed window's own kill can't have succeeded: {stderr:?}"
+    );
+}
+
+#[test]
 fn layout_target_id_references_an_earlier_steps_real_window() {
     let mut connection = connect();
     let path = TempToml::write(

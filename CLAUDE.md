@@ -128,6 +128,13 @@ The crate is four source files plus five integration test files:
   `tests/json_output.rs`/`tests/layout.rs` instead (`rollback_on_error_without_layout_or_template_errors`,
   `con_id_json_error_output_is_a_structured_object`, `layout_json_error_output_is_a_structured_object`,
   `layout_rollback_on_error_reports_empty_rollback_when_nothing_was_launched`).
+  `rollback_on_error_handles_a_launched_window_that_already_closed_itself` covers the scenario
+  where a step-1-launched window closes on its own before a later step's failure triggers
+  rollback — `rollback()`'s own `kill_container()` call against that already-gone container is
+  confirmed to log-and-skip rather than hang or panic. Deterministic, not racy: step 2 retargets
+  step 1's window with a `NewColumn`/large-`wait_time` action, whose `container_exists()` check
+  runs *after* the sleep (see `run_wait_time()`), so the window is reliably already gone by the
+  time step 2's own check runs, without needing an external process to race a kill against it.
 
   **This file's coverage must stay complete, not just present.** It's the one place anything
   IPC-touching actually gets exercised against real Sway, and — same as `.github/workflows/`'s
