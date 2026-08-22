@@ -1,10 +1,11 @@
 # A wide main window flanked by one narrow sidebar on each side (20%/60%/20% width).
 # dual-sidebars.toml's shape with a wider main window (60% instead of 50%,
-# leaving 20% per sidebar instead of 25%) — a dashboard-style layout where
-# the side panels are meant to stay narrow and secondary rather than
-# roughly half the screen each.
+# leaving 20% per sidebar instead of 25%), the same kind of width-ratio
+# variant master-dual-stack-wide.toml is to master-dual-stack.toml — the
+# side panels are meant to stay narrow and secondary rather than roughly
+# half the screen each.
 # Run with, e.g.:
-#   sway-launch --template dashboard --apps foot,code,foot
+#   sway-launch --template dual-sidebars-wide --apps foot,code,foot
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
 #
