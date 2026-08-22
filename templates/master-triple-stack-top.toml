@@ -1,0 +1,34 @@
+# A 3-window stack on top, one large main window below it.
+# master-triple-stack-left.toml rotated 90 degrees: the stack forms first as
+# a horizontal row (stack-left/stack-middle/stack-right side by side)
+# instead of a vertical column — only stack-left gets an explicit split="h"
+# (while it's still the workspace's only window); stack-middle and
+# stack-right both join as flat siblings in that same splith row with no
+# further split calls, producing three equal columns (same fix
+# master-triple-stack-left.toml's own header comment describes, rotated
+# here from a column to a row). main then joins last via new_row ("move
+# down"), pulling it out to become a new vertical sibling below the
+# finished row.
+# Run with, e.g.:
+#   sway-launch --template master-triple-stack-top --apps foot,foot,foot,code
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section.
+
+[template]
+description = "A 3-window stack on top, one large main window below it."
+category = "Master/stack"
+
+[[step]]
+slot = "stack-left"
+split = "h"
+
+[[step]]
+slot = "stack-middle"
+
+[[step]]
+slot = "stack-right"
+
+[[step]]
+slot = "main"
+new_row = true
+height = "70ppt"
