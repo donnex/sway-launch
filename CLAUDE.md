@@ -475,7 +475,9 @@ relocates the window elsewhere, so it always lands as an ordinary new sibling in
 existing layout with the origin workspace's other windows completely undisturbed. No reorder
 needed. Confirmed by `tests/live_sway.rs`'s
 `new_column_combined_with_workspace_lands_on_the_target_workspace_correctly` and
-`new_column_output_guard_still_applies_when_combined_with_output`.
+`new_column_and_new_row_output_guard_still_applies_when_combined_with_output` (the latter covers
+both `--new-column`+`--output` and `--new-row`+`--output` in one test, reusing its own
+`create_output` call for both).
 
 Before including `NewColumn`/`NewRow` in the plan at all, `build_actions()` calls
 `relocates_to_another_output(container_id, direction)`, which checks `get_outputs()` (skipping the

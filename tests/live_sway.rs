@@ -361,6 +361,60 @@ fn output_moves_window_to_named_output() {
     let tree = connection.get_tree().expect("get_tree should succeed");
     let output = output_containing(&tree, container_id, None);
     assert_eq!(output, Some(new_output.as_str()));
+
+    // Combination coverage, reusing this test's own create_output call
+    // rather than budgeting a second one (see the note on
+    // new_column_does_not_relocate_a_solo_window_to_a_different_output for
+    // why this headless backend's create_output budget is shared across the
+    // whole file): --output+--split and --output+--fullscreen, each
+    // combined in one invocation.
+    //
+    // output+split: --split v on a window that's solo on the new output
+    // (build_actions() runs Output before Split, so by the time Split runs
+    // the window is already there) should configure *that* output's
+    // workspace layout, not wherever the window transiently existed before
+    // the move -- confirmed by a second window landing stacked below it.
+    let (split_id, _split_guard) = launch_foot(&["--output", &new_output, "--split", "v"]);
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        output_containing(&tree, split_id, None),
+        Some(new_output.as_str()),
+        "the --split-combined window should still land on the requested output"
+    );
+    let (stacked_id, _stacked_guard) = launch_foot(&["--output", &new_output]);
+    std::thread::sleep(Duration::from_millis(300));
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let split_rect = find_node(&tree, split_id)
+        .expect("split window should be in the tree")
+        .rect;
+    let stacked_rect = find_node(&tree, stacked_id)
+        .expect("stacked window should be in the tree")
+        .rect;
+    assert_eq!(
+        split_rect.x, stacked_rect.x,
+        "stacked windows on the new output should share the same x"
+    );
+    assert_ne!(
+        split_rect.y, stacked_rect.y,
+        "stacked windows on the new output should have different y"
+    );
+
+    // output+fullscreen: combined in one invocation, the window should end
+    // up both on the requested output and fullscreen.
+    let (fullscreen_id, _fullscreen_guard) =
+        launch_foot(&["--output", &new_output, "--fullscreen"]);
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        output_containing(&tree, fullscreen_id, None),
+        Some(new_output.as_str()),
+        "the --fullscreen-combined window should still land on the requested output"
+    );
+    let fullscreen_node = get_node(&mut connection, fullscreen_id);
+    assert_ne!(
+        fullscreen_node.fullscreen_mode,
+        Some(0),
+        "the --output-combined window should also be fullscreen"
+    );
 }
 
 #[test]
@@ -870,14 +924,17 @@ fn new_column_combined_with_workspace_lands_on_the_target_workspace_correctly() 
 }
 
 #[test]
-fn new_column_output_guard_still_applies_when_combined_with_output() {
-    // Companion to the workspace case above: when --new-column and --output
-    // are combined in one invocation and the window is at the trailing edge
-    // of an axis-matched, multi-output-eligible workspace,
+fn new_column_and_new_row_output_guard_still_applies_when_combined_with_output() {
+    // Companion to the workspace case above: when --new-column/--new-row and
+    // --output are combined in one invocation and the window is at the
+    // trailing edge of an axis-matched, multi-output-eligible workspace,
     // relocates_to_another_output() should still skip the (redundant, and
-    // in a single-output world dangerous) "move right" exactly as it does
-    // when --new-column runs alone -- confirmed live this combination
-    // doesn't bypass or double up on the existing guard.
+    // in a single-output world dangerous) "move right"/"move down" exactly
+    // as it does when --new-column/--new-row runs alone -- confirmed live
+    // this combination doesn't bypass or double up on the existing guard.
+    // Covers --new-row+--output in the same test (reusing this test's own
+    // create_output call) rather than budgeting a second one for it -- see
+    // the note on new_column_does_not_relocate_a_solo_window_to_a_different_output.
     let mut connection = connect();
     let outputs_before: Vec<String> = connection
         .get_outputs()
@@ -922,6 +979,31 @@ fn new_column_output_guard_still_applies_when_combined_with_output() {
         Some(origin_output.as_str()),
         "the first window should stay on its original output, undisturbed"
     );
+
+    // Same combination, for --new-row, on a fresh origin workspace.
+    let (third_id, _third_guard) =
+        launch_foot(&["--workspace", "live-sway-test-new-row-output-combo"]);
+    connection
+        .run_command("workspace live-sway-test-new-row-output-combo")
+        .expect("workspace switch should succeed");
+    let tree_before_third = connection.get_tree().expect("get_tree should succeed");
+    let third_origin_output = output_containing(&tree_before_third, third_id, None)
+        .expect("third window should be found in the tree")
+        .to_string();
+
+    let (fourth_id, _fourth_guard) = launch_foot(&["--new-row", "--output", &new_output]);
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        output_containing(&tree, fourth_id, None),
+        Some(new_output.as_str()),
+        "the --new-row-combined window should end up on the requested output, same as --output alone"
+    );
+    assert_eq!(
+        output_containing(&tree, third_id, None),
+        Some(third_origin_output.as_str()),
+        "the third window should stay on its original output, undisturbed"
+    );
 }
 
 #[test]
@@ -931,6 +1013,111 @@ fn fullscreen_enables_fullscreen_mode() {
 
     let node = get_node(&mut connection, container_id);
     assert_ne!(node.fullscreen_mode, Some(0));
+}
+
+#[test]
+fn fullscreen_combined_with_workspace_lands_on_the_target_workspace_fullscreen() {
+    // Combination coverage: --workspace runs before --fullscreen in
+    // build_actions()'s fixed order, so a step combining both should end up
+    // both on the target workspace and fullscreen, not one or the other.
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&[
+        "--workspace",
+        "live-sway-test-fullscreen-workspace-combo",
+        "--fullscreen",
+    ]);
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        workspace_containing(&tree, container_id, None),
+        Some("live-sway-test-fullscreen-workspace-combo"),
+        "the window should have moved to the target workspace"
+    );
+    let node = get_node(&mut connection, container_id);
+    assert_ne!(
+        node.fullscreen_mode,
+        Some(0),
+        "the workspace-combined window should also be fullscreen"
+    );
+}
+
+#[test]
+fn split_combined_with_workspace_configures_the_target_workspace_not_the_origin() {
+    // Combination coverage: --workspace runs before --split in
+    // build_actions()'s fixed order, so a step combining both should
+    // configure the *target* workspace's own layout (via the solo-window
+    // "sets the workspace's layout directly" rule — see parent_node_layout's
+    // doc comment), not whatever origin workspace the window transiently
+    // existed on before the move.
+    let mut connection = connect();
+    let (first_id, _first_guard) = launch_foot(&[
+        "--workspace",
+        "live-sway-test-workspace-split-combo",
+        "--split",
+        "v",
+    ]);
+    let (second_id, _second_guard) =
+        launch_foot(&["--workspace", "live-sway-test-workspace-split-combo"]);
+    std::thread::sleep(Duration::from_millis(300));
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        workspace_containing(&tree, second_id, None),
+        Some("live-sway-test-workspace-split-combo"),
+        "second window should land on the target workspace"
+    );
+    let first_rect = find_node(&tree, first_id)
+        .expect("first window should be in the tree")
+        .rect;
+    let second_rect = find_node(&tree, second_id)
+        .expect("second window should be in the tree")
+        .rect;
+    assert_eq!(
+        first_rect.x, second_rect.x,
+        "combining --workspace with --split v should stack the windows vertically \
+         on the target workspace"
+    );
+    assert_ne!(
+        first_rect.y, second_rect.y,
+        "combining --workspace with --split v should stack the windows vertically \
+         on the target workspace"
+    );
+}
+
+#[test]
+fn floating_centered_and_scratchpadded_together_lands_hidden_but_correctly_configured() {
+    // Combination coverage: --scratchpad always runs last (after Floating/
+    // Position/etc.), specifically so earlier actions like centering still
+    // apply to a visible window before it's hidden away -- the classic
+    // "dropdown terminal" pattern. An external review agreed this ordering
+    // is correct but suggested a regression test to confirm centering and
+    // scratchpad-ing don't race (e.g. --position center silently failing
+    // once the window is already hidden).
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&[
+        "--floating",
+        "--width",
+        "400px",
+        "--height",
+        "300px",
+        "--position",
+        "center",
+        "--scratchpad",
+    ]);
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let workspace = ancestor_workspace_name(&tree, container_id, None);
+    assert_eq!(
+        workspace.as_deref(),
+        Some("__i3_scratch"),
+        "expected the window to be in Sway's scratchpad workspace, got ancestor workspace {:?}",
+        workspace
+    );
+    let node = find_node(&tree, container_id).expect("window should be in the tree");
+    assert!(
+        node_is_floating(node),
+        "the scratchpadded window should still be floating"
+    );
 }
 
 #[test]
