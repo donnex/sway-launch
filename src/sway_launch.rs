@@ -604,7 +604,15 @@ impl SwayAction<'_> {
         }
     }
 
-    fn run(&self) -> Result<i64, String> {
+    /// Runs this action for real, returning the container id it acted on
+    /// alongside whether `already_at_target()` short-circuited it (`true`)
+    /// rather than actually changing anything (`false`) — `SwayLaunch::run()`
+    /// uses this to distinguish `ActionStatus::AlreadySatisfied` from
+    /// `ActionStatus::Changed` in `RunOutcome`/`--json`. `Exec` is the one
+    /// variant `already_at_target()` never short-circuits (a freshly
+    /// launched window is inherently a change, never already-satisfied), so
+    /// it's always `false` there.
+    fn run(&self) -> Result<(i64, bool), String> {
         if self.verbose() {
             eprintln!("Sway action: {}", self);
         }
@@ -616,16 +624,17 @@ impl SwayAction<'_> {
                     container_id
                 );
             }
-            return Ok(container_id);
+            return Ok((container_id, true));
         }
 
-        match self {
+        let container_id = match self {
             SwayAction::Exec { .. } => self.run_wait_matching_exec_event(),
             _ => match self.matching_window_change_events() {
                 Some(_) => self.run_wait_matching_events(),
                 None => self.run_wait_time(),
             },
-        }
+        }?;
+        Ok((container_id, false))
     }
 
     /// Checks whether the container is already where/how a given action
@@ -2032,7 +2041,8 @@ impl<'a> SwayLaunch<'a> {
                 verbose: self.verbose,
                 timeout: self.timeout,
             }
-            .run(),
+            .run()
+            .map(|(container_id, _already_satisfied)| container_id),
             Target::ConId(container_id) => Ok(container_id),
             Target::Existing => self::find_existing_container_id(
                 self.app_id_match,
@@ -2060,19 +2070,19 @@ impl<'a> SwayLaunch<'a> {
     /// previewing fully IPC-free — `NewColumn`/`NewRow` are always included
     /// in a preview when the flag is set, same as every other action.
     ///
-    /// The second element of the returned tuple is every action the guard
-    /// above skipped, alongside why — `--verbose` already logged this via
-    /// `eprintln!` before this existed; this is what lets `run()` also
-    /// surface it in `RunOutcome`/`--json`, instead of a skip being visible
-    /// only in a `--verbose` log line. Always empty when `check_relocation`
-    /// is `false` (a preview has nothing to actually check).
+    /// Each entry the guard above skips is interleaved in-place as
+    /// `PlannedAction::Skip`, alongside why — `--verbose` already logged
+    /// this via `eprintln!` before this existed; this is what lets `run()`
+    /// also surface it in `RunOutcome`/`--json`, in its correct position in
+    /// the fixed order, instead of a skip being visible only in a
+    /// `--verbose` log line. Never appears when `check_relocation` is
+    /// `false` (a preview has nothing to actually check).
     fn build_actions(
         &self,
         container_id: i64,
         check_relocation: bool,
-    ) -> Result<(Vec<SwayAction<'a>>, Vec<SkippedAction>), String> {
+    ) -> Result<Vec<PlannedAction<'a>>, String> {
         let mut actions = Vec::new();
-        let mut skipped = Vec::new();
 
         if self.new_column {
             if check_relocation
@@ -2087,16 +2097,16 @@ impl<'a> SwayLaunch<'a> {
                         container_id
                     );
                 }
-                skipped.push(SkippedAction {
+                actions.push(PlannedAction::Skip(SkippedAction {
                     action: "new_column",
                     reason: "trailing_workspace_edge",
-                });
+                }));
             } else {
-                actions.push(SwayAction::NewColumn {
+                actions.push(PlannedAction::Run(SwayAction::NewColumn {
                     container_id,
                     verbose: self.verbose,
                     wait_time: self.wait_time,
-                });
+                }));
             }
         }
         if self.new_row {
@@ -2112,111 +2122,111 @@ impl<'a> SwayLaunch<'a> {
                         container_id
                     );
                 }
-                skipped.push(SkippedAction {
+                actions.push(PlannedAction::Skip(SkippedAction {
                     action: "new_row",
                     reason: "trailing_workspace_edge",
-                });
+                }));
             } else {
-                actions.push(SwayAction::NewRow {
+                actions.push(PlannedAction::Run(SwayAction::NewRow {
                     container_id,
                     verbose: self.verbose,
                     wait_time: self.wait_time,
-                });
+                }));
             }
         }
         if let Some(workspace) = self.workspace {
-            actions.push(SwayAction::Workspace {
+            actions.push(PlannedAction::Run(SwayAction::Workspace {
                 container_id,
                 workspace,
                 verbose: self.verbose,
                 timeout: self.timeout,
-            });
+            }));
         }
         if let Some(output) = self.output {
-            actions.push(SwayAction::Output {
+            actions.push(PlannedAction::Run(SwayAction::Output {
                 container_id,
                 output,
                 verbose: self.verbose,
                 timeout: self.timeout,
-            });
+            }));
         }
         if let Some(split) = self.split {
-            actions.push(SwayAction::Split {
+            actions.push(PlannedAction::Run(SwayAction::Split {
                 container_id,
                 split,
                 verbose: self.verbose,
                 wait_time: self.wait_time,
-            });
+            }));
         }
         if self.floating {
-            actions.push(SwayAction::Floating {
+            actions.push(PlannedAction::Run(SwayAction::Floating {
                 container_id,
                 verbose: self.verbose,
                 timeout: self.timeout,
-            });
+            }));
         }
         if self.sticky {
-            actions.push(SwayAction::Sticky {
+            actions.push(PlannedAction::Run(SwayAction::Sticky {
                 container_id,
                 verbose: self.verbose,
                 wait_time: self.wait_time,
-            });
+            }));
         }
         if self.fullscreen {
-            actions.push(SwayAction::Fullscreen {
+            actions.push(PlannedAction::Run(SwayAction::Fullscreen {
                 container_id,
                 verbose: self.verbose,
                 timeout: self.timeout,
-            });
+            }));
         }
         if self.focus {
-            actions.push(SwayAction::Focus {
+            actions.push(PlannedAction::Run(SwayAction::Focus {
                 container_id,
                 verbose: self.verbose,
                 timeout: self.timeout,
-            });
+            }));
         }
         if let Some(height) = self.height {
-            actions.push(SwayAction::Height {
+            actions.push(PlannedAction::Run(SwayAction::Height {
                 container_id,
                 height,
                 verbose: self.verbose,
                 wait_time: self.wait_time,
-            });
+            }));
         }
         if let Some(width) = self.width {
-            actions.push(SwayAction::Width {
+            actions.push(PlannedAction::Run(SwayAction::Width {
                 container_id,
                 width,
                 verbose: self.verbose,
                 wait_time: self.wait_time,
-            });
+            }));
         }
         if let Some(position) = self.position {
-            actions.push(SwayAction::Position {
+            actions.push(PlannedAction::Run(SwayAction::Position {
                 container_id,
                 position,
                 verbose: self.verbose,
                 wait_time: self.wait_time,
-            });
+            }));
         }
         if !self.mark.is_empty() {
-            actions.push(SwayAction::Mark {
+            actions.push(PlannedAction::Run(SwayAction::Mark {
                 container_id,
                 mark: self.mark,
                 verbose: self.verbose,
                 timeout: self.timeout,
-            });
+            }));
         }
         if self.scratchpad {
-            actions.push(SwayAction::Scratchpad {
+            actions.push(PlannedAction::Run(SwayAction::Scratchpad {
                 container_id,
                 verbose: self.verbose,
                 timeout: self.timeout,
-            });
+            }));
         }
 
-        Ok((actions, skipped))
+        Ok(actions)
     }
 
     /// The `--dry-run` entry point: every `SwayAction` this `SwayLaunch`
@@ -2226,16 +2236,19 @@ impl<'a> SwayLaunch<'a> {
     /// is what makes that possible. Infallible (`build_actions()` only
     /// ever errors via the relocation check this skips), so callers don't
     /// need to handle a `--dry-run` preview failing the way a real `run()`
-    /// can. The skipped-actions half of `build_actions()`'s return value is
-    /// always empty here (`check_relocation: false` never populates it), so
-    /// it's discarded rather than threaded through a preview that has
-    /// nothing to report.
+    /// can. `check_relocation: false` never produces a `PlannedAction::Skip`
+    /// entry, so filtering down to just the `Run` half loses nothing here.
     pub fn build_actions_for_preview(&self) -> Vec<SwayAction<'a>> {
         self.build_actions(0, false)
             .expect(
                 "check_relocation: false means build_actions() makes no IPC call, so it can't fail",
             )
-            .0
+            .into_iter()
+            .filter_map(|planned| match planned {
+                PlannedAction::Run(action) => Some(action),
+                PlannedAction::Skip(_) => None,
+            })
+            .collect()
     }
 
     pub fn run(&self) -> Result<RunOutcome, String> {
@@ -2245,53 +2258,101 @@ impl<'a> SwayLaunch<'a> {
             eprintln!("Target container id: {}", container_id);
         }
 
-        let (planned_actions, skipped) = self.build_actions(container_id, true)?;
         let mut actions = Vec::new();
-        for action in planned_actions {
-            actions.push(action.sway_command_verb());
-            action.run()?;
+        for planned in self.build_actions(container_id, true)? {
+            let record = match planned {
+                PlannedAction::Run(action) => {
+                    let verb = action.sway_command_verb();
+                    let (_, already_satisfied) = action.run()?;
+                    ActionRecord {
+                        action: verb,
+                        status: if already_satisfied {
+                            ActionStatus::AlreadySatisfied
+                        } else {
+                            ActionStatus::Changed
+                        },
+                    }
+                }
+                PlannedAction::Skip(skipped) => ActionRecord {
+                    action: skipped.action.to_string(),
+                    status: ActionStatus::Skipped {
+                        reason: skipped.reason,
+                    },
+                },
+            };
+            actions.push(record);
         }
 
         Ok(RunOutcome {
             container_id,
             actions,
-            skipped,
         })
     }
 }
 
 /// `SwayLaunch::run()`'s result: the resolved container id, plus every
-/// action's verb (`SwayAction::sway_command_verb()`, the same
-/// container-id-free text `--dry-run` prints) in the order it actually ran
-/// — a real run's richer `--json` shape (`main.rs`) reports this alongside
-/// `container_id`. Since `run()` stops at the first action that fails,
-/// `actions` on a successful `Ok` is always the *complete* planned list,
-/// not a partial one — there's no per-action "confirmed"/"failed" status to
-/// report here, because a failed action never returns at all; it's
-/// reported as `run()`'s `Err` instead, same as before this existed.
-/// `skipped` is every `NewColumn`/`NewRow` `build_actions()` chose not to
-/// include at all (the multi-output relocation guard — see its own doc
-/// comment) — previously visible only via a `--verbose` log line, now also
-/// reported structurally so a `--json` caller can see it too.
+/// planned action's outcome, in the fixed order `build_actions()` produced
+/// it in — a real run's richer `--json` shape (`main.rs`) reports this
+/// alongside `container_id`. Since `run()` stops at the first action that
+/// fails, `actions` on a successful `Ok` is always the *complete* planned
+/// list, not a partial one — a failed action never produces an `ActionRecord`
+/// at all; it's reported as `run()`'s `Err` instead, same as before this
+/// existed.
 pub struct RunOutcome {
     pub container_id: i64,
-    pub actions: Vec<String>,
-    pub skipped: Vec<SkippedAction>,
+    pub actions: Vec<ActionRecord>,
+}
+
+/// One entry in `RunOutcome.actions`: either an action that actually ran
+/// (`action` is `SwayAction::sway_command_verb()`, the same
+/// container-id-free text `--dry-run` prints), or one `build_actions()`
+/// chose not to run at all (the multi-output relocation guard — see its own
+/// doc comment; `action` is then the short, stable, machine-readable flag
+/// name `SkippedAction.action` already used, not a Sway command verb, since
+/// a skipped action was never turned into a real `SwayAction` to have one).
+/// Previously a skip was visible only via a `--verbose` log line or a
+/// separate `"skipped"` field; folding both into one `actions` list,
+/// alongside the `Changed`/`AlreadySatisfied` distinction
+/// `SwayAction::already_at_target()` already computed internally but
+/// discarded, is what makes a `--json` caller able to tell all three
+/// outcomes apart in their actual run order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActionRecord {
+    pub action: String,
+    pub status: ActionStatus,
+}
+
+/// What actually happened to one planned action. `reason` on `Skipped` is a
+/// short, stable, machine-readable identifier (not prose) — the same spirit
+/// as `SwayAction::sway_command_verb()`'s stable text, not a human-facing
+/// message (that's what the existing `--verbose` `eprintln!` next to each
+/// skip is for). Only one skip mechanism exists today (the multi-output
+/// relocation guard), so `reason` is a plain `&'static str` rather than a
+/// nested enum — revisit if a second one ever appears.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionStatus {
+    Changed,
+    AlreadySatisfied,
+    Skipped { reason: &'static str },
+}
+
+/// One `SwayAction` `SwayLaunch::build_actions()` planned to run, or one it
+/// decided to skip instead (interleaved in the same `Vec` so the overall
+/// fixed order survives — see `build_actions()`'s doc comment for why a
+/// skip needs a defined position at all, not just a separate side list).
+#[derive(Debug)]
+enum PlannedAction<'a> {
+    Run(SwayAction<'a>),
+    Skip(SkippedAction),
 }
 
 /// One action `SwayLaunch::build_actions()` decided not to include in the
-/// plan, and why. `action`/`reason` are short, stable, machine-readable
-/// identifiers (not prose) — snake_case tokens meant to be matched on by a
-/// script, the same spirit as `SwayAction::sway_command_verb()`'s stable
-/// text, not a human-facing message (that's what the existing `--verbose`
-/// `eprintln!` next to each skip is for). Only one skip mechanism exists
-/// today (the multi-output relocation guard), so `reason` is a plain
-/// `&'static str` rather than an enum — revisit if a second one ever
-/// appears.
+/// plan, and why — see `ActionStatus::Skipped`, which is what actually
+/// carries this into `RunOutcome`/`--json`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SkippedAction {
-    pub action: &'static str,
-    pub reason: &'static str,
+struct SkippedAction {
+    action: &'static str,
+    reason: &'static str,
 }
 
 #[cfg(test)]
@@ -4453,11 +4514,10 @@ mod tests {
     #[test]
     fn build_actions_is_empty_when_no_flags_are_set() {
         let sway_launch = minimal_sway_launch();
-        let (actions, skipped) = sway_launch
+        let actions = sway_launch
             .build_actions(42, true)
             .expect("no flags set means no IPC call at all, so this can't fail");
         assert!(actions.is_empty());
-        assert!(skipped.is_empty());
     }
 
     #[test]
@@ -4486,27 +4546,26 @@ mod tests {
         sway_launch.mark = "pinned";
         sway_launch.scratchpad = true;
 
-        let (actions, skipped) = sway_launch
+        let actions = sway_launch
             .build_actions(42, true)
             .expect("none of these flags touch IPC while building the plan");
-        assert!(skipped.is_empty());
 
         let kinds: Vec<&str> = actions
             .iter()
-            .map(|action| match action {
-                SwayAction::Workspace { .. } => "workspace",
-                SwayAction::Output { .. } => "output",
-                SwayAction::Split { .. } => "split",
-                SwayAction::Floating { .. } => "floating",
-                SwayAction::Sticky { .. } => "sticky",
-                SwayAction::Fullscreen { .. } => "fullscreen",
-                SwayAction::Focus { .. } => "focus",
-                SwayAction::Height { .. } => "height",
-                SwayAction::Width { .. } => "width",
-                SwayAction::Position { .. } => "position",
-                SwayAction::Mark { .. } => "mark",
-                SwayAction::Scratchpad { .. } => "scratchpad",
-                other => panic!("unexpected action in plan: {:?}", other),
+            .map(|planned| match planned {
+                PlannedAction::Run(SwayAction::Workspace { .. }) => "workspace",
+                PlannedAction::Run(SwayAction::Output { .. }) => "output",
+                PlannedAction::Run(SwayAction::Split { .. }) => "split",
+                PlannedAction::Run(SwayAction::Floating { .. }) => "floating",
+                PlannedAction::Run(SwayAction::Sticky { .. }) => "sticky",
+                PlannedAction::Run(SwayAction::Fullscreen { .. }) => "fullscreen",
+                PlannedAction::Run(SwayAction::Focus { .. }) => "focus",
+                PlannedAction::Run(SwayAction::Height { .. }) => "height",
+                PlannedAction::Run(SwayAction::Width { .. }) => "width",
+                PlannedAction::Run(SwayAction::Position { .. }) => "position",
+                PlannedAction::Run(SwayAction::Mark { .. }) => "mark",
+                PlannedAction::Run(SwayAction::Scratchpad { .. }) => "scratchpad",
+                other => panic!("unexpected planned action: {:?}", other),
             })
             .collect();
         assert_eq!(
@@ -4526,20 +4585,23 @@ mod tests {
                 "scratchpad",
             ]
         );
-        for action in &actions {
-            assert_eq!(action.container_id(), Some(42));
+        for planned in &actions {
+            match planned {
+                PlannedAction::Run(action) => assert_eq!(action.container_id(), Some(42)),
+                PlannedAction::Skip(skipped) => panic!("unexpected skip: {:?}", skipped),
+            }
         }
     }
 
     #[test]
     fn build_actions_omits_mark_when_empty() {
         let sway_launch = minimal_sway_launch();
-        let (actions, _skipped) = sway_launch
+        let actions = sway_launch
             .build_actions(42, true)
             .expect("no flags set means no IPC call at all, so this can't fail");
         assert!(!actions
             .iter()
-            .any(|action| matches!(action, SwayAction::Mark { .. })));
+            .any(|planned| matches!(planned, PlannedAction::Run(SwayAction::Mark { .. }))));
     }
 
     #[test]
@@ -4572,16 +4634,18 @@ mod tests {
         let mut sway_launch = minimal_sway_launch();
         sway_launch.new_column = true;
         sway_launch.new_row = true;
-        let (actions, skipped) = sway_launch
+        let actions = sway_launch
             .build_actions(42, false)
             .expect("check_relocation: false makes no IPC call, so this can't fail");
         assert!(actions
             .iter()
-            .any(|action| matches!(action, SwayAction::NewColumn { .. })));
+            .any(|planned| matches!(planned, PlannedAction::Run(SwayAction::NewColumn { .. }))));
         assert!(actions
             .iter()
-            .any(|action| matches!(action, SwayAction::NewRow { .. })));
-        assert!(skipped.is_empty());
+            .any(|planned| matches!(planned, PlannedAction::Run(SwayAction::NewRow { .. }))));
+        assert!(!actions
+            .iter()
+            .any(|planned| matches!(planned, PlannedAction::Skip(_))));
     }
 
     // SwayLaunch::build_actions_for_preview

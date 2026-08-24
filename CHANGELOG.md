@@ -57,9 +57,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of a plain-text message, so a `--json` caller doesn't need to also parse plain stderr on
   failure.
 - `--json`'s success output is richer: a single invocation now also reports `"actions"` (every
-  action that actually ran, in order); `--layout`/`--template` now also reports `"containers"` (a
-  map from each named step's `id`/`slot` to its container id). No compatibility shim — every field
-  from the previous shape is still present, just alongside the new ones.
+  planned action, in order, each as `{"action": ..., "status": "changed"|"already_satisfied"|
+  "skipped"[, "reason": ...]}` — `"already_satisfied"` covers an action that no-oped because the
+  window was already in the target state, e.g. re-applying `--floating` to an already-floating
+  window; `"skipped"` covers a `--new-column`/`--new-row` action the multi-output relocation guard
+  chose not to run at all, with a machine-readable `"reason"`); `--layout`/`--template` now also
+  reports `"containers"` (a map from each named step's `id`/`slot` to its container id) alongside
+  its own per-step-tagged `"actions"`. No compatibility shim — no version has shipped yet, so this
+  is a free redesign rather than an additive one.
 - Every `--template` file now requires a `[template]` table with `description` and `category`
   fields, replacing the old convention of scraping the description from the file's first header
   comment line. `--list-templates`/`--show-template --json` now also report each template's
@@ -78,10 +83,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   zips its own comma-separated list against — appended to each line as `(N slot(s): name, name,
   ...)` in plain output, or as separate `slots`/`slot_names` fields under `--json`, so a script can
   size or pre-fill `--apps`/a `--bindings` file without parsing the template's TOML itself.
-- `--json`'s success output now also reports `"skipped"`: any `--new-column`/`--new-row` action
-  that was silently no-oped by the multi-output relocation guard instead of run (previously visible
-  only via a `--verbose` log line), each entry naming the `action` and a machine-readable `reason`.
-  `--layout`/`--template`'s `"skipped"` additionally tags each entry with its 1-based `step` number.
 - `--layout`/`--template` step fields that name an identifier (`id`, `target_id`, `slot`), a
   binding's `command`, and a template's `[template]` `description`/`category` now all reject an
   empty or whitespace-only value immediately, naming the offending field — previously an empty

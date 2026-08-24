@@ -670,7 +670,7 @@ run — whenever the window is already the trailing (rightmost) child of a works
 horizontally: Sway's own `move right` would otherwise relocate the window to the next output
 instead of restructuring it in place, and `sway-launch` skips the command rather than doing that
 silently on your behalf. Run with `--verbose` to see when this happens, or check `--json`'s
-`skipped` field (see [JSON output](#json-output) below) for a machine-readable signal instead of
+`"actions"` array (see [JSON output](#json-output) below) for a machine-readable signal instead of
 parsing a log line.
 
 ### New row
@@ -722,25 +722,34 @@ Confirmed via poll (container id: 437)
 ### JSON output
 
 Print the result as a JSON object instead of a bare container id, for scripts that want structured
-output. `actions` lists every action that actually ran, in order — the same text `--dry-run` would
-have printed for that action, confirming what happened, not just the final container id. `skipped`
-lists any action that was silently no-oped instead of run — currently only `--new-column`/
-`--new-row`'s multi-output relocation guard (see "New column"/"New row" below) produces one, each
-entry naming the `action` and a machine-readable `reason`:
+output. `actions` lists every planned action, in order, each as `{"action": ..., "status": ...}`:
+
+- `"action"` is the same text `--dry-run` would have printed for that action (its Sway command
+  verb), or, for a skipped action, the short flag name that would have produced it (e.g.
+  `"new_column"`) — a skipped action was never actually turned into a runnable Sway command.
+- `"status"` is one of:
+  - `"changed"` — the action ran and actually changed something.
+  - `"already_satisfied"` — the window was already in the target state (already floating, already
+    on the target workspace, etc.), so nothing needed to change; see
+    [Floating](#floating)/[Fullscreen](#fullscreen)/[Focus](#focus)/[Workspace](#workspace)/
+    [Output](#output)/[Scratchpad](#scratchpad) above for which actions can no-op like this.
+  - `"skipped"` — the action was never run at all, with a machine-readable `"reason"` field added
+    alongside `"status"`. Currently only `--new-column`/`--new-row`'s multi-output relocation guard
+    (see "New column"/"New row" above) produces one.
 
 ```shell
 $ sway-launch --json --floating --mark pinned foot
-{"actions":["floating enable","mark \"pinned\""],"container_id":437,"skipped":[]}
+{"actions":[{"action":"floating enable","status":"changed"},{"action":"mark \"pinned\"","status":"changed"}],"container_id":437}
 ```
 
 For `--layout`/`--template`, `container_ids` lists every step's container id positionally,
 `containers` maps each *named* step (one with `id` set, or a template `slot`, which resolves to the
 same name) to its container id — steps without a name only appear in `container_ids` — and
-`skipped` aggregates every step's skipped actions, each also tagged with its 1-based `step` number:
+`actions` aggregates every step's actions, each also tagged with its 1-based `step` number:
 
 ```shell
 $ sway-launch --template quad-grid --apps foot,foot,code,foot --json
-{"container_ids":[437,438,439,440],"containers":{"bottom-left":439,"bottom-right":440,"top-left":437,"top-right":438},"skipped":[]}
+{"actions":[{"action":"splith","status":"changed","step":1},{"action":"splitv","status":"changed","step":2},{"action":"move down","status":"changed","step":3},{"action":"splith","status":"changed","step":3}],"container_ids":[437,438,439,440],"containers":{"bottom-left":439,"bottom-right":440,"top-left":437,"top-right":438}}
 ```
 
 This also applies to errors — a failure prints a JSON object to stderr instead of a plain-text
