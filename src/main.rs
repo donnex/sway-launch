@@ -866,7 +866,24 @@ fn run_steps_dry_run(steps: &[layout::LayoutStep], args: &Args) -> ! {
 /// synthetic-`target_id`-placeholder approach `run_steps_dry_run()` does,
 /// for the same reason (nothing actually launches, so there's no real
 /// container id for a later step's `target_id` to resolve against).
+///
+/// Success output names the `--layout`/`--template` argument as given
+/// (`args.layout`/`args.template`, whichever is set — exactly one is
+/// guaranteed by the `--validate` guard before `run_steps()` is ever
+/// reached), not a canonicalized path, the same "echo back what was passed"
+/// convention `--show-template`'s `"name"` field already uses: `valid:
+/// <source> (N step(s))`, or `{"source": ..., "steps": N, "valid": true}`
+/// under `--json`.
 fn run_steps_validate(steps: &[layout::LayoutStep], args: &Args) -> ! {
+    let source = args
+        .layout
+        .as_deref()
+        .or(args.template.as_deref())
+        .expect(
+            "--validate requires --layout or --template, enforced before run_steps() is reached",
+        )
+        .display()
+        .to_string();
     let default_timeout = time::Duration::from_secs(args.timeout);
     let default_wait_time = time::Duration::from_millis(args.wait_time);
     let mut resolved_ids = HashMap::new();
@@ -902,10 +919,10 @@ fn run_steps_validate(steps: &[layout::LayoutStep], args: &Args) -> ! {
     if args.json {
         println!(
             "{}",
-            serde_json::json!({ "valid": true, "steps": steps.len() })
+            serde_json::json!({ "source": source, "valid": true, "steps": steps.len() })
         );
     } else {
-        println!("valid: {} step(s)", steps.len());
+        println!("valid: {} ({} step(s))", source, steps.len());
     }
     process::exit(0);
 }

@@ -241,7 +241,10 @@ fn template_validate_reports_success_without_launching_anything() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
-    assert_eq!(stdout.trim(), "valid: 2 step(s)");
+    assert_eq!(
+        stdout.trim(),
+        format!("valid: {} (2 step(s))", template.display())
+    );
 }
 
 #[test]
