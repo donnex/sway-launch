@@ -77,3 +77,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that was silently no-oped by the multi-output relocation guard instead of run (previously visible
   only via a `--verbose` log line), each entry naming the `action` and a machine-readable `reason`.
   `--layout`/`--template`'s `"skipped"` additionally tags each entry with its 1-based `step` number.
+- `--layout`/`--template` step fields that name an identifier (`id`, `target_id`, `slot`), a
+  binding's `command`, and a template's `[template]` `description`/`category` now all reject an
+  empty or whitespace-only value immediately, naming the offending field — previously an empty
+  binding `command` only surfaced as a confusing, one-layer-removed error on the resulting step, and
+  a blank `id`/`target_id`/`slot`/`description`/`category` was silently accepted.
