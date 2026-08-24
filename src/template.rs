@@ -186,6 +186,7 @@ pub struct Binding {
     pub existing: bool,
     pub app_id: Option<String>,
     pub class: Option<String>,
+    pub mark_match: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -262,7 +263,7 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
             sway_launch::require_non_blank("target_id", target_id)?;
         }
 
-        let (id, target_id, command, con_id, existing, app_id, class) =
+        let (id, target_id, command, con_id, existing, app_id, class, mark_match) =
             if let Some(slot) = step.slot.as_deref() {
                 let binding = bindings_by_slot
                     .get(slot)
@@ -286,9 +287,17 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
                     sway_launch::require_non_blank("command", command)
                         .map_err(|error| format!("binding for slot {:?}: {}", slot, error))?;
                 }
-                if binding.app_id.is_some() && binding.class.is_some() {
+                let match_fields_set = [
+                    binding.app_id.is_some(),
+                    binding.class.is_some(),
+                    binding.mark_match.is_some(),
+                ]
+                .into_iter()
+                .filter(|&set| set)
+                .count();
+                if match_fields_set > 1 {
                     return Err(format!(
-                        "binding for slot {:?} must set only one of: app_id, class",
+                        "binding for slot {:?} must set only one of: app_id, class, mark_match",
                         slot
                     ));
                 }
@@ -304,9 +313,19 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
                     binding.existing,
                     binding.app_id.clone(),
                     binding.class.clone(),
+                    binding.mark_match.clone(),
                 )
             } else {
-                (None, step.target_id.clone(), None, None, false, None, None)
+                (
+                    None,
+                    step.target_id.clone(),
+                    None,
+                    None,
+                    false,
+                    None,
+                    None,
+                    None,
+                )
             };
 
         steps.push(LayoutStep {
@@ -317,6 +336,7 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
             id,
             app_id,
             class,
+            mark_match,
             split: step.split,
             floating: step.floating,
             sticky: step.sticky,
@@ -409,6 +429,7 @@ mod tests {
             existing: false,
             app_id: None,
             class: None,
+            mark_match: None,
         }
     }
 
@@ -612,6 +633,7 @@ mod tests {
                 existing: false,
                 app_id: None,
                 class: None,
+                mark_match: None,
             }],
         };
         let error = resolve(&template, &bindings)
@@ -640,6 +662,7 @@ mod tests {
                 existing: false,
                 app_id: None,
                 class: None,
+                mark_match: None,
             }],
         };
         let error = resolve(&template, &bindings)
@@ -659,12 +682,44 @@ mod tests {
                 existing: false,
                 app_id: Some("foot".to_string()),
                 class: Some("Foot".to_string()),
+                mark_match: None,
             }],
         };
         let error = resolve(&template, &bindings)
             .err()
             .expect("binding with app_id and class together should error");
         assert!(error.contains("editor"));
+    }
+
+    #[test]
+    fn resolve_errors_on_binding_with_class_and_mark_match_together() {
+        let template = minimal_template(vec![minimal_step()]);
+        let mut binding = minimal_binding();
+        binding.command = None;
+        binding.existing = true;
+        binding.class = Some("Foot".to_string());
+        binding.mark_match = Some("dropdown-term".to_string());
+        let bindings = Bindings {
+            binding: vec![binding],
+        };
+        let error = resolve(&template, &bindings)
+            .err()
+            .expect("binding with class and mark_match together should error");
+        assert!(error.contains("editor"));
+    }
+
+    #[test]
+    fn resolve_fills_in_a_binding_s_mark_match() {
+        let template = minimal_template(vec![minimal_step()]);
+        let mut binding = minimal_binding();
+        binding.command = None;
+        binding.existing = true;
+        binding.mark_match = Some("dropdown-term".to_string());
+        let bindings = Bindings {
+            binding: vec![binding],
+        };
+        let resolved = resolve(&template, &bindings).expect("valid binding should resolve");
+        assert_eq!(resolved[0].mark_match, Some("dropdown-term".to_string()));
     }
 
     #[test]

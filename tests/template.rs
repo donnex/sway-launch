@@ -97,6 +97,40 @@ fn template_dry_run_prints_a_continuously_numbered_plan_via_apps() {
 }
 
 #[test]
+fn template_resolves_a_binding_matched_by_mark_via_dry_run() {
+    let template = TempToml::write(
+        "mark-match-template",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"terminal\"\n",
+    );
+    let bindings = TempToml::write(
+        "mark-match-bindings",
+        "[[binding]]\nslot = \"terminal\"\nexisting = true\nmark_match = \"dropdown-term\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            template.to_str().unwrap(),
+            "--bindings",
+            bindings.to_str().unwrap(),
+            "--dry-run",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(
+        stdout,
+        "1. target existing window (mark_match=\"dropdown-term\")\n"
+    );
+}
+
+#[test]
 fn template_dry_run_resolves_target_id_without_launching_anything() {
     let template = TempToml::write(
         "dry-run-target-id-template",

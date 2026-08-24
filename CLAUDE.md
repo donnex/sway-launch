@@ -418,6 +418,23 @@ stated goal (safer internals, less repeated parsing) to actually land.
   covers the entire tree returned by `get_tree()`, which includes the `__i3_scratch` scratchpad
   workspace — a hidden scratchpad window matching the criteria is just as eligible as a visible
   one (documented for the user in README.md's "Target an existing window" section).
+  `matching_container_ids()`/`find_existing_container_id()` take a third `mark_match: &str`
+  alongside `app_id_match`/`class_match` — an external review suggested this (`--mark-match
+  <MARK>`, matching a container's own `marks: Vec<String>` via a new `window_mark_match()`, the
+  same shape as `window_app_id_match`/`window_class_match`) as a way to retarget a previously-
+  `--mark`ed window without tracking its container id, the classic "dropdown terminal" pattern
+  (`sway-launch --existing --mark-match dropdown-term --scratchpad`). The three criteria are
+  mutually exclusive by construction (`--mark-match` sits in `--app-id`/`--class`'s
+  `conflicts_with_all` the same way those two already conflict with each other, and the matching
+  `LayoutStep`/`Binding` fields enforce the same three-way exclusivity `to_sway_launch()`/
+  `resolve()` already enforced for `app_id`/`class`), but `matching_container_ids()`'s own
+  precedence chain (app_id, then class, then mark) still needs a defined order regardless — the
+  same `if/else if/else` shape `window_app_id_match`/`window_class_match`'s existing precedence
+  already used, just extended by one arm. `SwayLaunch` gained a matching `mark_match: &'a str`
+  field alongside `app_id_match`/`class_match`, threaded through the same call sites; `--mark-match`
+  only ever applies to `Target::Existing` (a freshly launched `Target::Exec` window has no mark yet
+  to match against, since marks are applied *after* launch via `--mark`), so `SwayAction::Exec`'s
+  own content-matching is untouched.
 
 `run()` used to conditionally build *and immediately run* the other actions inline, one `if
 self.foo { SwayAction::Foo { .. }.run()?; }` block per flag. An external review flagged that shape

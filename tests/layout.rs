@@ -76,6 +76,47 @@ fn layout_dry_run_prints_a_continuously_numbered_plan() {
 }
 
 #[test]
+fn layout_dry_run_describes_an_existing_step_matched_by_mark() {
+    let path = TempToml::write(
+        "dry-run-mark-match",
+        "[[step]]\nexisting = true\nmark_match = \"dropdown-term\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap(), "--dry-run"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        output.status.success(),
+        "sway-launch --layout --dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(
+        stdout,
+        "1. target existing window (mark_match=\"dropdown-term\")\n"
+    );
+}
+
+#[test]
+fn layout_rejects_app_id_and_mark_match_together() {
+    let path = TempToml::write(
+        "app-id-and-mark-match",
+        "[[step]]\nexisting = true\napp_id = \"foot\"\nmark_match = \"dropdown-term\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap()])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("step 1"));
+}
+
+#[test]
 fn layout_dry_run_resolves_target_id_without_launching_anything() {
     // The interesting case: a target_id step references an earlier step's
     // id, which normally resolves to a real container id run_steps()

@@ -29,6 +29,7 @@ pub struct LayoutStep {
 
     pub app_id: Option<String>,
     pub class: Option<String>,
+    pub mark_match: Option<String>,
 
     pub split: Option<Split>,
     #[serde(default)]
@@ -89,16 +90,27 @@ impl LayoutStep {
 
         let app_id_match = self.app_id.as_deref().unwrap_or_default();
         let class_match = self.class.as_deref().unwrap_or_default();
-        if !app_id_match.is_empty() && !class_match.is_empty() {
-            return Err("step must set only one of: app_id, class".to_string());
+        let mark_match = self.mark_match.as_deref().unwrap_or_default();
+        let match_fields_set = [
+            !app_id_match.is_empty(),
+            !class_match.is_empty(),
+            !mark_match.is_empty(),
+        ]
+        .into_iter()
+        .filter(|&set| set)
+        .count();
+        if match_fields_set > 1 {
+            return Err("step must set only one of: app_id, class, mark_match".to_string());
         }
-        // Mirrors the CLI's `conflicts_with_all` on `--app-id`/`--class`
-        // against `--con-id`: a con_id target already names an exact
-        // container, so an app_id/class match criteria alongside it can
-        // only be silently ignored, not honored — better to reject it than
-        // let a step look like it's matching on identity when it isn't.
-        if self.con_id.is_some() && (!app_id_match.is_empty() || !class_match.is_empty()) {
-            return Err("step must not combine con_id with app_id/class".to_string());
+        // Mirrors the CLI's `conflicts_with_all` on `--app-id`/`--class`/
+        // `--mark-match` against `--con-id`: a con_id target already names
+        // an exact container, so a match criteria alongside it can only be
+        // silently ignored, not honored — better to reject it than let a
+        // step look like it's matching on identity when it isn't.
+        if self.con_id.is_some()
+            && (!app_id_match.is_empty() || !class_match.is_empty() || !mark_match.is_empty())
+        {
+            return Err("step must not combine con_id with app_id/class/mark_match".to_string());
         }
 
         let target_fields_set = [
@@ -127,8 +139,8 @@ impl LayoutStep {
             })?;
             sway_launch::Target::ConId(*con_id)
         } else if self.existing {
-            if app_id_match.is_empty() && class_match.is_empty() {
-                return Err("existing = true requires app_id or class".to_string());
+            if app_id_match.is_empty() && class_match.is_empty() && mark_match.is_empty() {
+                return Err("existing = true requires app_id, class, or mark_match".to_string());
             }
             sway_launch::Target::Existing
         } else {
@@ -159,6 +171,7 @@ impl LayoutStep {
             target,
             app_id_match,
             class_match,
+            mark_match,
             split: self.split,
             floating: self.floating,
             sticky: self.sticky,
@@ -255,6 +268,7 @@ mod tests {
             id: None,
             app_id: None,
             class: None,
+            mark_match: None,
             split: None,
             floating: false,
             sticky: false,
@@ -366,6 +380,55 @@ mod tests {
                 &HashMap::new()
             )
             .is_err());
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_app_id_and_mark_match_together() {
+        let mut step = minimal_step();
+        step.app_id = Some("foot".to_string());
+        step.mark_match = Some("dropdown-term".to_string());
+        assert!(step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &HashMap::new()
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_con_id_and_mark_match_together() {
+        let mut step = minimal_step();
+        step.command = None;
+        step.con_id = Some(42);
+        step.mark_match = Some("dropdown-term".to_string());
+        assert!(step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &HashMap::new()
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn to_sway_launch_existing_step_with_mark_match_succeeds() {
+        let mut step = minimal_step();
+        step.command = None;
+        step.existing = true;
+        step.mark_match = Some("dropdown-term".to_string());
+        let sway_launch = step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &HashMap::new(),
+            )
+            .expect("existing step with mark_match should convert");
+        assert!(matches!(sway_launch.target, sway_launch::Target::Existing));
+        assert_eq!(sway_launch.mark_match, "dropdown-term");
     }
 
     #[test]

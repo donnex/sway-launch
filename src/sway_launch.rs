@@ -1401,16 +1401,30 @@ fn window_class_match(node: &Node, class_match: &str) -> bool {
     matches!(node_class, _ if node_class == class_match)
 }
 
+fn window_mark_match(node: &Node, mark_match: &str) -> bool {
+    node.marks.iter().any(|mark| mark == mark_match)
+}
+
 /// Recursively collects the container ids of every node in `tree` (tiling
-/// and floating children at every level) whose app_id/class matches, used to
-/// target an already-open window instead of launching a new one. app_id
-/// takes priority over class when both are set, mirroring
-/// `matches_window_event`'s Exec-matching precedence.
-fn matching_container_ids(tree: &Node, app_id_match: &str, class_match: &str) -> Vec<i64> {
+/// and floating children at every level) whose app_id/class/mark matches,
+/// used to target an already-open window instead of launching a new one.
+/// The three criteria are mutually exclusive by construction (enforced at
+/// the CLI/layout/template level, mirroring `--app-id`/`--class`/
+/// `--mark-match`'s own `conflicts_with_all`), but the precedence order
+/// here — app_id, then class, then mark — still needs to be defined
+/// regardless, matching `matches_window_event`'s Exec-matching precedence.
+fn matching_container_ids(
+    tree: &Node,
+    app_id_match: &str,
+    class_match: &str,
+    mark_match: &str,
+) -> Vec<i64> {
     let matches = if !app_id_match.is_empty() {
         window_app_id_match(tree, app_id_match)
     } else if !class_match.is_empty() {
         window_class_match(tree, class_match)
+    } else if !mark_match.is_empty() {
+        window_mark_match(tree, mark_match)
     } else {
         false
     };
@@ -1418,18 +1432,27 @@ fn matching_container_ids(tree: &Node, app_id_match: &str, class_match: &str) ->
     let mut ids = if matches { vec![tree.id] } else { vec![] };
 
     for child in tree.nodes.iter().chain(tree.floating_nodes.iter()) {
-        ids.extend(matching_container_ids(child, app_id_match, class_match));
+        ids.extend(matching_container_ids(
+            child,
+            app_id_match,
+            class_match,
+            mark_match,
+        ));
     }
 
     ids
 }
 
 /// Finds exactly one already-open window matching `app_id_match`/
-/// `class_match` via `get_tree()`, for `Target::Existing`. Errors — rather
-/// than silently picking one — if zero or more than one window matches,
-/// since guessing which of several matches the caller meant would be a
-/// worse default than asking them to retarget with `--con-id`.
-fn find_existing_container_id(app_id_match: &str, class_match: &str) -> Result<i64, String> {
+/// `class_match`/`mark_match` via `get_tree()`, for `Target::Existing`.
+/// Errors — rather than silently picking one — if zero or more than one
+/// window matches, since guessing which of several matches the caller meant
+/// would be a worse default than asking them to retarget with `--con-id`.
+fn find_existing_container_id(
+    app_id_match: &str,
+    class_match: &str,
+    mark_match: &str,
+) -> Result<i64, String> {
     let tree = match self::new_connection()?.get_tree() {
         Ok(tree) => tree,
         Err(error) => return Err(error.to_string()),
@@ -1437,12 +1460,14 @@ fn find_existing_container_id(app_id_match: &str, class_match: &str) -> Result<i
 
     let criteria = if !app_id_match.is_empty() {
         format!("app_id \"{}\"", app_id_match)
-    } else {
+    } else if !class_match.is_empty() {
         format!("class \"{}\"", class_match)
+    } else {
+        format!("mark \"{}\"", mark_match)
     };
 
     resolve_matches(
-        matching_container_ids(&tree, app_id_match, class_match),
+        matching_container_ids(&tree, app_id_match, class_match, mark_match),
         &criteria,
     )
 }
@@ -1937,7 +1962,7 @@ fn compute_center_position(
 /// What `SwayLaunch::run()` should act on: launch a new window (the
 /// original, still-default behavior), a specific already-open window by
 /// container id, or an already-open window found by matching
-/// `app_id_match`/`class_match` against currently open windows.
+/// `app_id_match`/`class_match`/`mark_match` against currently open windows.
 pub enum Target<'a> {
     Exec { command: &'a str },
     ConId(i64),
@@ -1949,6 +1974,7 @@ pub struct SwayLaunch<'a> {
 
     pub app_id_match: &'a str,
     pub class_match: &'a str,
+    pub mark_match: &'a str,
 
     pub split: Option<Split>,
     pub floating: bool,
@@ -2008,9 +2034,11 @@ impl<'a> SwayLaunch<'a> {
             }
             .run(),
             Target::ConId(container_id) => Ok(container_id),
-            Target::Existing => {
-                self::find_existing_container_id(self.app_id_match, self.class_match)
-            }
+            Target::Existing => self::find_existing_container_id(
+                self.app_id_match,
+                self.class_match,
+                self.mark_match,
+            ),
         }
     }
 
@@ -3748,6 +3776,28 @@ mod tests {
         assert!(!window_class_match(&node, "Firefox"));
     }
 
+    #[test]
+    fn window_mark_match_true_when_present() {
+        let mut value = leaf_node_value(1, None, None);
+        value["marks"] = serde_json::json!(["dropdown-term"]);
+        let node: Node = serde_json::from_value(value).expect("valid Node test fixture");
+        assert!(window_mark_match(&node, "dropdown-term"));
+    }
+
+    #[test]
+    fn window_mark_match_false_when_different() {
+        let mut value = leaf_node_value(1, None, None);
+        value["marks"] = serde_json::json!(["other-mark"]);
+        let node: Node = serde_json::from_value(value).expect("valid Node test fixture");
+        assert!(!window_mark_match(&node, "dropdown-term"));
+    }
+
+    #[test]
+    fn window_mark_match_false_when_absent() {
+        let event = window_event("new", 1, None, None);
+        assert!(!window_mark_match(&event.container, "dropdown-term"));
+    }
+
     // matching_container_ids
 
     #[test]
@@ -3760,7 +3810,7 @@ mod tests {
             ],
             vec![leaf_node_value(20, Some("foot"), None)],
         );
-        let mut ids = matching_container_ids(&tree, "foot", "");
+        let mut ids = matching_container_ids(&tree, "foot", "", "");
         ids.sort();
         assert_eq!(ids, vec![10, 20]);
     }
@@ -3769,7 +3819,7 @@ mod tests {
     fn matching_container_ids_empty_when_no_match() {
         let tree = node_tree(1, vec![leaf_node_value(10, Some("foot"), None)], vec![]);
         assert_eq!(
-            matching_container_ids(&tree, "nonexistent", ""),
+            matching_container_ids(&tree, "nonexistent", "", ""),
             Vec::<i64>::new()
         );
     }
@@ -3777,14 +3827,25 @@ mod tests {
     #[test]
     fn matching_container_ids_matches_by_class() {
         let tree = node_tree(1, vec![leaf_node_value(10, None, Some("Firefox"))], vec![]);
-        assert_eq!(matching_container_ids(&tree, "", "Firefox"), vec![10]);
+        assert_eq!(matching_container_ids(&tree, "", "Firefox", ""), vec![10]);
+    }
+
+    #[test]
+    fn matching_container_ids_matches_by_mark() {
+        let mut value = leaf_node_value(10, None, None);
+        value["marks"] = serde_json::json!(["dropdown-term"]);
+        let tree = node_tree(1, vec![value], vec![]);
+        assert_eq!(
+            matching_container_ids(&tree, "", "", "dropdown-term"),
+            vec![10]
+        );
     }
 
     #[test]
     fn matching_container_ids_recurses_into_nested_containers() {
         let inner = container_node_value(2, vec![leaf_node_value(10, Some("foot"), None)], vec![]);
         let tree = node_tree(1, vec![inner], vec![]);
-        assert_eq!(matching_container_ids(&tree, "foot", ""), vec![10]);
+        assert_eq!(matching_container_ids(&tree, "foot", "", ""), vec![10]);
     }
 
     #[test]
@@ -3794,7 +3855,21 @@ mod tests {
             vec![leaf_node_value(10, Some("foot"), Some("NoMatch"))],
             vec![],
         );
-        assert_eq!(matching_container_ids(&tree, "foot", "NoMatch"), vec![10]);
+        assert_eq!(
+            matching_container_ids(&tree, "foot", "NoMatch", ""),
+            vec![10]
+        );
+    }
+
+    #[test]
+    fn matching_container_ids_prefers_class_over_mark_when_both_set() {
+        let mut value = leaf_node_value(10, None, Some("Firefox"));
+        value["marks"] = serde_json::json!(["no-match"]);
+        let tree = node_tree(1, vec![value], vec![]);
+        assert_eq!(
+            matching_container_ids(&tree, "", "Firefox", "no-match"),
+            vec![10]
+        );
     }
 
     // resolve_matches
@@ -4354,6 +4429,7 @@ mod tests {
             target: Target::ConId(42),
             app_id_match: "",
             class_match: "",
+            mark_match: "",
             split: None,
             floating: false,
             sticky: false,

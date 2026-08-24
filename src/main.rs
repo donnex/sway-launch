@@ -12,21 +12,26 @@ mod template;
 struct Args {
     /// app_id match. With --existing, matches an already-open window instead
     /// of the newly launched one
-    #[clap(short, long, conflicts_with_all = ["class", "con_id"])]
+    #[clap(short, long, conflicts_with_all = ["class", "con_id", "mark_match"])]
     app_id: Option<String>,
 
     /// class match. With --existing, matches an already-open window instead
     /// of the newly launched one
-    #[clap(short, long, conflicts_with = "con_id")]
+    #[clap(short, long, conflicts_with_all = ["con_id", "mark_match"])]
     class: Option<String>,
+
+    /// Mark match. With --existing, matches an already-open window carrying
+    /// this mark instead of the newly launched one
+    #[clap(long, conflicts_with_all = ["class", "con_id"])]
+    mark_match: Option<String>,
 
     /// Act on an already-open window with this container id, instead of
     /// launching a new one
     #[clap(long, conflicts_with = "command")]
     con_id: Option<i64>,
 
-    /// Act on an already-open window found via --app-id/--class, instead of
-    /// launching a new one
+    /// Act on an already-open window found via --app-id/--class/--mark-match,
+    /// instead of launching a new one
     #[clap(long, conflicts_with_all = ["command", "con_id"])]
     existing: bool,
 
@@ -112,7 +117,7 @@ struct Args {
 
     /// Generate a shell completion script and print it to stdout
     #[clap(long, value_enum, conflicts_with_all = [
-        "command", "con_id", "existing", "app_id", "class", "split",
+        "command", "con_id", "existing", "app_id", "class", "mark_match", "split",
         "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
         "layout", "template", "list_templates", "bindings", "apps", "rollback_on_error", "dry_run", "validate",
@@ -134,7 +139,7 @@ struct Args {
     /// per-window flag below, which would otherwise apply to no specific
     /// step
     #[clap(long, conflicts_with_all = [
-        "command", "con_id", "existing", "app_id", "class", "split",
+        "command", "con_id", "existing", "app_id", "class", "mark_match", "split",
         "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
         "bindings", "apps",
@@ -148,7 +153,7 @@ struct Args {
     /// no extension (see --list-templates). Conflicts with --layout and
     /// every per-window flag, same reasoning as --layout
     #[clap(long, conflicts_with_all = [
-        "command", "con_id", "existing", "app_id", "class", "split",
+        "command", "con_id", "existing", "app_id", "class", "mark_match", "split",
         "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
         "layout",
@@ -157,7 +162,7 @@ struct Args {
 
     /// List built-in --template names and exit
     #[clap(long, conflicts_with_all = [
-        "command", "con_id", "existing", "app_id", "class", "split",
+        "command", "con_id", "existing", "app_id", "class", "mark_match", "split",
         "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
         "layout", "template", "completions", "bindings", "apps", "rollback_on_error", "dry_run", "validate",
@@ -170,7 +175,7 @@ struct Args {
     /// --list-templates), or a path ending in .toml. With --json, prints
     /// {"name": ..., "contents": "..."}
     #[clap(long, value_name = "NAME_OR_PATH", conflicts_with_all = [
-        "command", "con_id", "existing", "app_id", "class", "split",
+        "command", "con_id", "existing", "app_id", "class", "mark_match", "split",
         "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
         "layout", "template", "completions", "bindings", "apps", "rollback_on_error", "dry_run", "validate",
@@ -270,6 +275,7 @@ fn main() {
     let command = args.command.unwrap_or_default();
     let app_id_match = args.app_id.unwrap_or_default();
     let class_match = args.class.unwrap_or_default();
+    let mark_match = args.mark_match.unwrap_or_default();
 
     if !args.debug_events && command.is_empty() && args.con_id.is_none() && !args.existing {
         Args::command()
@@ -280,11 +286,11 @@ fn main() {
             .exit();
     }
 
-    if args.existing && app_id_match.is_empty() && class_match.is_empty() {
+    if args.existing && app_id_match.is_empty() && class_match.is_empty() && mark_match.is_empty() {
         Args::command()
             .error(
                 ErrorKind::MissingRequiredArgument,
-                "--existing requires --app-id or --class",
+                "--existing requires --app-id, --class, or --mark-match",
             )
             .exit();
     }
@@ -301,6 +307,7 @@ fn main() {
         target,
         app_id_match: &app_id_match,
         class_match: &class_match,
+        mark_match: &mark_match,
         split: args.split,
         floating: args.floating,
         sticky: args.sticky,
@@ -440,15 +447,23 @@ struct DryRunStep {
 /// every action line below stays id-free (see
 /// `SwayAction::sway_command_verb()`) would be an inconsistent preview
 /// format for one target mode only.
-fn describe_target(target: &sway_launch::Target, app_id_match: &str, class_match: &str) -> String {
+fn describe_target(
+    target: &sway_launch::Target,
+    app_id_match: &str,
+    class_match: &str,
+    mark_match: &str,
+) -> String {
     match target {
         sway_launch::Target::Exec { command } => format!("launch {}", command),
         sway_launch::Target::ConId(_) => "target existing container".to_string(),
         sway_launch::Target::Existing if !app_id_match.is_empty() => {
             format!("target existing window (app_id={:?})", app_id_match)
         }
-        sway_launch::Target::Existing => {
+        sway_launch::Target::Existing if !class_match.is_empty() => {
             format!("target existing window (class={:?})", class_match)
+        }
+        sway_launch::Target::Existing => {
+            format!("target existing window (mark_match={:?})", mark_match)
         }
     }
 }
@@ -459,6 +474,7 @@ fn dry_run_step(sway_launch: &sway_launch::SwayLaunch) -> DryRunStep {
             &sway_launch.target,
             sway_launch.app_id_match,
             sway_launch.class_match,
+            sway_launch.mark_match,
         ),
         actions: sway_launch
             .build_actions_for_preview()
@@ -705,6 +721,7 @@ fn bindings_from_apps(
             existing: false,
             app_id: None,
             class: None,
+            mark_match: None,
         })
         .collect();
 
@@ -1018,6 +1035,63 @@ mod tests {
         // instead of being rejected.
         let result = Args::try_parse_from(["sway-launch", "-a", "foot", "-c", "Foot", "foot"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn args_accepts_mark_match_alone() {
+        let args =
+            Args::try_parse_from(["sway-launch", "--existing", "--mark-match", "dropdown-term"])
+                .unwrap();
+        assert_eq!(args.mark_match, Some("dropdown-term".to_string()));
+        assert_eq!(args.app_id, None);
+        assert_eq!(args.class, None);
+    }
+
+    #[test]
+    fn args_rejects_app_id_and_mark_match_together() {
+        let result = Args::try_parse_from([
+            "sway-launch",
+            "-a",
+            "foot",
+            "--mark-match",
+            "dropdown-term",
+            "foot",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn args_rejects_class_and_mark_match_together() {
+        let result = Args::try_parse_from([
+            "sway-launch",
+            "-c",
+            "Foot",
+            "--mark-match",
+            "dropdown-term",
+            "foot",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn args_rejects_con_id_and_mark_match_together() {
+        let result = Args::try_parse_from([
+            "sway-launch",
+            "--con-id",
+            "42",
+            "--mark-match",
+            "dropdown-term",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn args_accepts_existing_with_mark_match() {
+        let args =
+            Args::try_parse_from(["sway-launch", "--existing", "--mark-match", "dropdown-term"])
+                .unwrap();
+        assert!(args.existing);
+        assert_eq!(args.mark_match, Some("dropdown-term".to_string()));
     }
 
     #[test]

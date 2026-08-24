@@ -2714,6 +2714,55 @@ fn existing_errors_with_zero_matches() {
 }
 
 #[test]
+fn existing_matches_a_window_by_mark() {
+    // --mark-match: retargets a previously-marked window by its mark, the
+    // classic "dropdown terminal" scripting pattern, instead of tracking a
+    // container id or matching by app_id/class.
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&["--mark", "live-sway-test-dropdown-term"]);
+
+    let output = sway_launch_command()
+        .args([
+            "--existing",
+            "--mark-match",
+            "live-sway-test-dropdown-term",
+            "--floating",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --existing --mark-match failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let node = get_node(&mut connection, container_id);
+    assert!(
+        node_is_floating(&node),
+        "the window matched by mark should have had --floating applied to it"
+    );
+}
+
+#[test]
+fn existing_mark_match_errors_with_zero_matches() {
+    let output = sway_launch_command()
+        .args([
+            "--existing",
+            "--mark-match",
+            "live-sway-test-nonexistent-mark",
+            "--floating",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No existing window matches"),
+        "unexpected stderr: {stderr:?}"
+    );
+}
+
+#[test]
 fn existing_errors_listing_ids_with_multiple_matches() {
     let mut connection = connect();
     connection
