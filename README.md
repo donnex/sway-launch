@@ -10,10 +10,13 @@ application, waits for its window to appear via Sway's IPC event stream, then op
 follow-up actions against that window — floating, fullscreen, resizing, moving to a
 workspace/output, splitting, marking, and more (see [Actions reference](#actions-reference)).
 
-- **Deterministic** — blocks until the window exists, and until each follow-up action is actually
-  confirmed, so layouts build up reliably with no manual `sleep`s or race conditions. Window
-  correlation itself is deterministic whenever the launched process's own marker is observable, and
-  falls back to a bounded heuristic on the rare occasions it isn't (see
+- **Deterministic** — blocks until the window exists, and until each follow-up action is confirmed
+  wherever Sway exposes a reliable event or observable tree state to confirm it against, so layouts
+  build up reliably with no manual `sleep`s or race conditions. Percentage-based `--height`/`--width`
+  (`ppt`) are the one exception — there's no reference dimension available to verify a percentage
+  against, so those always fall back to the configured wait time instead of an actual confirmation.
+  Window correlation itself is deterministic whenever the launched process's own marker is
+  observable, and falls back to a bounded heuristic on the rare occasions it isn't (see
   [Basic usage](#basic-usage)) — chaining calls sequentially, the default and recommended way to use
   this tool, keeps things fully deterministic throughout.
 - **Zero setup** — a single static binary; no daemon, no config file. Chain calls directly in a
@@ -762,6 +765,13 @@ Every line is container-id-free by design: for a fresh command, there's no real 
 one for; for `--con-id`/`--existing`, showing the id on some lines and not others would be an
 inconsistent preview. `--json` prints a structured `{"steps": [{"target": "...", "actions":
 [...]}, ...]}` object instead.
+
+The preview is statically planned, not a guaranteed prediction of what a real run will do: `move
+right`/`move down` (`--new-column`/`--new-row`) always show as planned here, even on a multi-monitor
+setup where a real run's relocation guard (see [JSON output](#json-output) below) would skip one of
+them to avoid throwing the window onto a different output. Checking that guard needs a live query
+against Sway's actual output layout, which would defeat the point of a preview that works with no
+Sway session running at all.
 
 A `target_id` reference in a `--layout`/`--template` step still resolves during a dry run (so the
 plan doesn't error out partway through), but against a placeholder rather than a real container id,
