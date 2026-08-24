@@ -346,8 +346,7 @@ fn main() {
                     "{}",
                     serde_json::json!({
                         "container_id": outcome.container_id,
-                        "actions": outcome.actions,
-                        "skipped": skipped_actions_json(&outcome.skipped),
+                        "actions": actions_json(&outcome.actions),
                     })
                 );
             } else {
@@ -358,39 +357,56 @@ fn main() {
     };
 }
 
-/// Renders a single invocation's `RunOutcome.skipped` as `--json`'s
-/// `"skipped"` array (`[{"action": ..., "reason": ...}, ...]`). `run_steps()`
-/// (`--layout`/`--template`) doesn't reuse this — it needs each entry
-/// tagged with a 1-based step number too (there can be several steps, not
-/// just one invocation) — see `step_skipped_actions_json()` below.
-fn skipped_actions_json(skipped: &[sway_launch::SkippedAction]) -> serde_json::Value {
-    serde_json::json!(skipped
-        .iter()
-        .map(|skipped| serde_json::json!({ "action": skipped.action, "reason": skipped.reason }))
-        .collect::<Vec<_>>())
+/// Renders one `ActionRecord` as `--json`'s per-action object:
+/// `{"action": ..., "status": "changed"|"already_satisfied"|"skipped"}`,
+/// with a `"reason"` field added only for `"skipped"` (the same
+/// machine-readable `SkippedAction.reason` identifier this project has
+/// always used, not prose).
+fn action_record_json(record: &sway_launch::ActionRecord) -> serde_json::Value {
+    match record.status {
+        sway_launch::ActionStatus::Changed => serde_json::json!({
+            "action": record.action,
+            "status": "changed",
+        }),
+        sway_launch::ActionStatus::AlreadySatisfied => serde_json::json!({
+            "action": record.action,
+            "status": "already_satisfied",
+        }),
+        sway_launch::ActionStatus::Skipped { reason } => serde_json::json!({
+            "action": record.action,
+            "status": "skipped",
+            "reason": reason,
+        }),
+    }
 }
 
-/// `run_steps()`'s per-step counterpart to `skipped_actions_json()`: the
-/// same `{"action": ..., "reason": ...}` shape, plus a `"step"` field (the
-/// step's 1-based number, matching the `"step {}: ..."` convention every
-/// other per-step error message in this file already uses) so a skip is
-/// traceable to which step produced it across a multi-step `--layout`/
-/// `--template` run. A small pure function specifically so the step-number
-/// arithmetic (`index + 1`) is unit-testable headlessly with a synthetic
-/// `SkippedAction`, without needing to actually trigger a live skip (only
-/// reachable via a real multi-output Sway session) just to verify it.
-fn step_skipped_actions_json(
+/// Renders a single invocation's `RunOutcome.actions` as `--json`'s
+/// `"actions"` array. `run_steps()` (`--layout`/`--template`) doesn't reuse
+/// this directly — it needs each entry tagged with a 1-based step number
+/// too (there can be several steps, not just one invocation) — see
+/// `step_action_records_json()` below.
+fn actions_json(actions: &[sway_launch::ActionRecord]) -> serde_json::Value {
+    serde_json::json!(actions.iter().map(action_record_json).collect::<Vec<_>>())
+}
+
+/// `run_steps()`'s per-step counterpart to `actions_json()`: the same
+/// per-action object shape, plus a `"step"` field (the step's 1-based
+/// number, matching the `"step {}: ..."` convention every other per-step
+/// error message in this file already uses) so an action is traceable to
+/// which step produced it across a multi-step `--layout`/`--template` run.
+/// A small pure function specifically so the step-number arithmetic
+/// (`index + 1`) is unit-testable headlessly with a synthetic
+/// `ActionRecord`, without needing a live Sway session just to verify it.
+fn step_action_records_json(
     step_index: usize,
-    skipped: Vec<sway_launch::SkippedAction>,
+    actions: Vec<sway_launch::ActionRecord>,
 ) -> Vec<serde_json::Value> {
-    skipped
-        .into_iter()
-        .map(|skipped| {
-            serde_json::json!({
-                "step": step_index + 1,
-                "action": skipped.action,
-                "reason": skipped.reason,
-            })
+    actions
+        .iter()
+        .map(|record| {
+            let mut value = action_record_json(record);
+            value["step"] = serde_json::json!(step_index + 1);
+            value
         })
         .collect()
 }
@@ -750,10 +766,10 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
     // not ones it merely retargeted via con_id/existing/target_id — see
     // fail_step()'s doc comment.
     let mut launched_container_ids = Vec::new();
-    // Every skipped NewColumn/NewRow across every step, each tagged with
-    // its 1-based step number (steps.len() can be several, unlike a single
-    // direct-CLI invocation) — see skipped_actions_json()'s doc comment.
-    let mut skipped = Vec::new();
+    // Every action across every step, each tagged with its 1-based step
+    // number (steps.len() can be several, unlike a single direct-CLI
+    // invocation) — see step_action_records_json()'s doc comment.
+    let mut actions = Vec::new();
 
     for (index, step) in steps.iter().enumerate() {
         if let Some(id) = step.id.as_deref() {
@@ -798,7 +814,7 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
                 if let Some(id) = step.id.as_deref() {
                     resolved_ids.insert(id.to_string(), outcome.container_id);
                 }
-                skipped.extend(step_skipped_actions_json(index, outcome.skipped));
+                actions.extend(step_action_records_json(index, outcome.actions));
             }
             Err(error) => fail_step(args, &launched_container_ids, index, error),
         }
@@ -810,7 +826,7 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
             serde_json::json!({
                 "container_ids": container_ids,
                 "containers": resolved_ids,
-                "skipped": skipped,
+                "actions": actions,
             })
         );
     }
@@ -1210,43 +1226,62 @@ mod tests {
     }
 
     #[test]
-    fn skipped_actions_json_renders_action_and_reason_with_no_step_field() {
-        let skipped = [sway_launch::SkippedAction {
-            action: "new_column",
-            reason: "trailing_workspace_edge",
-        }];
+    fn actions_json_renders_changed_already_satisfied_and_skipped() {
+        let actions = [
+            sway_launch::ActionRecord {
+                action: "floating enable".to_string(),
+                status: sway_launch::ActionStatus::Changed,
+            },
+            sway_launch::ActionRecord {
+                action: "focus".to_string(),
+                status: sway_launch::ActionStatus::AlreadySatisfied,
+            },
+            sway_launch::ActionRecord {
+                action: "new_column".to_string(),
+                status: sway_launch::ActionStatus::Skipped {
+                    reason: "trailing_workspace_edge",
+                },
+            },
+        ];
         assert_eq!(
-            skipped_actions_json(&skipped),
-            serde_json::json!([{ "action": "new_column", "reason": "trailing_workspace_edge" }])
+            actions_json(&actions),
+            serde_json::json!([
+                { "action": "floating enable", "status": "changed" },
+                { "action": "focus", "status": "already_satisfied" },
+                { "action": "new_column", "status": "skipped", "reason": "trailing_workspace_edge" },
+            ])
         );
     }
 
     #[test]
-    fn step_skipped_actions_json_tags_each_entry_with_a_1_based_step_number() {
+    fn step_action_records_json_tags_each_entry_with_a_1_based_step_number() {
         // Regression test for the exact off-by-one that would be invisible
         // against a real skip on a --layout's first step: step_index is
         // 0-based (an iterator position), but the reported "step" must be
         // 1-based, matching every other per-step error message in this
         // file's own "step {}: ..." convention. Uses a synthetic
-        // SkippedAction rather than a real live skip (only reachable via a
+        // ActionRecord rather than a real live skip (only reachable via a
         // multi-output Sway session) specifically so this arithmetic is
         // verifiable headlessly.
-        let skipped = vec![sway_launch::SkippedAction {
-            action: "new_row",
-            reason: "trailing_workspace_edge",
+        let actions = vec![sway_launch::ActionRecord {
+            action: "new_row".to_string(),
+            status: sway_launch::ActionStatus::Skipped {
+                reason: "trailing_workspace_edge",
+            },
         }];
         assert_eq!(
-            step_skipped_actions_json(1, skipped),
+            step_action_records_json(1, actions),
             vec![serde_json::json!({
                 "step": 2,
                 "action": "new_row",
+                "status": "skipped",
                 "reason": "trailing_workspace_edge",
             })]
         );
     }
 
     #[test]
-    fn step_skipped_actions_json_is_empty_for_no_skips() {
-        assert!(step_skipped_actions_json(0, Vec::new()).is_empty());
+    fn step_action_records_json_is_empty_for_no_actions() {
+        assert!(step_action_records_json(0, Vec::new()).is_empty());
     }
 }

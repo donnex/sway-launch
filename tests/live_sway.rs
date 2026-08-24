@@ -638,8 +638,9 @@ fn new_column_does_not_relocate_a_solo_window_to_a_different_output() {
     // output in that direction, rather than a same-workspace no-op.
     // SwayLaunch::run() guards against this via relocates_to_another_output();
     // this proves the guard actually prevents the relocation. Also asserts
-    // on --json's "skipped" field (RunOutcome.skipped) rather than adding a
-    // second, near-identical test with its own create_output call: this
+    // on --json's unified "actions" array reporting the skip (RunOutcome)
+    // rather than adding a second, near-identical test with its own
+    // create_output call: this
     // headless backend was confirmed live (manual probing, isolated from
     // any other test activity) to crash deterministically and unrecoverably
     // on its *8th* create_output call, and this file's tests already sit at
@@ -692,14 +693,13 @@ fn new_column_does_not_relocate_a_solo_window_to_a_different_output() {
     let json: serde_json::Value =
         serde_json::from_str(stdout.trim()).expect("--json output should be valid JSON");
     assert_eq!(
-        json["skipped"],
-        serde_json::json!([{ "action": "new_column", "reason": "trailing_workspace_edge" }]),
-        "expected the skipped new_column action reported: {json:?}"
-    );
-    assert_eq!(
         json["actions"],
-        serde_json::json!([]),
-        "the skipped action must not also appear in actions: {json:?}"
+        serde_json::json!([{
+            "action": "new_column",
+            "status": "skipped",
+            "reason": "trailing_workspace_edge",
+        }]),
+        "expected the skipped new_column action reported, and nothing else: {json:?}"
     );
 }
 
@@ -2655,9 +2655,11 @@ fn json_output_for_a_real_exec_is_a_clean_container_id_object() {
 
 #[test]
 fn json_output_lists_the_actions_that_actually_ran() {
-    // Companion to the test above: with real action flags, "actions"
-    // should list each one's sway_command_verb() text, in the fixed order
-    // SwayLaunch::run() always applies them (Floating before Mark here).
+    // Companion to the test above: with real action flags, "actions" should
+    // list each one's sway_command_verb() text with a "changed" status (a
+    // freshly launched window is neither already floating nor already
+    // marked), in the fixed order SwayLaunch::run() always applies them
+    // (Floating before Mark here).
     let output = sway_launch_command()
         .args([
             "--app-id",
@@ -2688,10 +2690,46 @@ fn json_output_lists_the_actions_that_actually_ran() {
         .unwrap_or_else(|| panic!("expected an integer container_id, got {json:?}"));
     assert_eq!(
         json["actions"],
-        serde_json::json!(["floating enable", "mark \"live-sway-test-json-actions\""]),
-        "actions should list what actually ran, in order: {json:?}"
+        serde_json::json!([
+            { "action": "floating enable", "status": "changed" },
+            { "action": "mark \"live-sway-test-json-actions\"", "status": "changed" },
+        ]),
+        "actions should list what actually ran, in order, with a changed status: {json:?}"
     );
     let _guard = KillOnDrop(container_id);
+}
+
+#[test]
+fn json_output_reports_already_satisfied_when_re_applying_an_unchanged_state() {
+    // Companion to the test above: re-running --floating against a window
+    // that's already floating should report "already_satisfied", not
+    // "changed" — SwayAction::already_at_target() already computes this
+    // distinction internally; this confirms it actually reaches --json.
+    let (container_id, _guard) = launch_foot(&["--floating"]);
+
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--floating",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --floating (already floating) --json failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    let json: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("--json output should be valid JSON");
+    assert_eq!(
+        json["actions"],
+        serde_json::json!([{ "action": "floating enable", "status": "already_satisfied" }]),
+        "re-applying an already-floating state should report already_satisfied: {json:?}"
+    );
 }
 
 #[test]
