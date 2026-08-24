@@ -504,23 +504,24 @@ cross-monitor relocation for a silent no-op — confirmed by `tests/live_sway.rs
 `new_column_does_not_relocate_a_solo_window_to_a_different_output`,
 `new_column_does_not_relocate_a_non_solo_window_at_the_trailing_edge`, and (the nested case)
 `new_column_does_not_relocate_a_nested_window_to_a_different_output`. A skip is also structurally
-reported, not just logged: `build_actions()` returns `(Vec<SwayAction<'a>>, Vec<SkippedAction>)`
-instead of a bare `Vec<SwayAction<'a>>` — `SkippedAction { action, reason }` holds short,
-stable, machine-readable `&'static str` identifiers (`"new_column"`/`"new_row"`,
-`"trailing_workspace_edge"`), not a human-facing message (that's still what the `--verbose`
-`eprintln!` next to each skip is for). `RunOutcome` gained a matching `skipped: Vec<SkippedAction>`
-field, populated in `run()` alongside `actions`; `main.rs` renders it as `--json`'s `"skipped"`
-array (`skipped_actions_json()` for a single invocation, `step_skipped_actions_json()` for
-`run_steps()`, which additionally tags each entry with a 1-based `"step"` number — the same
-`"step {}: ..."` convention every other per-step error in that file already uses). Previously a
-skip was visible only via a `--verbose` log line, invisible to a `--json` caller; this closes that
-gap without changing the log line at all. `build_actions_for_preview()` (`--dry-run`) discards the
-skipped half of the tuple — always empty there anyway, since `check_relocation: false` never
-populates it. Only one skip mechanism exists today, so `SkippedAction.reason` is a plain
+reported, not just logged: `build_actions()` returns `Vec<PlannedAction<'a>>` (`enum PlannedAction
+{ Run(SwayAction<'a>), Skip(SkippedAction) }`) instead of a bare `Vec<SwayAction<'a>>`, interleaving
+a skip in its actual fixed-order position rather than collecting skips into a separate side list —
+`SkippedAction { action, reason }` holds short, stable, machine-readable `&'static str` identifiers
+(`"new_column"`/`"new_row"`, `"trailing_workspace_edge"`), not a human-facing message (that's still
+what the `--verbose` `eprintln!` next to each skip is for). `run()` folds each `PlannedAction` into
+an `ActionRecord { action, status }` (`ActionStatus::Changed`/`AlreadySatisfied`/`Skipped { reason
+}` — see "`--json`'s richer schema" below for the full design of this, added later alongside the
+`already_satisfied` distinction), so a `PlannedAction::Skip` never actually calls `.run()` — it
+short-circuits straight to an `ActionStatus::Skipped` record. Previously a skip was visible only via
+a `--verbose` log line, invisible to a `--json` caller; surfacing it in `RunOutcome`/`--json` closes
+that gap without changing the log line at all. `build_actions_for_preview()` (`--dry-run`) filters
+down to just the `Run` half — always the *only* half there anyway, since `check_relocation: false`
+never produces a `Skip`. Only one skip mechanism exists today, so `SkippedAction.reason` is a plain
 `&'static str` rather than an enum; revisit if a second one ever appears.
-`step_skipped_actions_json()`'s step-number arithmetic (`step_index + 1`) is unit-tested headlessly
-with a synthetic `SkippedAction` (`main.rs`'s
-`step_skipped_actions_json_tags_each_entry_with_a_1_based_step_number`) rather than only via a real
+`step_action_records_json()`'s step-number arithmetic (`step_index + 1`) is unit-tested headlessly
+with a synthetic `ActionRecord` (`main.rs`'s
+`step_action_records_json_tags_each_entry_with_a_1_based_step_number`) rather than only via a real
 skip, which needs a live multi-output Sway session to trigger at all — isolating the off-by-one
 risk from the live-only trigger condition. Confirmed live end to end (a real skip surfacing
 correctly in real `--json` output) by extending
@@ -570,26 +571,46 @@ no version has ever shipped (`Cargo.toml` is still `0.1.0`, no `v*` tags exist),
 existing consumer to stay compatible with, so this was a free redesign rather than an additive one.
 
 `SwayLaunch::run()` itself now returns `Result<RunOutcome, String>` instead of `Result<i64,
-String>` — `RunOutcome { container_id: i64, actions: Vec<String> }`, where `actions` is every
-action's `sway_command_verb()` (the same container-id-free text `--dry-run` prints — see above),
-collected in the order it actually ran, immediately before each one's own `.run()` call. Because
-`run()` still stops and returns `Err` at the first action that fails (unchanged), a successful
-`Ok(RunOutcome)`'s `actions` is always the *complete* planned list, never a partial one — there's
-no per-action "confirmed"/"failed" status to report the way the review's own illustrative example
-showed, because a failed action never reaches the `Ok` return at all; it's `run()`'s `Err` instead,
-exactly as before this existed. Plain (non-`--json`) output is unaffected — still just the bare
-`container_id`.
+String>` — `RunOutcome { container_id: i64, actions: Vec<ActionRecord> }`. Because `run()` still
+stops and returns `Err` at the first action that fails (unchanged), a successful `Ok(RunOutcome)`'s
+`actions` is always the *complete* planned list, never a partial one — a failed action never
+produces an `ActionRecord` at all; it's `run()`'s `Err` instead, exactly as before this existed.
+Plain (non-`--json`) output is unaffected — still just the bare `container_id`.
 
-A single invocation's `--json` output is now `{"container_id": N, "actions": [...], "skipped":
-[...]}`. `run_steps()` (`--layout`/`--template`) already tracked a `resolved_ids: HashMap<String,
-i64>` of every named step's (`id`, or a template `slot`, which resolves to the same name — see
-"`--template`" below) container id, purely to resolve later `target_id` references — that same map
-is now serialized directly as `--json`'s new `"containers"` field, alongside the existing
-`"container_ids"` array (every step's id positionally, named or not). No new bookkeeping was
-needed for this specifically because `resolved_ids` already existed for an unrelated reason.
-`"skipped"` (`[{"action": ..., "reason": ...}, ...]`, or, for `run_steps()`, each entry also tagged
-with a 1-based `"step"`) was added later, alongside `RunOutcome.skipped` — see
-`relocates_to_another_output()`'s doc comment above for the full design.
+**Per-action status (`changed`/`already_satisfied`/`skipped`), not just present-or-absent.** A
+later external review pointed out that the first version of this schema (a single invocation's
+`--json` output as `{"container_id": N, "actions": [...], "skipped": [...]}`, `actions` a bare
+`Vec<String>` of `sway_command_verb()` text) couldn't distinguish an action that actually changed
+something from one `already_at_target()` (see above) silently no-oped — both looked identical in
+the `"actions"` array, and a skip lived in a separate `"skipped"` list with no way to tell where it
+would have fallen relative to the other actions. Fixed by unifying both into one `Vec<ActionRecord>`
+(`ActionRecord { action: String, status: ActionStatus }`, `enum ActionStatus { Changed,
+AlreadySatisfied, Skipped { reason: &'static str } }`), replacing `RunOutcome.actions: Vec<String>`
+and dropping `RunOutcome.skipped` entirely — its contents fold into the same list instead.
+`SwayAction::run()`'s own return type changed from `Result<i64, String>` to `Result<(i64, bool),
+String>` (the `bool` is `already_satisfied`) specifically so `run()` can read back the distinction
+`already_at_target()` already computed internally but previously discarded; `run()` builds each
+`ActionRecord` directly from a `PlannedAction` (see above) — `Run` becomes `Changed`/
+`AlreadySatisfied` depending on that bool, `Skip` becomes `Skipped { reason }` directly, with no
+`.run()` call at all. `main.rs`'s `action_record_json()` renders one record as
+`{"action": ..., "status": "changed"|"already_satisfied"|"skipped"[, "reason": ...]}` — `"reason"`
+only present for `"skipped"`. A single invocation's `--json` output is now `{"container_id": N,
+"actions": [...]}` (`actions_json()`).
+
+This was extended to the multi-step case in the same change: `run_steps()` (`--layout`/
+`--template`) previously had no `"actions"` field in its own `--json` output at all (only
+`"container_ids"`/`"containers"`/`"skipped"`) — `outcome.actions` was fetched per-step but
+discarded, an inconsistency found while reworking this schema rather than a separate suggestion.
+`step_action_records_json()` (renamed from `step_skipped_actions_json()`, same `"step"`-tagging
+shape) now tags every action, not just skips, with its 1-based step number, accumulated into a
+top-level `"actions"` array alongside the existing `"container_ids"`/`"containers"` fields.
+
+`run_steps()` (`--layout`/`--template`) separately already tracked a `resolved_ids:
+HashMap<String, i64>` of every named step's (`id`, or a template `slot`, which resolves to the same
+name — see "`--template`" below) container id, purely to resolve later `target_id` references —
+that same map is serialized directly as `--json`'s `"containers"` field, alongside the
+`"container_ids"` array (every step's id positionally, named or not). No new bookkeeping was needed
+for this specifically because `resolved_ids` already existed for an unrelated reason.
 
 ### `--debug-events`
 
