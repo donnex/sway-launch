@@ -159,7 +159,10 @@ fn layout_validate_reports_success_without_launching_anything() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
-    assert_eq!(stdout.trim(), "valid: 2 step(s)");
+    assert_eq!(
+        stdout.trim(),
+        format!("valid: {} (2 step(s))", path.display())
+    );
 }
 
 #[test]
@@ -173,7 +176,13 @@ fn layout_validate_json_output_is_a_structured_object() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
-    assert_eq!(stdout.trim(), "{\"steps\":1,\"valid\":true}");
+    assert_eq!(
+        stdout.trim(),
+        format!(
+            "{{\"source\":\"{}\",\"steps\":1,\"valid\":true}}",
+            path.display()
+        )
+    );
 }
 
 #[test]

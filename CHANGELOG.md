@@ -82,3 +82,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   empty or whitespace-only value immediately, naming the offending field — previously an empty
   binding `command` only surfaced as a confusing, one-layer-removed error on the resulting step, and
   a blank `id`/`target_id`/`slot`/`description`/`category` was silently accepted.
+- `--validate` now names the `--layout`/`--template` argument it validated: `valid: <source> (N
+  step(s))`, or `{"source": ..., "steps": N, "valid": true}` under `--json` — previously just
+  `valid: N step(s)`/`{"steps": N, "valid": true}` with no indication of which file was checked.
