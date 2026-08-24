@@ -785,7 +785,7 @@ resolution — without launching anything or touching Sway IPC. Requires `--layo
 
 ```shell
 $ sway-launch --layout layout.toml --validate
-valid: 3 step(s)
+valid: layout.toml (3 step(s))
 ```
 
 ```shell
@@ -793,7 +793,8 @@ $ sway-launch --layout layout.toml --validate
 step 2: height: Must be in format <HEIGHT>px|ppt. E.g. 300px/20ppt. ppt = percent
 ```
 
-`--json` prints `{"valid": true, "steps": N}` on success, or the same structured
+`--json` prints `{"source": "...", "steps": N, "valid": true}` on success — `source` echoes back the
+`--layout`/`--template` argument as given, not a canonicalized path — or the same structured
 `{"error": "...", "rolled_back": [...]}` shape every other runtime error uses. Useful in CI or a
 dotfiles repo to catch a typo in a layout/template file without needing a live Sway session to
 check it against.
