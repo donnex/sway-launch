@@ -1364,6 +1364,20 @@ pub fn validate_position_argument(value: &str) -> Result<String, String> {
     }
 }
 
+/// Rejects an empty or whitespace-only value for a named field — shared by
+/// every layout/template schema field that's a free-form identifier or
+/// required string (`id`, `target_id`, `slot`, a binding's `command`, a
+/// template's `description`/`category`) rather than something with its own
+/// dedicated format, the way `validate_size_argument`/
+/// `validate_position_argument` above validate a specific value shape.
+pub fn require_non_blank(field: &str, value: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        Err(format!("{field} must not be empty or whitespace-only"))
+    } else {
+        Ok(())
+    }
+}
+
 fn window_app_id_match(node: &Node, app_id_match: &str) -> bool {
     let node_app_id = match node.app_id.as_ref().ok_or(()) {
         Ok(app_id) => app_id,
@@ -2578,6 +2592,27 @@ mod tests {
     #[test]
     fn validate_position_argument_rejects_empty() {
         assert!(validate_position_argument("").is_err());
+    }
+
+    // require_non_blank
+
+    #[test]
+    fn require_non_blank_accepts_a_real_value() {
+        assert!(require_non_blank("field", "foot").is_ok());
+    }
+
+    #[test]
+    fn require_non_blank_rejects_empty() {
+        let error = require_non_blank("field", "").expect_err("empty value should be rejected");
+        assert!(
+            error.contains("field"),
+            "error should name the field: {error:?}"
+        );
+    }
+
+    #[test]
+    fn require_non_blank_rejects_whitespace_only() {
+        assert!(require_non_blank("field", "   ").is_err());
     }
 
     // Split

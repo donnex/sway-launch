@@ -80,6 +80,13 @@ impl LayoutStep {
         verbose: bool,
         resolved_ids: &HashMap<String, i64>,
     ) -> Result<sway_launch::SwayLaunch<'a>, String> {
+        if let Some(id) = self.id.as_deref() {
+            sway_launch::require_non_blank("id", id)?;
+        }
+        if let Some(target_id) = self.target_id.as_deref() {
+            sway_launch::require_non_blank("target_id", target_id)?;
+        }
+
         let app_id_match = self.app_id.as_deref().unwrap_or_default();
         let class_match = self.class.as_deref().unwrap_or_default();
         if !app_id_match.is_empty() && !class_match.is_empty() {
@@ -128,7 +135,7 @@ impl LayoutStep {
             let command = self
                 .command
                 .as_deref()
-                .filter(|command| !command.is_empty())
+                .filter(|command| !command.trim().is_empty())
                 .ok_or_else(|| {
                     "step needs one of: command, con_id, existing, target_id".to_string()
                 })?;
@@ -373,6 +380,59 @@ mod tests {
                 &HashMap::new()
             )
             .is_err());
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_whitespace_only_command() {
+        let mut step = minimal_step();
+        step.command = Some("   ".to_string());
+        assert!(step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &HashMap::new()
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_blank_id() {
+        let mut step = minimal_step();
+        step.id = Some("  ".to_string());
+        let error = step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &HashMap::new(),
+            )
+            .err()
+            .expect("blank id should be rejected");
+        assert!(
+            error.contains("id"),
+            "error should name the field: {error:?}"
+        );
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_blank_target_id() {
+        let mut step = minimal_step();
+        step.command = None;
+        step.target_id = Some("   ".to_string());
+        let error = step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &HashMap::new(),
+            )
+            .err()
+            .expect("blank target_id should be rejected");
+        assert!(
+            error.contains("target_id"),
+            "error should name the field: {error:?}"
+        );
     }
 
     #[test]
