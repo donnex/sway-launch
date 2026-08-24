@@ -79,8 +79,9 @@ Arguments:
 Options:
   -a, --app-id <APP_ID>               app_id match. With --existing, matches an already-open window instead of the newly launched one
   -c, --class <CLASS>                 class match. With --existing, matches an already-open window instead of the newly launched one
+      --mark-match <MARK_MATCH>       Mark match. With --existing, matches an already-open window carrying this mark instead of the newly launched one
       --con-id <CON_ID>               Act on an already-open window with this container id, instead of launching a new one
-      --existing                      Act on an already-open window found via --app-id/--class, instead of launching a new one
+      --existing                      Act on an already-open window found via --app-id/--class/--mark-match, instead of launching a new one
   -s, --split <SPLIT>                 Change split for new window [possible values: v, h]
   -f, --floating                      Make new window floating
       --sticky                        Make new window sticky (shows on all workspaces)
@@ -293,25 +294,25 @@ app_id = "foot"
 sway-launch --layout layout.toml
 ```
 
-A step's keys mirror the CLI flags of the same name (`app_id`, `class`, `con_id`, `existing`,
-`split`, `floating`, `sticky`, `fullscreen`, `focus`, `mark`, `new_column`, `new_row`, `workspace`,
-`output`, `height`, `width`, `position`, `scratchpad`, `timeout`, `wait_time`) — `height`/`width`/`position`
-are validated the same way their CLI equivalents are, and a step without its own
-`timeout`/`wait_time` inherits the top-level `--timeout`/`--wait-time` values. Exactly one of
-`command`, `con_id`, `existing = true`, or `target_id` is required per step, matching the CLI's own
-command/`--con-id`/`--existing` mutual exclusivity plus one layout-only addition:
+A step's keys mirror the CLI flags of the same name (`app_id`, `class`, `mark_match`, `con_id`,
+`existing`, `split`, `floating`, `sticky`, `fullscreen`, `focus`, `mark`, `new_column`, `new_row`,
+`workspace`, `output`, `height`, `width`, `position`, `scratchpad`, `timeout`, `wait_time`) —
+`height`/`width`/`position` are validated the same way their CLI equivalents are, and a step
+without its own `timeout`/`wait_time` inherits the top-level `--timeout`/`--wait-time` values.
+Exactly one of `command`, `con_id`, `existing = true`, or `target_id` is required per step, matching
+the CLI's own command/`--con-id`/`--existing` mutual exclusivity plus one layout-only addition:
 
 - `id` names a step, so a later step can target its window specifically via `target_id` — useful
-  when several steps share the same `app_id`/`class`, where `existing = true` would be ambiguous
-  about which one it means. See
+  when several steps share the same `app_id`/`class`/`mark_match`, where `existing = true` would be
+  ambiguous about which one it means. See
   [`examples/layouts/retarget-by-id.toml`](examples/layouts/retarget-by-id.toml).
 - `target_id` targets an earlier step's window by that name, instead of `command`/`con_id`/
   `existing`. Errors if the named `id` doesn't exist, or was used by more than one step.
 
-As with the CLI's `--app-id`/`--class`, a step can't set both `app_id` and `class` — pick
-whichever matches the application. `con_id` can't be combined with `app_id`/`class` either, same as
-the CLI: a `con_id` target already names an exact container, so a match criteria alongside it would
-only be silently ignored.
+As with the CLI's `--app-id`/`--class`/`--mark-match`, a step can set only one of `app_id`, `class`,
+`mark_match` — pick whichever identifies the window. `con_id` can't be combined with any of the
+three either, same as the CLI: a `con_id` target already names an exact container, so a match
+criteria alongside it would only be silently ignored.
 
 Neither has a CLI equivalent — a single `sway-launch` invocation only ever has one step, so
 there's nothing to name or reference.
@@ -401,8 +402,9 @@ sway-launch --template template.toml --bindings bindings.toml
 ```
 
 A `Binding`'s keys are the same target-selection subset a layout step has (`command`, `con_id`,
-`existing`, `app_id`, `class`) — exactly one of `command`/`con_id`/`existing = true` is required, same
-rule as `--layout`, and `app_id`/`class` are mutually exclusive the same way too. A template step's
+`existing`, `app_id`, `class`, `mark_match`) — exactly one of `command`/`con_id`/`existing = true` is
+required, same rule as `--layout`, and `app_id`/`class`/`mark_match` can set only one of the three,
+same rule too. A template step's
 action keys (`split`, `floating`, `height`, etc.) are the same
 ones `--layout` has; `slot` and `target_id` are its only two target-selection keys, and exactly one
 is required per step — a `slot` step resolves its window via a binding, a `target_id` step
@@ -536,10 +538,19 @@ the same way those flags match a newly launched window:
 sway-launch --existing -a foot --fullscreen
 ```
 
-`--existing` requires `--app-id` or `--class`, and errors if that doesn't match exactly one
+Or match on a mark instead, applied to a window by an earlier `--mark` (or `swaymsg mark`) call —
+useful for the classic "dropdown terminal" scripting pattern, where a script wants to find its own
+previously-marked window again without tracking a container id itself:
+
+```shell
+sway-launch --existing --mark-match dropdown-term --scratchpad
+```
+
+`--existing` requires exactly one of `--app-id`, `--class`, or `--mark-match` (they're mutually
+exclusive — pick whichever identifies the window), and errors if that doesn't match exactly one
 window — it won't guess which one you meant. The search includes windows in Sway's scratchpad
 (hidden/stashed windows), not just visible ones — if you have both a visible and a scratchpad
-window with the same `app_id`/`class`, retarget with `--con-id` instead to be unambiguous.
+window with the same `app_id`/`class`/mark, retarget with `--con-id` instead to be unambiguous.
 
 ### Floating
 

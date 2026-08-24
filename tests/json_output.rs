@@ -158,6 +158,33 @@ fn dry_run_never_launches_the_command() {
 }
 
 #[test]
+fn dry_run_describes_an_existing_target_matched_by_mark() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--existing", "--mark-match", "dropdown-term", "--dry-run"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(
+        stdout.trim(),
+        "1. target existing window (mark_match=\"dropdown-term\")"
+    );
+}
+
+#[test]
+fn existing_without_app_id_class_or_mark_match_errors() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--existing"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("--existing requires --app-id, --class, or --mark-match"));
+}
+
+#[test]
 fn validate_without_layout_or_template_errors() {
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
         .args(["--con-id", "42", "--validate"])

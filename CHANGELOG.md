@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `--mark-match <MARK>` (and the matching `--layout`/`--template` step/binding field) for
+  `--existing`: matches an already-open window carrying this mark, instead of `--app-id`/`--class`
+  — useful for retargeting a previously-`--mark`ed window without tracking its container id, the
+  classic "dropdown terminal" pattern (`sway-launch --existing --mark-match dropdown-term
+  --scratchpad`). Mutually exclusive with `--app-id`/`--class`.
 - `--scratchpad` flag (and the matching `--layout`/`--template` step field) to move a window to
   Sway's scratchpad, runs last after every other action — pairs well with `--mark`/`--floating`/
   `--width`/`--height`/`--position` for the classic "dropdown terminal" pattern.
