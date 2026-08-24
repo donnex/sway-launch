@@ -1,5 +1,5 @@
 use crate::layout::LayoutStep;
-use crate::sway_launch::Split;
+use crate::sway_launch::{self, Split};
 use include_dir::{include_dir, Dir};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -199,7 +199,10 @@ pub struct Bindings {
 /// itself so the file-not-found and parse-error cases stay distinguishable
 /// to the caller.
 pub fn parse(contents: &str) -> Result<Template, String> {
-    toml::from_str(contents).map_err(|error| error.to_string())
+    let template: Template = toml::from_str(contents).map_err(|error| error.to_string())?;
+    sway_launch::require_non_blank("template.description", &template.template.description)?;
+    sway_launch::require_non_blank("template.category", &template.template.category)?;
+    Ok(template)
 }
 
 /// Parses a bindings file's contents. See `parse()`.
@@ -232,6 +235,7 @@ pub fn parse_bindings(contents: &str) -> Result<Bindings, String> {
 pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutStep>, String> {
     let mut bindings_by_slot = HashMap::new();
     for binding in &bindings.binding {
+        sway_launch::require_non_blank("binding.slot", &binding.slot)?;
         if bindings_by_slot
             .insert(binding.slot.as_str(), binding)
             .is_some()
@@ -250,6 +254,12 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
             .count();
         if target_fields_set != 1 {
             return Err("template step must set exactly one of: slot, target_id".to_string());
+        }
+        if let Some(slot) = step.slot.as_deref() {
+            sway_launch::require_non_blank("slot", slot)?;
+        }
+        if let Some(target_id) = step.target_id.as_deref() {
+            sway_launch::require_non_blank("target_id", target_id)?;
         }
 
         let (id, target_id, command, con_id, existing, app_id, class) =
@@ -271,6 +281,10 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
                         "binding for slot {:?} must set exactly one of: command, con_id, existing",
                         slot
                     ));
+                }
+                if let Some(command) = binding.command.as_deref() {
+                    sway_launch::require_non_blank("command", command)
+                        .map_err(|error| format!("binding for slot {:?}: {}", slot, error))?;
                 }
                 if binding.app_id.is_some() && binding.class.is_some() {
                     return Err(format!(
@@ -416,6 +430,72 @@ mod tests {
             binding: vec![minimal_binding()],
         };
         assert!(resolve(&template, &bindings).is_err());
+    }
+
+    #[test]
+    fn resolve_rejects_blank_slot() {
+        let mut step = minimal_step();
+        step.slot = Some("   ".to_string());
+        let template = minimal_template(vec![step]);
+        let bindings = Bindings { binding: vec![] };
+        let error = resolve(&template, &bindings)
+            .err()
+            .expect("blank slot should be rejected");
+        assert!(
+            error.contains("slot"),
+            "error should name the field: {error:?}"
+        );
+    }
+
+    #[test]
+    fn resolve_rejects_blank_target_id() {
+        let mut step = minimal_step();
+        step.slot = None;
+        step.target_id = Some("  ".to_string());
+        let template = minimal_template(vec![step]);
+        let bindings = Bindings { binding: vec![] };
+        let error = resolve(&template, &bindings)
+            .err()
+            .expect("blank target_id should be rejected");
+        assert!(
+            error.contains("target_id"),
+            "error should name the field: {error:?}"
+        );
+    }
+
+    #[test]
+    fn resolve_rejects_blank_binding_slot() {
+        let template = minimal_template(vec![minimal_step()]);
+        let mut binding = minimal_binding();
+        binding.slot = "   ".to_string();
+        let bindings = Bindings {
+            binding: vec![binding],
+        };
+        let error = resolve(&template, &bindings)
+            .err()
+            .expect("blank binding slot should be rejected");
+        assert!(
+            error.contains("slot"),
+            "error should name the field: {error:?}"
+        );
+    }
+
+    #[test]
+    fn resolve_rejects_blank_binding_command_naming_the_slot() {
+        let template = minimal_template(vec![minimal_step()]);
+        let mut binding = minimal_binding();
+        binding.command = Some("   ".to_string());
+        let bindings = Bindings {
+            binding: vec![binding],
+        };
+        let error = resolve(&template, &bindings)
+            .err()
+            .expect("blank binding command should be rejected");
+        assert!(
+            error.contains("editor") && error.contains("command"),
+            "error should name the offending slot and field: {:?}",
+            error
+        );
     }
 
     #[test]
@@ -743,6 +823,44 @@ mod tests {
             "#,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_rejects_blank_description() {
+        let result = parse(
+            r#"
+            [template]
+            description = "   "
+            category = "Test"
+
+            [[step]]
+            slot = "editor"
+            "#,
+        );
+        let error = result.err().expect("blank description should be rejected");
+        assert!(
+            error.contains("description"),
+            "error should name the field: {error:?}"
+        );
+    }
+
+    #[test]
+    fn parse_rejects_blank_category() {
+        let result = parse(
+            r#"
+            [template]
+            description = "A test template."
+            category = ""
+
+            [[step]]
+            slot = "editor"
+            "#,
+        );
+        let error = result.err().expect("blank category should be rejected");
+        assert!(
+            error.contains("category"),
+            "error should name the field: {error:?}"
+        );
     }
 
     #[test]
