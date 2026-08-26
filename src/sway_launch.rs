@@ -1393,7 +1393,7 @@ fn window_app_id_match(node: &Node, app_id_match: &str) -> bool {
         Err(_) => return false,
     };
 
-    matches!(node_app_id, _ if node_app_id == app_id_match)
+    node_app_id == app_id_match
 }
 
 fn window_class_match(node: &Node, class_match: &str) -> bool {
@@ -1407,7 +1407,7 @@ fn window_class_match(node: &Node, class_match: &str) -> bool {
         Err(_) => return false,
     };
 
-    matches!(node_class, _ if node_class == class_match)
+    node_class == class_match
 }
 
 fn window_mark_match(node: &Node, mark_match: &str) -> bool {
