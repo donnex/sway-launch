@@ -100,9 +100,10 @@ Each action's own definition of "confirmed", as shipped:
   very first poll. Confirmed live by `tests/live_sway.rs`'s
   `split_confirms_via_poll_well_under_a_large_wait_time`/
   `split_is_idempotent_and_still_confirms_promptly_when_already_set`.
-- **`Height`/`Width`** — `parse_pixel_value()` opts a value out of polling entirely (`None`, not
-  `Some(false)`) unless it's in `px`; a `ppt` percentage has no pixel figure to poll for without
-  also resolving the reference dimension it's a percentage of. For `px` values,
+- **`Height`/`Width`** — `poll_matches()` matches directly on the held `Size`: `Size::Percent` opts
+  out of polling entirely (`None`, not `Some(false)`), since a `ppt` percentage has no pixel figure
+  to poll for without also resolving the reference dimension it's a percentage of, while
+  `Size::Pixels` opts in unconditionally. For pixel values,
   `height_matches()`/`width_matches()` (via `node_by_id()`) needed tolerance-aware matching, not
   one fixed formula — live testing found the border/decoration accounting genuinely inconsistent
   for width specifically (this project never found a single deterministic rule for it):

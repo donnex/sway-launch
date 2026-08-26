@@ -885,8 +885,8 @@ this repo's own content, not a runtime condition to handle gracefully, so it pan
 file's name rather than silently dropping it from the `--list-templates` output. `description`
 must still be a complete, self-contained sentence (ending in `.`) — `template.rs`'s
 `builtin_templates_every_description_is_a_complete_sentence` test guards this, and
-`builtin_templates_every_category_is_non_empty` guards `category` similarly. Every one of the 27
-shipped `templates/*.toml` files was migrated to this table in the same change that added it, per
+`builtin_templates_every_category_is_non_empty` guards `category` similarly. Every shipped
+`templates/*.toml` file was migrated to this table in the same change that added it, per
 this file's "Screenshots" section discipline of never leaving shipped content half-migrated to a
 new schema.
 
@@ -1569,7 +1569,7 @@ after being asked. Don't flag it in a future content-policy review, and don't us
 for adding other real URLs without the same explicit confirmation.
 
 **Approved exception:** `README.md:8`/`CLAUDE.md:7` (`https://swaywm.org/`, the window manager
-this tool is built for), `CLAUDE.md:1296` (`https://cli.github.com/`, the `gh` CLI's own site), and
+this tool is built for), `CLAUDE.md:1611` (`https://cli.github.com/`, the `gh` CLI's own site), and
 `Cargo.toml:9` (`https://doc.rust-lang.org/cargo/reference/manifest.html`, `cargo init`'s
 boilerplate "see more keys" comment pointing at Cargo's own manifest reference docs) are real
 URLs, but each is a necessary reference to the specific upstream project/tool the surrounding text
@@ -1590,7 +1590,7 @@ regenerating either file with different URLs needs no re-confirmation and should
 future content-policy review.
 
 **Approved exception:** `CHANGELOG.md`'s header and this file's "Changelog" section
-(`CLAUDE.md:734`) link to `https://keepachangelog.com/en/1.1.0/` and
+(`CLAUDE.md:1035`) link to `https://keepachangelog.com/en/1.1.0/` and
 `https://semver.org/spec/v2.0.0.html`. Both are real URLs, but each is a necessary reference to the
 specific upstream spec the surrounding text is about, the same reasoning as the `swaywm.org`/
 `cli.github.com`/`doc.rust-lang.org` exception above — the user explicitly signed off on these

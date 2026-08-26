@@ -3500,8 +3500,8 @@ mod tests {
     fn height_and_width_in_percent_have_no_poll_matcher() {
         // A `ppt` value has no pixel figure to poll for without also
         // resolving the reference dimension it's a percentage of (see
-        // parse_pixel_value()'s doc comment), so these opt out entirely
-        // rather than polling for something that could never match.
+        // Size's doc comment), so these opt out entirely rather than
+        // polling for something that could never match.
         let height = SwayAction::Height {
             container_id: 42,
             height: Size::Percent(20),
@@ -4065,7 +4065,7 @@ mod tests {
         assert!(find_node(&tree, 42).is_none());
     }
 
-    // parse_pixel_value
+    // parse_size
 
     #[test]
     fn parse_size_parses_pixels() {
