@@ -112,6 +112,9 @@ impl LayoutStep {
         {
             return Err("step must not combine con_id with app_id/class/mark_match".to_string());
         }
+        if !mark_match.is_empty() && !self.existing {
+            return Err("mark_match requires existing = true".to_string());
+        }
 
         let target_fields_set = [
             self.command.is_some(),
@@ -402,6 +405,37 @@ mod tests {
         let mut step = minimal_step();
         step.command = None;
         step.con_id = Some(42);
+        step.mark_match = Some("dropdown-term".to_string());
+        assert!(step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &HashMap::new()
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_mark_match_without_existing() {
+        let mut step = minimal_step();
+        step.mark_match = Some("dropdown-term".to_string());
+        let error = step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &HashMap::new(),
+            )
+            .err()
+            .expect("mark_match without existing should be rejected");
+        assert!(error.contains("mark_match"));
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_class_and_mark_match_together() {
+        let mut step = minimal_step();
+        step.class = Some("Foot".to_string());
         step.mark_match = Some("dropdown-term".to_string());
         assert!(step
             .to_sway_launch(

@@ -295,6 +295,15 @@ fn main() {
             .exit();
     }
 
+    if !mark_match.is_empty() && !args.existing {
+        Args::command()
+            .error(
+                ErrorKind::MissingRequiredArgument,
+                "--mark-match requires --existing",
+            )
+            .exit();
+    }
+
     let target = if let Some(con_id) = args.con_id {
         sway_launch::Target::ConId(con_id)
     } else if args.existing {
