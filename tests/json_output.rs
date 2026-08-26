@@ -182,6 +182,18 @@ fn existing_without_app_id_class_or_mark_match_errors() {
 }
 
 #[test]
+fn mark_match_without_existing_errors() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--mark-match", "foo", "true"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("--mark-match requires --existing"));
+}
+
+#[test]
 fn validate_without_layout_or_template_errors() {
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
         .args(["--con-id", "42", "--validate"])

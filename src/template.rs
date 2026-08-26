@@ -301,6 +301,12 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
                         slot
                     ));
                 }
+                if binding.mark_match.is_some() && !binding.existing {
+                    return Err(format!(
+                        "binding for slot {:?}: mark_match requires existing = true",
+                        slot
+                    ));
+                }
 
                 if !used_slots.insert(slot) {
                     return Err(format!("template: slot {:?} is used more than once", slot));
@@ -706,6 +712,21 @@ mod tests {
             .err()
             .expect("binding with class and mark_match together should error");
         assert!(error.contains("editor"));
+    }
+
+    #[test]
+    fn resolve_rejects_binding_mark_match_without_existing() {
+        let template = minimal_template(vec![minimal_step()]);
+        let mut binding = minimal_binding();
+        binding.mark_match = Some("dropdown-term".to_string());
+        let bindings = Bindings {
+            binding: vec![binding],
+        };
+        let error = resolve(&template, &bindings)
+            .err()
+            .expect("binding mark_match without existing should be rejected");
+        assert!(error.contains("editor"));
+        assert!(error.contains("mark_match"));
     }
 
     #[test]

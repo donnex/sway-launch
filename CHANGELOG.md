@@ -91,3 +91,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--validate` now names the `--layout`/`--template` argument it validated: `valid: <source> (N
   step(s))`, or `{"source": ..., "steps": N, "valid": true}` under `--json` — previously just
   `valid: N step(s)`/`{"steps": N, "valid": true}` with no indication of which file was checked.
+- `--mark-match`/`mark_match` now requires `--existing`/`existing = true` — previously it silently
+  had no effect when combined with a launch command, since a freshly launched window has no marks
+  yet to match against.
