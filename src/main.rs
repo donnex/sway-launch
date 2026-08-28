@@ -94,7 +94,7 @@ struct Args {
     /// Print the planned sequence of Sway commands instead of running them —
     /// works with a direct command or --layout/--template. Never touches
     /// Sway IPC or launches anything
-    #[clap(long, conflicts_with = "debug_events")]
+    #[clap(long, conflicts_with_all = ["debug_events", "validate"])]
     dry_run: bool,
 
     /// Validate a --layout/--template file (and, for --template,
@@ -1179,6 +1179,18 @@ mod tests {
     #[test]
     fn args_rejects_sticky_and_layout_together() {
         let result = Args::try_parse_from(["sway-launch", "--sticky", "--layout", "x.toml"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn args_rejects_dry_run_and_validate_together() {
+        let result = Args::try_parse_from([
+            "sway-launch",
+            "--layout",
+            "x.toml",
+            "--dry-run",
+            "--validate",
+        ]);
         assert!(result.is_err());
     }
 

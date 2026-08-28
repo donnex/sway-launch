@@ -94,3 +94,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--mark-match`/`mark_match` now requires `--existing`/`existing = true` — previously it silently
   had no effect when combined with a launch command, since a freshly launched window has no marks
   yet to match against.
+
+### Fixed
+
+- `--dry-run` and `--validate` combined now error immediately as conflicting flags, instead of
+  `--dry-run` silently winning and `--validate` being ignored with no indication anything was
+  skipped.
