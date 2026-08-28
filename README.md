@@ -332,6 +332,8 @@ sway-launch --layout layout.toml --rollback-on-error
 Only windows this invocation itself launched (a step's `command`) are ever closed — a step that
 retargeted an already-open window via `con_id`/`existing`/`target_id` is left alone, since that
 window existed before this run and isn't this run's to close. Requires `--layout` or `--template`.
+Rollback doesn't check whether a launched window has since been put to other use — it kills any
+window it recognizes as its own, best-effort, regardless of what's happened to it since launch.
 With `--json`, the error object includes which container ids were closed:
 `{"error": "...", "rolled_back": [123, 456]}`.
 
@@ -833,7 +835,9 @@ before-command wait, not double `--wait-time`. A few cases have no way to confir
 (e.g. resizing a window that's the sole occupant of its workspace is silently clamped by Sway, or
 moving a tiled window that's already at the edge of its workspace), in which case the action falls
 back to sleeping the full `--wait-time` again, same as before this fast path existed — so the
-"roughly double `--wait-time`" figure is still the worst case, just no longer the typical one.
+"roughly double `--wait-time`" figure is still the worst case, just no longer the typical one. The
+poll window itself is capped at `--wait-time` too, so on a heavily-loaded system, raising
+`--wait-time` widens the actual confirmation window, not just the fallback sleep.
 
 ```shell
 ...
