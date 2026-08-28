@@ -955,6 +955,14 @@ impl SwayAction<'_> {
     /// running — nothing marker-confirmed is coming — or
     /// `PID_MARKER_FALLBACK_GRACE` elapses, whichever comes first, bounding
     /// how long a genuinely ambiguous case can add to the wait.
+    ///
+    /// Same background-thread/socket lifetime caveat as
+    /// `run_wait_matching_events()`: the thread reading this action's event
+    /// stream may outlive this function if still blocked on the socket when
+    /// we return, and a multi-step `--layout`/`--template` run calling this
+    /// once per `Exec` step accumulates one such thread/socket per step
+    /// rather than staying bounded. See the comment at that function's own
+    /// `thread::spawn` call for the full reasoning.
     fn run_wait_matching_exec_event(&self) -> Result<i64, String> {
         let SwayAction::Exec {
             command,
@@ -1099,8 +1107,19 @@ impl SwayAction<'_> {
         // the event stream itself never produces another event (a blocking
         // iterator has no way to time out on its own). The thread may
         // outlive this function if it's still blocked on the socket when we
-        // return — harmless, since sway-launch is a short-lived process and
-        // the thread dies with it.
+        // return — harmless for a single direct-CLI invocation, since
+        // sway-launch is a short-lived process and the thread dies with it.
+        // A multi-step --layout/--template run calls this once per
+        // event-confirmed action, though, and the process keeps running for
+        // the rest of the steps — each still-blocked thread (and the Sway
+        // IPC socket it holds open) only gets cleaned up once an unrelated
+        // Sway window event happens to wake it, or the whole process exits
+        // after the last step. For a large generated layout with many
+        // event-confirmed actions, this accumulates rather than staying
+        // bounded; there's no public way to interrupt the underlying
+        // blocking EventStream read from another thread to close this
+        // promptly, so it's accepted as a known scaling limit rather than
+        // fought here.
         let (event_sender, event_receiver) = mpsc::channel();
         thread::spawn(move || {
             for event in event_loop {
