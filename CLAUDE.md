@@ -291,6 +291,12 @@ stated goal (safer internals, less repeated parsing) to actually land.
   `tests/live_sway.rs`'s `concurrent_exec_invocations_do_not_collide_on_the_same_container_id`
   (0 collisions across 90 manual trials during development, versus every trial colliding before
   this) and `exec_falls_back_to_a_content_match_when_its_own_process_already_exited`.
+  `any_process_has_env_var()` treats a per-process `/proc/<pid>/environ` read failure (the process
+  already exited) as an expected, silent `false` — but a `read_dir("/proc")` failure itself is a
+  different, environment-level condition (restricted `/proc`, unusual containerization), so that
+  case logs a `--verbose` line noting PID-marker correlation is degraded on this system, rather
+  than staying indistinguishable from "marker genuinely absent." Not unit-tested: reliably making
+  `/proc` unreadable from within a test isn't portable/safe to simulate.
 - **No event exists in Sway IPC for it** (`Split`, `Sticky`, `NewColumn`, `NewRow`, `Height`,
   `Width`, `Position`) → `run_wait_time()`: sleeps for `--wait-time` *before* sending the command
   unconditionally (there's no signal yet to poll for), then sends it, since Sway doesn't emit an
