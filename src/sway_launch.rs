@@ -1071,7 +1071,7 @@ impl SwayAction<'_> {
             }
 
             marked_process_confirmed_gone = marked_process_confirmed_gone
-                || !self::any_process_has_env_var(PID_MARKER_VAR, &token);
+                || !self::any_process_has_env_var(PID_MARKER_VAR, &token, verbose);
             if marked_process_confirmed_gone {
                 let (container_id, _) = fallback.expect("just set above if it wasn't already");
                 if verbose {
@@ -1307,9 +1307,25 @@ fn process_has_env_var(pid: i32, var_name: &str, expected_value: &str) -> bool {
 /// having already exited — e.g. a single-instance application that forwards
 /// a request to an already-running instance and exits immediately, with no
 /// further marker-confirmed match ever coming.
-fn any_process_has_env_var(var_name: &str, expected_value: &str) -> bool {
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return false;
+fn any_process_has_env_var(var_name: &str, expected_value: &str, verbose: bool) -> bool {
+    // A per-process /proc/<pid>/environ read failing (the process already
+    // exited) is expected and common, and needs no signal — but read_dir on
+    // /proc itself failing is a different, environment-level condition
+    // (restricted /proc, unusual containerization) worth surfacing to a
+    // --verbose caller debugging a wrong-container-id report. Not unit-
+    // tested: reliably making /proc unreadable from within a test isn't
+    // portable/safe to simulate (it would mean altering process
+    // permissions), so this branch is expected to stay uncovered.
+    let entries = match std::fs::read_dir("/proc") {
+        Ok(entries) => entries,
+        Err(_) => {
+            if verbose {
+                eprintln!(
+                    "Could not read /proc — PID-marker correlation is degraded on this system"
+                );
+            }
+            return false;
+        }
     };
     entries
         .filter_map(Result::ok)
@@ -2502,14 +2518,15 @@ mod tests {
     #[test]
     fn any_process_has_env_var_true_when_this_process_has_it() {
         let path = std::env::var("PATH").expect("PATH should be set in the test environment");
-        assert!(any_process_has_env_var("PATH", &path));
+        assert!(any_process_has_env_var("PATH", &path, false));
     }
 
     #[test]
     fn any_process_has_env_var_false_for_a_value_nothing_has() {
         assert!(!any_process_has_env_var(
             "SWAY_LAUNCH_DEFINITELY_UNUSED_TEST_VAR_XYZ",
-            "nope"
+            "nope",
+            false
         ));
     }
 
