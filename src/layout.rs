@@ -13,7 +13,12 @@ pub struct Layout {
     pub step: Vec<LayoutStep>,
 }
 
+// Serialize is test-only, purely so main.rs's schema-parity test can read
+// this struct's field names back at runtime — see
+// schemas_mirror_args_field_for_field there. Nothing serializes a
+// LayoutStep in a real run.
 #[derive(Deserialize)]
+#[cfg_attr(test, derive(serde::Serialize))]
 #[serde(deny_unknown_fields)]
 pub struct LayoutStep {
     pub command: Option<String>,
