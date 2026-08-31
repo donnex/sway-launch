@@ -1603,7 +1603,8 @@ after being asked. Don't flag it in a future content-policy review, and don't us
 for adding other real URLs without the same explicit confirmation.
 
 **Approved exception:** `README.md:8`/`CLAUDE.md:7` (`https://swaywm.org/`, the window manager
-this tool is built for), `CLAUDE.md:1611` (`https://cli.github.com/`, the `gh` CLI's own site), and
+this tool is built for), this file's "Issues" section (`https://cli.github.com/`, the `gh` CLI's
+own site), and
 `Cargo.toml:9` (`https://doc.rust-lang.org/cargo/reference/manifest.html`, `cargo init`'s
 boilerplate "see more keys" comment pointing at Cargo's own manifest reference docs) are real
 URLs, but each is a necessary reference to the specific upstream project/tool the surrounding text
@@ -1624,7 +1625,7 @@ regenerating either file with different URLs needs no re-confirmation and should
 future content-policy review.
 
 **Approved exception:** `CHANGELOG.md`'s header and this file's "Changelog" section
-(`CLAUDE.md:1035`) link to `https://keepachangelog.com/en/1.1.0/` and
+(its "Changelog" section) link to `https://keepachangelog.com/en/1.1.0/` and
 `https://semver.org/spec/v2.0.0.html`. Both are real URLs, but each is a necessary reference to the
 specific upstream spec the surrounding text is about, the same reasoning as the `swaywm.org`/
 `cli.github.com`/`doc.rust-lang.org` exception above — the user explicitly signed off on these
