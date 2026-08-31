@@ -142,6 +142,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An action that waits on a Sway IPC event (`--floating`, `--fullscreen`, `--focus`, `--workspace`,
+  `--output`, `--mark`, `--scratchpad`) now fails immediately, naming the container, when its target
+  window has already closed. Previously only the poll-based actions checked this, so on Sway 1.9 —
+  which treats a `[con_id=N]` criteria matching nothing as success — a closed window meant blocking
+  for the whole `--timeout` and then reporting `5 sec timeout reached`, which points at the wrong
+  cause. Most visible on a `--layout`/`--template` step retargeting an earlier step's window that
+  exited on its own.
 - `--dry-run` and `--validate` combined now error immediately as conflicting flags, instead of
   `--dry-run` silently winning and `--validate` being ignored with no indication anything was
   skipped.
