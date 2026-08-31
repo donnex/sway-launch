@@ -136,7 +136,9 @@ pub struct TemplateMetadata {
     pub category: String,
 }
 
+// Serialize is test-only — see LayoutStep's matching note in layout.rs.
 #[derive(Deserialize)]
+#[cfg_attr(test, derive(serde::Serialize))]
 #[serde(deny_unknown_fields)]
 pub struct TemplateStep {
     /// Names this step's window, so a binding can supply its identity, and

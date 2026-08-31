@@ -54,7 +54,11 @@ const WAIT_TIME_POLL_GRACE: time::Duration = time::Duration::from_millis(200);
 /// avoiding a zero-sleep busy loop.
 const WAIT_TIME_POLL_INTERVAL: time::Duration = time::Duration::from_millis(10);
 
+// Serialize is test-only, so main.rs's schema-parity test can serialize a
+// LayoutStep/TemplateStep to read its field names back — see
+// schemas_mirror_args_field_for_field there.
 #[derive(Copy, Clone, PartialEq, ValueEnum, serde::Deserialize, Debug)]
+#[cfg_attr(test, derive(serde::Serialize))]
 #[serde(rename_all = "lowercase")]
 pub enum Split {
     V,

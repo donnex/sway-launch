@@ -810,13 +810,23 @@ by `template.rs`'s `resolve_applies_the_template_layout_context_to_a_step_withou
 (`template_layout_context_applies_workspace_and_output_to_a_step_without_its_own`,
 `template_layout_context_does_not_override_a_step_s_own_workspace_and_output`).
 
-**`LayoutStep`/`TemplateStep` mirror `Args` by design and nothing keeps any of them in sync
-automatically** — no compiler check, no test. When adding a new flag to `main.rs`'s `Args`, add the
-matching field to `layout.rs`'s `LayoutStep` *and* `template.rs`'s `TemplateStep` in the same
-change, wire it into `to_sway_launch()`/`resolve()`, and add it to README.md's "Layout files" and
-"Templates" field lists — otherwise `--layout`/`--template` mode silently lacks that capability
-with no signal to anyone that they've drifted apart. `id`/`target_id`/`slot` are the one exception:
-layout/template-only, so they never get an `Args` field to mirror. `TemplateStep`'s action fields
+**`LayoutStep`/`TemplateStep` mirror `Args` by design**, and `main.rs`'s
+`schemas_mirror_args_field_for_field` test is what keeps them in sync: it reads all three field
+lists back at runtime (clap's own `Args::command().get_arguments()` for the CLI, a test-only
+`Serialize` derive on the two schema structs for the rest) and fails on any field present in one
+but not the others. The intentional differences live in three commented allowlists next to it —
+`CLI_ONLY_ARGS` (invocation-mode/global flags with no per-step meaning), `LAYOUT_ONLY_FIELDS`
+(`id`/`target_id`, since a single invocation has only one step to name), and
+`BINDING_SUPPLIED_FIELDS`/`TEMPLATE_ONLY_FIELDS` (a template step names a `slot` and gets its
+target identity from a binding). Adding a flag therefore fails the test until it's either mirrored
+or deliberately allowlisted.
+
+That test does *not* check the wiring or the docs, only the field lists — so when adding a new flag
+to `Args`, still add the matching field to `layout.rs`'s `LayoutStep` *and* `template.rs`'s
+`TemplateStep` in the same change, wire it into `to_sway_launch()`/`resolve()`, and add it to
+README.md's "Layout files" and "Templates" field lists. Before this test existed nothing caught any
+of it: `--layout`/`--template` mode would silently lack the capability with no signal to anyone
+that they'd drifted apart. `TemplateStep`'s action fields
 are a plain duplicate of `LayoutStep`'s rather than a shared `#[serde(flatten)]`ed struct — flatten
 has a known history of interacting badly with `#[serde(deny_unknown_fields)]` on the outer struct
 (unknown fields can silently pass through instead of erroring), which isn't worth risking against
