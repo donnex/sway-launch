@@ -514,6 +514,61 @@ fn layout_json_error_output_is_a_structured_object() {
 }
 
 #[test]
+fn layout_json_error_output_reports_the_steps_that_already_completed() {
+    // Plain output prints each step's container id as that step finishes, so
+    // a mid-layout failure still leaves the caller holding every id. --json
+    // collects them for one object at the end instead, so before this the
+    // error object named nothing that had already run -- leaving a caller
+    // with real windows open and no way to identify them. Steps 1 and 2 here
+    // are con_id-only (headless-safe, never touching the socket); step 3
+    // fails on a duplicate id.
+    let path = TempToml::write(
+        "json-error-progress",
+        "[[step]]\nid = \"first\"\ncon_id = 42\n\n[[step]]\ncon_id = 91\n\n\
+         [[step]]\nid = \"first\"\ncon_id = 7\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap(), "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    let error: serde_json::Value = serde_json::from_str(stderr.trim())
+        .unwrap_or_else(|_| panic!("stderr should be a JSON object, got {stderr:?}"));
+    assert_eq!(error["container_ids"], serde_json::json!([42, 91]));
+    assert_eq!(error["containers"], serde_json::json!({ "first": 42 }));
+    assert!(
+        error["error"]
+            .as_str()
+            .expect("error should be a string")
+            .contains("step 3"),
+        "the reported error should still be the step failure: {error:?}"
+    );
+}
+
+#[test]
+fn layout_json_error_output_omits_progress_for_a_single_invocation() {
+    // The partial-progress fields are a multi-step concept; a single
+    // invocation either resolved its one container or didn't, so reporting
+    // an empty array there would suggest a run that got nowhere rather than
+    // one the concept never applied to.
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--con-id", "42", "--floating", "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    let last_line = stderr.lines().next_back().unwrap_or_default();
+    let error: serde_json::Value = serde_json::from_str(last_line)
+        .unwrap_or_else(|_| panic!("the last stderr line should be JSON, got {stderr:?}"));
+    assert!(error.get("container_ids").is_none());
+    assert!(error.get("containers").is_none());
+}
+
+#[test]
 fn layout_rollback_on_error_reports_empty_rollback_when_nothing_was_launched() {
     // con_id-only steps are never rolled back (they retarget a pre-existing
     // window, not one this invocation launched) — proves --rollback-on-error
