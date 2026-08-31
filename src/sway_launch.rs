@@ -715,71 +715,92 @@ impl SwayAction<'_> {
         }
     }
 
-    /// Whether this variant has a poll-based way to confirm its own command
-    /// took effect (see docs/plan-poll-based-wait-time-actions.md) — `Some`
-    /// with the current match state, or `None` if this variant has no poll
-    /// matcher yet (only `Split` does today; `run_wait_time()` falls back to
-    /// its original blind-sleep behavior for every other `None` variant).
-    /// Errors reading the tree (transient IPC hiccup, container gone) are
-    /// folded into "not confirmed yet" rather than propagated — this is only
-    /// ever used to try to return *faster* than the unconditional sleep
-    /// already does, never to turn success into failure.
-    /// `baseline` is only used by `NewColumn`/`NewRow` (see
-    /// `poll_baseline()`'s doc comment) — every other variant ignores it and
-    /// checks against a fixed target derived from its own fields instead.
-    fn poll_matches(&self, container_id: i64, baseline: Option<swayipc::Rect>) -> Option<bool> {
+    /// Whether this variant confirms its own command via polling at all.
+    /// Pure — no IPC — so `run_wait_time()` can decide whether to enter the
+    /// poll loop before opening a connection for it, and so the decision
+    /// stays unit-testable headlessly (which is most of what the poll
+    /// matchers' own tests were ever asserting).
+    ///
+    /// `baseline` matters only to `NewColumn`/`NewRow`: without a snapshot
+    /// to compare against there is nothing for them to poll for, so they opt
+    /// out (see `poll_baseline()`'s doc comment). A `ppt` (percent) `Size`
+    /// opts out for a different reason — there's no pixel figure to poll for
+    /// without also resolving the reference dimension it's a percentage of.
+    fn polls(&self, baseline: Option<swayipc::Rect>) -> bool {
+        match self {
+            SwayAction::Split { .. } | SwayAction::Sticky { .. } | SwayAction::Position { .. } => {
+                true
+            }
+            SwayAction::Height {
+                height: Size::Pixels(_),
+                ..
+            }
+            | SwayAction::Width {
+                width: Size::Pixels(_),
+                ..
+            } => true,
+            SwayAction::Height {
+                height: Size::Percent(_),
+                ..
+            }
+            | SwayAction::Width {
+                width: Size::Percent(_),
+                ..
+            } => false,
+            SwayAction::NewColumn { .. } | SwayAction::NewRow { .. } => baseline.is_some(),
+            _ => false,
+        }
+    }
+
+    /// Whether the tree currently shows this action's command as having
+    /// taken effect (see docs/plan-poll-based-wait-time-actions.md). Only
+    /// meaningful for variants `polls()` returns `true` for; every other
+    /// variant answers `false` unconditionally.
+    ///
+    /// Reads through the caller's `connection` rather than opening its own:
+    /// `run_poll_then_fallback()` calls this up to 20 times inside a 200ms
+    /// grace period, and each variant used to open one or two fresh Sway IPC
+    /// connections per iteration (`Position` two, for `get_tree()` plus
+    /// `get_outputs()`) — ~40 connects and handshakes for a single action.
+    ///
+    /// Errors reading the tree (transient IPC hiccup, container gone) fold
+    /// into "not confirmed yet" rather than propagating: this only ever
+    /// exists to return *faster* than the unconditional sleep already does,
+    /// never to turn success into failure.
+    fn poll_matches(
+        &self,
+        connection: &mut Connection,
+        container_id: i64,
+        baseline: Option<swayipc::Rect>,
+    ) -> bool {
         match self {
             SwayAction::Split { split, .. } => {
                 let expected = match split {
                     Split::V => NodeLayout::SplitV,
                     Split::H => NodeLayout::SplitH,
                 };
-                Some(self::parent_node_layout(container_id) == Some(expected))
+                self::parent_node_layout(connection, container_id) == Some(expected)
             }
-            // A `ppt` (percent) `Size` has no pixel figure to poll for
-            // without also resolving the reference dimension it's a
-            // percentage of, so those opt out of polling entirely (`None`)
-            // rather than resolving to `Some(false)` that could never
-            // become true. `Size::Pixels` values do have a formula
-            // (`width_matches`/`height_matches`), so they opt in
-            // unconditionally — a transient tree-read failure inside
-            // `node_by_id()` folds into `Some(false)` ("not confirmed
-            // yet"), not `None`, so a one-off hiccup doesn't skip the whole
-            // poll grace period the way returning `None` here would.
             SwayAction::Height {
                 height: Size::Pixels(pixels),
                 ..
-            } => Some(
-                self::node_by_id(container_id)
-                    .is_some_and(|node| self::height_matches(&node, *pixels as i32)),
-            ),
-            SwayAction::Height {
-                height: Size::Percent(_),
-                ..
-            } => None,
+            } => self::node_by_id(connection, container_id)
+                .is_some_and(|node| self::height_matches(&node, *pixels as i32)),
             SwayAction::Width {
                 width: Size::Pixels(pixels),
                 ..
-            } => Some(
-                self::node_by_id(container_id)
-                    .is_some_and(|node| self::width_matches(&node, *pixels as i32)),
-            ),
-            SwayAction::Width {
-                width: Size::Percent(_),
-                ..
-            } => None,
+            } => self::node_by_id(connection, container_id)
+                .is_some_and(|node| self::width_matches(&node, *pixels as i32)),
             SwayAction::Position { position, .. } => {
-                Some(self::position_matches(container_id, position))
+                self::position_matches(connection, container_id, position)
             }
             // Unlike Floating's `floating`/node-type split (see
             // node_is_floating()'s doc comment), `sticky` is a plain `bool`
             // on `Node` with no version-dependent quirk found — confirmed
             // live that `sticky enable` sets it directly and immediately,
-            // even on a still-tiled container (see the Sticky doc comment
-            // on `matching_window_change_events()`'s arm for why this is a
-            // wait-time action at all).
+            // even on a still-tiled container.
             SwayAction::Sticky { .. } => {
-                Some(self::node_by_id(container_id).is_some_and(|node| node.sticky))
+                self::node_by_id(connection, container_id).is_some_and(|node| node.sticky)
             }
             // No fixed target exists for "move right"/"move down" — a
             // successful move can land the window almost anywhere in the
@@ -800,10 +821,12 @@ impl SwayAction<'_> {
             // exactly the no-op case this whole mechanism exists to fall
             // back gracefully on.
             SwayAction::NewColumn { .. } | SwayAction::NewRow { .. } => {
-                let baseline = baseline?;
-                Some(self::node_by_id(container_id).is_some_and(|node| node.rect != baseline))
+                baseline.is_some_and(|baseline| {
+                    self::node_by_id(connection, container_id)
+                        .is_some_and(|node| node.rect != baseline)
+                })
             }
-            _ => None,
+            _ => false,
         }
     }
 
@@ -816,10 +839,14 @@ impl SwayAction<'_> {
     /// applies" for these two variants — without a baseline there's nothing
     /// to compare against, so falling back to the original unconditional
     /// sleep is the only sound choice.
-    fn poll_baseline(&self, container_id: i64) -> Option<swayipc::Rect> {
+    fn poll_baseline(
+        &self,
+        connection: &mut Connection,
+        container_id: i64,
+    ) -> Option<swayipc::Rect> {
         match self {
             SwayAction::NewColumn { .. } | SwayAction::NewRow { .. } => {
-                self::node_by_id(container_id).map(|node| node.rect)
+                self::node_by_id(connection, container_id).map(|node| node.rect)
             }
             _ => None,
         }
@@ -837,6 +864,7 @@ impl SwayAction<'_> {
     /// `PID_MARKER_FALLBACK_GRACE` fallback.
     fn run_poll_then_fallback(
         &self,
+        connection: &mut Connection,
         container_id: i64,
         wait_time: time::Duration,
         baseline: Option<swayipc::Rect>,
@@ -856,7 +884,7 @@ impl SwayAction<'_> {
         let grace = WAIT_TIME_POLL_GRACE.min(wait_time);
         let poll_started = time::Instant::now();
         loop {
-            if self.poll_matches(container_id, baseline).unwrap_or(false) {
+            if self.poll_matches(connection, container_id, baseline) {
                 if self.verbose() {
                     eprintln!("Confirmed via poll (container id: {})", container_id);
                 }
@@ -916,10 +944,19 @@ impl SwayAction<'_> {
             ));
         }
 
+        // One connection for the whole poll cycle — the baseline snapshot
+        // and every poll iteration below share it, rather than each tree
+        // read opening its own. Failing to open one isn't fatal: there's
+        // simply nothing to poll with, so this falls back to the original
+        // unconditional sleep, exactly as a variant with no matcher does.
+        let mut poll_connection = self::new_connection().ok();
+
         // Captured before the command runs, not after — see
         // poll_baseline()'s doc comment for why NewColumn/NewRow need a
         // "before" snapshot while every other poll-matched action doesn't.
-        let baseline = self.poll_baseline(container_id);
+        let baseline = poll_connection
+            .as_mut()
+            .and_then(|connection| self.poll_baseline(connection, container_id));
 
         let sway_command = self.sway_command();
         if self.verbose() {
@@ -928,8 +965,15 @@ impl SwayAction<'_> {
 
         run_sway_command(&sway_command)?;
 
-        if self.poll_matches(container_id, baseline).is_some() {
-            return Ok(self.run_poll_then_fallback(container_id, wait_time, baseline));
+        if self.polls(baseline) {
+            if let Some(connection) = poll_connection.as_mut() {
+                return Ok(self.run_poll_then_fallback(
+                    connection,
+                    container_id,
+                    wait_time,
+                    baseline,
+                ));
+            }
         }
 
         thread::sleep(wait_time);
@@ -1889,8 +1933,8 @@ fn contains_id(node: &Node, container_id: i64) -> bool {
 /// `None`/unset either way. Used by `SwayAction::poll_matches()` to confirm
 /// a `Split` action actually applied before its `run_poll_then_fallback()`
 /// grace period falls back to sleeping the rest of `--wait-time`.
-fn parent_node_layout(container_id: i64) -> Option<NodeLayout> {
-    let tree = self::new_connection().ok()?.get_tree().ok()?;
+fn parent_node_layout(connection: &mut Connection, container_id: i64) -> Option<NodeLayout> {
+    let tree = connection.get_tree().ok()?;
     self::find_parent_layout(&tree, container_id)
 }
 
@@ -1914,8 +1958,8 @@ fn find_parent_layout(node: &Node, container_id: i64) -> Option<NodeLayout> {
 /// `SwayAction::poll_matches()`'s `Height`/`Width`/`Position` arms to read
 /// a window's own current geometry, as opposed to `parent_node_layout()`,
 /// which reads its *parent's* state for `Split`.
-fn node_by_id(container_id: i64) -> Option<Node> {
-    let tree = self::new_connection().ok()?.get_tree().ok()?;
+fn node_by_id(connection: &mut Connection, container_id: i64) -> Option<Node> {
+    let tree = connection.get_tree().ok()?;
     self::find_node(&tree, container_id).cloned()
 }
 
@@ -1988,12 +2032,20 @@ fn height_matches(node: &Node, expected_px: i32) -> bool {
 /// falling back to sleeping `--wait-time`. Falling back to `rect.x`/`rect.y`
 /// when `deco_rect` is unset closes that gap, mirroring `width_matches()`'s
 /// existing dual-formula tolerance for a different Sway geometry quirk.
-fn position_matches(container_id: i64, position: &Position) -> bool {
-    let Some((node, output_name)) = self::node_and_output_name(container_id) else {
+fn position_matches(connection: &mut Connection, container_id: i64, position: &Position) -> bool {
+    let Some((node, output_name)) = self::node_and_output_name(connection, container_id) else {
         return false;
     };
-    let Some((expected_x, expected_y)) =
-        self::expected_position(position, &node, output_name.as_deref())
+    // Only `center` needs the output's own geometry, so an explicit
+    // `<x>,<y>` costs one tree read per poll iteration rather than a tree
+    // read plus a get_outputs().
+    let output_rect = match position {
+        Position::Center => output_name
+            .as_deref()
+            .and_then(|name| self::output_rect(connection, name)),
+        Position::Coordinates { .. } => None,
+    };
+    let Some((expected_x, expected_y)) = self::expected_position(position, &node, output_rect)
     else {
         return false;
     };
@@ -2010,8 +2062,11 @@ fn position_matches(container_id: i64, position: &Position) -> bool {
 /// rather than combining `node_by_id()` with the existing `current_output()`
 /// helper, which would cost a second, redundant tree fetch per poll
 /// iteration.
-fn node_and_output_name(container_id: i64) -> Option<(Node, Option<String>)> {
-    let tree = self::new_connection().ok()?.get_tree().ok()?;
+fn node_and_output_name(
+    connection: &mut Connection,
+    container_id: i64,
+) -> Option<(Node, Option<String>)> {
+    let tree = connection.get_tree().ok()?;
     let node = self::find_node(&tree, container_id)?.clone();
     let output_name = self::find_containing_name(&tree, container_id, NodeType::Output, None);
     Some((node, output_name))
@@ -2019,8 +2074,8 @@ fn node_and_output_name(container_id: i64) -> Option<(Node, Option<String>)> {
 
 /// The geometry of the output named `output_name`, or `None` if it can't be
 /// read or no output has that name.
-fn output_rect(output_name: &str) -> Option<swayipc::Rect> {
-    let outputs = self::new_connection().ok()?.get_outputs().ok()?;
+fn output_rect(connection: &mut Connection, output_name: &str) -> Option<swayipc::Rect> {
+    let outputs = connection.get_outputs().ok()?;
     outputs
         .into_iter()
         .find(|output| output.name == output_name)
@@ -2043,17 +2098,14 @@ fn output_rect(output_name: &str) -> Option<swayipc::Rect> {
 fn expected_position(
     position: &Position,
     node: &Node,
-    output_name: Option<&str>,
+    output_rect: Option<swayipc::Rect>,
 ) -> Option<(i32, i32)> {
     match position {
-        Position::Center => {
-            let rect = self::output_rect(output_name?)?;
-            Some(self::compute_center_position(
-                rect,
-                node.rect.width,
-                node.rect.height + node.deco_rect.height,
-            ))
-        }
+        Position::Center => Some(self::compute_center_position(
+            output_rect?,
+            node.rect.width,
+            node.rect.height + node.deco_rect.height,
+        )),
         Position::Coordinates { x, y } => Some((*x, *y)),
     }
 }
@@ -3528,36 +3580,34 @@ mod tests {
         assert_eq!(position.matching_window_change_events(), None);
     }
 
-    // SwayAction::poll_matches
+    // SwayAction::polls
+    //
+    // These assert which variants opt into polling at all — a pure decision
+    // with no IPC. They previously went through poll_matches(), whose
+    // Some/None return carried the same information but needed a live tree
+    // read to produce it, so headlessly they could only ever observe
+    // Some(false) and asserted the opt-in indirectly. The match outcome
+    // itself still needs a real compositor: see tests/live_sway.rs.
 
     #[test]
-    fn split_has_a_poll_matcher() {
-        // container_id 999999 is never in the tree read back by
-        // parent_node_layout()'s IPC call in this headless test environment,
-        // so the Some(bool) returned is always Some(false) here — this test
-        // only asserts Split opts into polling at all, not the match outcome
-        // itself (that needs a live Sway tree, covered by
-        // tests/live_sway.rs). Both directions are exercised so
-        // poll_matches()'s Split::V => NodeLayout::SplitV arm isn't left
-        // unhit by cargo test.
+    fn split_polls() {
         for split in [Split::H, Split::V] {
             let action = SwayAction::Split {
-                container_id: 999999,
+                container_id: 42,
                 split,
                 verbose: false,
                 wait_time: time::Duration::from_millis(20),
             };
-            assert_eq!(action.poll_matches(999999, None), Some(false));
+            assert!(action.polls(None));
         }
     }
 
     #[test]
-    fn new_column_and_new_row_have_no_poll_matcher_without_a_baseline() {
-        // Unlike Split/Height/Width/Position, NewColumn/NewRow have no
-        // fixed target to check against — without a poll_baseline()
-        // snapshot to compare the current rect to, there's nothing to poll
-        // for, so these opt out entirely (None) rather than resolving to
-        // Some(false) that could never become true.
+    fn new_column_and_new_row_do_not_poll_without_a_baseline() {
+        // Unlike Split/Height/Width/Position, NewColumn/NewRow have no fixed
+        // target to check against — without a poll_baseline() snapshot to
+        // compare the current rect to there is nothing to poll for, so these
+        // opt out entirely.
         let new_column = SwayAction::NewColumn {
             container_id: 42,
             verbose: false,
@@ -3568,47 +3618,29 @@ mod tests {
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
-        assert_eq!(new_column.poll_matches(42, None), None);
-        assert_eq!(new_row.poll_matches(42, None), None);
+        assert!(!new_column.polls(None));
+        assert!(!new_row.polls(None));
     }
 
     #[test]
-    fn new_column_and_new_row_have_a_poll_matcher_given_a_baseline() {
-        // container_id 999999 is never in the tree read back by
-        // node_by_id()'s IPC call in this headless test environment, so
-        // node_by_id(999999) is always None and node.rect != baseline can
-        // never be observed true here — this test only asserts NewColumn/
-        // NewRow opt into polling once a baseline exists, not the match
-        // outcome itself (that needs a live Sway tree, covered by
-        // tests/live_sway.rs).
+    fn new_column_and_new_row_poll_given_a_baseline() {
         let new_column = SwayAction::NewColumn {
-            container_id: 999999,
+            container_id: 42,
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
         let new_row = SwayAction::NewRow {
-            container_id: 999999,
+            container_id: 42,
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
         let baseline = Some(rect(0, 0, 640, 720));
-        assert_eq!(new_column.poll_matches(999999, baseline), Some(false));
-        assert_eq!(new_row.poll_matches(999999, baseline), Some(false));
+        assert!(new_column.polls(baseline));
+        assert!(new_row.polls(baseline));
     }
 
     #[test]
-    fn only_new_column_and_new_row_have_a_poll_baseline_at_all() {
-        // Every other wait-time variant's poll_baseline() arm is `_ =>
-        // None` with no IPC call at all — a deterministic "not applicable"
-        // answer, unlike NewColumn/NewRow's (which calls node_by_id() and
-        // is exempted from headless coverage per CLAUDE.md, since it needs
-        // a live tree to return Some).
-        let split = SwayAction::Split {
-            container_id: 42,
-            split: Split::H,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
+    fn height_and_width_in_pixels_poll() {
         let height = SwayAction::Height {
             container_id: 42,
             height: Size::Pixels(300),
@@ -3617,58 +3649,20 @@ mod tests {
         };
         let width = SwayAction::Width {
             container_id: 42,
-            width: Size::Pixels(300),
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        let position = SwayAction::Position {
-            container_id: 42,
-            position: Position::Center,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        let sticky = SwayAction::Sticky {
-            container_id: 42,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        assert_eq!(split.poll_baseline(42), None);
-        assert_eq!(height.poll_baseline(42), None);
-        assert_eq!(width.poll_baseline(42), None);
-        assert_eq!(position.poll_baseline(42), None);
-        assert_eq!(sticky.poll_baseline(42), None);
-    }
-
-    #[test]
-    fn height_and_width_in_pixels_have_a_poll_matcher() {
-        // container_id 999999 is never in the tree read back by
-        // node_by_id()'s IPC call in this headless test environment, so the
-        // Some(bool) returned is always Some(false) here — this test only
-        // asserts Height/Width in px opt into polling at all, not the match
-        // outcome itself (that needs a live Sway tree, covered by
-        // tests/live_sway.rs).
-        let height = SwayAction::Height {
-            container_id: 999999,
-            height: Size::Pixels(300),
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        let width = SwayAction::Width {
-            container_id: 999999,
             width: Size::Pixels(400),
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
-        assert_eq!(height.poll_matches(999999, None), Some(false));
-        assert_eq!(width.poll_matches(999999, None), Some(false));
+        assert!(height.polls(None));
+        assert!(width.polls(None));
     }
 
     #[test]
-    fn height_and_width_in_percent_have_no_poll_matcher() {
+    fn height_and_width_in_percent_do_not_poll() {
         // A `ppt` value has no pixel figure to poll for without also
-        // resolving the reference dimension it's a percentage of (see
-        // Size's doc comment), so these opt out entirely rather than
-        // polling for something that could never match.
+        // resolving the reference dimension it's a percentage of (see Size's
+        // doc comment), so these opt out rather than polling for something
+        // that could never match.
         let height = SwayAction::Height {
             container_id: 42,
             height: Size::Percent(20),
@@ -3681,42 +3675,50 @@ mod tests {
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
-        assert_eq!(height.poll_matches(42, None), None);
-        assert_eq!(width.poll_matches(42, None), None);
+        assert!(!height.polls(None));
+        assert!(!width.polls(None));
     }
 
     #[test]
-    fn sticky_has_a_poll_matcher() {
-        // container_id 999999 is never in the tree read back by
-        // node_by_id()'s IPC call in this headless test environment, so
-        // the Some(bool) returned is always Some(false) here — this test
-        // only asserts Sticky opts into polling at all, not the match
-        // outcome itself (that needs a live Sway tree, covered by
-        // tests/live_sway.rs).
+    fn sticky_polls() {
         let action = SwayAction::Sticky {
-            container_id: 999999,
+            container_id: 42,
             verbose: false,
             wait_time: time::Duration::from_millis(20),
         };
-        assert_eq!(action.poll_matches(999999, None), Some(false));
+        assert!(action.polls(None));
     }
 
     #[test]
-    fn position_has_a_poll_matcher() {
-        let center = SwayAction::Position {
-            container_id: 999999,
-            position: Position::Center,
+    fn position_polls() {
+        for position in [Position::Center, Position::Coordinates { x: 100, y: 200 }] {
+            let action = SwayAction::Position {
+                container_id: 42,
+                position,
+                verbose: false,
+                wait_time: time::Duration::from_millis(20),
+            };
+            assert!(action.polls(None));
+        }
+    }
+
+    #[test]
+    fn event_confirmed_actions_do_not_poll() {
+        // The `_ => false` arm: everything dispatched through an IPC event
+        // confirms that way instead and never enters the poll loop.
+        let floating = SwayAction::Floating {
+            container_id: 42,
             verbose: false,
-            wait_time: time::Duration::from_millis(20),
+            timeout: time::Duration::from_secs(5),
         };
-        let coords = SwayAction::Position {
-            container_id: 999999,
-            position: Position::Coordinates { x: 100, y: 200 },
+        let mark = SwayAction::Mark {
+            container_id: 42,
+            mark: "pinned",
             verbose: false,
-            wait_time: time::Duration::from_millis(20),
+            timeout: time::Duration::from_secs(5),
         };
-        assert_eq!(center.poll_matches(999999, None), Some(false));
-        assert_eq!(coords.poll_matches(999999, None), Some(false));
+        assert!(!floating.polls(None));
+        assert!(!mark.polls(None));
     }
 
     // SwayAction::matches_window_event
@@ -4448,7 +4450,7 @@ mod tests {
 
     #[test]
     fn expected_position_parses_explicit_coordinates() {
-        let node = node_with_geometry(400, 300, 2, 25);
+        let node = node_with_geometry(400, 300, 0, 0);
         assert_eq!(
             expected_position(&Position::Coordinates { x: 100, y: 200 }, &node, None),
             Some((100, 200))
@@ -4456,27 +4458,33 @@ mod tests {
     }
 
     #[test]
-    fn expected_position_center_without_an_output_name_is_none() {
-        let node = node_with_geometry(400, 300, 2, 25);
+    fn expected_position_center_without_an_output_rect_is_none() {
+        // A window on no known output (the scratchpad, say) has nothing to
+        // centre against.
+        let node = node_with_geometry(400, 300, 0, 0);
         assert_eq!(expected_position(&Position::Center, &node, None), None);
     }
 
     #[test]
-    fn expected_position_center_with_an_output_name_is_none_without_a_live_socket() {
-        // Exercises the "center" branch's output_rect() call (unreachable
-        // from the None-output_name test above) — output_rect() degrades
-        // to None when no Sway socket is reachable, which is exactly this
-        // headless test environment, so this is testable without live
-        // Sway: it confirms the whole chain still resolves to None rather
-        // than panicking when IPC is unavailable.
-        let node = node_with_geometry(400, 300, 2, 25);
+    fn expected_position_centers_against_the_given_output_rect() {
+        // Coverable headlessly now that the output geometry is passed in
+        // rather than looked up here — this arm used to need a live socket
+        // and was exempt from coverage accordingly.
+        let node = node_with_geometry(400, 300, 0, 25);
         assert_eq!(
-            expected_position(&Position::Center, &node, Some("some-output")),
-            None
+            expected_position(&Position::Center, &node, Some(rect(0, 0, 1920, 1080))),
+            Some(((1920 - 400) / 2, (1080 - 325) / 2))
         );
     }
 
-    // is_at_the_trailing_workspace_edge
+    #[test]
+    fn expected_position_center_accounts_for_a_non_origin_output() {
+        let node = node_with_geometry(400, 300, 0, 0);
+        assert_eq!(
+            expected_position(&Position::Center, &node, Some(rect(1920, 0, 1920, 1080))),
+            Some((1920 + (1920 - 400) / 2, (1080 - 300) / 2))
+        );
+    }
 
     fn workspace_node_tree_with_layout(
         container_id: i64,
