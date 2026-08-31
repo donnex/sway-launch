@@ -25,7 +25,20 @@ pub struct BuiltinTemplate {
 
 /// Looks up a built-in template's raw TOML contents by name (no `.toml`
 /// extension, e.g. `"quad-grid"`), or `None` if there's no such built-in.
+///
+/// A name containing a path separator is rejected outright rather than
+/// looked up: `include_dir`'s `get_file()` searches nested directories,
+/// while `builtin_templates()` below (and `tests/live_sway.rs`'s
+/// every_shipped_template_resolves_and_launches_successfully) only ever look
+/// at `templates/`'s immediate children. Without this, a template added in a
+/// subdirectory would be runnable as `--template sub/name` while staying
+/// invisible to `--list-templates` and untested by the live suite. Keeping
+/// the lookup flat matches the directory's actual layout and keeps the two
+/// halves in agreement by construction.
 pub fn builtin(name: &str) -> Option<&'static str> {
+    if name.contains('/') || name.contains('\\') {
+        return None;
+    }
     BUILTIN_TEMPLATES
         .get_file(format!("{name}.toml"))
         .and_then(|file| file.contents_utf8())
@@ -1012,6 +1025,18 @@ mod tests {
     #[test]
     fn builtin_returns_none_for_an_unknown_name() {
         assert!(builtin("not-a-real-template").is_none());
+    }
+
+    #[test]
+    fn builtin_returns_none_for_a_name_containing_a_path_separator() {
+        // get_file() searches recursively, but builtin_templates() lists only
+        // immediate children -- so a nested template would otherwise be
+        // runnable yet unlisted and untested. Rejecting separators keeps the
+        // two in agreement. (Nothing is nested today; this pins the rule
+        // before something is.)
+        assert!(builtin("sub/quad-grid").is_none());
+        assert!(builtin("../Cargo").is_none());
+        assert!(builtin("sub\\quad-grid").is_none());
     }
 
     #[test]
