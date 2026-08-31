@@ -432,17 +432,52 @@ fn step_action_records_json(
 /// calls above) is still reported via clap's own usage-error formatting
 /// regardless of `--json`, the same as `--help` itself isn't JSON.
 fn fail(json: bool, message: &str) -> ! {
-    fail_with_rollback(json, message, &[]);
+    fail_with_rollback(json, message, &[], &PartialProgress::default());
+}
+
+/// What a multi-step `--layout`/`--template` run had already accomplished
+/// when a later step failed — the same `container_ids`/`containers` a
+/// successful run reports, but for the steps that did complete.
+///
+/// Plain output prints each step's container id as that step finishes, so a
+/// failure there still leaves the caller holding every id. `--json` collects
+/// them for one object at the end instead, so without this a failure
+/// reported nothing but the error, leaving a caller with real windows open
+/// on screen and no way to identify them short of walking the tree and
+/// guessing — the exact ambiguity `id`/`containers` exists to remove.
+/// Always empty outside `run_steps()` (a single invocation has no partial
+/// state: it either resolved its one container or it didn't).
+#[derive(Default)]
+struct PartialProgress {
+    container_ids: Vec<i64>,
+    containers: HashMap<String, i64>,
+}
+
+impl PartialProgress {
+    fn is_empty(&self) -> bool {
+        self.container_ids.is_empty() && self.containers.is_empty()
+    }
 }
 
 /// `fail()`, plus the container ids `run_steps()`'s `--rollback-on-error`
-/// killed before giving up — `rolled_back` is always empty outside that path.
-fn fail_with_rollback(json: bool, message: &str, rolled_back: &[i64]) -> ! {
+/// killed before giving up (`rolled_back` is always empty outside that path)
+/// and whatever earlier steps had already completed (see `PartialProgress`).
+fn fail_with_rollback(
+    json: bool,
+    message: &str,
+    rolled_back: &[i64],
+    progress: &PartialProgress,
+) -> ! {
     if json {
-        eprintln!(
-            "{}",
-            serde_json::json!({ "error": message, "rolled_back": rolled_back })
-        );
+        let mut value = serde_json::json!({ "error": message, "rolled_back": rolled_back });
+        // Omitted entirely rather than reported as empty for a single
+        // invocation, where the concept doesn't apply at all — an empty
+        // array there would suggest a multi-step run that got nowhere.
+        if !progress.is_empty() {
+            value["container_ids"] = serde_json::json!(progress.container_ids);
+            value["containers"] = serde_json::json!(progress.containers);
+        }
+        eprintln!("{}", value);
     } else {
         eprintln!("{}", message);
         if !rolled_back.is_empty() {
@@ -787,6 +822,8 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
                 fail_step(
                     args,
                     &launched_container_ids,
+                    &container_ids,
+                    &resolved_ids,
                     index,
                     format!("id {:?} was already used by an earlier step", id),
                 );
@@ -800,7 +837,14 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
             &resolved_ids,
         ) {
             Ok(sway_launch) => sway_launch,
-            Err(error) => fail_step(args, &launched_container_ids, index, error),
+            Err(error) => fail_step(
+                args,
+                &launched_container_ids,
+                &container_ids,
+                &resolved_ids,
+                index,
+                error,
+            ),
         };
 
         // Equivalent to matching Target::Exec on the resolved SwayLaunch,
@@ -826,7 +870,14 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
                 }
                 actions.extend(step_action_records_json(index, outcome.actions));
             }
-            Err(error) => fail_step(args, &launched_container_ids, index, error),
+            Err(error) => fail_step(
+                args,
+                &launched_container_ids,
+                &container_ids,
+                &resolved_ids,
+                index,
+                error,
+            ),
         }
     }
 
@@ -979,16 +1030,44 @@ fn run_steps_validate(steps: &[layout::LayoutStep], args: &Args) -> ! {
 /// windows this invocation retargeted via con_id/existing/target_id were
 /// already open before this invocation started, so rolling them back would
 /// close something the user, not this run, created.
-fn fail_step(args: &Args, launched_container_ids: &[i64], index: usize, error: String) -> ! {
+///
+/// `container_ids`/`resolved_ids` are every step that completed before this
+/// failure, reported under `--json` so a caller can identify the windows
+/// left open — see `PartialProgress`. They're the full set, not just the
+/// launched ones: a retargeted window isn't this run's to close, but it *is*
+/// something the caller may still want to know the id of.
+fn fail_step(
+    args: &Args,
+    launched_container_ids: &[i64],
+    container_ids: &[i64],
+    resolved_ids: &HashMap<String, i64>,
+    index: usize,
+    error: String,
+) -> ! {
     let rolled_back = if args.rollback_on_error {
         rollback(launched_container_ids)
     } else {
         Vec::new()
     };
+    // Anything just rolled back is gone, so reporting it as still-open
+    // partial progress would be actively misleading.
+    let progress = PartialProgress {
+        container_ids: container_ids
+            .iter()
+            .copied()
+            .filter(|id| !rolled_back.contains(id))
+            .collect(),
+        containers: resolved_ids
+            .iter()
+            .filter(|(_, id)| !rolled_back.contains(id))
+            .map(|(name, id)| (name.clone(), *id))
+            .collect(),
+    };
     fail_with_rollback(
         args.json,
         &format!("step {}: {}", index + 1, error),
         &rolled_back,
+        &progress,
     );
 }
 

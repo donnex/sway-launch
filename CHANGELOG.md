@@ -93,6 +93,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--json` now also applies to error output: a failure prints `{"error": "...", "rolled_back": [...]}`
   instead of a plain-text message, so a `--json` caller doesn't need to also parse plain stderr on
   failure.
+- A failing `--layout`/`--template` run's `--json` error now also reports `container_ids`/
+  `containers` for the steps that already completed. Plain output prints each id as its step
+  finishes, so a failure there always left the caller able to clean up; `--json` collected them for
+  a single object at the end, so a mid-layout failure reported nothing but the error while real
+  windows stayed open with no way to identify them. Ids closed by `--rollback-on-error` are
+  excluded, and both fields are omitted for a single invocation, which has no partial progress.
 - `--json`'s success output is richer: a single invocation now also reports `"actions"` (every
   planned action, in order, each as `{"action": ..., "status": "changed"|"already_satisfied"|
   "skipped"[, "reason": ...]}` — `"already_satisfied"` covers an action that no-oped because the
