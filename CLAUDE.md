@@ -325,9 +325,18 @@ stated goal (safer internals, less repeated parsing) to actually land.
   with `"No matching node."` on its own. `container_exists()` is therefore redundant on 1.11 but
   still required for 1.9 — don't remove it on the strength of testing against a newer Sway alone.
 
-  After sending the command, what happens next depends on `SwayAction::poll_matches()`, which now
-  has a matcher for every one of these seven variants (per
-  `docs/plan-poll-based-wait-time-actions.md`, now fully landed): `run_wait_time()` hands off to
+  After sending the command, what happens next depends on `SwayAction::polls()`/`poll_matches()`,
+  which between them cover every one of these seven variants (per
+  `docs/plan-poll-based-wait-time-actions.md`, now fully landed). The two are deliberately split:
+  `polls()` is the pure "does this variant confirm by polling at all" decision (no IPC, so
+  `run_wait_time()` can ask before opening a connection, and so it stays unit-testable headlessly),
+  while `poll_matches()` is the tree read itself and takes a `&mut Connection` from its caller
+  rather than opening one. That connection is created once per action in `run_wait_time()` and
+  shared by the baseline snapshot and every poll iteration — previously each iteration opened one
+  or two fresh connections (`Position` two: `get_tree()` plus `get_outputs()`), so a single action
+  could cost ~40 connects and handshakes inside the 200ms grace window. Failing to open it isn't
+  fatal: there's simply nothing to poll with, so the action falls back to the unconditional sleep
+  exactly as a variant with no matcher does. `run_wait_time()` hands off to
   `run_poll_then_fallback()`, which polls `get_tree()` every `WAIT_TIME_POLL_INTERVAL` for up to
   `WAIT_TIME_POLL_GRACE` for `poll_matches()` to confirm, returning immediately once it does (the
   fast path) — mirroring `run_wait_matching_exec_event()`'s `PID_MARKER_FALLBACK_GRACE` pattern of
@@ -548,7 +557,13 @@ same way: extend an existing `create_output`-using test rather than defaulting t
 genuinely unavoidable.
 
 Each Sway IPC call opens its own fresh `Connection` (`new_connection()` in `sway_launch.rs`) — there
-is no persistent/shared connection across actions.
+is no persistent/shared connection across actions. The one exception is a wait-time action's poll
+cycle: `run_wait_time()` opens a single `Connection` and passes it to `poll_baseline()` and every
+`poll_matches()` iteration (see the "No event exists in Sway IPC for it" bullet above), because
+that's the only place the same read repeats up to 20 times inside 200ms. `poll_matches()` and the
+tree/output helpers it calls (`parent_node_layout`, `node_by_id`, `position_matches`,
+`node_and_output_name`, `output_rect`) therefore take `&mut Connection` rather than opening their
+own; everything else still opens its own.
 
 ### Output streams
 
@@ -1129,18 +1144,18 @@ comments, name things clearly instead" style). Two rule-specific overrides:
     `run_wait_matching_events`, `run_wait_matching_exec_event`, `run_poll_then_fallback`,
     `container_exists`, `parent_node_layout`, `node_by_id`, `find_container_node`,
     `container_is_in_scratchpad`,
-    `position_matches`, `node_and_output_name`, `output_rect`,
-    `expected_position`'s `"center"` arm (only reachable once `output_rect()` succeeds, so it's
-    exempt for the same reason `output_rect` itself is; the rest of `expected_position` — explicit
-    coordinates, and `"center"` without a live socket — is ordinary pure logic and stays
-    coverage-measured),
+    `position_matches`, `node_and_output_name`, `output_rect`, `SwayAction::poll_matches`
+    (`expected_position` is *not* exempt any more: it used to look the output geometry up itself,
+    which made its `"center"` arm unreachable without a live socket — it now takes the resolved
+    `Rect` as an argument, so every arm is ordinary pure logic and stays coverage-measured, with
+    `position_matches` doing the lookup instead),
     `find_existing_container_id`'s connection call,
     `SwayAction::run`, `SwayAction::already_at_target`, `SwayAction::poll_baseline`'s
     `NewColumn`/`NewRow` arm, `current_workspace`, `current_output`, `containing_node_name`,
     `relocates_to_another_output`, `SwayLaunch::run`, `SwayLaunch::build_actions`'s
     `NewColumn`/`NewRow` arms (their `relocates_to_another_output()` call — the rest of
-    `build_actions()` is ordinary pure logic and stays coverage-measured, same reasoning as
-    `expected_position` above; see "Orchestration" below for why it's split out from `run()` at
+    `build_actions()` is ordinary pure logic and stays coverage-measured; see "Orchestration" below
+    for why it's split out from `run()` at
     all), `SwayLaunch::debug_events`) are exempted from
     the `cargo llvm-cov` line-
     coverage measurement — they require a live Sway compositor, so `cargo test`/`cargo llvm-cov`
