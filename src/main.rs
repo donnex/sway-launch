@@ -1099,6 +1099,123 @@ fn rollback(launched_container_ids: &[i64]) -> Vec<i64> {
 mod tests {
     use super::*;
 
+    /// Args flags with deliberately no `LayoutStep` equivalent: they select
+    /// or configure the invocation as a whole, so there's no per-step
+    /// meaning for them to have.
+    const CLI_ONLY_ARGS: &[&str] = &[
+        "layout",
+        "template",
+        "list_templates",
+        "show_template",
+        "bindings",
+        "apps",
+        "completions",
+        "debug_events",
+        "dry_run",
+        "validate",
+        "rollback_on_error",
+        "json",
+        "verbose",
+        // clap's own auto-generated arguments.
+        "help",
+        "version",
+    ];
+
+    /// `LayoutStep` fields with deliberately no CLI equivalent: a single
+    /// invocation has only one step, so there's nothing to name or
+    /// cross-reference.
+    const LAYOUT_ONLY_FIELDS: &[&str] = &["id", "target_id"];
+
+    /// `LayoutStep` fields a `TemplateStep` deliberately lacks: a template
+    /// step names a `slot` and gets its target identity from a binding
+    /// instead of naming an application itself.
+    const BINDING_SUPPLIED_FIELDS: &[&str] = &[
+        "command",
+        "con_id",
+        "existing",
+        "app_id",
+        "class",
+        "mark_match",
+        "id",
+    ];
+
+    /// `TemplateStep` fields with no `LayoutStep` equivalent.
+    const TEMPLATE_ONLY_FIELDS: &[&str] = &["slot"];
+
+    fn field_names<T: serde::Serialize>(value: &T) -> std::collections::BTreeSet<String> {
+        serde_json::to_value(value)
+            .expect("schema struct should serialize")
+            .as_object()
+            .expect("schema struct should serialize as an object")
+            .keys()
+            .cloned()
+            .collect()
+    }
+
+    fn difference(
+        left: &std::collections::BTreeSet<String>,
+        right: &std::collections::BTreeSet<String>,
+        allowed: &[&str],
+    ) -> Vec<String> {
+        left.difference(right)
+            .filter(|name| !allowed.contains(&name.as_str()))
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn schemas_mirror_args_field_for_field() {
+        // CLAUDE.md states that LayoutStep/TemplateStep mirror Args by
+        // design and that "nothing keeps any of them in sync automatically —
+        // no compiler check, no test". This is that test. Adding a flag to
+        // Args without the matching schema field is silent: every existing
+        // test still passes, CI stays green, and --layout/--template simply
+        // lack the capability until someone notices. The three allowlists
+        // above are the intentional differences; a genuinely new one has to
+        // be added there deliberately, which is the review moment this
+        // otherwise relies on a human to remember.
+        //
+        // Both schema structs deserialize from empty TOML (every field is
+        // either Option or #[serde(default)]), so serializing that gives the
+        // field list without needing to construct one by hand.
+        let layout_step: layout::LayoutStep =
+            toml::from_str("").expect("LayoutStep should deserialize from an empty document");
+        let template_step: template::TemplateStep =
+            toml::from_str("").expect("TemplateStep should deserialize from an empty document");
+
+        let layout_fields = field_names(&layout_step);
+        let template_fields = field_names(&template_step);
+        let args_fields: std::collections::BTreeSet<String> = Args::command()
+            .get_arguments()
+            .map(|argument| argument.get_id().to_string())
+            .collect();
+
+        assert_eq!(
+            difference(&args_fields, &layout_fields, CLI_ONLY_ARGS),
+            Vec::<String>::new(),
+            "every Args flag needs a matching layout::LayoutStep field (or an entry in \
+             CLI_ONLY_ARGS saying why it has none)"
+        );
+        assert_eq!(
+            difference(&layout_fields, &args_fields, LAYOUT_ONLY_FIELDS),
+            Vec::<String>::new(),
+            "every layout::LayoutStep field needs a matching Args flag (or an entry in \
+             LAYOUT_ONLY_FIELDS)"
+        );
+        assert_eq!(
+            difference(&layout_fields, &template_fields, BINDING_SUPPLIED_FIELDS),
+            Vec::<String>::new(),
+            "every layout::LayoutStep field needs a matching template::TemplateStep field (or an \
+             entry in BINDING_SUPPLIED_FIELDS)"
+        );
+        assert_eq!(
+            difference(&template_fields, &layout_fields, TEMPLATE_ONLY_FIELDS),
+            Vec::<String>::new(),
+            "every template::TemplateStep field needs a matching layout::LayoutStep field (or an \
+             entry in TEMPLATE_ONLY_FIELDS)"
+        );
+    }
+
     #[test]
     fn args_accepts_valid_workspace_and_position() {
         let args = Args::try_parse_from([
