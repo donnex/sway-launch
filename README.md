@@ -607,6 +607,12 @@ for_window [con_mark="firefox-floating-left"] resize set 1100 px 90 ppt, move po
 sway-launch --mark firefox-floating-left 'firefox --new-window https://example.com'
 ```
 
+A mark may contain spaces and Sway's own command separators (`,`, `;`) — those are quoted and
+stored literally. It may not contain a double quote or a backslash: Sway stores those with the
+escape character intact rather than unescaping it, so the value wouldn't survive a round trip back
+through `--mark-match`. Both are rejected up front rather than silently mangled. The same rule
+applies to `--mark-match`, `--workspace`, and `--output`.
+
 ### Workspace
 
 Move the new window to a workspace.

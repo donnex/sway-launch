@@ -94,6 +94,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--mark-match`/`mark_match` now requires `--existing`/`existing = true` — previously it silently
   had no effect when combined with a launch command, since a freshly launched window has no marks
   yet to match against.
+- `--mark`, `--mark-match`, `--workspace`, `--output` (and the matching `--layout`/`--template`
+  step/binding fields) now reject a value that is blank, or that contains a double quote or a
+  backslash. Sway stores those two characters with the escape character intact rather than
+  unescaping them, so a mark set as `dropdown"term` was silently stored as `dropdown\"term` and
+  could never be found again by `--mark-match`; a blank `mark` silently did nothing at all. Values
+  containing spaces or Sway's own `,`/`;` command separators are unaffected — those are quoted and
+  stored literally, as before. One consequence: a mark containing a backslash that was set by some
+  other tool (`swaymsg mark 'a\b'`) can no longer be targeted by `--mark-match`.
 
 ### Fixed
 
