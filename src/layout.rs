@@ -157,6 +157,22 @@ impl LayoutStep {
             sway_launch::Target::Exec { command }
         };
 
+        // Every value below is interpolated into a Sway command as a quoted
+        // string (or, for mark_match, compared against one that was) — see
+        // validate_sway_string_argument()'s doc comment for why `"`/`\` and
+        // a blank value are rejected rather than silently mangled.
+        for (field, value) in [
+            ("mark", self.mark.as_deref()),
+            ("mark_match", self.mark_match.as_deref()),
+            ("workspace", self.workspace.as_deref()),
+            ("output", self.output.as_deref()),
+        ] {
+            if let Some(value) = value {
+                sway_launch::validate_sway_string_argument(value)
+                    .map_err(|error| format!("{}: {}", field, error))?;
+            }
+        }
+
         if let Some(height) = self.height.as_deref() {
             sway_launch::validate_size_argument(height)
                 .map_err(|error| format!("height: {}", error))?;
@@ -659,6 +675,91 @@ mod tests {
             .err()
             .expect("unresolved target_id should error");
         assert!(error.contains("missing"));
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_a_mark_containing_a_double_quote() {
+        // Regression test: confirmed live that Sway stores such a mark with
+        // the escape character intact, so --mark/--mark-match could never
+        // round-trip it. See validate_sway_string_argument's doc comment.
+        let mut step = minimal_step();
+        step.mark = Some("dropdown\"term".to_string());
+        let error = step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &HashMap::new(),
+            )
+            .err()
+            .expect("a mark containing a double quote should be rejected");
+        assert!(
+            error.contains("mark"),
+            "error should name the field: {error:?}"
+        );
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_a_blank_mark() {
+        let mut step = minimal_step();
+        step.mark = Some("   ".to_string());
+        assert!(step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &HashMap::new()
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_a_blank_workspace() {
+        let mut step = minimal_step();
+        step.workspace = Some("".to_string());
+        let error = step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &HashMap::new(),
+            )
+            .err()
+            .expect("a blank workspace should be rejected");
+        assert!(
+            error.contains("workspace"),
+            "error should name the field: {error:?}"
+        );
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_an_output_containing_a_backslash() {
+        let mut step = minimal_step();
+        step.output = Some("HDMI\\A-1".to_string());
+        assert!(step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &HashMap::new()
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn to_sway_launch_accepts_a_mark_containing_command_separators() {
+        // quote_sway_string() genuinely neutralizes these (confirmed live),
+        // so the new validation must not over-reject them.
+        let mut step = minimal_step();
+        step.mark = Some("foo, exec bar; baz".to_string());
+        assert!(step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &HashMap::new()
+            )
+            .is_ok());
     }
 
     #[test]

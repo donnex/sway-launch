@@ -22,7 +22,8 @@ struct Args {
 
     /// Mark match. With --existing, matches an already-open window carrying
     /// this mark instead of the newly launched one
-    #[clap(long, conflicts_with_all = ["class", "con_id"])]
+    #[clap(long, conflicts_with_all = ["class", "con_id"],
+        value_parser = sway_launch::validate_sway_string_argument)]
     mark_match: Option<String>,
 
     /// Act on an already-open window with this container id, instead of
@@ -56,7 +57,7 @@ struct Args {
     focus: bool,
 
     /// Add mark to new window
-    #[clap(short, long)]
+    #[clap(short, long, value_parser = sway_launch::validate_sway_string_argument)]
     mark: Option<String>,
 
     /// Move window to new column (move right)
@@ -76,11 +77,11 @@ struct Args {
     new_row: bool,
 
     /// Move new window to workspace
-    #[clap(long)]
+    #[clap(long, value_parser = sway_launch::validate_sway_string_argument)]
     workspace: Option<String>,
 
     /// Move new window to output (monitor)
-    #[clap(long)]
+    #[clap(long, value_parser = sway_launch::validate_sway_string_argument)]
     output: Option<String>,
 
     /// Set position on new window. Either "center" or "<x>,<y>" in pixels (x/y may be negative)
@@ -1198,6 +1199,48 @@ mod tests {
     fn args_new_row_short_flag_is_r() {
         let args = Args::try_parse_from(["sway-launch", "-r", "foot"]).unwrap();
         assert!(args.new_row);
+    }
+
+    #[test]
+    fn args_rejects_a_mark_containing_a_double_quote() {
+        // Regression test: Sway stores the escape character literally rather
+        // than unescaping it (confirmed live), so such a mark could never be
+        // matched again by --mark-match. See
+        // sway_launch::validate_sway_string_argument's doc comment.
+        let result = Args::try_parse_from(["sway-launch", "--mark", "dropdown\"term", "foot"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn args_rejects_a_mark_match_containing_a_double_quote() {
+        let result = Args::try_parse_from([
+            "sway-launch",
+            "--existing",
+            "--mark-match",
+            "dropdown\"term",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn args_rejects_a_blank_workspace() {
+        let result = Args::try_parse_from(["sway-launch", "--workspace", "  ", "foot"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn args_rejects_an_output_containing_a_backslash() {
+        let result = Args::try_parse_from(["sway-launch", "--output", "HDMI\\A-1", "foot"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn args_accepts_a_mark_containing_command_separators() {
+        // quote_sway_string() neutralizes these, so validation must not
+        // over-reject them.
+        let args =
+            Args::try_parse_from(["sway-launch", "--mark", "foo, exec bar; baz", "foot"]).unwrap();
+        assert_eq!(args.mark, Some("foo, exec bar; baz".to_string()));
     }
 
     #[test]

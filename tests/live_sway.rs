@@ -3031,6 +3031,41 @@ fn mark_with_special_characters_is_stored_literally_not_executed() {
 }
 
 #[test]
+fn mark_containing_command_separators_still_round_trips_through_mark_match() {
+    // The other half of the `"`/`\` rejection added alongside this test (see
+    // sway_launch.rs's validate_sway_string_argument): proving the new
+    // validation didn't over-reject. A `,`/`;` in a mark *is* genuinely
+    // neutralized by quote_sway_string() and stored byte-for-byte, so
+    // --mark followed by --mark-match on the same value must still find the
+    // window. This is the live-only half -- the rejection itself is caught
+    // by clap before any IPC and is covered headlessly.
+    let mut connection = connect();
+    let mark = "live-sway-test-roundtrip, exec true; echo";
+    let (container_id, _guard) = launch_foot(&["--mark", mark]);
+
+    let output = sway_launch_command()
+        .args(["--existing", "--mark-match", mark, "--floating"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "a mark containing command separators should still be matchable by --mark-match: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let node = get_node(&mut connection, container_id);
+    assert!(
+        node.marks.contains(&mark.to_string()),
+        "the mark should be stored byte-for-byte, got {:?}",
+        node.marks
+    );
+    assert!(
+        node_is_floating(&node),
+        "the window matched by mark should have had --floating applied to it"
+    );
+}
+
+#[test]
 fn mark_with_an_embedded_newline_is_not_executed_as_a_separate_command() {
     // Companion to the comma/semicolon case above, for a character
     // quote_sway_string() doesn't escape at all (only `\`/`"` are).

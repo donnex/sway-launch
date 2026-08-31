@@ -1408,6 +1408,45 @@ pub fn validate_position_argument(value: &str) -> Result<String, String> {
     }
 }
 
+/// Validates a value that gets interpolated into a Sway IPC command as a
+/// quoted string — `--mark`/`--workspace`/`--output`, and the matching
+/// `LayoutStep`/`TemplateStep` fields. Rejects a blank value (silently a
+/// no-op or a nonsense target otherwise), and both characters
+/// `quote_sway_string()` escapes.
+///
+/// The escaping exists to stop a `,`/`;` in a value from being read back as
+/// an additional Sway command, and it does that correctly — but confirmed
+/// live (2026-08-31) that Sway's own parser does *not* strip the escape
+/// characters back out again: `mark "has\"quote"` stores the literal
+/// `has\"quote`, and `mark "has\\backslash"` stores `has\\backslash`. So a
+/// value containing `"` or `\` is silently corrupted rather than rejected,
+/// which broke the round-trip `--mark`/`--mark-match` is built on (a mark
+/// set as `dropdown"term` could never be matched again). Sway offers no way
+/// to represent either character inside a quoted command argument, so
+/// rejecting up front is the only option that isn't silent corruption.
+///
+/// `--mark-match` is validated the same way even though it's compared
+/// client-side against `Node::marks` and never interpolated into a command:
+/// once `--mark` rejects these characters, no mark this tool sets can
+/// contain one, so accepting them here would only ever produce a guaranteed
+/// no-match. The tradeoff is that a mark containing a backslash set by some
+/// *other* tool (`swaymsg mark 'a\b'`) can no longer be retargeted by
+/// `--mark-match`; judged worth it for the consistency, since this tool has
+/// no way to create such a mark itself.
+pub fn validate_sway_string_argument(value: &str) -> Result<String, String> {
+    if value.trim().is_empty() {
+        return Err("Must not be empty or whitespace-only".to_string());
+    }
+    if let Some(character) = value.chars().find(|&c| c == '"' || c == '\\') {
+        return Err(format!(
+            "Must not contain {:?} — Sway stores it literally rather than unescaping it, so the \
+             value would not round-trip",
+            character
+        ));
+    }
+    Ok(value.to_string())
+}
+
 /// Rejects an empty or whitespace-only value for a named field — shared by
 /// every layout/template schema field that's a free-form identifier or
 /// required string (`id`, `target_id`, `slot`, a binding's `command`, a
@@ -2717,6 +2756,54 @@ mod tests {
     #[test]
     fn validate_position_argument_rejects_empty() {
         assert!(validate_position_argument("").is_err());
+    }
+
+    // validate_sway_string_argument
+
+    #[test]
+    fn validate_sway_string_argument_accepts_an_ordinary_value() {
+        assert_eq!(
+            validate_sway_string_argument("dropdown-term"),
+            Ok("dropdown-term".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_sway_string_argument_accepts_command_separators() {
+        // These are exactly what quote_sway_string() exists to neutralize,
+        // and Sway does store them literally inside the quotes (confirmed
+        // live) -- so they must stay accepted, unlike `"`/`\` below.
+        assert!(validate_sway_string_argument("foo, exec bar").is_ok());
+        assert!(validate_sway_string_argument("foo; exec bar").is_ok());
+        assert!(validate_sway_string_argument("foo\nexec bar").is_ok());
+    }
+
+    #[test]
+    fn validate_sway_string_argument_rejects_a_double_quote() {
+        // Regression test: confirmed live that Sway stores `mark "a\"b"` as
+        // the literal `a\"b`, so --mark/--mark-match could never round-trip
+        // such a value. See this function's doc comment.
+        let error = validate_sway_string_argument("dropdown\"term")
+            .expect_err("a double quote should be rejected");
+        assert!(
+            error.contains('"'),
+            "error should name the offending character: {error:?}"
+        );
+    }
+
+    #[test]
+    fn validate_sway_string_argument_rejects_a_backslash() {
+        assert!(validate_sway_string_argument("back\\slash").is_err());
+    }
+
+    #[test]
+    fn validate_sway_string_argument_rejects_empty() {
+        assert!(validate_sway_string_argument("").is_err());
+    }
+
+    #[test]
+    fn validate_sway_string_argument_rejects_whitespace_only() {
+        assert!(validate_sway_string_argument("   ").is_err());
     }
 
     // require_non_blank
