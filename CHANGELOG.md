@@ -118,7 +118,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so it lands somewhere deterministic every run instead of wherever Sway's own default floating
   placement happened to put it.
 - A `--bindings` binding setting both `app_id` and `class` now errors immediately, naming the
-  offending slot, instead of only being caught later by a more generic step-level error.
+  offending slot, instead of only being caught later by a more generic step-level error. A binding
+  setting `existing = true` with none of `app_id`/`class`/`mark_match` is now caught the same way,
+  rather than surfacing as an error about a layout step the user never wrote.
 - Two `--template` steps sharing the same `slot` name now error immediately with a message naming
   the slot (`template: slot "..." is used more than once`), instead of a generic, implementation-detail-flavored
   "id already used by an earlier step" message.
