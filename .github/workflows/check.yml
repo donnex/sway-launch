@@ -37,7 +37,10 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       # Thresholds are calibrated to this project's actual measured baseline
-      # (87.06% regions / 88.51% lines as of 2026-08-26), not an arbitrary
+      # (86.18% regions / 87.21% lines / 91.42% functions as of 2026-08-31 --
+      # down from 87.06/88.51 once the wait-time poll loop started sharing one
+      # connection, which made poll_matches()'s arms genuinely unreachable
+      # headlessly rather than incidentally executed), not an arbitrary
       # round number: sway_launch.rs's IPC-touching functions are
       # deliberately exempted from unit-test coverage (see CLAUDE.md's Rust
       # conventions -- they're exercised by tests/live_sway.rs instead,

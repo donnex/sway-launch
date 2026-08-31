@@ -50,10 +50,19 @@ The crate is four source files plus five integration test files:
   (`--layout` mode) or `run_template()`/`template.rs` (`--template` mode) — both funnel into the
   shared `run_steps()` (see "`--template`" below). Argument validation itself (e.g.
   `--height`/`--width` must match `\d+(px|ppt)`) lives in `sway_launch.rs` as
-  `pub fn validate_size_argument`/`validate_position_argument`, referenced from `main.rs`'s
+  `pub fn validate_size_argument`/`validate_position_argument`/
+  `validate_sway_string_argument`, referenced from `main.rs`'s
   `#[clap(value_parser = ...)]` attributes, so both the CLI parser and `layout.rs`'s TOML steps
-  validate the same way without duplicating the regexes.
-- `src/sway_launch.rs` — all the core logic (see below), plus the two shared validators above.
+  validate the same way without duplicating the regexes. `validate_sway_string_argument` is the
+  third of these, covering `--mark`/`--mark-match`/`--workspace`/`--output` — every value
+  interpolated into a Sway command as a quoted string: it rejects a blank value, and both
+  characters `quote_sway_string()` escapes (`"` and `\`), since Sway was confirmed live to store
+  the escape character literally rather than unescaping it, silently corrupting the value instead
+  of round-tripping it (see that function's own doc comment). A fourth, `pub fn require_non_blank`,
+  is the generic "this named field must not be empty or whitespace-only" check the layout/template
+  schemas apply to free-form identifiers (`id`, `target_id`, `slot`, a binding's `command`, a
+  template's `description`/`category`) that have no dedicated format of their own.
+- `src/sway_launch.rs` — all the core logic (see below), plus the shared validators above.
 - `src/layout.rs` — `--layout`'s TOML schema (`Layout`/`LayoutStep`) and
   `LayoutStep::to_sway_launch()`, which converts one step into a `sway_launch::SwayLaunch` (see
   "Layout files" below).
@@ -161,7 +170,11 @@ Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`,
 - render itself as a `swaymsg` command string (`sway_command()`) — `Mark`'s, `Workspace`'s, and
   `Output`'s values are wrapped through `quote_sway_string()` before interpolation, since Sway's
   command parser splits on unquoted `,`/`;` and an unescaped value could otherwise inject
-  additional commands; `Height`, `Width`, and `Position` don't need this since they hold typed
+  additional commands. That quoting is defense in depth rather than the only guard: since
+  `validate_sway_string_argument` (see the `src/main.rs` bullet above) rejects `"` and `\` up
+  front, `quote_sway_string()`'s own `replace()` calls can no longer fire for any value this tool
+  actually accepts — they're kept so the function stays correct for any future caller, not because
+  a validated value can still reach them. `Height`, `Width`, and `Position` don't need this since they hold typed
   `Size`/`Position` values (see below), not arbitrary strings — `sway_command()` is their
   serialization point, formatting a `Size`/`Position` back into Sway's `<n>px`/`<n>ppt` or
   space-separated `move position <x> <y>` syntax, rather than interpolating a pre-validated string,
@@ -576,12 +589,31 @@ command's actual output in that mode, so both stay on stdout — neither is mean
 single clean value the way a real run's container id is, so the "exactly one line" property simply
 doesn't apply to them.
 
+Every stdout write goes through `main.rs`'s `print_line()`/`print_str()` (and, for
+`SwayLaunch::debug_events()`'s own dump, the same `writeln!`-plus-`BrokenPipe` handling inline)
+rather than `println!`. Rust ignores `SIGPIPE`, so a `println!` into a closed pipe panics
+("failed printing to stdout: Broken pipe") and exits 101 — a poor answer to
+`sway-launch --debug-events | head -5`, which is an ordinary way to use the one mode that writes
+until killed. `exit_on_write_failure()` treats `ErrorKind::BrokenPipe` as a clean `exit(0)` (the
+reader got what it asked for and went away) and any other write failure as a reported `exit(1)`.
+Handled this way rather than by restoring the default `SIGPIPE` disposition, which would mean an
+`unsafe` libc call and a new dependency for something this narrow. `--completions` is the one
+stdout path not routed through these, since `clap_complete::generate()` does its own writing.
+
 Errors always go to stderr regardless of `--json` (`main.rs`'s `fail()`/`fail_with_rollback()`), but
 their *shape* on stderr does follow `--json`: a `{"error": "...", "rolled_back": [...]}` object
 instead of a plain-text line, mirroring the structured success shapes below rather than leaving a
 `--json` caller to also parse plain-text stderr on failure. `rolled_back` is only ever non-empty
 when `run_steps()`'s `--rollback-on-error` (see "`--layout`" below) actually killed something
-first — every other error path passes an empty slice. This is deliberately scoped to *runtime*
+first — every other error path passes an empty slice. A failing multi-step run's error object also
+carries `container_ids`/`containers` for the steps that *did* complete (`main.rs`'s
+`PartialProgress`, threaded from `run_steps()` through `fail_step()` into `fail_with_rollback()`):
+plain output prints each id as its step finishes, so a mid-layout failure there still leaves the
+caller able to clean up, while `--json` collects them for one object at the end and so previously
+reported nothing but the error with real windows left open on screen. Anything `--rollback-on-error`
+just killed is filtered back out (reporting a closed window as still-open progress would be worse
+than reporting nothing), and both fields are omitted entirely for a single invocation, which has no
+partial state to report. This is deliberately scoped to *runtime*
 failures (file I/O, TOML parsing, a `SwayLaunch`/step actually failing against Sway) — a bad CLI
 invocation (missing/conflicting flags, `Args::command().error(...).exit()`) is still reported via
 clap's own usage-error formatting regardless of `--json`, the same as `--help` itself isn't JSON
@@ -639,6 +671,15 @@ for this specifically because `resolved_ids` already existed for an unrelated re
 
 `SwayLaunch::debug_events()` subscribes to all Sway IPC event types and prints every event until
 killed. Useful for discovering event shapes when adding a new action.
+
+It's a standalone mode like `--completions`/`--list-templates`: it never acts on a window, so it
+`conflicts_with_all`-conflicts with the positional command, `--con-id`/`--existing`, and every
+per-window flag, rather than accepting and silently discarding them (`sway-launch --debug-events
+foot --floating` used to parse clean, dump events, and never launch `foot`). Unlike those other
+standalone modes it still builds a `SwayLaunch` first, so it isn't checked until after that; the
+`!args.debug_events` exemption from `main()`'s "Missing COMMAND" check stays too, since a bare
+`--debug-events` legitimately has no target. `--timeout`/`--wait-time` remain accepted but unused
+here, the same as for the other standalone modes.
 
 ### `--dry-run`
 
@@ -717,6 +758,16 @@ completes, or (if `--json` is set) collects them into one `{"container_ids": [..
 {...}}` object printed at the end instead (see "`--json`'s richer schema" above). Every top-level
 per-window flag `conflicts_with_all`-conflicts with `--layout` in `Args`, since a step's own fields
 are what apply, not a top-level flag with no specific step to attach to.
+
+`run_steps()` errors (`no steps found in <source>`, via the shared `steps_source()` helper that
+echoes back the `--layout`/`--template` argument as given) when a file resolves to zero steps.
+Every field of a `Layout` is optional, so a file with no `[[step]]` blocks parses fine and used to
+"succeed" silently — exit 0, no output, nothing launched, indistinguishable from a run that
+worked, when the likely causes (steps lost to a bad merge, or commented out while debugging) are
+exactly the ones worth surfacing. Checked at the top of `run_steps()`, *before* the
+`--dry-run`/`--validate` branches, so all three modes agree — `--validate` in particular exists to
+catch a broken layout without a Sway session, and reporting `valid: 0 step(s)` for a file that
+can't do anything would defeat that.
 
 **Named/aliased steps (`id`/`target_id`)**: a step's `id` names it for later reference; a later
 step's `target_id` resolves to that named step's container id instead of launching/matching its
@@ -870,6 +921,17 @@ nothing while making the two paths mutually exclusive by construction — confir
 `tests/template.rs`'s `template_toml_suffixed_name_is_never_treated_as_a_builtin` (a `.toml`-suffixed
 value that happens to share a real built-in's name still fails as a file read, not a lookup) and
 `template_unknown_builtin_name_errors_clearly`.
+
+`builtin()` rejects a name containing `/` or `\` outright rather than looking it up. `include_dir`'s
+`get_file()` searches nested directories, while `builtin_templates()` (`--list-templates`, via
+`Dir::files()`) and `tests/live_sway.rs`'s
+`every_shipped_template_resolves_and_launches_successfully` (via a non-recursive `read_dir`) only
+ever look at `templates/`'s immediate children — so without this, a template added in a
+subdirectory would be runnable as `--template sub/name` while staying invisible to
+`--list-templates` and never driven against a real compositor, letting a broken one ship untested.
+Nothing is nested today, so this changes no behavior; it pins the flat layout the rest of the code
+already assumes rather than leaving the two halves free to disagree later. Covered by
+`template.rs`'s `builtin_returns_none_for_a_name_containing_a_path_separator`.
 
 `--list-templates` (`main.rs`'s `print_builtin_templates()`) is a standalone mode — doesn't touch
 Sway IPC, so it's checked and short-circuits right after `--completions`, before the `--layout`/

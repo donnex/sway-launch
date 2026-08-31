@@ -116,9 +116,11 @@ Options:
       --bindings <BINDINGS>           Bindings file supplying each --template slot's application identity. Requires --template; conflicts with --apps
       --apps <APPS>                   Comma-separated list of commands to launch into --template's slots, in the order they first appear in the template. Requires --template; conflicts with --bindings
       --rollback-on-error             If a later --layout/--template step fails, kill every window this invocation itself launched by an earlier, already-completed step (not one it merely retargeted via con_id/existing/target_id), rather than leaving them open. Requires --layout or --template
-  -h, --help                          Print help
+  -h, --help                          Print help (see more with '--help')
   -V, --version                       Print version
 ```
+
+(`--help` prints the same options in a longer, one-paragraph-per-flag form.)
 
 ## Quickstart
 
@@ -793,7 +795,11 @@ $ sway-launch --template quad-grid --apps foot,foot,code,foot --json
 ```
 
 This also applies to errors — a failure prints a JSON object to stderr instead of a plain-text
-message, so a `--json` caller never needs to also parse plain stderr on failure:
+message, so a `--json` caller never needs to interpret a plain-text error message. Read it as the
+**last line** of stderr rather than assuming stderr holds nothing else: with no reachable Sway
+socket, the `sway --get-socketpath` fallback the IPC library shells out to can print its own
+`sway socket not detected.` diagnostic to the inherited stderr first, ahead of anything
+`sway-launch` writes.
 
 ```shell
 $ sway-launch --json --con-id 999999 --floating
@@ -813,8 +819,10 @@ $ sway-launch --layout layout.toml --json
 ```
 
 `container_ids`/`containers` carry the same meaning they do on success. Anything `rolled_back`
-closed is excluded — it no longer exists. Both fields are omitted entirely for a single invocation,
-where there is no partial progress to report.
+closed is excluded — it no longer exists. Both fields are omitted whenever there's no partial
+progress to report at all: for a single invocation, which has no concept of one, and equally for a
+`--layout`/`--template` run that failed on its very first step, having launched nothing yet. Treat
+them as optional rather than always present.
 
 ### Dry run
 
