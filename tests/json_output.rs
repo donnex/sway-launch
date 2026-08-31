@@ -139,7 +139,13 @@ fn dry_run_never_launches_the_command() {
     // A --dry-run with a real command (not --con-id/--existing) must never
     // actually exec it -- this uses a command that would create an
     // unmistakable side effect if it ran, and confirms it didn't.
-    let marker_dir = std::env::temp_dir().join("sway-launch-dry-run-test-marker");
+    // Per-process path: this asserts a marker does *not* exist, so a stray
+    // one left at a predictable shared path by another run (or another
+    // user) would fail it for the wrong reason.
+    let marker_dir = std::env::temp_dir().join(format!(
+        "sway-launch-dry-run-test-marker-{}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir(&marker_dir);
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
