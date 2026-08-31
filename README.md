@@ -310,9 +310,9 @@ the CLI's own command/`--con-id`/`--existing` mutual exclusivity plus one layout
   `existing`. Errors if the named `id` doesn't exist, or was used by more than one step.
 
 As with the CLI's `--app-id`/`--class`/`--mark-match`, a step can set only one of `app_id`, `class`,
-`mark_match` — pick whichever identifies the window. `con_id` can't be combined with any of the
-three either, same as the CLI: a `con_id` target already names an exact container, so a match
-criteria alongside it would only be silently ignored.
+`mark_match` — pick whichever identifies the window. Neither `con_id` nor `target_id` can be
+combined with any of the three, same as the CLI: both already name an exact container, so a match
+criteria alongside one would only be silently ignored.
 
 Neither has a CLI equivalent — a single `sway-launch` invocation only ever has one step, so
 there's nothing to name or reference.

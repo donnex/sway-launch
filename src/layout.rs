@@ -107,10 +107,18 @@ impl LayoutStep {
         // an exact container, so a match criteria alongside it can only be
         // silently ignored, not honored — better to reject it than let a
         // step look like it's matching on identity when it isn't.
-        if self.con_id.is_some()
+        //
+        // `target_id` is covered by the identical reasoning: it resolves to
+        // `Target::ConId` a few lines below, via an earlier step's already-
+        // resolved id, so a match criterion alongside it is discarded just
+        // as silently. It has no CLI equivalent to mirror a
+        // `conflicts_with_all` from, which is why it needs saying here.
+        if (self.con_id.is_some() || self.target_id.is_some())
             && (!app_id_match.is_empty() || !class_match.is_empty() || !mark_match.is_empty())
         {
-            return Err("step must not combine con_id with app_id/class/mark_match".to_string());
+            return Err(
+                "step must not combine con_id/target_id with app_id/class/mark_match".to_string(),
+            );
         }
         if !mark_match.is_empty() && !self.existing {
             return Err("mark_match requires existing = true".to_string());
@@ -638,6 +646,51 @@ mod tests {
                 time::Duration::from_millis(20),
                 false,
                 &HashMap::new()
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_target_id_and_app_id_together() {
+        // Regression test: target_id resolves to Target::ConId, so a match
+        // criterion alongside it is discarded exactly as silently as one
+        // alongside con_id -- which this step already rejected. Mirrors
+        // to_sway_launch_rejects_con_id_and_app_id_together.
+        let mut step = minimal_step();
+        step.command = None;
+        step.target_id = Some("first".to_string());
+        step.app_id = Some("foot".to_string());
+        let mut resolved_ids = HashMap::new();
+        resolved_ids.insert("first".to_string(), 42);
+        let error = step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &resolved_ids,
+            )
+            .err()
+            .expect("target_id combined with app_id should be rejected");
+        assert!(
+            error.contains("target_id"),
+            "error should name the offending field: {error:?}"
+        );
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_target_id_and_class_together() {
+        let mut step = minimal_step();
+        step.command = None;
+        step.target_id = Some("first".to_string());
+        step.class = Some("Foot".to_string());
+        let mut resolved_ids = HashMap::new();
+        resolved_ids.insert("first".to_string(), 42);
+        assert!(step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &resolved_ids
             )
             .is_err());
     }

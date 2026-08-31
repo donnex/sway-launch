@@ -134,6 +134,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--validate` now names the `--layout`/`--template` argument it validated: `valid: <source> (N
   step(s))`, or `{"source": ..., "steps": N, "valid": true}` under `--json` — previously just
   `valid: N step(s)`/`{"steps": N, "valid": true}` with no indication of which file was checked.
+- A `--layout` step combining `target_id` with `app_id`/`class`/`mark_match` now errors, instead of
+  silently discarding the match criteria. `target_id` resolves to an exact container the same way
+  `con_id` does, which the step already rejected combining with a matcher for exactly this reason.
 - `--mark-match`/`mark_match` now requires `--existing`/`existing = true` — previously it silently
   had no effect when combined with a launch command, since a freshly launched window has no marks
   yet to match against.
