@@ -1094,6 +1094,34 @@ impl SwayAction<'_> {
     }
 
     fn run_wait_matching_events(&self) -> Result<i64, String> {
+        // Same check, same reason, and the same error text as
+        // run_wait_time()'s: on Sway 1.9 (still what `apt` installs on
+        // Ubuntu 24.04/CI) a [con_id=N] criteria matching zero containers is
+        // "success", so without this an action whose container closed since
+        // it was resolved would send its command successfully and then block
+        // for the full --timeout waiting on a confirmation event that can
+        // never arrive, reporting "N sec timeout reached" — pointing the
+        // user at --timeout rather than at the closed window. Sway 1.11
+        // already errors clearly ("No matching node.") from
+        // run_sway_command() below, confirmed live, making this redundant
+        // there but still required for 1.9.
+        //
+        // Costs one extra get_tree() per event-confirmed action, partly
+        // duplicating the one already_at_target() makes for six of the seven
+        // variants. Accepted deliberately: one check in one place covers
+        // every variant (including Mark, which has no already_at_target()
+        // arm at all), and this runs a handful of times per invocation, not
+        // in a loop.
+        let container_id = self
+            .container_id()
+            .expect("run_wait_matching_events() is only ever called for variants other than Exec");
+        if !self::container_exists(container_id)? {
+            return Err(format!(
+                "container id {} no longer exists — window may have closed",
+                container_id
+            ));
+        }
+
         let event_loop = self::event_loop(&[EventType::Window])?;
 
         let sway_command = self.sway_command();

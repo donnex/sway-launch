@@ -140,6 +140,29 @@ fn output_containing<'a>(node: &'a Node, con_id: i64, current: Option<&'a str>) 
         .find_map(|child| output_containing(child, con_id, current))
 }
 
+/// Blocks until `con_id` is genuinely absent from Sway's tree, so a test
+/// that deliberately closes a window before asserting on the
+/// already-closed behaviour isn't racing the compositor.
+///
+/// `run_command("[con_id=N] kill")` returns as soon as Sway has *accepted*
+/// the command, not once the window is gone — so a check made immediately
+/// afterwards can still see the container and take a different code path
+/// than the test intends. Panics rather than returning a bool: a window that
+/// won't close within the deadline means the test's premise is broken, and
+/// silently continuing would produce a confusing downstream assertion
+/// instead.
+fn wait_for_container_gone(connection: &mut Connection, con_id: i64) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        let tree = connection.get_tree().expect("get_tree should succeed");
+        if find_node(&tree, con_id).is_none() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    panic!("container id {con_id} was still in the tree 5s after being killed");
+}
+
 /// Kills its container id when dropped, via a fresh IPC connection, so a
 /// test's windows never leak into the next one — even on assertion panic.
 struct KillOnDrop(i64);
@@ -1389,9 +1412,12 @@ fn rollback_on_error_kills_earlier_launched_windows_when_a_later_step_fails() {
     // step's real window stays open when a later step fails; with it,
     // run_steps() kills every window this invocation itself launched
     // before reporting the failure. The second step targets a con_id that
-    // was never opened, so --mark against it fails reliably and
-    // immediately ("No matching node.") without launching anything of its
-    // own to roll back.
+    // was never opened, so --mark against it fails reliably and immediately
+    // -- via run_wait_matching_events()'s own container_exists() check on
+    // every Sway version (before that check existed this failed only
+    // incidentally, through Sway 1.11's "No matching node."; on Sway 1.9 it
+    // instead waited out the full --timeout first) -- without launching
+    // anything of its own to roll back.
     let mut connection = connect();
     connection
         .run_command("[app_id=foot] kill")
@@ -1933,6 +1959,11 @@ fn wait_time_action_errors_clearly_when_its_container_already_closed() {
         .collect::<Result<Vec<_>, _>>()
         .expect("kill should succeed");
     std::mem::forget(guard); // already closed — nothing left for KillOnDrop to clean up
+                             // Deterministic rather than incidental: this test only ever passed
+                             // because run_wait_time() sleeps --wait-time *before* its own
+                             // container_exists() check, which happened to give Sway long enough to
+                             // process the kill. Waiting explicitly removes that dependency.
+    wait_for_container_gone(&mut connection, container_id);
 
     let output = sway_launch_command()
         .args(["--con-id", &container_id.to_string(), "--split", "h"])
@@ -1942,6 +1973,65 @@ fn wait_time_action_errors_clearly_when_its_container_already_closed() {
     assert!(
         !output.status.success(),
         "--split against an already-closed container should fail, not silently no-op"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&container_id.to_string()),
+        "error should name the container id: {stderr:?}"
+    );
+}
+
+#[test]
+fn event_confirmed_action_errors_clearly_when_its_container_already_closed() {
+    // Companion to wait_time_action_errors_clearly_when_its_container_already_closed
+    // above, for the other dispatch half. Until this check was added, only
+    // the wait-time actions pre-checked that their container still exists;
+    // an event-confirmed one (here --mark, which has no already_at_target()
+    // arm) sent its command and then waited out the full --timeout for a
+    // confirmation event that could never arrive, reporting "N sec timeout
+    // reached" instead of naming the closed window. On Sway 1.11
+    // run_sway_command() already errors on its own, so the assertion below
+    // is on the *message* rather than just a non-zero exit -- that is what
+    // makes this meaningful on Sway 1.9 (what CI installs), where the
+    // command would otherwise be reported as a success.
+    let mut connection = connect();
+    let (container_id, guard) = launch_foot(&[]);
+    connection
+        .run_command(format!("[con_id={container_id}] kill"))
+        .expect("kill should succeed")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("kill should succeed");
+    std::mem::forget(guard); // already closed — nothing left for KillOnDrop to clean up
+                             // Without this the test races the compositor: if the container is still
+                             // in the tree when sway-launch reads it, the guard under test passes and
+                             // the command instead fails via Sway 1.11's own "No matching node."
+                             // (which doesn't name the id) -- a correct failure, but not the one this
+                             // test exists to pin, and not the path Sway 1.9 would take at all.
+    wait_for_container_gone(&mut connection, container_id);
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--mark",
+            "live-sway-test-closed-container",
+            "--timeout",
+            "5",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        !output.status.success(),
+        "--mark against an already-closed container should fail, not silently no-op"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "--mark against a closed container took {:?}, suggesting it waited out --timeout for an \
+         event that can never arrive rather than failing fast",
+        started.elapsed()
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
