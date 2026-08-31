@@ -47,6 +47,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `master-dual-stack-wide` built-in template — `master-dual-stack` with a wider stack (60%/40%
   instead of ~65%/35%), better suited to browser/documentation/chat-style pairing than the
   narrower IDE-oriented ratio.
+- Launching an application and blocking until its window actually appears, via Sway's IPC event
+  stream, then printing the matching window's container id — the core of the tool, and what makes
+  `sway-launch` calls chainable in a shell script with no manual `sleep`s.
+- Follow-up actions applied to that window in one invocation: `--split`, `--floating`,
+  `--fullscreen`, `--focus`, `--mark`, `--new-column`, `--new-row`, `--workspace`, `--output`,
+  `--height`, `--width`, `--position`.
+- `--app-id`/`--class` matching, so a call in a multi-window script matches the right window rather
+  than whichever one happened to appear first.
+- `--con-id`/`--existing`, applying any of the actions above to an already-open window instead of
+  launching a new one — `--existing` errors rather than guessing when its criteria match zero or
+  more than one window.
+- `--layout <FILE>`: run a whole layout from one declarative TOML file and one invocation, each
+  `[[step]]` the equivalent of one call's flags, stopping at the first error. A step's `id` names it
+  so a later step's `target_id` can retarget that specific window — the one way to single out one of
+  several windows sharing an `app_id`.
+- `--template <FILE|NAME>` with `--apps`/`--bindings`: the same shape decoupled from the
+  applications it applies to, so one template can be reused across completely different programs.
+- A built-in template library compiled into the binary — grid, sidebar, master/stack, floating,
+  multi-workspace/output and retargeting shapes, applied with `--template <name> --apps ...` and no
+  files to write. `--list-templates` prints every name with its category, description and slots.
+- `--json` for structured output instead of a bare container id.
+- `--completions <SHELL>` for bash, zsh, fish, elvish and PowerShell.
+- `--timeout`, `--wait-time`, `--verbose`, and `--debug-events` (a raw dump of Sway's event stream,
+  for diagnosing what the compositor actually sends).
+- Window correlation that survives concurrent invocations: the launched command's environment is
+  tagged with a per-invocation marker, so two `sway-launch` processes started at the same time no
+  longer risk matching each other's windows and silently returning the wrong container id. Falls
+  back to a bounded heuristic only for a single-instance application that forwards to an
+  already-running process, where there is no spawned process to correlate against.
+- Confirmation by polling Sway's tree for the actions that have no IPC event to wait on
+  (`--split`, `--new-column`, `--new-row`, `--height`, `--width`, `--position`), so they return as
+  soon as the change is observable instead of always sleeping the full `--wait-time` twice. Where
+  no confirmation is possible (a solo window's resize is silently clamped by Sway, a move at the
+  edge of a workspace is a no-op) they fall back to the original sleep rather than hanging.
+- Short-circuiting for actions whose target state is already satisfied — re-applying `--floating`,
+  `--fullscreen`, `--focus`, `--workspace` or `--output` to a window already in that state returns
+  immediately instead of waiting for an event Sway never fires for a no-op.
 
 ### Changed
 
