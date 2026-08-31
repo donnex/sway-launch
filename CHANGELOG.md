@@ -160,6 +160,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for the whole `--timeout` and then reporting `5 sec timeout reached`, which points at the wrong
   cause. Most visible on a `--layout`/`--template` step retargeting an earlier step's window that
   exited on its own.
+- A `--layout`/`--template` file that resolves to no steps at all now errors (`no steps found in
+  <file>`), under `--dry-run` and `--validate` too, instead of exiting 0 having done nothing —
+  which was indistinguishable from a run that worked.
 - `--debug-events` combined with a command or any per-window flag now errors, instead of dumping
   events while silently discarding them — `sway-launch --debug-events foot` never launched `foot`.
   A bare `--debug-events` is unaffected.
