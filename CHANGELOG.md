@@ -160,6 +160,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for the whole `--timeout` and then reporting `5 sec timeout reached`, which points at the wrong
   cause. Most visible on a `--layout`/`--template` step retargeting an earlier step's window that
   exited on its own.
+- Piping `sway-launch`'s output into a command that stops reading early (`--debug-events | head -5`,
+  say) now ends the run cleanly instead of panicking with `failed printing to stdout: Broken pipe`
+  and exiting 101.
 - A `--layout`/`--template` file that resolves to no steps at all now errors (`no steps found in
   <file>`), under `--dry-run` and `--validate` too, instead of exiting 0 having done nothing —
   which was indistinguishable from a run that worked.

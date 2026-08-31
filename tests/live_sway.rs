@@ -2040,6 +2040,58 @@ fn event_confirmed_action_errors_clearly_when_its_container_already_closed() {
     );
 }
 
+#[test]
+fn debug_events_exits_cleanly_when_its_reader_goes_away() {
+    // The deterministic half of tests/json_output.rs's
+    // a_closed_stdout_exits_cleanly_instead_of_panicking. --debug-events is
+    // the one mode that writes until killed, so `sway-launch --debug-events
+    // | head -5` is an ordinary way to use it -- and Rust ignores SIGPIPE,
+    // so before this every such invocation ended in a panic and exit 101
+    // once the reader left. Deterministic here (unlike the headless version)
+    // because closing the read end while events keep arriving guarantees a
+    // failed write rather than depending on the pipe buffer.
+    let mut child = sway_launch_command()
+        .arg("--debug-events")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn sway-launch --debug-events");
+
+    // Let the subscription establish, then close the read end and keep
+    // generating events for it to fail writing.
+    std::thread::sleep(Duration::from_millis(300));
+    drop(child.stdout.take());
+    let (_container_id, _guard) = launch_foot(&[]);
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        match child.try_wait().expect("try_wait should succeed") {
+            Some(status) => break status,
+            None if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("--debug-events did not exit within 10s of its reader going away");
+            }
+            None => std::thread::sleep(Duration::from_millis(100)),
+        }
+    };
+
+    let mut stderr = String::new();
+    if let Some(mut handle) = child.stderr.take() {
+        use std::io::Read;
+        let _ = handle.read_to_string(&mut stderr);
+    }
+    assert!(
+        !stderr.contains("panicked"),
+        "--debug-events should treat a closed stdout as end-of-output, not panic: {stderr}"
+    );
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "--debug-events should exit cleanly once its reader is gone: {stderr}"
+    );
+}
+
 /// The repo-root-relative directory a shipped example file lives under,
 /// resolved via CARGO_MANIFEST_DIR rather than a relative path, so these
 /// tests work regardless of the working directory `cargo test` is invoked

@@ -1,5 +1,6 @@
 use clap::ValueEnum;
 use regex::Regex;
+use std::io::Write;
 use std::sync::mpsc;
 use std::{fmt, thread, time};
 use swayipc::{
@@ -2131,8 +2132,19 @@ impl<'a> SwayLaunch<'a> {
                 Err(error) => return Err(error.to_string()),
             };
 
-            println!("Event: {}", i);
-            println!("{:?}\n", event);
+            // Written through `writeln!` rather than `println!` so a closed
+            // stdout is an ordinary end-of-output rather than a panic: this
+            // is the one mode that writes until killed, so
+            // `--debug-events | head` is a normal way to use it, and Rust
+            // ignores SIGPIPE. Reported as success — the reader got what it
+            // asked for and went away.
+            let written = writeln!(std::io::stdout(), "Event: {}\n{:?}\n", i, event);
+            if let Err(error) = written {
+                if error.kind() == std::io::ErrorKind::BrokenPipe {
+                    return Ok(());
+                }
+                return Err(format!("failed writing to stdout: {}", error));
+            }
         }
 
         Ok(())

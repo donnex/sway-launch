@@ -363,19 +363,59 @@ fn main() {
     match sway_launch.run() {
         Ok(outcome) => {
             if args.json {
-                println!(
-                    "{}",
-                    serde_json::json!({
+                print_line(
+                    &serde_json::json!({
                         "container_id": outcome.container_id,
                         "actions": actions_json(&outcome.actions),
                     })
+                    .to_string(),
                 );
             } else {
-                println!("{}", outcome.container_id);
+                print_line(&outcome.container_id.to_string());
             }
         }
         Err(error) => fail(args.json, &error),
     };
+}
+
+/// Writes one line to stdout, exiting cleanly if stdout has already been
+/// closed — `sway-launch --debug-events | head -5` and friends.
+///
+/// Rust ignores `SIGPIPE`, so a plain `println!` into a closed pipe panics
+/// ("failed printing to stdout: Broken pipe") and exits 101, which is a poor
+/// answer to an ordinary shell idiom. Handled here rather than by restoring
+/// the default `SIGPIPE` disposition, which would mean an `unsafe` libc call
+/// and a new dependency for something this narrow.
+///
+/// Short outputs usually fit the pipe buffer and never notice; the case that
+/// reliably hits this is `--debug-events`, which writes until killed.
+fn print_line(line: &str) {
+    use std::io::Write;
+    if let Err(error) = writeln!(io::stdout(), "{}", line) {
+        exit_on_write_failure(&error);
+    }
+}
+
+/// `print_line()` without the trailing newline, for output that carries its
+/// own (a template file's raw contents). Flushes explicitly, since stdout is
+/// line-buffered and the trailing partial line would otherwise sit in the
+/// buffer.
+fn print_str(text: &str) {
+    use std::io::Write;
+    let result = write!(io::stdout(), "{}", text).and_then(|()| io::stdout().flush());
+    if let Err(error) = result {
+        exit_on_write_failure(&error);
+    }
+}
+
+fn exit_on_write_failure(error: &io::Error) -> ! {
+    if error.kind() == io::ErrorKind::BrokenPipe {
+        // The reader is gone, so there's nothing left to say and nothing to
+        // report it to. A clean exit is the expected outcome here.
+        process::exit(0);
+    }
+    eprintln!("failed writing to stdout: {}", error);
+    process::exit(1);
 }
 
 /// Renders one `ActionRecord` as `--json`'s per-action object:
@@ -566,16 +606,16 @@ fn print_dry_run_steps(steps: &[DryRunStep], json: bool) {
             .iter()
             .map(|step| serde_json::json!({ "target": step.target, "actions": step.actions }))
             .collect();
-        println!("{}", serde_json::json!({ "steps": steps }));
+        print_line(&serde_json::json!({ "steps": steps }).to_string());
         return;
     }
 
     let mut n = 1;
     for step in steps {
-        println!("{}. {}", n, step.target);
+        print_line(&format!("{}. {}", n, step.target));
         n += 1;
         for action in &step.actions {
-            println!("{}. {}", n, action);
+            print_line(&format!("{}. {}", n, action));
             n += 1;
         }
     }
@@ -656,7 +696,7 @@ fn print_builtin_templates(json: bool) {
                 })
             })
             .collect();
-        println!("{}", serde_json::json!({ "templates": templates }));
+        print_line(&serde_json::json!({ "templates": templates }).to_string());
         return;
     }
 
@@ -671,7 +711,7 @@ fn print_builtin_templates(json: bool) {
         .max()
         .unwrap_or(0);
     for template in &templates {
-        println!(
+        print_line(&format!(
             "{:<name_width$}  {:<category_width$}  {} ({} slot{}: {})",
             template.name,
             template.category,
@@ -679,7 +719,7 @@ fn print_builtin_templates(json: bool) {
             template.slots,
             if template.slots == 1 { "" } else { "s" },
             template.slot_names.join(", ")
-        );
+        ));
     }
 }
 
@@ -695,14 +735,14 @@ fn print_template_contents(template_arg: &Path, json: bool) {
     };
 
     if json {
-        println!(
-            "{}",
-            serde_json::json!({ "name": template_arg.to_string_lossy(), "contents": contents })
+        print_line(
+            &serde_json::json!({ "name": template_arg.to_string_lossy(), "contents": contents })
+                .to_string(),
         );
         return;
     }
 
-    print!("{contents}");
+    print_str(&contents);
 }
 
 /// Reads and parses a `--template` file, resolves it against `--bindings`/
@@ -883,7 +923,7 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
         match sway_launch.run() {
             Ok(outcome) => {
                 if !args.json {
-                    println!("{}", outcome.container_id);
+                    print_line(&outcome.container_id.to_string());
                 }
                 container_ids.push(outcome.container_id);
                 if launched_a_new_window {
@@ -906,13 +946,13 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
     }
 
     if args.json {
-        println!(
-            "{}",
-            serde_json::json!({
+        print_line(
+            &serde_json::json!({
                 "container_ids": container_ids,
                 "containers": resolved_ids,
                 "actions": actions,
             })
+            .to_string(),
         );
     }
 
@@ -1027,12 +1067,12 @@ fn run_steps_validate(steps: &[layout::LayoutStep], args: &Args) -> ! {
     }
 
     if args.json {
-        println!(
-            "{}",
-            serde_json::json!({ "source": source, "valid": true, "steps": steps.len() })
+        print_line(
+            &serde_json::json!({ "source": source, "valid": true, "steps": steps.len() })
+                .to_string(),
         );
     } else {
-        println!("valid: {} ({} step(s))", source, steps.len());
+        print_line(&format!("valid: {} ({} step(s))", source, steps.len()));
     }
     process::exit(0);
 }
