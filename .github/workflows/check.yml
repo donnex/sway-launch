@@ -60,11 +60,25 @@ jobs:
       - name: Install shellcheck and shfmt
         run: sudo apt-get update && sudo apt-get install -y shellcheck shfmt
 
+      # Discovered by shebang rather than listed by name, so a shell script
+      # added under scripts/ or examples/scripts/ is linted automatically
+      # instead of silently escaping both checks. Selecting by shebang (not
+      # by directory) is what keeps the one Python script in scripts/ out of
+      # it -- that has its own black/ruff steps below.
+      - name: Find shell scripts
+        id: shell-scripts
+        run: |
+          set -euo pipefail
+          files="$(grep -rlE '^#!/bin/sh' scripts examples/scripts | sort | tr '\n' ' ')"
+          test -n "$files" || { echo "::error::no shell scripts found to lint"; exit 1; }
+          echo "files=$files" >> "$GITHUB_OUTPUT"
+          echo "Linting: $files"
+
       - name: shellcheck
-        run: shellcheck --shell=sh scripts/run-live-sway-tests examples/scripts/*
+        run: shellcheck --shell=sh ${{ steps.shell-scripts.outputs.files }}
 
       - name: shfmt
-        run: shfmt -i 2 -d scripts/run-live-sway-tests examples/scripts/*
+        run: shfmt -i 2 -d ${{ steps.shell-scripts.outputs.files }}
 
       - name: Install markdownlint
         run: npm install -g markdownlint-cli
