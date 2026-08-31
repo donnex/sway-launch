@@ -319,8 +319,8 @@ there's nothing to name or reference.
 
 Every top-level per-window flag (`--split`, `--floating`, etc.) conflicts with `--layout`, since it
 would otherwise be unclear which step it applied to — `--timeout`, `--wait-time`, `--verbose`, and
-`--json` still apply, the latter printing one `{"container_ids": [...]}` array at the end instead
-of a line per step.
+`--json` still apply, the latter printing one object at the end (see
+[JSON output](#json-output) below) instead of a line per step.
 
 Stopping at the first error leaves whatever earlier steps already launched open by default — add
 `--rollback-on-error` to close them automatically instead:
@@ -770,6 +770,19 @@ $ sway-launch --json --con-id 999999 --floating
 
 `rolled_back` is only ever non-empty when `--rollback-on-error` (see "Layout files" above) actually
 closed something first.
+
+For a `--layout`/`--template` run, the error object also reports whatever earlier steps had already
+completed, so a caller can identify the windows left open on screen without walking Sway's tree and
+guessing which ones were its own:
+
+```shell
+$ sway-launch --layout layout.toml --json
+{"container_ids":[437,438],"containers":{"editor":437},"error":"step 3: 5 sec timeout reached","rolled_back":[]}
+```
+
+`container_ids`/`containers` carry the same meaning they do on success. Anything `rolled_back`
+closed is excluded — it no longer exists. Both fields are omitted entirely for a single invocation,
+where there is no partial progress to report.
 
 ### Dry run
 
