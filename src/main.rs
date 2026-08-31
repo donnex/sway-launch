@@ -113,7 +113,15 @@ struct Args {
     wait_time: u64,
 
     /// Debug events. Output all Sway IPC events until stopped.
-    #[clap(short, long)]
+    ///
+    /// A standalone mode like --completions/--list-templates: it never acts
+    /// on a window, so a command or per-window flag alongside it could only
+    /// be discarded. Rejected rather than ignored, same as those.
+    #[clap(short, long, conflicts_with_all = [
+        "command", "con_id", "existing", "app_id", "class", "mark_match", "split",
+        "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
+        "workspace", "output", "height", "width", "position", "scratchpad",
+    ])]
     debug_events: bool,
 
     /// Generate a shell completion script and print it to stdout
@@ -278,6 +286,9 @@ fn main() {
     let class_match = args.class.unwrap_or_default();
     let mark_match = args.mark_match.unwrap_or_default();
 
+    // --debug-events conflicts with a command/--con-id/--existing rather than
+    // ignoring them, but still needs exempting here: it's a standalone mode,
+    // so a bare `sway-launch --debug-events` has no target and needs none.
     if !args.debug_events && command.is_empty() && args.con_id.is_none() && !args.existing {
         Args::command()
             .error(

@@ -194,6 +194,30 @@ fn mark_match_without_existing_errors() {
 }
 
 #[test]
+fn debug_events_conflicts_with_a_command() {
+    // --debug-events never acts on a window, so a command alongside it could
+    // only be discarded -- it used to parse cleanly and dump events while
+    // silently never launching `foot`. clap rejects this before any IPC, so
+    // it stays headless-safe.
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--debug-events", "foot"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+}
+
+#[test]
+fn debug_events_conflicts_with_a_per_window_flag() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--debug-events", "--con-id", "42", "--floating"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+}
+
+#[test]
 fn validate_without_layout_or_template_errors() {
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
         .args(["--con-id", "42", "--validate"])
