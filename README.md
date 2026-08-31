@@ -294,6 +294,12 @@ app_id = "foot"
 sway-launch --layout layout.toml
 ```
 
+> [!WARNING]
+> A layout file's `command` fields are executed. Running someone else's layout file is exactly as
+> dangerous as running their shell script — read it first. The same applies to a `--bindings` file
+> (see [Templates](#templates) below). Template files themselves are safe: they contain no commands
+> at all, which is what makes them shareable on their own.
+
 A step's keys mirror the CLI flags of the same name (`app_id`, `class`, `mark_match`, `con_id`,
 `existing`, `split`, `floating`, `sticky`, `fullscreen`, `focus`, `mark`, `new_column`, `new_row`,
 `workspace`, `output`, `height`, `width`, `position`, `scratchpad`, `timeout`, `wait_time`) —
@@ -351,6 +357,11 @@ reusing one for a different application means editing it. `--template <FILE>` se
 template step describes *what to do*, and a `slot` names *which window* — the application itself
 comes from a separate `--bindings <FILE>` or `--apps <list>`, so the same template can be shared or
 reused across completely different applications.
+
+That split has a useful safety property: a template file names no commands anywhere, so it can't
+run anything on its own. The commands live in the `--bindings` file (or `--apps`), which you
+supply. A template is therefore safe to share and apply to your own applications; a layout or
+bindings file from elsewhere should be read first, like any shell script.
 
 ```toml
 [template]
