@@ -44,7 +44,8 @@ Requires a running Sway session — `sway-launch` talks to Sway over its IPC soc
   - [Floating](#floating) · [Sticky](#sticky) · [Fullscreen](#fullscreen) · [Focus](#focus) ·
     [Mark](#mark)
   - [Workspace](#workspace) · [Output](#output) · [Height and width](#height-and-width) ·
-    [Position](#position) · [Split](#split) · [New column](#new-column) · [New row](#new-row)
+    [Position](#position) · [Split](#split) · [New column](#new-column) · [New row](#new-row) ·
+    [Scratchpad](#scratchpad)
   - [Verbose](#verbose) · [JSON output](#json-output) · [Dry run](#dry-run) ·
     [Validate](#validate) · [Wait time](#wait-time) · [Debug events](#debug-events)
 
@@ -65,7 +66,11 @@ Shell completions (bash, zsh, fish, elvish, PowerShell) can be generated with `-
 <SHELL>`, e.g.:
 
 ```shell
-sway-launch --completions bash > /etc/bash_completion.d/sway-launch
+# User-local (no root needed):
+sway-launch --completions bash > ~/.local/share/bash-completion/completions/sway-launch
+
+# System-wide — note the redirect has to run as root too, so `sudo sway-launch ... >` won't work:
+sway-launch --completions bash | sudo tee /usr/share/bash-completion/completions/sway-launch
 ```
 
 ```shell
@@ -836,7 +841,7 @@ inconsistent preview. `--json` prints a structured `{"steps": [{"target": "...",
 
 The preview is statically planned, not a guaranteed prediction of what a real run will do: `move
 right`/`move down` (`--new-column`/`--new-row`) always show as planned here, even on a multi-monitor
-setup where a real run's relocation guard (see [JSON output](#json-output) below) would skip one of
+setup where a real run's relocation guard (see [JSON output](#json-output) above) would skip one of
 them to avoid throwing the window onto a different output. Checking that guard needs a live query
 against Sway's actual output layout, which would defeat the point of a preview that works with no
 Sway session running at all.

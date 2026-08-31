@@ -2,7 +2,15 @@
 
 **Status:** done (2026-08-16) — all six variants (`Split`, `Height`, `Width`, `Position`,
 `NewColumn`, `NewRow`) now confirm via `SwayAction::poll_matches()`/`run_poll_then_fallback()` in
-`src/sway_launch.rs` instead of always blind-sleeping `2 * --wait-time`. See "Per-action matching
+`src/sway_launch.rs` instead of always blind-sleeping `2 * --wait-time`. `Sticky` was added as a
+seventh afterwards, on the same mechanism.
+
+**Later changes (2026-08-31):** `poll_matches()` was split in two — `polls()` for the pure "does
+this variant poll at all" decision, `poll_matches()` for the tree read — and now takes a
+`&mut Connection` from its caller instead of opening one per iteration. `expected_position()`
+likewise takes the resolved output `Rect` rather than looking it up. The per-action matching logic
+described below is unchanged; only where the connection comes from is. See CLAUDE.md's "Core
+model" section for the current shape. See "Per-action matching
 logic" below for what each variant actually checks, and "Corrections found during implementation"
 for two assumptions this doc originally got wrong that live-Sway testing caught before they
 shipped. `WAIT_TIME_POLL_GRACE`/`WAIT_TIME_POLL_INTERVAL` were hardcoded (200ms/10ms) per the
@@ -174,7 +182,11 @@ also *avoids* a new false positive the old check didn't have: a solo window whos
 doesn't match the axis (e.g. stacked via `splitv`, then moved right) was confirmed live to
 restructure in place rather than escalate, so the old "solo = always skip" rule would have blocked
 a move that was actually safe. A window nested inside a sub-container is conservatively never
-flagged — that case wasn't confirmed live either way, so this only guards the confirmed risk.
+flagged. That was unconfirmed either way when this was written; it has since been checked live in
+both an axis-mismatched and the axis-matched worst case, and confirmed safe — `move right` pops the
+nested target out to become a direct child of the workspace rather than escalating to another
+output. See `tests/live_sway.rs`'s
+`new_column_does_not_relocate_a_nested_window_to_a_different_output`.
 Confirmed live by `tests/live_sway.rs`'s
 `new_column_does_not_relocate_a_solo_window_to_a_different_output` (existing, still passes) and
 `new_column_does_not_relocate_a_non_solo_window_at_the_trailing_edge` (new).
