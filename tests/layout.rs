@@ -458,6 +458,25 @@ fn layout_target_id_resolves_to_an_earlier_steps_container_id() {
 }
 
 #[test]
+fn layout_rejects_target_id_and_app_id_together() {
+    let path = TempToml::write(
+        "target-id-and-app-id",
+        "[[step]]\nid = \"first\"\ncon_id = 42\n\n\
+         [[step]]\ntarget_id = \"first\"\napp_id = \"foot\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap()])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("step 2"));
+    assert!(stderr.contains("target_id"));
+}
+
+#[test]
 fn layout_rejects_unresolved_target_id() {
     let path = TempToml::write(
         "unresolved-target-id",
