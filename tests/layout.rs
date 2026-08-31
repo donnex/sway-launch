@@ -6,7 +6,7 @@
 use std::fs;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{self, Command};
 
 /// A layout file fixture written to the OS temp directory, removed again
 /// when it goes out of scope (even if an assertion panics mid-test).
@@ -14,8 +14,18 @@ struct TempToml(PathBuf);
 
 impl TempToml {
     fn write(name: &str, contents: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("sway-launch-test-{}.toml", name));
-        fs::write(&path, contents).expect("failed to write temp layout file");
+        // Scoped to a per-process directory rather than written straight
+        // into the shared temp dir under a fixed name. Two of these test
+        // files independently used the fixture name "malformed", so both
+        // wrote the same path -- harmless while cargo runs test binaries one
+        // at a time, but a real collision under a parallel runner (cargo
+        // nextest), under two concurrent `cargo test --test ...` runs, or
+        // with two users on one machine. A predictable path in a shared
+        // /tmp is also writable through a symlink planted by another user.
+        let directory = std::env::temp_dir().join(format!("sway-launch-test-{}", process::id()));
+        fs::create_dir_all(&directory).expect("failed to create temp fixture directory");
+        let path = directory.join(format!("{}.toml", name));
+        fs::write(&path, contents).expect("failed to write temp fixture file");
         Self(path)
     }
 }

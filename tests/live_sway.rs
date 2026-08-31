@@ -186,6 +186,19 @@ impl Drop for KillChildOnDrop {
     }
 }
 
+/// A per-process scratch directory for this suite's fixtures and marker
+/// files, so nothing depends on a fixed path in a shared temp directory —
+/// which another user (or a second concurrent run) could pre-create,
+/// symlink, or collide with. The injection tests below care especially:
+/// they assert a marker file does *not* exist, and a stray file at a
+/// predictable path would fail them for the wrong reason.
+fn test_temp_dir() -> std::path::PathBuf {
+    let directory =
+        std::env::temp_dir().join(format!("sway-launch-live-test-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("failed to create the test temp directory");
+    directory
+}
+
 /// A layout file fixture written to the OS temp directory, removed again
 /// when it goes out of scope (even if an assertion panics mid-test) —
 /// mirrors tests/layout.rs's TempToml.
@@ -193,7 +206,7 @@ struct TempToml(std::path::PathBuf);
 
 impl TempToml {
     fn write(name: &str, contents: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("sway-launch-live-test-{}.toml", name));
+        let path = test_temp_dir().join(format!("{}.toml", name));
         std::fs::write(&path, contents).expect("failed to write temp layout file");
         Self(path)
     }
@@ -2254,7 +2267,7 @@ fn every_basic_example_script_launches_successfully() {
     // covering none of the 11.
     let mut connection = connect();
 
-    let bin_dir = std::env::temp_dir().join("sway-launch-live-test-script-bin");
+    let bin_dir = test_temp_dir().join("script-bin");
     std::fs::create_dir_all(&bin_dir).expect("failed to create temp PATH dir for scripts");
     let fake_bin_path = bin_dir.join("sway-launch");
     std::fs::copy(env!("CARGO_BIN_EXE_sway-launch"), &fake_bin_path)
@@ -3158,16 +3171,19 @@ fn mark_with_special_characters_is_stored_literally_not_executed() {
     // literal mark against a real compositor, rather than being split into
     // multiple Sway commands.
     let mut connection = connect();
-    let malicious_mark =
-        "live-sway-test-injection, exec touch /tmp/sway-launch-live-test-pwned; echo bar";
-    let _ = std::fs::remove_file("/tmp/sway-launch-live-test-pwned");
+    let marker = test_temp_dir().join("injection-pwned");
+    let malicious_mark = format!(
+        "live-sway-test-injection, exec touch {}; echo bar",
+        marker.display()
+    );
+    let _ = std::fs::remove_file(&marker);
 
-    let (container_id, _guard) = launch_foot(&["--mark", malicious_mark]);
+    let (container_id, _guard) = launch_foot(&["--mark", &malicious_mark]);
 
     let node = get_node(&mut connection, container_id);
-    assert!(node.marks.contains(&malicious_mark.to_string()));
+    assert!(node.marks.contains(&malicious_mark));
     assert!(
-        !std::path::Path::new("/tmp/sway-launch-live-test-pwned").exists(),
+        !marker.exists(),
         "mark should be stored literally, not executed as a separate command"
     );
 }
@@ -3219,18 +3235,23 @@ fn mark_with_an_embedded_newline_is_not_executed_as_a_separate_command() {
     // mark, and critically, still as part of ONE literal mark rather than
     // splitting into a separate executed command.
     let mut connection = connect();
-    let malicious_mark =
-        "live-sway-test-newline-injection\nexec touch /tmp/sway-launch-live-test-newline-pwned";
-    let expected_stored_mark =
-        "live-sway-test-newline-injection;exec touch /tmp/sway-launch-live-test-newline-pwned";
-    let _ = std::fs::remove_file("/tmp/sway-launch-live-test-newline-pwned");
+    let marker = test_temp_dir().join("newline-injection-pwned");
+    let malicious_mark = format!(
+        "live-sway-test-newline-injection\nexec touch {}",
+        marker.display()
+    );
+    let expected_stored_mark = format!(
+        "live-sway-test-newline-injection;exec touch {}",
+        marker.display()
+    );
+    let _ = std::fs::remove_file(&marker);
 
-    let (container_id, _guard) = launch_foot(&["--mark", malicious_mark]);
+    let (container_id, _guard) = launch_foot(&["--mark", &malicious_mark]);
 
     let node = get_node(&mut connection, container_id);
-    assert!(node.marks.contains(&expected_stored_mark.to_string()));
+    assert!(node.marks.contains(&expected_stored_mark));
     assert!(
-        !std::path::Path::new("/tmp/sway-launch-live-test-newline-pwned").exists(),
+        !marker.exists(),
         "mark should be stored as one literal mark, not executed as a separate command"
     );
 }
