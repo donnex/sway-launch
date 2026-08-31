@@ -621,6 +621,18 @@ Move the new window to a workspace.
 sway-launch --workspace 2 foot
 ```
 
+The value is always a literal workspace name. Sway's own `move container to workspace` also accepts
+`next`, `prev`, `current`, `back_and_forth` and `number <n>`, but `sway-launch` quotes the value
+before sending it — which is what stops a name containing `,` or `;` from being read back as extra
+Sway commands — so those keywords would be taken as names rather than acted on. `--workspace next`
+creates a workspace literally called `next`. For the keyword forms, capture the container id and
+run `swaymsg` directly:
+
+```shell
+container_id="$(sway-launch foot)"
+swaymsg "[con_id=$container_id] move container to workspace next"
+```
+
 ### Output
 
 Move the new window to a specific output (monitor).
@@ -628,6 +640,10 @@ Move the new window to a specific output (monitor).
 ```shell
 sway-launch --output HDMI-A-1 foot
 ```
+
+As with [Workspace](#workspace) above, the value is always a literal output name — Sway's
+directional keywords (`left`, `right`, `up`, `down`, `current`) are not supported here, and will
+fail as an unknown output. Use `swaymsg` with a captured container id for those.
 
 ### Height and width
 
