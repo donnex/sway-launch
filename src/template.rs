@@ -309,6 +309,23 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
                         slot
                     ));
                 }
+                // Caught here rather than left to to_sway_launch(): the
+                // resulting LayoutStep would fail there too, but as
+                // "step N: existing = true requires app_id, class, or
+                // mark_match" — naming a step the user never wrote, for a
+                // mistake they made in a bindings file. Same reasoning as
+                // the checks above it.
+                if binding.existing
+                    && binding.app_id.is_none()
+                    && binding.class.is_none()
+                    && binding.mark_match.is_none()
+                {
+                    return Err(format!(
+                        "binding for slot {:?}: existing = true requires app_id, class, or \
+                         mark_match",
+                        slot
+                    ));
+                }
 
                 if !used_slots.insert(slot) {
                     return Err(format!("template: slot {:?} is used more than once", slot));
@@ -729,6 +746,25 @@ mod tests {
             .expect("binding mark_match without existing should be rejected");
         assert!(error.contains("editor"));
         assert!(error.contains("mark_match"));
+    }
+
+    #[test]
+    fn resolve_rejects_binding_existing_without_a_matcher_naming_the_slot() {
+        let template = minimal_template(vec![minimal_step()]);
+        let mut binding = minimal_binding();
+        binding.command = None;
+        binding.existing = true;
+        let bindings = Bindings {
+            binding: vec![binding],
+        };
+        let error = resolve(&template, &bindings)
+            .err()
+            .expect("existing without a matcher should be rejected");
+        assert!(
+            error.contains("editor") && error.contains("binding"),
+            "error should be worded in terms of the binding and name its slot, not the resulting \
+             layout step: {error:?}"
+        );
     }
 
     #[test]
