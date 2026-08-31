@@ -807,6 +807,19 @@ fn bindings_from_apps(
 /// of main()'s error-handling style. Shared by `run_layout()` and
 /// `run_template()`, since a resolved template is just more layout steps.
 fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
+    // Checked before the --dry-run/--validate branches so all three modes
+    // agree. A file with no steps parses fine (every field of a layout is
+    // optional), so without this it "succeeded" silently: exit 0, no output,
+    // nothing launched — indistinguishable from a run that worked, and the
+    // likely causes (steps lost to a bad merge, or commented out) are
+    // exactly the ones worth surfacing.
+    if steps.is_empty() {
+        fail(
+            args.json,
+            &format!("no steps found in {}", steps_source(args)),
+        );
+    }
+
     if args.dry_run {
         run_steps_dry_run(steps, args);
     }
@@ -980,15 +993,7 @@ fn run_steps_dry_run(steps: &[layout::LayoutStep], args: &Args) -> ! {
 /// <source> (N step(s))`, or `{"source": ..., "steps": N, "valid": true}`
 /// under `--json`.
 fn run_steps_validate(steps: &[layout::LayoutStep], args: &Args) -> ! {
-    let source = args
-        .layout
-        .as_deref()
-        .or(args.template.as_deref())
-        .expect(
-            "--validate requires --layout or --template, enforced before run_steps() is reached",
-        )
-        .display()
-        .to_string();
+    let source = steps_source(args);
     let default_timeout = time::Duration::from_secs(args.timeout);
     let default_wait_time = time::Duration::from_millis(args.wait_time);
     let mut resolved_ids = HashMap::new();
@@ -1030,6 +1035,19 @@ fn run_steps_validate(steps: &[layout::LayoutStep], args: &Args) -> ! {
         println!("valid: {} ({} step(s))", source, steps.len());
     }
     process::exit(0);
+}
+
+/// The `--layout`/`--template` argument as the user gave it — exactly one is
+/// set by the time `run_steps()` is reached, since that's the only way to
+/// get there. Not canonicalized: the same "echo back what was passed"
+/// convention `--show-template`'s `"name"` field uses.
+fn steps_source(args: &Args) -> String {
+    args.layout
+        .as_deref()
+        .or(args.template.as_deref())
+        .expect("run_steps() is only reachable via --layout or --template")
+        .display()
+        .to_string()
 }
 
 /// Reports a step failure (`step N: <message>`) — shared by every failure

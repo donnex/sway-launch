@@ -374,6 +374,42 @@ fn layout_malformed_toml_errors() {
 }
 
 #[test]
+fn layout_with_no_steps_errors() {
+    // Every layout field is optional, so a file with no [[step]] blocks
+    // parses fine -- and used to "succeed" silently: exit 0, no output,
+    // nothing launched, indistinguishable from a run that worked.
+    let path = TempToml::write("no-steps", "");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap()])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(
+        stderr.contains("no steps found") && stderr.contains("no-steps"),
+        "the error should say what was wrong and name the file: {stderr:?}"
+    );
+}
+
+#[test]
+fn layout_with_no_steps_errors_under_validate_too() {
+    // --validate exists to catch a broken layout without a Sway session, so
+    // it must agree with a real run rather than reporting "valid: 0 step(s)".
+    let path = TempToml::write("no-steps-validate", "");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap(), "--validate"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("no steps found"));
+}
+
+#[test]
 fn layout_step_without_a_target_errors_naming_the_step() {
     let path = TempToml::write("no-target", "[[step]]\n");
 

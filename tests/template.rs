@@ -431,6 +431,36 @@ fn template_rejects_unused_binding() {
 }
 
 #[test]
+fn template_with_no_steps_errors() {
+    // A template's steps are optional too, so one with only a [template]
+    // table resolves to zero steps and used to succeed silently. Driven via
+    // an empty --bindings file rather than --apps, since --apps has no way
+    // to express "zero applications" (an empty string splits to one entry).
+    let template = TempToml::write(
+        "no-steps-template",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n",
+    );
+    let bindings = TempToml::write("no-steps-bindings", "");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            template.to_str().unwrap(),
+            "--bindings",
+            bindings.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(
+        stderr.contains("no steps found"),
+        "the error should say what was wrong: {stderr:?}"
+    );
+}
+
+#[test]
 fn template_rejects_misspelled_step_field() {
     let template = TempToml::write(
         "misspelled-field-template",
