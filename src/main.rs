@@ -964,8 +964,8 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
 /// continuing the numbering across steps, without ever calling `.run()` or
 /// touching Sway IPC. A step's own `id`/`target_id` chain still needs *some*
 /// value to resolve `target_id` lookups against — since nothing actually
-/// launches, there's no real container id yet, so each step's own 1-based
-/// index is used as a synthetic placeholder; that placeholder is never
+/// launches, there's no real container id yet, so each step's own index is
+/// used as a synthetic placeholder; that placeholder is never
 /// printed (`dry_run_step()`'s target/action text never names a container
 /// id at all), it only exists to keep `to_sway_launch()`'s `target_id`
 /// lookups from failing on a step that legitimately references an earlier
