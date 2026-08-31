@@ -194,6 +194,41 @@ fn mark_match_without_existing_errors() {
 }
 
 #[test]
+fn a_closed_stdout_exits_cleanly_instead_of_panicking() {
+    // Rust ignores SIGPIPE, so an unguarded println! into a closed pipe
+    // panics with "failed printing to stdout: Broken pipe" and exits 101.
+    // Reproduced by closing the read end of the child's stdout pipe
+    // immediately after spawning, which is what `| head` amounts to once
+    // head has had enough.
+    //
+    // Best-effort by nature: if the child writes all ~30 lines before the
+    // drop lands they fit the pipe buffer and no EPIPE occurs, in which case
+    // this passes trivially. It can only ever fail for the right reason.
+    // The deterministic version is in tests/live_sway.rs, against
+    // --debug-events, the mode that actually writes until killed.
+    let mut child = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--list-templates"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn sway-launch binary");
+    drop(child.stdout.take());
+
+    let output = child.wait_with_output().expect("sway-launch should exit");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("panicked"),
+        "writing to a closed stdout should not panic: {stderr}"
+    );
+    assert_ne!(
+        output.status.code(),
+        Some(101),
+        "exit 101 is a Rust panic: {stderr}"
+    );
+}
+
+#[test]
 fn debug_events_conflicts_with_a_command() {
     // --debug-events never acts on a window, so a command alongside it could
     // only be discarded -- it used to parse cleanly and dump events while
