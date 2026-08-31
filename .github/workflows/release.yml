@@ -11,15 +11,15 @@ on:
     tags:
       - "v*"
 
-permissions:
-  contents: write
-
 jobs:
   # Mirrors check.yml's checks against the exact tagged commit, so a release
   # can't ship from a commit that never passed CI (e.g. a tag pushed before
   # check.yml ran, or pointing at an older commit).
   check:
     runs-on: ubuntu-latest
+    # Only the release job below writes anything; this one just runs checks.
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -81,6 +81,15 @@ jobs:
   release:
     needs: check
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # The tag name reaches every step below through the environment rather
+    # than being expanded into a shell script by ${{ }}. Git ref names permit
+    # `$`, backticks, `;` and parentheses, so an interpolated tag is shell
+    # source -- reachable only by someone who can already push a tag here,
+    # but the env-var form costs nothing and removes the question.
+    env:
+      REF_NAME: ${{ github.ref_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -93,13 +102,17 @@ jobs:
 
       # The archive name carries the version/platform detail; the binary
       # inside it stays plain `sway-launch` so extracting it needs no
-      # renaming. ARCHIVE_NAME is computed once here (via $GITHUB_ENV) so
-      # the packaging and upload steps below don't repeat the same string.
+      # renaming. ARCHIVE_NAME is published to $GITHUB_ENV so the upload step
+      # below doesn't repeat the same string — but it's also assigned
+      # normally here, rather than read back with `source "$GITHUB_ENV"`.
+      # Sourcing that file executes it as shell, which would have made an
+      # interpolated tag name executable at exactly the point this is trying
+      # to be careful about.
       - name: Package release archive
         run: |
           set -euo pipefail
-          echo "ARCHIVE_NAME=sway-launch-${{ github.ref_name }}-x86_64-unknown-linux-gnu" >> "$GITHUB_ENV"
-          source "$GITHUB_ENV"
+          ARCHIVE_NAME="sway-launch-${REF_NAME}-x86_64-unknown-linux-gnu"
+          echo "ARCHIVE_NAME=$ARCHIVE_NAME" >> "$GITHUB_ENV"
 
           mkdir -p "dist/$ARCHIVE_NAME"
           cp target/release/sway-launch "dist/$ARCHIVE_NAME/sway-launch"
@@ -136,8 +149,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          gh release create "${{ github.ref_name }}" \
+          gh release create "$REF_NAME" \
             "dist/$ARCHIVE_NAME.tar.gz" \
             "dist/$ARCHIVE_NAME.tar.gz.sha256" \
-            --title "${{ github.ref_name }}" \
+            --title "$REF_NAME" \
             --notes-file release-notes.md
