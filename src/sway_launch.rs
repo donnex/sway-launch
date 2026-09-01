@@ -55,6 +55,23 @@ const WAIT_TIME_POLL_GRACE: time::Duration = time::Duration::from_millis(200);
 /// avoiding a zero-sleep busy loop.
 const WAIT_TIME_POLL_INTERVAL: time::Duration = time::Duration::from_millis(10);
 
+/// How long a single Sway IPC request/response round trip may take before the
+/// socket read or write gives up (see `new_connection()`).
+///
+/// Deliberately *not* `--timeout`, and not derived from it. The two bound
+/// different things: `--timeout` is how long to wait for a window *event*,
+/// which legitimately takes seconds because it's waiting on an application to
+/// map a window. This bounds one request/response exchange with the compositor,
+/// which on a healthy system is sub-millisecond regardless of `--timeout`.
+/// Tying them together would mean `--timeout 1` making ordinary tree reads
+/// fail on a merely-slow machine, and `--timeout 60` re-opening a minute-long
+/// hang.
+///
+/// 10s is therefore far above any legitimate round trip while still turning a
+/// wedged compositor into a prompt, clear failure instead of an indefinite
+/// block.
+const IPC_ROUND_TRIP_TIMEOUT: time::Duration = time::Duration::from_secs(10);
+
 // Serialize is test-only, so main.rs's schema-parity test can serialize a
 // LayoutStep/TemplateStep to read its field names back — see
 // schemas_mirror_args_field_for_field there.
@@ -1372,7 +1389,90 @@ impl SwayAction<'_> {
     }
 }
 
+/// A request/response Sway IPC connection whose reads and writes are bounded
+/// by `IPC_ROUND_TRIP_TIMEOUT`, so a compositor that accepts a connection and
+/// then stops answering fails instead of blocking forever.
+///
+/// Without this, `--timeout` bounded only the wait for a confirmation *event*,
+/// not the IPC round trips around it — every `get_tree()`, `get_outputs()` and
+/// `run_command()` was an unbounded blocking read. Confirmed by pointing
+/// `SWAYSOCK` at a socket that accepts and never replies:
+/// `sway-launch --con-id 42 --floating --timeout 2` hung until killed
+/// externally at 15s, because the first thing it does is read the tree.
+///
+/// `swayipc`'s own `Connection::new()` gives no way to configure the socket,
+/// but it does expose `From<UnixStream>`, so the stream is built here instead.
+/// Socket discovery is `I3SOCK`/`SWAYSOCK`, matching `swayipc`'s own order;
+/// when neither is set it falls back to `Connection::new()`, whose remaining
+/// discovery step shells out to `sway --get-socketpath`. That fallback is
+/// unbounded, which is accepted: it only applies when the environment doesn't
+/// name a socket at all, and the subprocess it runs is not the wedged
+/// compositor's IPC socket.
 fn new_connection() -> Result<Connection, String> {
+    if let Some(path) = self::socket_path() {
+        let stream = std::os::unix::net::UnixStream::connect(path)
+            .map_err(|error| format!("failed to connect to the Sway IPC socket: {}", error))?;
+        // Applied to both directions: a wedged compositor can stall a write
+        // (socket buffer full, nothing draining it) as readily as a read.
+        stream
+            .set_read_timeout(Some(IPC_ROUND_TRIP_TIMEOUT))
+            .and_then(|()| stream.set_write_timeout(Some(IPC_ROUND_TRIP_TIMEOUT)))
+            .map_err(|error| format!("failed to set a Sway IPC socket timeout: {}", error))?;
+        return Ok(Connection::from(stream));
+    }
+
+    match Connection::new() {
+        Ok(connection) => Ok(connection),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// Renders a `swayipc` error, turning the socket-timeout case into something
+/// that names the actual problem.
+///
+/// A read or write that hits `IPC_ROUND_TRIP_TIMEOUT` surfaces as a bare
+/// `Resource temporarily unavailable (os error 11)`, which tells a user
+/// nothing about what happened or which knob (if any) relates to it. Every
+/// other error keeps `swayipc`'s own wording, which is already specific —
+/// `command failed with 'No matching node.'` and friends.
+fn ipc_error(error: swayipc::Error) -> String {
+    if let swayipc::Error::Io(io_error) = &error {
+        if matches!(
+            io_error.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ) {
+            return format!(
+                "Sway IPC did not respond within {} sec — the compositor accepted the connection \
+                 but stopped answering (this bounds one request/response exchange, and is \
+                 separate from --timeout)",
+                IPC_ROUND_TRIP_TIMEOUT.as_secs()
+            );
+        }
+    }
+    error.to_string()
+}
+
+/// The Sway IPC socket path from the environment, in `swayipc`'s own
+/// precedence order. `None` when neither variable is set, which is what sends
+/// `new_connection()` down its unbounded fallback.
+fn socket_path() -> Option<std::path::PathBuf> {
+    std::env::var_os("I3SOCK")
+        .or_else(|| std::env::var_os("SWAYSOCK"))
+        .map(std::path::PathBuf::from)
+}
+
+/// The connection `event_loop()` subscribes on, deliberately *without* a read
+/// timeout.
+///
+/// A subscription's whole purpose is to block until an event arrives, so a
+/// socket read timeout would surface a perfectly normal quiet period as an
+/// error. It doesn't need one either: the blocking read happens on a reader
+/// thread whose output the caller collects with `recv_timeout()`, so the
+/// invocation is already bounded by `--timeout` no matter what the socket
+/// does. Only the reader thread can be left blocked, which is the bounded,
+/// measured behaviour documented at `run_wait_matching_events()`'s
+/// `thread::spawn`.
+fn new_event_connection() -> Result<Connection, String> {
     match Connection::new() {
         Ok(connection) => Ok(connection),
         Err(error) => Err(error.to_string()),
@@ -1380,7 +1480,7 @@ fn new_connection() -> Result<Connection, String> {
 }
 
 fn event_loop(subscriptions: &[EventType]) -> Result<EventStream, String> {
-    match self::new_connection()?.subscribe(subscriptions) {
+    match self::new_event_connection()?.subscribe(subscriptions) {
         Ok(event_iterator) => Ok(event_iterator),
         Err(error) => Err(error.to_string()),
     }
@@ -1389,7 +1489,7 @@ fn event_loop(subscriptions: &[EventType]) -> Result<EventStream, String> {
 fn run_sway_command(command: &str) -> Result<(), String> {
     let outcomes = match self::new_connection()?.run_command(command) {
         Ok(outcomes) => outcomes,
-        Err(error) => return Err(error.to_string()),
+        Err(error) => return Err(self::ipc_error(error)),
     };
 
     first_outcome_error(outcomes, command)
@@ -1720,7 +1820,7 @@ fn find_existing_container_id(
 ) -> Result<i64, String> {
     let tree = match self::new_connection()?.get_tree() {
         Ok(tree) => tree,
-        Err(error) => return Err(error.to_string()),
+        Err(error) => return Err(self::ipc_error(error)),
     };
 
     let criteria = if !app_id_match.is_empty() {
@@ -1779,7 +1879,7 @@ fn current_output(con_id: i64) -> Result<Option<String>, String> {
 fn containing_node_name(con_id: i64, kind: NodeType) -> Result<Option<String>, String> {
     let tree = match self::new_connection()?.get_tree() {
         Ok(tree) => tree,
-        Err(error) => return Err(error.to_string()),
+        Err(error) => return Err(self::ipc_error(error)),
     };
 
     Ok(self::find_containing_name(&tree, con_id, kind, None))
@@ -1797,7 +1897,7 @@ fn containing_node_name(con_id: i64, kind: NodeType) -> Result<Option<String>, S
 fn find_container_node(container_id: i64) -> Result<Option<Node>, String> {
     let tree = match self::new_connection()?.get_tree() {
         Ok(tree) => tree,
-        Err(error) => return Err(error.to_string()),
+        Err(error) => return Err(self::ipc_error(error)),
     };
     Ok(self::find_node(&tree, container_id).cloned())
 }
@@ -1867,7 +1967,7 @@ fn tree_shows_container_in_scratchpad(tree: &Node, container_id: i64) -> bool {
 fn container_is_in_scratchpad(container_id: i64) -> Result<bool, String> {
     let tree = match self::new_connection()?.get_tree() {
         Ok(tree) => tree,
-        Err(error) => return Err(error.to_string()),
+        Err(error) => return Err(self::ipc_error(error)),
     };
     Ok(self::tree_shows_container_in_scratchpad(
         &tree,
@@ -1954,7 +2054,7 @@ fn relocates_to_another_output(
 
     let outputs = match connection.get_outputs() {
         Ok(outputs) => outputs,
-        Err(error) => return Err(error.to_string()),
+        Err(error) => return Err(self::ipc_error(error)),
     };
     if outputs.len() < 2 {
         return Ok(false);
@@ -1962,7 +2062,7 @@ fn relocates_to_another_output(
 
     let tree = match connection.get_tree() {
         Ok(tree) => tree,
-        Err(error) => return Err(error.to_string()),
+        Err(error) => return Err(self::ipc_error(error)),
     };
 
     Ok(self::is_at_the_trailing_workspace_edge(
@@ -2019,7 +2119,7 @@ fn find_workspace_node(node: &Node, container_id: i64) -> Option<&Node> {
 fn container_exists(container_id: i64) -> Result<bool, String> {
     let tree = match self::new_connection()?.get_tree() {
         Ok(tree) => tree,
-        Err(error) => return Err(error.to_string()),
+        Err(error) => return Err(self::ipc_error(error)),
     };
     Ok(self::contains_id(&tree, container_id))
 }
@@ -2859,6 +2959,49 @@ mod tests {
         let quoted = quote_sway_string(injected);
         assert_eq!(quoted, "\"foo, exec malicious-command\"");
         assert!(!quoted.trim_matches('"').contains('"'));
+    }
+
+    // ipc_error
+
+    #[test]
+    fn ipc_error_explains_a_socket_timeout() {
+        // A read that hits IPC_ROUND_TRIP_TIMEOUT arrives as a bare
+        // "Resource temporarily unavailable (os error 11)", which says nothing
+        // about what happened. Both kinds are mapped: Linux reports a timed-out
+        // socket read as WouldBlock, other platforms as TimedOut.
+        for kind in [std::io::ErrorKind::WouldBlock, std::io::ErrorKind::TimedOut] {
+            let error = ipc_error(swayipc::Error::Io(std::io::Error::from(kind)));
+            assert!(
+                error.contains("did not respond") && error.contains("10 sec"),
+                "should name the condition and the bound, got {error:?}"
+            );
+            assert!(
+                error.contains("--timeout"),
+                "should say which knob this is *not*, got {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ipc_error_leaves_other_errors_alone() {
+        // swayipc's own wording is already specific for these; rewriting them
+        // would lose the compositor's actual complaint.
+        let error = ipc_error(swayipc::Error::CommandFailed(
+            "No matching node.".to_string(),
+        ));
+        assert!(
+            error.contains("No matching node."),
+            "should keep swayipc's own message, got {error:?}"
+        );
+        assert!(!error.contains("did not respond"));
+    }
+
+    #[test]
+    fn ipc_error_leaves_a_non_timeout_io_error_alone() {
+        let error = ipc_error(swayipc::Error::Io(std::io::Error::from(
+            std::io::ErrorKind::ConnectionRefused,
+        )));
+        assert!(!error.contains("did not respond"), "got {error:?}");
     }
 
     // validate_size_argument / validate_position_argument

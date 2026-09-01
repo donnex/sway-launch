@@ -250,6 +250,69 @@ fn thread_and_socket_count(pid: u32) -> (usize, usize) {
 }
 
 #[test]
+fn a_stalled_sway_socket_fails_instead_of_hanging_forever() {
+    // Deliberately does NOT use the live compositor: it points SWAYSOCK at a
+    // socket that accepts a connection and then never answers, which is the
+    // one thing a real Sway session can't be made to do on demand. It lives in
+    // this suite anyway because it costs ~10s of wall clock -- the headless
+    // `cargo test` run is a fraction of a second and should stay that way,
+    // while this tier is already the slow, environment-dependent one.
+    //
+    // Regression test for a confirmed hang: --timeout bounded only the wait
+    // for a confirmation *event*, never the IPC round trips around it, so
+    // every get_tree()/get_outputs()/run_command() was an unbounded blocking
+    // read. `--con-id 42 --floating --timeout 2` against this socket ran until
+    // killed externally at 15s, because reading the tree is the first thing it
+    // does. IPC_ROUND_TRIP_TIMEOUT now bounds the socket itself.
+    let socket_path = test_temp_dir().join("stalled-sway.sock");
+    let _ = std::fs::remove_file(&socket_path);
+    let listener =
+        std::os::unix::net::UnixListener::bind(&socket_path).expect("failed to bind test socket");
+
+    // Accept and hold, never replying. Keeping the accepted streams alive is
+    // the point: closing them would give the client a clean EOF instead of the
+    // silence being reproduced here.
+    let accepted = std::thread::spawn(move || {
+        let mut held = Vec::new();
+        for stream in listener.incoming() {
+            match stream {
+                Ok(stream) => held.push(stream),
+                Err(_) => break,
+            }
+        }
+    });
+
+    let started = std::time::Instant::now();
+    let output = sway_launch_command()
+        .env("SWAYSOCK", &socket_path)
+        .env_remove("I3SOCK")
+        .args(["--con-id", "42", "--floating", "--timeout", "2"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let elapsed = started.elapsed();
+
+    assert!(
+        !output.status.success(),
+        "a compositor that never answers must be a failure, not a success"
+    );
+    // The bound is IPC_ROUND_TRIP_TIMEOUT (10s), deliberately not --timeout;
+    // see that constant's doc comment for why the two are separate. The
+    // ceiling here only has to be low enough to prove it terminates on its own.
+    assert!(
+        elapsed < std::time::Duration::from_secs(25),
+        "should fail on its own rather than hang; took {elapsed:?}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("did not respond"),
+        "the error should explain that the compositor stopped answering, got {stderr:?}"
+    );
+
+    drop(accepted);
+    let _ = std::fs::remove_file(&socket_path);
+}
+
+#[test]
 fn event_reader_threads_stay_bounded_across_a_long_layout() {
     // Every event-confirmed action spawns a thread owning a Sway IPC event
     // stream, and that thread outlives the action whenever it's still blocked

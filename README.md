@@ -541,6 +541,14 @@ These flags exist for convenience — you could just as well get the container i
 `swaymsg` commands against it, set up window rules with a mark, or use other window rules
 directly.
 
+`--timeout` bounds how long an action waits for its confirmation *event* — the part that depends on
+an application actually mapping a window, so seconds are a sensible unit. It is not the bound on
+talking to the compositor itself: a single Sway IPC request/response is bounded separately, at a
+fixed 10 seconds, so a compositor that accepts a connection and then stops answering fails with a
+clear message rather than blocking forever. The two are deliberately independent — tying them
+together would make `--timeout 1` break ordinary tree reads on a slow machine, and `--timeout 60`
+re-open a minute-long hang.
+
 ### Target an existing window
 
 All the actions above can also run against a window that's already open, instead of always
