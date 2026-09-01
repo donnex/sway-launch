@@ -587,6 +587,28 @@ guard silently not firing. Any *future* test needing a second output should budg
 same way: extend an existing `create_output`-using test rather than defaulting to a new one, unless
 genuinely unavoidable.
 
+**`new_connection()` builds the socket itself rather than calling `Connection::new()`**, so it can
+set a read and write timeout (`IPC_ROUND_TRIP_TIMEOUT`, 10s) on it — `swayipc` exposes no way to
+configure its own connection, but it does implement `From<UnixStream>`. Without this, `--timeout`
+bounded only the wait for a confirmation *event* and never the IPC round trips around it, so a
+compositor that accepted a connection and then stopped answering hung indefinitely: confirmed by
+pointing `SWAYSOCK` at a socket that accepts and never replies, where
+`--con-id 42 --floating --timeout 2` ran until killed externally at 15s (the first thing it does is
+read the tree). Socket discovery is `I3SOCK`/`SWAYSOCK`, matching `swayipc`'s own order, falling
+back to `Connection::new()` — and its `sway --get-socketpath` step — when neither is set; that
+fallback is unbounded, accepted because it only applies when the environment names no socket at
+all. The bound is deliberately *not* `--timeout` and not derived from it: `--timeout` waits on an
+application mapping a window (seconds are reasonable), while this bounds one request/response
+exchange (sub-millisecond on a healthy system), so tying them together would make `--timeout 1`
+break ordinary tree reads and `--timeout 60` restore a minute-long hang. `ipc_error()` maps the
+resulting `WouldBlock`/`TimedOut` into a message naming the condition, since the raw form is
+`Resource temporarily unavailable (os error 11)`. `event_loop()` deliberately uses
+`new_event_connection()` *without* a timeout: a subscription's job is to block until an event
+arrives, so a read timeout would turn a normal quiet period into an error, and it needs no bound
+because the caller collects from the reader thread with `recv_timeout()`. Covered by
+`tests/live_sway.rs`'s `a_stalled_sway_socket_fails_instead_of_hanging_forever` (which needs no
+compositor, but lives there because it costs ~10s) and `sway_launch.rs`'s `ipc_error` unit tests.
+
 Each Sway IPC call opens its own fresh `Connection` (`new_connection()` in `sway_launch.rs`) — there
 is no persistent/shared connection across actions. Two exceptions, both places where more than one
 read answers a single question:
