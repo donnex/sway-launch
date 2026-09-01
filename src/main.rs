@@ -1222,7 +1222,21 @@ fn fail_step(
 
 /// Best-effort `--rollback-on-error` cleanup: kills every id in
 /// `launched_container_ids`, most-recently-launched first, via a fresh
-/// `[con_id] kill` command each. A kill that itself fails (e.g. the window
+/// `[con_id] kill` command each.
+///
+/// Killing by an id recorded earlier has been raised as a time-of-check
+/// problem — the worry being that the id might by then refer to some other
+/// window. It can't: Sway allocates container ids monotonically and does not
+/// reuse them, confirmed by six launch/kill cycles handing out 5, 6, 7, 8, 9,
+/// 10 with no repeat. An id this invocation launched therefore always refers to
+/// exactly the container it launched, or to nothing at all (in which case the
+/// kill fails and is reported — see `RollbackOutcome`).
+///
+/// What remains is not an identity question but a judgement one: the user may
+/// have started *using* that window since it launched, and rollback closes it
+/// anyway. That is deliberate and documented in README's "Layout files"
+/// section — the feature undoes launches, and there is no way to ask a window
+/// whether it has become important to someone. It is opt-in for that reason. A kill that itself fails (e.g. the window
 /// already closed on its own in the meantime) is logged to stderr and
 /// recorded rather than treated as fatal — it doesn't stop the rest of the
 /// rollback, and the original step failure being reported by `fail_step()`
