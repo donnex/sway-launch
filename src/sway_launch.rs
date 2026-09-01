@@ -1863,7 +1863,13 @@ fn relocates_to_another_output(
     container_id: i64,
     direction: MoveDirection,
 ) -> Result<bool, String> {
-    let outputs = match self::new_connection()?.get_outputs() {
+    // One connection for both reads. They answer halves of a single question,
+    // and the early return below means the tree fetch only happens on a
+    // multi-output setup anyway — same reasoning as `run_wait_time()`'s shared
+    // poll connection, just without a loop to amplify the cost.
+    let mut connection = self::new_connection()?;
+
+    let outputs = match connection.get_outputs() {
         Ok(outputs) => outputs,
         Err(error) => return Err(error.to_string()),
     };
@@ -1871,7 +1877,7 @@ fn relocates_to_another_output(
         return Ok(false);
     }
 
-    let tree = match self::new_connection()?.get_tree() {
+    let tree = match connection.get_tree() {
         Ok(tree) => tree,
         Err(error) => return Err(error.to_string()),
     };

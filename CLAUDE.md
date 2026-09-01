@@ -570,13 +570,21 @@ same way: extend an existing `create_output`-using test rather than defaulting t
 genuinely unavoidable.
 
 Each Sway IPC call opens its own fresh `Connection` (`new_connection()` in `sway_launch.rs`) — there
-is no persistent/shared connection across actions. The one exception is a wait-time action's poll
-cycle: `run_wait_time()` opens a single `Connection` and passes it to `poll_baseline()` and every
-`poll_matches()` iteration (see the "No event exists in Sway IPC for it" bullet above), because
-that's the only place the same read repeats up to 20 times inside 200ms. `poll_matches()` and the
-tree/output helpers it calls (`parent_node_layout`, `node_by_id`, `position_matches`,
-`node_and_output_name`, `output_rect`) therefore take `&mut Connection` rather than opening their
-own; everything else still opens its own.
+is no persistent/shared connection across actions. Two exceptions, both places where more than one
+read answers a single question:
+
+- A wait-time action's poll cycle: `run_wait_time()` opens a single `Connection` and passes it to
+  `poll_baseline()` and every `poll_matches()` iteration (see the "No event exists in Sway IPC for
+  it" bullet above), because that's the only place the same read repeats up to 20 times inside
+  200ms. `poll_matches()` and the tree/output helpers it calls (`parent_node_layout`, `node_by_id`,
+  `position_matches`, `node_and_output_name`, `output_rect`) therefore take `&mut Connection`
+  rather than opening their own.
+- `relocates_to_another_output()`: its `get_outputs()` and `get_tree()` calls are two halves of one
+  check, so they share a connection too. Cheaper than the poll cycle's case (there's no loop to
+  amplify it, and the `outputs.len() < 2` early return means the tree fetch only happens on a
+  multi-output setup at all), but there's no reason for the two to differ.
+
+Everything else still opens its own.
 
 ### Output streams
 
