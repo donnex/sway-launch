@@ -1622,6 +1622,14 @@ had no release since September 2024 and still declares the now-deprecated `node2
 nothing newer to bump to; `actions-rust-lang/audit` is a composite action with no Node runtime of
 its own, so it sidesteps the issue rather than just deferring it).
 
+Both workflows declare `GITHUB_TOKEN` permissions explicitly rather than inheriting the repository
+default, which on a repo created before GitHub changed that default (or with it set permissively)
+hands every job a read/write token it has no use for. `check.yml` declares `contents: read` at
+workflow level, with only its `audit` job re-declaring its own (`issues: write`, which the audit
+action needs to file advisories); `release.yml` does the same, scoping `contents: write` to the
+`release` job alone so its `check` job can't write either. Any new job needing more than read
+access should declare it on the job, not widen the workflow-level grant.
+
 `.github/workflows/release.yml` re-runs `check.yml`'s `check` and `lint-scripts-and-docs` checks
 combined into one job (not the coverage gate, not `live-sway-tests` or `audit` — a release build
 doesn't need a compositor or a coverage measurement, and the security audit runs independently on
