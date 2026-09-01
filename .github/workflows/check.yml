@@ -7,6 +7,15 @@ on:
   push:
   pull_request:
 
+# None of these jobs writes anything to the repository -- they check out this
+# repo's own code, lint it and test it. Declared here rather than left to the
+# repository default, which on a repo created before GitHub changed that
+# default (or with it set permissively) hands every job a read/write token it
+# has no use for. The audit job below re-declares its own, since it does need
+# issues: write. Mirrors release.yml, where the same scoping already applies.
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
