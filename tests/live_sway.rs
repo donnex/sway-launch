@@ -1525,6 +1525,22 @@ fn rollback_on_error_handles_a_launched_window_that_already_closed_itself() {
         stderr.contains("\"rolled_back\":[]"),
         "the already-closed window's own kill can't have succeeded: {stderr:?}"
     );
+    // ...and is reported under its own field rather than vanishing. This is
+    // the only way to reach rollback_failed at all -- it needs a step to have
+    // genuinely launched a window (so it's eligible for rollback) whose kill
+    // then fails, which can't happen without a real compositor.
+    assert!(
+        stderr.contains("\"rollback_failed\":["),
+        "a kill that failed should be reported, not silently dropped: {stderr:?}"
+    );
+    // Neither open nor closed, so it must not be reported as still-open
+    // partial progress either: with step 1's id moved into rollback_failed,
+    // nothing is left for container_ids/containers to report and both are
+    // omitted entirely.
+    assert!(
+        !stderr.contains("\"container_ids\":"),
+        "an id whose rollback failed must not also be reported as open: {stderr:?}"
+    );
 }
 
 #[test]

@@ -490,7 +490,41 @@ fn step_action_records_json(
 /// calls above) is still reported via clap's own usage-error formatting
 /// regardless of `--json`, the same as `--help` itself isn't JSON.
 fn fail(json: bool, message: &str) -> ! {
-    fail_with_rollback(json, message, &[], &PartialProgress::default());
+    fail_with_rollback(
+        json,
+        message,
+        &RollbackOutcome::default(),
+        &PartialProgress::default(),
+    );
+}
+
+/// What `--rollback-on-error`'s cleanup actually managed to do: the ids whose
+/// `[con_id] kill` succeeded, and the ids whose kill failed.
+///
+/// The split exists because the two mean genuinely different things to a
+/// caller, and collapsing them loses information either way. A killed window
+/// is definitely gone. A window whose kill *failed* is in an unknown state —
+/// overwhelmingly likely already closed on its own (the case
+/// `rollback_on_error_handles_a_launched_window_that_already_closed_itself`
+/// covers), but a kill can fail for other reasons too, and this run can't
+/// tell which. Reporting it as still-open progress would assert something
+/// untrue; silently dropping it would hide a window the caller may still need
+/// to deal with. So it gets its own field and is excluded from
+/// `PartialProgress`, leaving the three sets unambiguous: `container_ids` is
+/// open, `rolled_back` is closed, `rollback_failed` needs checking.
+#[derive(Default)]
+struct RollbackOutcome {
+    rolled_back: Vec<i64>,
+    failed: Vec<i64>,
+}
+
+impl RollbackOutcome {
+    /// Every id this rollback touched, whatever the result — what
+    /// `PartialProgress` filters out, since none of them can be honestly
+    /// reported as a window still open.
+    fn attempted(&self) -> impl Iterator<Item = &i64> {
+        self.rolled_back.iter().chain(self.failed.iter())
+    }
 }
 
 /// What a multi-step `--layout`/`--template` run had already accomplished
@@ -517,17 +551,26 @@ impl PartialProgress {
     }
 }
 
-/// `fail()`, plus the container ids `run_steps()`'s `--rollback-on-error`
-/// killed before giving up (`rolled_back` is always empty outside that path)
-/// and whatever earlier steps had already completed (see `PartialProgress`).
+/// `fail()`, plus what `run_steps()`'s `--rollback-on-error` managed to close
+/// before giving up (see `RollbackOutcome`; both of its lists are empty
+/// outside that path) and whatever earlier steps had already completed (see
+/// `PartialProgress`).
 fn fail_with_rollback(
     json: bool,
     message: &str,
-    rolled_back: &[i64],
+    rollback: &RollbackOutcome,
     progress: &PartialProgress,
 ) -> ! {
     if json {
-        let mut value = serde_json::json!({ "error": message, "rolled_back": rolled_back });
+        let mut value =
+            serde_json::json!({ "error": message, "rolled_back": rollback.rolled_back });
+        // Omitted rather than reported as empty, so an ordinary failed
+        // rollback-free run's error object keeps exactly the shape it always
+        // had — a caller only ever sees this field when there is genuinely
+        // something it needs to check.
+        if !rollback.failed.is_empty() {
+            value["rollback_failed"] = serde_json::json!(rollback.failed);
+        }
         // Omitted entirely rather than reported as empty for a single
         // invocation, where the concept doesn't apply at all — an empty
         // array there would suggest a multi-step run that got nowhere.
@@ -538,16 +581,32 @@ fn fail_with_rollback(
         eprintln!("{}", value);
     } else {
         eprintln!("{}", message);
-        if !rolled_back.is_empty() {
-            let ids = rolled_back
-                .iter()
-                .map(i64::to_string)
-                .collect::<Vec<_>>()
-                .join(", ");
-            eprintln!("rolled back {} container(s): {}", rolled_back.len(), ids);
+        if !rollback.rolled_back.is_empty() {
+            eprintln!(
+                "rolled back {} container(s): {}",
+                rollback.rolled_back.len(),
+                join_ids(&rollback.rolled_back)
+            );
+        }
+        // The per-failure reason was already reported by rollback() itself as
+        // it happened; this is the summary line, so the count is visible
+        // without re-reading the warnings above it.
+        if !rollback.failed.is_empty() {
+            eprintln!(
+                "failed to roll back {} container(s): {} — check whether they are still open",
+                rollback.failed.len(),
+                join_ids(&rollback.failed)
+            );
         }
     }
     process::exit(1);
+}
+
+fn join_ids(ids: &[i64]) -> String {
+    ids.iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// One step's `--dry-run` preview: its target description plus every
@@ -1120,29 +1179,33 @@ fn fail_step(
     index: usize,
     error: String,
 ) -> ! {
-    let rolled_back = if args.rollback_on_error {
+    let rollback_outcome = if args.rollback_on_error {
         rollback(launched_container_ids)
     } else {
-        Vec::new()
+        RollbackOutcome::default()
     };
-    // Anything just rolled back is gone, so reporting it as still-open
-    // partial progress would be actively misleading.
+    // Anything rollback touched is filtered out, whether the kill succeeded or
+    // not: a killed window is gone, and one whose kill failed is in a state
+    // this run can't vouch for. Reporting either as still-open partial
+    // progress would assert something it doesn't know. The failed ones are
+    // still reported, under their own field — see RollbackOutcome.
+    let attempted: Vec<i64> = rollback_outcome.attempted().copied().collect();
     let progress = PartialProgress {
         container_ids: container_ids
             .iter()
             .copied()
-            .filter(|id| !rolled_back.contains(id))
+            .filter(|id| !attempted.contains(id))
             .collect(),
         containers: resolved_ids
             .iter()
-            .filter(|(_, id)| !rolled_back.contains(id))
+            .filter(|(_, id)| !attempted.contains(id))
             .map(|(name, id)| (name.clone(), *id))
             .collect(),
     };
     fail_with_rollback(
         args.json,
         &format!("step {}: {}", index + 1, error),
-        &rolled_back,
+        &rollback_outcome,
         &progress,
     );
 }
@@ -1151,24 +1214,27 @@ fn fail_step(
 /// `launched_container_ids`, most-recently-launched first, via a fresh
 /// `[con_id] kill` command each. A kill that itself fails (e.g. the window
 /// already closed on its own in the meantime) is logged to stderr and
-/// skipped rather than treated as fatal — it doesn't stop the rest of the
+/// recorded rather than treated as fatal — it doesn't stop the rest of the
 /// rollback, and the original step failure being reported by `fail_step()`
-/// stays the primary error either way. Returns the ids actually killed, for
-/// `fail_with_rollback()` to report alongside that error.
-fn rollback(launched_container_ids: &[i64]) -> Vec<i64> {
-    let mut rolled_back = Vec::new();
+/// stays the primary error either way. Returns both outcomes separately (see
+/// `RollbackOutcome`), for `fail_with_rollback()` to report alongside that
+/// error: "closed" and "tried to close and couldn't" are different facts, and
+/// a caller cleaning up after a failed run needs to tell them apart.
+fn rollback(launched_container_ids: &[i64]) -> RollbackOutcome {
+    let mut outcome = RollbackOutcome::default();
     for &container_id in launched_container_ids.iter().rev() {
         match sway_launch::kill_container(container_id) {
-            Ok(()) => rolled_back.push(container_id),
+            Ok(()) => outcome.rolled_back.push(container_id),
             Err(error) => {
                 eprintln!(
                     "warning: --rollback-on-error failed to close container {}: {}",
                     container_id, error
                 );
+                outcome.failed.push(container_id);
             }
         }
     }
-    rolled_back
+    outcome
 }
 
 #[cfg(test)]

@@ -347,8 +347,11 @@ retargeted an already-open window via `con_id`/`existing`/`target_id` is left al
 window existed before this run and isn't this run's to close. Requires `--layout` or `--template`.
 Rollback doesn't check whether a launched window has since been put to other use — it kills any
 window it recognizes as its own, best-effort, regardless of what's happened to it since launch.
-With `--json`, the error object includes which container ids were closed:
-`{"error": "...", "rolled_back": [123, 456]}`.
+A kill that fails (usually: that window had already closed on its own) is reported and skipped
+rather than stopping the rest of the rollback, and the original step failure stays the error that's
+actually reported. With `--json`, the error object includes which container ids were closed, and
+which ones couldn't be: `{"error": "...", "rolled_back": [123, 456], "rollback_failed": [789]}`
+(see [JSON output](#json-output) below).
 
 This is **window-launch rollback**, not transactional rollback: it undoes *launches*, not
 *actions*. A `move`/`resize`/`mark`/etc. an earlier step applied to a `con_id`/`existing`/
@@ -807,7 +810,18 @@ $ sway-launch --json --con-id 999999 --floating
 ```
 
 `rolled_back` is only ever non-empty when `--rollback-on-error` (see "Layout files" above) actually
-closed something first.
+closed something first. If a rollback kill fails — most often because that window had already
+closed on its own — the id appears under `rollback_failed` instead, a field present only when
+there's something in it:
+
+```shell
+{"error":"step 2: container id 437 no longer exists — window may have closed","rolled_back":[],"rollback_failed":[437]}
+```
+
+The three lists never overlap and mean different things: `container_ids` is still open,
+`rolled_back` was closed by this run, and `rollback_failed` is in a state this run can't vouch for
+and worth checking. An id whose kill failed is deliberately kept out of `container_ids` rather than
+reported as though it were still open.
 
 For a `--layout`/`--template` run, the error object also reports whatever earlier steps had already
 completed, so a caller can identify the windows left open on screen without walking Sway's tree and

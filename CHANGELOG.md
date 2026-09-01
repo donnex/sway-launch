@@ -93,6 +93,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--json` now also applies to error output: a failure prints `{"error": "...", "rolled_back": [...]}`
   instead of a plain-text message, so a `--json` caller doesn't need to also parse plain stderr on
   failure.
+- `--rollback-on-error` now reports a kill it couldn't complete, instead of leaving that window
+  indistinguishable from one it never touched. Under `--json` the id appears in a new
+  `rollback_failed` array (present only when non-empty); in plain output, a summary line follows
+  the existing per-failure warnings. Such an id is also no longer reported in `container_ids` as
+  though it were still open — the three lists now mean exactly "still open", "closed by this run",
+  and "couldn't be closed, worth checking", with no overlap. The usual cause is a window that had
+  already closed on its own before rollback reached it.
 - A failing `--layout`/`--template` run's `--json` error now also reports `container_ids`/
   `containers` for the steps that already completed. Plain output prints each id as its step
   finishes, so a failure there always left the caller able to clean up; `--json` collected them for
