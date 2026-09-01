@@ -302,6 +302,15 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
                     sway_launch::require_non_blank("command", command)
                         .map_err(|error| format!("binding for slot {:?}: {}", slot, error))?;
                 }
+                for (field, value) in [
+                    ("app_id", binding.app_id.as_deref()),
+                    ("class", binding.class.as_deref()),
+                ] {
+                    if let Some(value) = value {
+                        sway_launch::require_non_blank(field, value)
+                            .map_err(|error| format!("binding for slot {:?}: {}", slot, error))?;
+                    }
+                }
                 let match_fields_set = [
                     binding.app_id.is_some(),
                     binding.class.is_some(),
@@ -744,6 +753,44 @@ mod tests {
             .err()
             .expect("binding with class and mark_match together should error");
         assert!(error.contains("editor"));
+    }
+
+    #[test]
+    fn resolve_rejects_a_blank_binding_app_id_naming_the_slot() {
+        let template = minimal_template(vec![minimal_step()]);
+        let mut binding = minimal_binding();
+        binding.command = None;
+        binding.existing = true;
+        binding.app_id = Some("   ".to_string());
+        let bindings = Bindings {
+            binding: vec![binding],
+        };
+        let error = resolve(&template, &bindings)
+            .err()
+            .expect("a blank binding app_id should be rejected");
+        assert!(
+            error.contains("editor") && error.contains("app_id"),
+            "error should name the offending slot and field: {error:?}"
+        );
+    }
+
+    #[test]
+    fn resolve_rejects_a_blank_binding_class_naming_the_slot() {
+        let template = minimal_template(vec![minimal_step()]);
+        let mut binding = minimal_binding();
+        binding.command = None;
+        binding.existing = true;
+        binding.class = Some("".to_string());
+        let bindings = Bindings {
+            binding: vec![binding],
+        };
+        let error = resolve(&template, &bindings)
+            .err()
+            .expect("a blank binding class should be rejected");
+        assert!(
+            error.contains("editor") && error.contains("class"),
+            "error should name the offending slot and field: {error:?}"
+        );
     }
 
     #[test]

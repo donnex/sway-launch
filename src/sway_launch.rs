@@ -1524,6 +1524,28 @@ pub fn validate_sway_string_argument(value: &str) -> Result<String, String> {
     Ok(value.to_string())
 }
 
+/// `require_non_blank()` in the shape clap's `value_parser` wants, for a flag
+/// whose only constraint is "not blank" — `--app-id`/`--class`, the two
+/// window-matching criteria. Unlike `validate_sway_string_argument()` above,
+/// this deliberately does *not* reject `"`/`\`: these values are compared
+/// client-side against a `Node`'s own `app_id`/`class` and never interpolated
+/// into a Sway command, so there's no quoting round trip for those characters
+/// to break, and an XWayland `WM_CLASS` containing one would be legitimate to
+/// match on.
+///
+/// A blank value still has to go, for the same reason a blank `--mark` did:
+/// it can only ever match nothing. It also used to produce a message that
+/// contradicted the command line — an empty `--app-id` was indistinguishable
+/// from an absent one after `unwrap_or_default()`, so `--existing --app-id ''`
+/// reported "--existing requires --app-id, --class, or --mark-match" at a
+/// caller who had just passed `--app-id`.
+pub fn validate_non_blank_argument(value: &str) -> Result<String, String> {
+    if value.trim().is_empty() {
+        return Err("Must not be empty or whitespace-only".to_string());
+    }
+    Ok(value.to_string())
+}
+
 /// Rejects an empty or whitespace-only value for a named field — shared by
 /// every layout/template schema field that's a free-form identifier or
 /// required string (`id`, `target_id`, `slot`, a binding's `command`, a
@@ -2900,6 +2922,29 @@ mod tests {
     #[test]
     fn validate_sway_string_argument_rejects_whitespace_only() {
         assert!(validate_sway_string_argument("   ").is_err());
+    }
+
+    // validate_non_blank_argument
+
+    #[test]
+    fn validate_non_blank_argument_accepts_an_ordinary_value() {
+        assert_eq!(validate_non_blank_argument("foot"), Ok("foot".to_string()));
+    }
+
+    #[test]
+    fn validate_non_blank_argument_rejects_empty_and_whitespace_only() {
+        assert!(validate_non_blank_argument("").is_err());
+        assert!(validate_non_blank_argument("   ").is_err());
+    }
+
+    #[test]
+    fn validate_non_blank_argument_accepts_quotes_and_backslashes() {
+        // Unlike validate_sway_string_argument, these values are compared
+        // client-side against a Node's app_id/class and never interpolated
+        // into a Sway command, so there's no quoting round trip to break --
+        // an XWayland WM_CLASS containing one is legitimate to match on.
+        assert!(validate_non_blank_argument("weird\\class").is_ok());
+        assert!(validate_non_blank_argument("weird\"class").is_ok());
     }
 
     // require_non_blank

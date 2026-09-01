@@ -142,6 +142,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--mark-match`/`mark_match` now requires `--existing`/`existing = true` — previously it silently
   had no effect when combined with a launch command, since a freshly launched window has no marks
   yet to match against.
+- `--app-id`/`--class` (and the matching `--layout` step and `--template` binding fields) now
+  reject a blank value, completing the same rule already applied to the fields below. A blank
+  matcher can only ever match nothing, and an empty `--app-id` was previously indistinguishable
+  from an absent one — so `sway-launch --existing --app-id ''` reported `--existing requires
+  --app-id, --class, or --mark-match` at a caller who had just passed `--app-id`. Unlike the
+  fields below, a double quote or backslash stays allowed here: these are compared against a
+  window's own `app_id`/`class` rather than sent to Sway, so there's no quoting round trip for
+  them to break.
 - `--mark`, `--mark-match`, `--workspace`, `--output` (and the matching `--layout`/`--template`
   step/binding fields) now reject a value that is blank, or that contains a double quote or a
   backslash. Sway stores those two characters with the escape character intact rather than
