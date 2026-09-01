@@ -701,9 +701,22 @@ would have fallen relative to the other actions. Fixed by unifying both into one
 (`ActionRecord { action: String, status: ActionStatus }`, `enum ActionStatus { Changed,
 AlreadySatisfied, Skipped { reason: &'static str } }`), replacing `RunOutcome.actions: Vec<String>`
 and dropping `RunOutcome.skipped` entirely — its contents fold into the same list instead.
-`SwayAction::run()`'s own return type changed from `Result<i64, String>` to `Result<(i64, bool),
-String>` (the `bool` is `already_satisfied`) specifically so `run()` can read back the distinction
-`already_at_target()` already computed internally but previously discarded; `run()` builds each
+`SwayAction::run()`'s own return type changed from `Result<i64, String>` to
+`Result<(i64, ActionOutcome), String>` specifically so `run()` can read back distinctions the
+action layer already computed internally but previously discarded — first `already_at_target()`'s,
+and later the poll/fallback split. `ActionOutcome` (`Changed`/`AlreadySatisfied`/`Unconfirmed`) is
+separate from `ActionStatus` because a skip is decided while *planning* and never reaches `run()`
+at all. **`Unconfirmed` is what a wait-time action reports when it sent its command and the wait
+elapsed without the change ever being observed** — the poll grace period lapsing, a variant with no
+matcher (a `ppt` size has no pixel figure to poll for), or the poll connection failing to open.
+Deliberately not an error: several of these have legitimate outcomes where the expected state never
+arrives (a solo window's resize clamp, a move already at the workspace edge), so failing on them
+would break working layouts. But it is a weaker claim than `Changed`, and folding the two together
+made a wait-time action's "success" quietly weaker than an event-confirmed one's — an external
+review's point, and a fair one. Covered live on both sides by
+`height_confirms_via_poll_when_resized_with_a_sibling` (`"changed"`) and
+`height_and_width_fall_back_gracefully_when_solo_window_clamps_the_resize` (`"unconfirmed"`),
+which run the same command against a window with and without a sibling. `run()` builds each
 `ActionRecord` directly from a `PlannedAction` (see above) — `Run` becomes `Changed`/
 `AlreadySatisfied` depending on that bool, `Skip` becomes `Skipped { reason }` directly, with no
 `.run()` call at all. `main.rs`'s `action_record_json()` renders one record as

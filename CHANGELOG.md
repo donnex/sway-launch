@@ -106,6 +106,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a single object at the end, so a mid-layout failure reported nothing but the error while real
   windows stayed open with no way to identify them. Ids closed by `--rollback-on-error` are
   excluded, and both fields are omitted for a single invocation, which has no partial progress.
+- A wait-time action (`--split`, `--sticky`, `--new-column`, `--new-row`, `--height`, `--width`,
+  `--position`) that sends its command but never observes the change now reports
+  `"status": "unconfirmed"` under `--json`, instead of being indistinguishable from one that was
+  actually confirmed. It is still a success, not an error — several of these have legitimate
+  outcomes where the expected state never arrives (a solo window's resize is silently clamped, a
+  move at the edge of a workspace is a no-op), and a percentage `--height`/`--width` has no pixel
+  figure to check at all — but "we waited long enough" and "we saw it happen" are different claims,
+  and a script chaining actions on the first one can now tell.
 - `--json`'s success output is richer: a single invocation now also reports `"actions"` (every
   planned action, in order, each as `{"action": ..., "status": "changed"|"already_satisfied"|
   "skipped"[, "reason": ...]}` — `"already_satisfied"` covers an action that no-oped because the

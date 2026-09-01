@@ -2939,6 +2939,7 @@ fn height_confirms_via_poll_when_resized_with_a_sibling() {
             "200px",
             "--wait-time",
             "2000",
+            "--json",
         ])
         .output()
         .expect("failed to run sway-launch binary");
@@ -2952,6 +2953,16 @@ fn height_confirms_via_poll_when_resized_with_a_sibling() {
         "--height took {:?} against a 2000ms --wait-time (fallback would take ~4000ms), \
          suggesting it fell back to sleeping instead of confirming via poll",
         started.elapsed()
+    );
+
+    // The other half of the "unconfirmed" distinction: this resize really did
+    // take effect and was observed, so it reports "changed" -- paired with
+    // height_and_width_fall_back_gracefully_when_solo_window_clamps_the_resize,
+    // where the identical command on a solo window reports "unconfirmed".
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("\"status\":\"changed\""),
+        "a confirmed resize should report changed, got {stdout:?}"
     );
 
     let node = get_node(&mut connection, second_id);
@@ -3019,6 +3030,7 @@ fn height_and_width_fall_back_gracefully_when_solo_window_clamps_the_resize() {
             "200px",
             "--wait-time",
             "300",
+            "--json",
         ])
         .output()
         .expect("failed to run sway-launch binary");
@@ -3026,6 +3038,17 @@ fn height_and_width_fall_back_gracefully_when_solo_window_clamps_the_resize() {
         height_output.status.success(),
         "sway-launch --height (solo window) failed: {}",
         String::from_utf8_lossy(&height_output.stderr)
+    );
+    // Succeeding is not the same as having worked, and --json now says which
+    // it was: the clamp means the requested height never appears, so this is
+    // reported as "unconfirmed" rather than passing as "changed". That
+    // distinction is the whole point of the status -- a caller chaining
+    // further actions on the assumption this resize took effect can now see
+    // that it didn't.
+    let height_stdout = String::from_utf8_lossy(&height_output.stdout);
+    assert!(
+        height_stdout.contains("\"status\":\"unconfirmed\""),
+        "a clamped resize should report unconfirmed, got {height_stdout:?}"
     );
 
     let width_output = sway_launch_command()

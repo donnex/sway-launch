@@ -791,6 +791,14 @@ output. `actions` lists every planned action, in order, each as `{"action": ...,
     on the target workspace, etc.), so nothing needed to change; see
     [Floating](#floating)/[Fullscreen](#fullscreen)/[Focus](#focus)/[Workspace](#workspace)/
     [Output](#output)/[Scratchpad](#scratchpad) above for which actions can no-op like this.
+  - `"unconfirmed"` — the command was sent and the wait elapsed, but the change was never
+    observed. Only the [wait time](#wait-time) actions can report this, and it isn't an error:
+    some of them have legitimate outcomes where the expected state never arrives (resizing a
+    window that's the sole occupant of its workspace is silently clamped by Sway; moving one
+    that's already at the edge of its workspace is a no-op), and a percentage `--height`/`--width`
+    has no pixel figure to check against at all. It is a weaker result than `"changed"`, though —
+    if you chain further actions assuming this one took effect, this is the field that tells you
+    it may not have.
   - `"skipped"` — the action was never run at all, with a machine-readable `"reason"` field added
     alongside `"status"`. Currently only `--new-column`/`--new-row`'s multi-output relocation guard
     (see "New column"/"New row" above) produces one.
@@ -924,6 +932,12 @@ back to sleeping the full `--wait-time` again, same as before this fast path exi
 "roughly double `--wait-time`" figure is still the worst case, just no longer the typical one. The
 poll window itself is capped at `--wait-time` too, so on a heavily-loaded system, raising
 `--wait-time` widens the actual confirmation window, not just the fallback sleep.
+
+Falling back is reported, not hidden: the action's `"status"` under
+[`--json`](#json-output) is `"unconfirmed"` rather than `"changed"` whenever the change was never
+observed, so "we waited long enough" is never presented as "we saw it happen". The exit status is
+still success — several of these fallbacks are legitimate no-ops rather than failures — so a script
+that wants to treat unconfirmed as fatal has to check the field.
 
 ```shell
 ...
