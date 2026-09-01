@@ -1636,10 +1636,17 @@ live-Sway case is exactly as much a bug as a missing lint step — see the cover
 
 GitHub Actions is set up: `.github/workflows/check.yml` runs `cargo fmt --check`, `cargo clippy`,
 `cargo build`, `cargo test`, and a `cargo llvm-cov` coverage-regression gate (`--fail-under-lines
-82 --fail-under-regions 80 --fail-under-functions 90`, calibrated to this project's actual measured
+82 --fail-under-regions 80 --fail-under-functions 88`, calibrated to this project's actual measured
 baseline — see the comment above that step in `check.yml` for why a flat number this project didn't
 choose arbitrarily still coexists with the qualitative "cover every pure/logic function" target
-under Rust conventions above) in its `check` job; a separate `lint-scripts-and-docs` job that runs
+under Rust conventions above, and for the arithmetic behind each figure) in its `check` job;
+the functions threshold was lowered from 90 to 88 on 2026-09-01, deliberately: making the poll
+cycle share one connection left `poll_matches()`'s arms genuinely unreachable headlessly, and the
+resulting ~1.6 points of headroom meant the next deliberately-exempt IPC helper would have failed a
+gate never meant to constrain it. When adding IPC-touching code, expect the exemption list under
+Rust conventions to grow rather than the gate to be met — but check the headroom in `check.yml`'s
+comment before assuming there's room, and lower the gate as its own deliberate decision (with the
+comment updated) rather than as a side effect of an unrelated change; a separate `lint-scripts-and-docs` job that runs
 `shellcheck`/`shfmt` on every shell script under `scripts/`/`examples/scripts/` (discovered by
 shebang at run time, not a fixed list, so a newly added script is covered automatically — and the
 one Python script in `scripts/` is excluded by the same mechanism rather than by name),

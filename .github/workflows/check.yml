@@ -46,22 +46,37 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       # Thresholds are calibrated to this project's actual measured baseline
-      # (86.18% regions / 87.21% lines / 91.42% functions as of 2026-08-31 --
-      # down from 87.06/88.51 once the wait-time poll loop started sharing one
-      # connection, which made poll_matches()'s arms genuinely unreachable
-      # headlessly rather than incidentally executed), not an arbitrary
-      # round number: sway_launch.rs's IPC-touching functions are
-      # deliberately exempted from unit-test coverage (see CLAUDE.md's Rust
-      # conventions -- they're exercised by tests/live_sway.rs instead,
-      # which this job can't run headlessly), so a flat 90%+ target isn't
-      # the right bar here the way it might be for a project with no such
+      # (86.54% regions / 87.46% lines / 91.59% functions as of 2026-09-01),
+      # not an arbitrary round number: sway_launch.rs's IPC-touching functions
+      # are deliberately exempted from unit-test coverage (see CLAUDE.md's
+      # Rust conventions -- they're exercised by tests/live_sway.rs instead,
+      # which this job can't run headlessly), so a flat 90%+ target isn't the
+      # right bar here the way it might be for a project with no such
       # exemption list. This gate exists to catch a *regression* (new
-      # pure-logic code added with no test) against the known baseline, not
-      # to enforce an idealized number.
+      # pure-logic code added with no test) against the known baseline, not to
+      # enforce an idealized number.
+      #
+      # --fail-under-functions was lowered from 90 to 88 on 2026-09-01, a
+      # deliberate decision rather than a slip. Sharing one connection across
+      # the wait-time poll cycle moved poll_matches()'s arms from "incidentally
+      # executed while always returning false" to genuinely unreachable without
+      # a compositor, taking function coverage from 93.38% to 91.59% and
+      # leaving only ~1.6 points of headroom over a 90 gate. The next
+      # IPC-touching helper added -- exactly the kind this project exempts on
+      # purpose -- would then have failed a threshold that was never meant to
+      # constrain it, and the "fix" would have been lowering the gate anyway,
+      # under time pressure and looking like a slipped standard.
+      #
+      # The arithmetic, so this can be re-derived rather than re-guessed: 440
+      # functions, 37 currently uncovered. A 90 gate allows 44 uncovered (room
+      # for 7 more); 88 allows 52 (room for ~15). Regions and lines keep ~6.5
+      # and ~5.5 points of headroom respectively and are unchanged. A 3.6-point
+      # function drop would still be a lot of untested pure logic, so the
+      # regression signal survives.
       - name: cargo llvm-cov (coverage regression gate, excluding main.rs)
         run: |
           cargo llvm-cov --locked --ignore-filename-regex 'main\.rs' \
-            --fail-under-lines 82 --fail-under-regions 80 --fail-under-functions 90
+            --fail-under-lines 82 --fail-under-regions 80 --fail-under-functions 88
 
   lint-scripts-and-docs:
     runs-on: ubuntu-latest
