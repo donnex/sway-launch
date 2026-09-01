@@ -158,6 +158,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   window's own `app_id`/`class` rather than sent to Sway, so there's no quoting round trip for
   them to break.
 - `--mark`, `--mark-match`, `--workspace`, `--output` (and the matching `--layout`/`--template`
+  step/binding fields) now also reject a value containing a newline. Sway rewrites it to `;` when
+  storing the value, so a mark set as `a⏎b` came back as `a;b` and could never be found again by
+  `--mark-match` — the same round-trip failure as the double quote and backslash below, reached by
+  a different mechanism. Tabs, carriage returns, and Sway's own `,`/`;` separators are unaffected:
+  all were confirmed to round-trip byte-for-byte, so only the character that actually breaks is
+  rejected.
+- `--mark`, `--mark-match`, `--workspace`, `--output` (and the matching `--layout`/`--template`
   step/binding fields) now reject a value that is blank, or that contains a double quote or a
   backslash. Sway stores those two characters with the escape character intact rather than
   unescaping them, so a mark set as `dropdown"term` was silently stored as `dropdown\"term` and
