@@ -12,12 +12,14 @@ mod template;
 struct Args {
     /// app_id match. With --existing, matches an already-open window instead
     /// of the newly launched one
-    #[clap(short, long, conflicts_with_all = ["class", "con_id", "mark_match"])]
+    #[clap(short, long, conflicts_with_all = ["class", "con_id", "mark_match"],
+        value_parser = sway_launch::validate_non_blank_argument)]
     app_id: Option<String>,
 
     /// class match. With --existing, matches an already-open window instead
     /// of the newly launched one
-    #[clap(short, long, conflicts_with_all = ["con_id", "mark_match"])]
+    #[clap(short, long, conflicts_with_all = ["con_id", "mark_match"],
+        value_parser = sway_launch::validate_non_blank_argument)]
     class: Option<String>,
 
     /// Mark match. With --existing, matches an already-open window carrying
@@ -1485,6 +1487,22 @@ mod tests {
             "dropdown\"term",
         ]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn args_rejects_a_blank_app_id() {
+        // Regression test: an empty --app-id was indistinguishable from an
+        // absent one after unwrap_or_default(), so `--existing --app-id ''`
+        // reported "--existing requires --app-id, --class, or --mark-match"
+        // at a caller who had just passed --app-id. Rejected at parse time
+        // now, naming the flag.
+        assert!(Args::try_parse_from(["sway-launch", "--existing", "--app-id", ""]).is_err());
+        assert!(Args::try_parse_from(["sway-launch", "--existing", "-a", "   "]).is_err());
+    }
+
+    #[test]
+    fn args_rejects_a_blank_class() {
+        assert!(Args::try_parse_from(["sway-launch", "--existing", "-c", "  "]).is_err());
     }
 
     #[test]
