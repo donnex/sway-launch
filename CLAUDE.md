@@ -217,7 +217,25 @@ stated goal (safer internals, less repeated parsing) to actually land.
   `run_wait_matching_events()` for every variant except `Exec` (which gets its own
   `run_wait_matching_exec_event()`, below): connects to Sway, sends the command, then reads the
   event stream until a `Window` event matches (checked via `matches_window_event()`, container id
-  for every one of these variants), or the `--timeout` is hit. `Workspace` and `Output` both use
+  for every one of these variants) **and** `state_satisfied()` confirms the requested state is
+  actually in effect, or the `--timeout` is hit.
+
+  That second check is the difference between "Sway emitted this event type for this container" and
+  "what this action asked for is what applied". Container id gives object identity, not causality:
+  when something else drives the same window — another `sway-launch`, a keybinding, a `swaymsg` in
+  the same script — its events are indistinguishable from ours, so two invocations sending
+  `move workspace 2` and `move workspace 3` at once each see a `Move` for their container and, on
+  the event alone, both report success while the window is on exactly one of them. `Focus` is the
+  most exposed, focus being inherently global. An event that doesn't bring the requested state with
+  it is logged under `--verbose` and the loop keeps waiting. Requiring the state rather than
+  preferring it is safe because Sway applies a command before emitting its event and serves IPC
+  requests in order, so a `get_tree()` issued after receiving the event already reflects it — not a
+  settle race, and confirmed by the live suite running in the same 42s it did before the check
+  existed. `state_satisfied()` is also what `already_at_target()` now delegates to, so the
+  pre-command no-op check and the post-event confirmation can't drift apart; `Mark` is the one
+  variant deliberately excluded from the *pre*-command half (re-applying a mark does fire the
+  event, so there's no hang to avoid, and short-circuiting would misreport a real re-apply as
+  `AlreadySatisfied`). `Workspace` and `Output` both use
   `WindowChange::Move`, since moving to a different workspace/output reparents the container in
   Sway's tree — confirmed reliable against a live Sway session by `tests/live_sway.rs`'s
   `workspace_moves_window_to_named_workspace` and `output_moves_window_to_named_output`

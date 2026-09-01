@@ -175,6 +175,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An action that waits on a Sway IPC event (`--floating`, `--fullscreen`, `--focus`,
+  `--workspace`, `--output`, `--mark`, `--scratchpad`) now confirms that the state it asked for is
+  actually in effect, instead of treating the arrival of the matching event as proof on its own. An
+  event only says Sway emitted that event type for that container — if something else is driving
+  the same window (another `sway-launch`, a keybinding, a `swaymsg` in the same script), two
+  invocations sending `--workspace 2` and `--workspace 3` at once would each see their own
+  container's `Move` event and both report success, while the window is on exactly one of them.
+  The event is now the signal to look, and the tree is what confirms.
 - An action that waits on a Sway IPC event (`--floating`, `--fullscreen`, `--focus`, `--workspace`,
   `--output`, `--mark`, `--scratchpad`) now fails immediately, naming the container, when its target
   window has already closed. Previously only the poll-based actions checked this, so on Sway 1.9 —

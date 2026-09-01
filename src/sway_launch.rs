@@ -667,52 +667,84 @@ impl SwayAction<'_> {
     /// comment covers). Every other action falls through to `None`
     /// unconditionally, which this never touches.
     ///
+    /// `Mark` is the one event-confirmed action deliberately excluded here
+    /// even though `state_satisfied()` below can answer for it: re-applying a
+    /// mark the container already has *does* fire `WindowChange::Mark`, so
+    /// there's no hang to avoid, and short-circuiting would report it as
+    /// `AlreadySatisfied` when the command genuinely does re-apply.
     fn already_at_target(&self) -> Result<Option<i64>, String> {
+        if matches!(self, SwayAction::Mark { .. }) {
+            return Ok(None);
+        }
+        let Some(container_id) = self.container_id() else {
+            return Ok(None);
+        };
+        if self.state_satisfied()? {
+            Ok(Some(container_id))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Whether this action's requested end state currently holds, read from
+    /// Sway's tree. `false` for every action that confirms by polling instead
+    /// (`Split`, `Sticky`, `Height`, `Width`, `Position`, `NewColumn`,
+    /// `NewRow`) and for `Exec`, none of which reach this.
+    ///
+    /// Used twice, for two different questions. Before the command runs,
+    /// `already_at_target()` asks it to detect a no-op Sway would fire no
+    /// event for. *After* a matching event arrives,
+    /// `run_wait_matching_events()` asks it again — because an event proves
+    /// only that Sway emitted that event type for this container, not that the
+    /// state this action asked for is the one that ended up applying.
+    ///
+    /// The gap is reachable whenever something else is driving the same
+    /// window: another `sway-launch` process, a keybinding, a `swaymsg` in the
+    /// same script. Two invocations sending `move workspace 2` and
+    /// `move workspace 3` at once each see a `WindowChange::Move` for their
+    /// container and, on the event alone, both report success — while the
+    /// window is on exactly one of them. The same reasoning applies to
+    /// floating, fullscreen, focus (inherently global, so the most exposed),
+    /// output, mark and scratchpad. Checking the state turns the event from
+    /// the confirmation into what it actually is: a wake-up telling us it's
+    /// worth looking.
+    ///
+    /// Safe to require rather than merely prefer, because Sway applies a
+    /// command before emitting its event and serves IPC requests in order, so
+    /// a `get_tree()` issued after receiving the event already reflects it —
+    /// this is not a settle race. If the state genuinely isn't there, the
+    /// event was someone else's and waiting for the next one is correct.
+    fn state_satisfied(&self) -> Result<bool, String> {
         match self {
             SwayAction::Workspace {
                 container_id,
                 workspace,
                 ..
-            } => match self::current_workspace(*container_id)? {
-                Some(current) if current == *workspace => Ok(Some(*container_id)),
-                _ => Ok(None),
-            },
+            } => Ok(self::current_workspace(*container_id)?.as_deref() == Some(*workspace)),
             SwayAction::Output {
                 container_id,
                 output,
                 ..
-            } => match self::current_output(*container_id)? {
-                Some(current) if current == *output => Ok(Some(*container_id)),
-                _ => Ok(None),
-            },
+            } => Ok(self::current_output(*container_id)?.as_deref() == Some(*output)),
             SwayAction::Floating { container_id, .. } => {
-                match self::find_container_node(*container_id)? {
-                    Some(node) if self::node_is_floating(&node) => Ok(Some(*container_id)),
-                    _ => Ok(None),
-                }
+                Ok(self::find_container_node(*container_id)?
+                    .is_some_and(|node| self::node_is_floating(&node)))
             }
             SwayAction::Fullscreen { container_id, .. } => {
-                match self::find_container_node(*container_id)? {
-                    Some(node) if node.fullscreen_mode.is_some_and(|mode| mode != 0) => {
-                        Ok(Some(*container_id))
-                    }
-                    _ => Ok(None),
-                }
+                Ok(self::find_container_node(*container_id)?
+                    .is_some_and(|node| node.fullscreen_mode.is_some_and(|mode| mode != 0)))
             }
             SwayAction::Focus { container_id, .. } => {
-                match self::find_container_node(*container_id)? {
-                    Some(node) if node.focused => Ok(Some(*container_id)),
-                    _ => Ok(None),
-                }
+                Ok(self::find_container_node(*container_id)?.is_some_and(|node| node.focused))
             }
             SwayAction::Scratchpad { container_id, .. } => {
-                if self::container_is_in_scratchpad(*container_id)? {
-                    Ok(Some(*container_id))
-                } else {
-                    Ok(None)
-                }
+                self::container_is_in_scratchpad(*container_id)
             }
-            _ => Ok(None),
+            SwayAction::Mark {
+                container_id, mark, ..
+            } => Ok(self::find_container_node(*container_id)?
+                .is_some_and(|node| self::window_mark_match(&node, mark))),
+            _ => Ok(false),
         }
     }
 
@@ -1253,6 +1285,23 @@ impl SwayAction<'_> {
 
             match self.matches_window_event(&window) {
                 Ok(result) => {
+                    // The event identifies the right container and the right
+                    // event type, which is not the same as the requested state
+                    // having been what applied — another IPC client driving the
+                    // same window produces events indistinguishable from ours.
+                    // See state_satisfied()'s doc comment.
+                    if !self.state_satisfied()? {
+                        if self.verbose() {
+                            eprintln!(
+                                "Event match: {:?} container id {} ({}), but the requested state \
+                                 is not in effect — another client may be driving this window; \
+                                 waiting for the next event",
+                                window.change, window.container.id, result
+                            );
+                        }
+                        continue;
+                    }
+
                     if self.verbose() {
                         eprintln!(
                             "Event match: {:?} container id {} ({})",
