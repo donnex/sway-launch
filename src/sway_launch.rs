@@ -1005,13 +1005,12 @@ impl SwayAction<'_> {
     /// `PID_MARKER_FALLBACK_GRACE` elapses, whichever comes first, bounding
     /// how long a genuinely ambiguous case can add to the wait.
     ///
-    /// Same background-thread/socket lifetime caveat as
-    /// `run_wait_matching_events()`: the thread reading this action's event
-    /// stream may outlive this function if still blocked on the socket when
-    /// we return, and a multi-step `--layout`/`--template` run calling this
-    /// once per `Exec` step accumulates one such thread/socket per step
-    /// rather than staying bounded. See the comment at that function's own
-    /// `thread::spawn` call for the full reasoning.
+    /// Same background-thread/socket lifetime as `run_wait_matching_events()`:
+    /// the thread reading this action's event stream may outlive this function
+    /// if still blocked on the socket when we return, but is retired by the
+    /// next window event to arrive — which, in a multi-step run, is the next
+    /// step's own. Measured bounded, not accumulating; see the comment at that
+    /// function's `thread::spawn` call for the mechanism and the numbers.
     fn run_wait_matching_exec_event(&self) -> Result<i64, String> {
         let SwayAction::Exec {
             command,
@@ -1182,21 +1181,33 @@ impl SwayAction<'_> {
         // Read events on a separate thread and forward them through a
         // channel, so recv_timeout() below enforces a real deadline even if
         // the event stream itself never produces another event (a blocking
-        // iterator has no way to time out on its own). The thread may
-        // outlive this function if it's still blocked on the socket when we
-        // return — harmless for a single direct-CLI invocation, since
-        // sway-launch is a short-lived process and the thread dies with it.
-        // A multi-step --layout/--template run calls this once per
-        // event-confirmed action, though, and the process keeps running for
-        // the rest of the steps — each still-blocked thread (and the Sway
-        // IPC socket it holds open) only gets cleaned up once an unrelated
-        // Sway window event happens to wake it, or the whole process exits
-        // after the last step. For a large generated layout with many
-        // event-confirmed actions, this accumulates rather than staying
-        // bounded; there's no public way to interrupt the underlying
-        // blocking EventStream read from another thread to close this
-        // promptly, so it's accepted as a known scaling limit rather than
-        // fought here.
+        // iterator has no way to time out on its own).
+        //
+        // The thread outlives this function whenever it's still blocked on the
+        // socket as we return: there's no public way to interrupt a blocking
+        // EventStream read from another thread, so it can only notice its
+        // receiver is gone the next time an event actually arrives, at which
+        // point send() fails, the loop breaks, and the thread and its Sway IPC
+        // socket are released.
+        //
+        // That drains itself in practice rather than accumulating, because the
+        // events that wake a stale reader are the very ones the *next*
+        // event-confirmed action produces: Sway broadcasts every window event
+        // to every subscription, so step N's own confirming event is what
+        // retires step N-1's reader. Measured against a live compositor rather
+        // than assumed — a 300-step layout of event-confirmed actions peaked at
+        // 2 threads and 3 sockets, and a 15-step layout launching a real window
+        // per step at 3 and 3. Pinned by tests/live_sway.rs's
+        // `event_reader_threads_stay_bounded_across_a_long_layout`.
+        //
+        // An earlier version of this comment claimed the opposite ("for a large
+        // generated layout ... this accumulates rather than staying bounded")
+        // and was believed for long enough to reach an external reviewer, who
+        // reasonably rated it a high-severity resource leak on the strength of
+        // it. The bound is a real property worth stating, but note it depends
+        // on later events arriving: the *last* event-confirmed action's reader
+        // does stay blocked until the process exits, which is why the bound is
+        // a small constant rather than zero.
         let (event_sender, event_receiver) = mpsc::channel();
         thread::spawn(move || {
             for event in event_loop {
