@@ -92,6 +92,17 @@ impl LayoutStep {
         if let Some(target_id) = self.target_id.as_deref() {
             sway_launch::require_non_blank("target_id", target_id)?;
         }
+        // Checked before the emptiness-based target logic below, which reads a
+        // blank value as "set" (it isn't empty) while every later use reads it
+        // as a criterion that can only ever match nothing.
+        for (field, value) in [
+            ("app_id", self.app_id.as_deref()),
+            ("class", self.class.as_deref()),
+        ] {
+            if let Some(value) = value {
+                sway_launch::require_non_blank(field, value)?;
+            }
+        }
 
         let app_id_match = self.app_id.as_deref().unwrap_or_default();
         let class_match = self.class.as_deref().unwrap_or_default();
@@ -769,6 +780,52 @@ mod tests {
                 &HashMap::new()
             )
             .is_err());
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_a_blank_app_id() {
+        // A blank matcher isn't empty, so the target logic reads it as "set"
+        // while every later use can only ever match nothing -- the same
+        // silently-unsatisfiable input already rejected for mark/workspace/
+        // output.
+        let mut step = minimal_step();
+        step.command = None;
+        step.existing = true;
+        step.app_id = Some("   ".to_string());
+        let error = step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &HashMap::new(),
+            )
+            .err()
+            .expect("a blank app_id should be rejected");
+        assert!(
+            error.contains("app_id"),
+            "error should name the field: {error:?}"
+        );
+    }
+
+    #[test]
+    fn to_sway_launch_rejects_a_blank_class() {
+        let mut step = minimal_step();
+        step.command = None;
+        step.existing = true;
+        step.class = Some("".to_string());
+        let error = step
+            .to_sway_launch(
+                time::Duration::from_secs(5),
+                time::Duration::from_millis(20),
+                false,
+                &HashMap::new(),
+            )
+            .err()
+            .expect("a blank class should be rejected");
+        assert!(
+            error.contains("class"),
+            "error should name the field: {error:?}"
+        );
     }
 
     #[test]
