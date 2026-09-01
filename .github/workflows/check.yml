@@ -67,12 +67,22 @@ jobs:
       # constrain it, and the "fix" would have been lowering the gate anyway,
       # under time pressure and looking like a slipped standard.
       #
-      # The arithmetic, so this can be re-derived rather than re-guessed: 440
-      # functions, 37 currently uncovered. A 90 gate allows 44 uncovered (room
-      # for 7 more); 88 allows 52 (room for ~15). Regions and lines keep ~6.5
-      # and ~5.5 points of headroom respectively and are unchanged. A 3.6-point
-      # function drop would still be a lot of untested pure logic, so the
-      # regression signal survives.
+      # The arithmetic, so this can be re-derived rather than re-guessed: 451
+      # functions, 40 currently uncovered. A 90 gate would allow 45 uncovered
+      # (room for 5 more); 88 allows 54 (room for ~14). Regions and lines keep
+      # ~6.7 and ~5.4 points of headroom respectively and are unchanged. A
+      # 3.1-point function drop would still be a lot of untested pure logic, so
+      # the regression signal survives.
+      #
+      # Revisited 2026-09-01 after an external review suggested restoring 90
+      # once the polling predicates were extracted into pure functions. The
+      # extraction was done and was worth doing on its own merit (node_position
+      # is now unit-tested rather than reachable only through a live get_tree),
+      # but restoring 90 would be wrong: state_satisfied() was added in the same
+      # cycle and is itself IPC-touching and exempt, so measured function
+      # coverage sits at 91.13% -- barely a point over a 90 gate, which is the
+      # exact squeeze lowering it to 88 was meant to end. Extract predicates
+      # because it makes the logic testable, not to chase the threshold back up.
       - name: cargo llvm-cov (coverage regression gate, excluding main.rs)
         run: |
           cargo llvm-cov --locked --ignore-filename-regex 'main\.rs' \

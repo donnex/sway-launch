@@ -1256,12 +1256,16 @@ comments, name things clearly instead" style). Two rule-specific overrides:
     `container_exists`, `parent_node_layout`, `node_by_id`, `find_container_node`,
     `container_is_in_scratchpad`,
     `position_matches`, `node_and_output_name`, `output_rect`, `SwayAction::poll_matches`
-    (`expected_position` is *not* exempt any more: it used to look the output geometry up itself,
-    which made its `"center"` arm unreachable without a live socket — it now takes the resolved
-    `Rect` as an argument, so every arm is ordinary pure logic and stays coverage-measured, with
-    `position_matches` doing the lookup instead),
+    (`expected_position` and `node_position` are *not* exempt: `expected_position` used to look the
+    output geometry up itself, which made its `"center"` arm unreachable without a live socket, and
+    the decoration-frame-vs-`rect` choice used to sit inline in `position_matches` for the same
+    reason — both now take resolved values as arguments, so every arm is ordinary pure logic and
+    stays coverage-measured, with `position_matches` doing the lookups. Prefer this shape for any
+    new matcher: keep the decision pure and let the IPC layer fetch, rather than burying a
+    comparison behind a `&mut Connection` where the coverage gate can't see it),
     `find_existing_container_id`'s connection call,
-    `SwayAction::run`, `SwayAction::already_at_target`, `SwayAction::poll_baseline`'s
+    `SwayAction::run`, `SwayAction::already_at_target`, `SwayAction::state_satisfied`,
+    `SwayAction::poll_baseline`'s
     `NewColumn`/`NewRow` arm, `current_workspace`, `current_output`, `containing_node_name`,
     `relocates_to_another_output`, `SwayLaunch::run`, `SwayLaunch::build_actions`'s
     `NewColumn`/`NewRow` arms (their `relocates_to_another_output()` call — the rest of

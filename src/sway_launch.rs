@@ -2156,14 +2156,35 @@ fn position_matches(connection: &mut Connection, container_id: i64, position: &P
             .and_then(|name| self::output_rect(connection, name)),
         Position::Coordinates { .. } => None,
     };
-    let Some((expected_x, expected_y)) = self::expected_position(position, &node, output_rect)
-    else {
+    let Some(expected) = self::expected_position(position, &node, output_rect) else {
         return false;
     };
+    self::node_position(&node) == expected
+}
+
+/// The `(x, y)` a `move position` command actually lands `node` at — the
+/// decoration-inclusive frame origin, which is `deco_rect` for an ordinary
+/// window and `rect` for one that has no decoration geometry at all.
+///
+/// Split out from `position_matches()` so this comparison is ordinary pure
+/// logic with its own tests, rather than something only reachable through a
+/// live `get_tree()`: an external review pointed out that burying decision
+/// logic behind a `&mut Connection` is what pushes correctness-critical code
+/// below the coverage gate. `expected_position()` was separated from its own
+/// output lookup for the same reason.
+///
+/// The `deco_rect`-unset case is a fullscreen window: confirmed live that its
+/// `deco_rect` stays `{0, 0, 0, 0}` permanently — stable across a multi-second
+/// sweep, not a transient — since Sway never computes decoration geometry for
+/// a window with no border or titlebar to draw. `move position` still lands
+/// `rect.x`/`rect.y` on the requested target immediately, so without this
+/// fallback such a position could never be confirmed by polling and every
+/// invocation burned the full grace period before falling back.
+fn node_position(node: &Node) -> (i32, i32) {
     if node.deco_rect.width == 0 && node.deco_rect.height == 0 {
-        node.rect.x == expected_x && node.rect.y == expected_y
+        (node.rect.x, node.rect.y)
     } else {
-        node.deco_rect.x == expected_x && node.deco_rect.y == expected_y
+        (node.deco_rect.x, node.deco_rect.y)
     }
 }
 
@@ -4601,6 +4622,44 @@ mod tests {
     fn compute_center_position_accounts_for_a_non_origin_output() {
         let output_rect = rect(1920, 100, 1280, 720);
         assert_eq!(compute_center_position(output_rect, 400, 300), (2360, 310));
+    }
+
+    // node_position
+
+    fn node_with_rects(rect_x: i32, rect_y: i32, deco_x: i32, deco_y: i32, deco_set: bool) -> Node {
+        let mut value = leaf_node_value(10, Some("foot"), None);
+        value["rect"] = serde_json::json!({"x": rect_x, "y": rect_y, "width": 400, "height": 300});
+        value["deco_rect"] = if deco_set {
+            serde_json::json!({"x": deco_x, "y": deco_y, "width": 400, "height": 25})
+        } else {
+            serde_json::json!({"x": 0, "y": 0, "width": 0, "height": 0})
+        };
+        serde_json::from_value(value).expect("valid Node test fixture")
+    }
+
+    #[test]
+    fn node_position_uses_the_decoration_frame_for_an_ordinary_window() {
+        let node = node_with_rects(100, 225, 100, 200, true);
+        assert_eq!(node_position(&node), (100, 200));
+    }
+
+    #[test]
+    fn node_position_falls_back_to_rect_when_decoration_geometry_is_unset() {
+        // A fullscreen window: Sway never computes deco_rect for a window
+        // with no border/titlebar, so it stays {0,0,0,0} permanently while
+        // `move position` still lands rect.x/rect.y on the target. Comparing
+        // deco_rect alone would make such a position unconfirmable.
+        let node = node_with_rects(100, 200, 0, 0, false);
+        assert_eq!(node_position(&node), (100, 200));
+    }
+
+    #[test]
+    fn node_position_does_not_treat_a_zero_origin_decoration_as_unset() {
+        // Only zero *width and height* means "no decoration geometry". A
+        // window legitimately positioned at the origin still has a real
+        // deco_rect, and must not be misread as the fullscreen case.
+        let node = node_with_rects(0, 25, 0, 0, true);
+        assert_eq!(node_position(&node), (0, 0));
     }
 
     // expected_position
