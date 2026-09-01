@@ -175,6 +175,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A compositor that accepts an IPC connection and then stops answering no longer hangs
+  `sway-launch` indefinitely. `--timeout` bounded only the wait for a confirmation event, never the
+  IPC round trips around it, so every tree read and command dispatch was an unbounded blocking
+  socket read — `--con-id N --floating --timeout 2` against a wedged socket ran until killed. A
+  single request/response is now bounded at 10 seconds and fails with a message saying so.
+  `--timeout` is unchanged and still means "how long to wait for the confirmation event"; the two
+  are deliberately separate, so a short `--timeout` doesn't break ordinary tree reads on a slow
+  machine.
 - An action that waits on a Sway IPC event (`--floating`, `--fullscreen`, `--focus`,
   `--workspace`, `--output`, `--mark`, `--scratchpad`) now confirms that the state it asked for is
   actually in effect, instead of treating the arrival of the matching event as proof on its own. An
