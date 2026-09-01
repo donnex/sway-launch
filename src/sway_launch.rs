@@ -626,15 +626,18 @@ impl SwayAction<'_> {
         }
     }
 
-    /// Runs this action for real, returning the container id it acted on
-    /// alongside whether `already_at_target()` short-circuited it (`true`)
-    /// rather than actually changing anything (`false`) — `SwayLaunch::run()`
-    /// uses this to distinguish `ActionStatus::AlreadySatisfied` from
-    /// `ActionStatus::Changed` in `RunOutcome`/`--json`. `Exec` is the one
-    /// variant `already_at_target()` never short-circuits (a freshly
-    /// launched window is inherently a change, never already-satisfied), so
-    /// it's always `false` there.
-    fn run(&self) -> Result<(i64, bool), String> {
+    /// Runs this action for real, returning the container id it acted on and
+    /// how confidently it can say what happened — which `SwayLaunch::run()`
+    /// turns into the `ActionStatus` reported in `RunOutcome`/`--json`.
+    ///
+    /// The three outcomes are genuinely different claims, and collapsing them
+    /// was misleading: an event-confirmed action that observed its state, an
+    /// action that short-circuited because the state already held, and a
+    /// wait-time action that sent its command and never saw the change appear
+    /// are not equally strong results. `Exec` is always `Changed` — a freshly
+    /// launched window is inherently a change, and `already_at_target()` never
+    /// short-circuits it.
+    fn run(&self) -> Result<(i64, ActionOutcome), String> {
         if self.verbose() {
             eprintln!("Sway action: {}", self);
         }
@@ -646,17 +649,27 @@ impl SwayAction<'_> {
                     container_id
                 );
             }
-            return Ok((container_id, true));
+            return Ok((container_id, ActionOutcome::AlreadySatisfied));
         }
 
-        let container_id = match self {
-            SwayAction::Exec { .. } => self.run_wait_matching_exec_event(),
+        match self {
+            SwayAction::Exec { .. } => self
+                .run_wait_matching_exec_event()
+                .map(|container_id| (container_id, ActionOutcome::Changed)),
             _ => match self.matching_window_change_events() {
-                Some(_) => self.run_wait_matching_events(),
-                None => self.run_wait_time(),
+                Some(_) => self
+                    .run_wait_matching_events()
+                    .map(|container_id| (container_id, ActionOutcome::Changed)),
+                None => self.run_wait_time().map(|(container_id, confirmed)| {
+                    let outcome = if confirmed {
+                        ActionOutcome::Changed
+                    } else {
+                        ActionOutcome::Unconfirmed
+                    };
+                    (container_id, outcome)
+                }),
             },
-        }?;
-        Ok((container_id, false))
+        }
     }
 
     /// Checks whether the container is already where/how a given action
@@ -912,13 +925,17 @@ impl SwayAction<'_> {
     /// behavior: assume success and sleep out the rest of `wait_time`,
     /// mirroring `run_wait_matching_exec_event()`'s
     /// `PID_MARKER_FALLBACK_GRACE` fallback.
+    /// Returns the container id and whether the change was actually observed —
+    /// `false` means the grace period elapsed and this fell back to sleeping,
+    /// which the caller reports as `ActionStatus::Unconfirmed` rather than
+    /// letting it pass as an ordinary success.
     fn run_poll_then_fallback(
         &self,
         connection: &mut Connection,
         container_id: i64,
         wait_time: time::Duration,
         baseline: Option<swayipc::Rect>,
-    ) -> i64 {
+    ) -> (i64, bool) {
         // Capped at `wait_time`: `WAIT_TIME_POLL_GRACE` (200ms) is only a
         // sound upper bound when `--wait-time` is at least that — at the
         // CLI's own 20ms default, polling for the full 200ms before
@@ -938,7 +955,7 @@ impl SwayAction<'_> {
                 if self.verbose() {
                     eprintln!("Confirmed via poll (container id: {})", container_id);
                 }
-                return container_id;
+                return (container_id, true);
             }
             if poll_started.elapsed() >= grace {
                 break;
@@ -954,10 +971,18 @@ impl SwayAction<'_> {
             );
         }
         thread::sleep(wait_time.saturating_sub(poll_started.elapsed()));
-        container_id
+        (container_id, false)
     }
 
-    fn run_wait_time(&self) -> Result<i64, String> {
+    /// Returns the container id and whether the requested change was actually
+    /// observed. `false` covers every route to "we sent the command and waited,
+    /// but never saw it take effect": the poll grace period elapsing, a variant
+    /// with no poll matcher at all (a `ppt` size has no pixel figure to check),
+    /// and failing to open the poll connection. The caller reports that as
+    /// `ActionStatus::Unconfirmed` — it is not the same claim as a confirmed
+    /// change, and reporting it as one is what made a wait-time action's
+    /// "success" weaker than an event-confirmed action's without saying so.
+    fn run_wait_time(&self) -> Result<(i64, bool), String> {
         let wait_time = self.duration();
 
         if self.verbose() {
@@ -1028,7 +1053,9 @@ impl SwayAction<'_> {
 
         thread::sleep(wait_time);
 
-        Ok(container_id)
+        // Nothing was polled for, so nothing was observed. Honest rather than
+        // optimistic: this is the ppt-size case, and the no-connection case.
+        Ok((container_id, false))
     }
 
     /// `Exec`-only variant of `run_wait_matching_events()`: matching purely
@@ -2444,7 +2471,7 @@ impl<'a> SwayLaunch<'a> {
                 timeout: self.timeout,
             }
             .run()
-            .map(|(container_id, _already_satisfied)| container_id),
+            .map(|(container_id, _outcome)| container_id),
             Target::ConId(container_id) => Ok(container_id),
             Target::Existing => self::find_existing_container_id(
                 self.app_id_match,
@@ -2665,13 +2692,13 @@ impl<'a> SwayLaunch<'a> {
             let record = match planned {
                 PlannedAction::Run(action) => {
                     let verb = action.sway_command_verb();
-                    let (_, already_satisfied) = action.run()?;
+                    let (_, outcome) = action.run()?;
                     ActionRecord {
                         action: verb,
-                        status: if already_satisfied {
-                            ActionStatus::AlreadySatisfied
-                        } else {
-                            ActionStatus::Changed
+                        status: match outcome {
+                            ActionOutcome::Changed => ActionStatus::Changed,
+                            ActionOutcome::AlreadySatisfied => ActionStatus::AlreadySatisfied,
+                            ActionOutcome::Unconfirmed => ActionStatus::Unconfirmed,
                         },
                     }
                 }
@@ -2735,7 +2762,29 @@ pub struct ActionRecord {
 pub enum ActionStatus {
     Changed,
     AlreadySatisfied,
+    Unconfirmed,
     Skipped { reason: &'static str },
+}
+
+/// What `SwayAction::run()` observed, before `SwayLaunch::run()` folds it
+/// together with the skip case into an `ActionStatus`. Separate from
+/// `ActionStatus` because a skip is decided while *planning* and never reaches
+/// `run()` at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActionOutcome {
+    /// The change was observed: a confirmation event arrived and the requested
+    /// state was in effect, or a poll saw it take hold.
+    Changed,
+    /// The state already held, so the command was never sent.
+    AlreadySatisfied,
+    /// The command was sent and the wait elapsed, but the change was never
+    /// observed. Not an error — several wait-time actions have legitimate
+    /// outcomes where the expected state never arrives (a solo window's resize
+    /// is silently clamped by Sway, a move at the edge of a workspace is a
+    /// no-op), and failing on those would turn a working layout into a broken
+    /// one. It is, however, a weaker claim than `Changed`, and saying so is
+    /// the point.
+    Unconfirmed,
 }
 
 /// One `SwayAction` `SwayLaunch::build_actions()` planned to run, or one it
