@@ -426,10 +426,16 @@ fn exit_on_write_failure(error: &io::Error) -> ! {
 }
 
 /// Renders one `ActionRecord` as `--json`'s per-action object:
-/// `{"action": ..., "status": "changed"|"already_satisfied"|"skipped"}`,
-/// with a `"reason"` field added only for `"skipped"` (the same
-/// machine-readable `SkippedAction.reason` identifier this project has
-/// always used, not prose).
+/// `{"action": ..., "status":
+/// "changed"|"already_satisfied"|"unconfirmed"|"skipped"}`, with a `"reason"`
+/// field added only for `"skipped"` (the same machine-readable
+/// `SkippedAction.reason` identifier this project has always used, not prose).
+///
+/// `"unconfirmed"` is deliberately its own status rather than folded into
+/// `"changed"`: the command was sent and the wait elapsed, but the change was
+/// never observed. That's a weaker claim than the other two make, and a caller
+/// chaining actions on the assumption the previous one took effect is exactly
+/// who needs to be able to tell.
 fn action_record_json(record: &sway_launch::ActionRecord) -> serde_json::Value {
     match record.status {
         sway_launch::ActionStatus::Changed => serde_json::json!({
@@ -439,6 +445,10 @@ fn action_record_json(record: &sway_launch::ActionRecord) -> serde_json::Value {
         sway_launch::ActionStatus::AlreadySatisfied => serde_json::json!({
             "action": record.action,
             "status": "already_satisfied",
+        }),
+        sway_launch::ActionStatus::Unconfirmed => serde_json::json!({
+            "action": record.action,
+            "status": "unconfirmed",
         }),
         sway_launch::ActionStatus::Skipped { reason } => serde_json::json!({
             "action": record.action,
@@ -1685,6 +1695,10 @@ mod tests {
                 status: sway_launch::ActionStatus::AlreadySatisfied,
             },
             sway_launch::ActionRecord {
+                action: "resize set width 400px".to_string(),
+                status: sway_launch::ActionStatus::Unconfirmed,
+            },
+            sway_launch::ActionRecord {
                 action: "new_column".to_string(),
                 status: sway_launch::ActionStatus::Skipped {
                     reason: "trailing_workspace_edge",
@@ -1696,6 +1710,7 @@ mod tests {
             serde_json::json!([
                 { "action": "floating enable", "status": "changed" },
                 { "action": "focus", "status": "already_satisfied" },
+                { "action": "resize set width 400px", "status": "unconfirmed" },
                 { "action": "new_column", "status": "skipped", "reason": "trailing_workspace_edge" },
             ])
         );
