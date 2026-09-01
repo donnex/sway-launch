@@ -226,6 +226,110 @@ impl Drop for TempToml {
     }
 }
 
+/// The number of threads and open sockets `pid` currently holds, read from
+/// `/proc`. Both are `0` once the process has exited, which the sampling loop
+/// in `event_reader_threads_stay_bounded_across_a_long_layout` relies on to
+/// stop rather than treating as a real measurement.
+fn thread_and_socket_count(pid: u32) -> (usize, usize) {
+    let threads = std::fs::read_dir(format!("/proc/{pid}/task"))
+        .map(|entries| entries.count())
+        .unwrap_or(0);
+    let sockets = std::fs::read_dir(format!("/proc/{pid}/fd"))
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    std::fs::read_link(entry.path())
+                        .map(|target| target.to_string_lossy().starts_with("socket:"))
+                        .unwrap_or(false)
+                })
+                .count()
+        })
+        .unwrap_or(0);
+    (threads, sockets)
+}
+
+#[test]
+fn event_reader_threads_stay_bounded_across_a_long_layout() {
+    // Every event-confirmed action spawns a thread owning a Sway IPC event
+    // stream, and that thread outlives the action whenever it's still blocked
+    // on the socket -- there's no way to interrupt a blocking EventStream read
+    // from outside. The question this pins is whether those readers accumulate
+    // with step count or drain themselves.
+    //
+    // They drain: Sway broadcasts every window event to every subscription, so
+    // step N's own confirming event is what wakes step N-1's orphaned reader,
+    // whose receiver is gone, so it breaks out and releases both thread and
+    // socket. The cost is therefore a small constant, not O(steps).
+    //
+    // This test exists because the code comment here previously asserted the
+    // opposite -- that a large layout accumulates one thread and socket per
+    // event-confirmed action -- which was never measured, and was taken at
+    // face value by an external reviewer as a high-severity resource leak.
+    // An unverified claim in a comment is exactly as costly as an unverified
+    // claim in code, so the property is now enforced rather than described.
+    //
+    // Mark is used for every step because it is the one event-confirmed action
+    // with no already_at_target() short-circuit: re-applying a mark still
+    // fires WindowChange::Mark, so all 120 steps genuinely wait on an event
+    // and spawn a reader, rather than short-circuiting into a no-op.
+    let (container_id, _guard) = launch_foot(&[]);
+
+    const STEPS: usize = 120;
+    let mut layout = String::new();
+    for step in 0..STEPS {
+        layout.push_str(&format!(
+            "[[step]]\ncon_id = {container_id}\nmark = \"bounded-{step}\"\n\n"
+        ));
+    }
+    let path = TempToml::write("event-reader-bound", &layout);
+
+    let mut child = sway_launch_command()
+        .args(["--layout", path.to_str().unwrap()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn sway-launch");
+    let pid = child.id();
+
+    let mut max_threads = 0;
+    let mut max_sockets = 0;
+    let mut samples = 0;
+    while child.try_wait().expect("failed to poll child").is_none() {
+        let (threads, sockets) = thread_and_socket_count(pid);
+        // A zero reading means the process exited between try_wait() and the
+        // /proc read; don't fold that into the maximum.
+        if threads > 0 {
+            max_threads = max_threads.max(threads);
+            max_sockets = max_sockets.max(sockets);
+            samples += 1;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let status = child.wait().expect("failed to wait for child");
+    assert!(status.success(), "the layout run itself should succeed");
+
+    assert!(
+        samples >= 5,
+        "too few samples ({samples}) to conclude anything about resource growth"
+    );
+
+    // Generous ceilings relative to the ~3/~3 actually measured: the point is
+    // to catch a return to O(steps) growth, not to pin an exact number that a
+    // scheduling difference could jitter past.
+    assert!(
+        max_threads <= 12,
+        "event-reader threads should stay bounded regardless of step count, but a \
+         {STEPS}-step layout peaked at {max_threads} threads (over {samples} samples) -- \
+         if this grew with STEPS, the readers are accumulating again"
+    );
+    assert!(
+        max_sockets <= 12,
+        "Sway IPC sockets should stay bounded regardless of step count, but a {STEPS}-step \
+         layout peaked at {max_sockets} open sockets (over {samples} samples)"
+    );
+}
+
 fn launch_foot(extra_args: &[&str]) -> (i64, KillOnDrop) {
     // A higher --wait-time than the 20ms CLI default: the headless/pixman
     // compositor these tests run against is otherwise flaky on multi-action
