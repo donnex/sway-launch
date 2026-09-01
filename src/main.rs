@@ -1359,6 +1359,36 @@ mod tests {
     }
 
     #[test]
+    fn readme_help_block_matches_the_rendered_help() {
+        // README.md embeds the CLI's own help output verbatim, and nothing
+        // kept the two in sync: it drifted silently once before, when giving
+        // --debug-events a multi-paragraph doc comment switched clap into its
+        // long-help layout and `--help` stopped matching the block entirely
+        // (while `-h` still did, bar one line). Found only by diffing by hand.
+        //
+        // Compared against render_help() (the short form, what `-h` prints)
+        // rather than render_long_help(), because that's the compact layout
+        // the README carries deliberately -- the long form runs to 126 lines
+        // and would crowd out the rest of the file.
+        //
+        // Read via CARGO_MANIFEST_DIR rather than a relative path so this
+        // doesn't depend on the test harness's working directory.
+        let readme = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
+        )
+        .expect("README.md should be readable");
+
+        let rendered = Args::command().render_help().to_string();
+        let rendered = rendered.trim_end();
+
+        assert!(
+            readme.contains(rendered),
+            "README.md's help block is out of sync with the CLI's own `-h` output. \
+             Replace the block with:\n\n{rendered}\n"
+        );
+    }
+
+    #[test]
     fn args_accepts_valid_workspace_and_position() {
         let args = Args::try_parse_from([
             "sway-launch",

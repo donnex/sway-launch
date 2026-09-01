@@ -918,6 +918,18 @@ has a known history of interacting badly with `#[serde(deny_unknown_fields)]` on
 this project's explicit typo-catching regression tests (see `parse_rejects_misspelled_step_field`
 in both `layout.rs` and `template.rs`).
 
+**README.md's embedded help block is pinned the same way**, by `main.rs`'s
+`readme_help_block_matches_the_rendered_help`: it reads README.md back at runtime (via
+`CARGO_MANIFEST_DIR`, so it doesn't depend on the harness's working directory) and asserts the file
+still contains `Args::command().render_help()` verbatim, printing the correct replacement block in
+the failure message. It's the only place in the repo where documentation is a copy of program
+output, and it had already drifted silently once — giving `--debug-events` a multi-paragraph doc
+comment switched clap into its long-help layout, so `--help` stopped matching the block entirely
+while `-h` still matched it bar one line, caught only by diffing the two by hand during a docs
+review. Compared against `render_help()` (short form) rather than `render_long_help()` deliberately:
+the compact layout is what belongs in a README, since the long form runs to 126 lines. Deterministic
+because `clap`'s `wrap_help` feature isn't enabled, so rendering never consults a terminal width.
+
 ### Built-in templates (`--template <name>`, `--list-templates`, `--show-template`)
 
 `--template`'s argument can be either a path to a template file ending in `.toml` (the original
