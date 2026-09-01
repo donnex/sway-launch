@@ -666,6 +666,7 @@ impl SwayAction<'_> {
     /// for the unrelated reason `matching_window_change_events()`'s doc
     /// comment covers). Every other action falls through to `None`
     /// unconditionally, which this never touches.
+    ///
     fn already_at_target(&self) -> Result<Option<i64>, String> {
         match self {
             SwayAction::Workspace {
@@ -1531,6 +1532,28 @@ pub fn validate_sway_string_argument(value: &str) -> Result<String, String> {
              value would not round-trip",
             character
         ));
+    }
+    // A newline is rewritten rather than stored: confirmed live (2026-09-01)
+    // that `mark "a<LF>b"` is stored as `a;b`, so --mark-match could never
+    // find it again — the same round-trip failure as `"`/`\` above, reached by
+    // a different mechanism (Sway's parser normalizing the separator rather
+    // than keeping an escape character).
+    //
+    // Only the newline. Probed the neighbouring control characters against a
+    // live compositor rather than assuming a category: tab and carriage return
+    // both round-trip byte-for-byte, as do `,`/`;` and ordinary text, so
+    // rejecting control characters as a class would be over-rejection.
+    //
+    // This was missed when `"`/`\` were fixed because the tests covering
+    // newlines asserted the *storage* behaviour (one literal mark, nothing
+    // executed — which was and is true) rather than whether the value came
+    // back out again.
+    if value.contains('\n') {
+        return Err(
+            "Must not contain a newline — Sway rewrites it to \";\" when storing the value, so \
+             the value would not round-trip"
+                .to_string(),
+        );
     }
     Ok(value.to_string())
 }
@@ -2907,10 +2930,33 @@ mod tests {
     fn validate_sway_string_argument_accepts_command_separators() {
         // These are exactly what quote_sway_string() exists to neutralize,
         // and Sway does store them literally inside the quotes (confirmed
-        // live) -- so they must stay accepted, unlike `"`/`\` below.
+        // live) -- so they must stay accepted, unlike `"`/`\`/newline below.
         assert!(validate_sway_string_argument("foo, exec bar").is_ok());
         assert!(validate_sway_string_argument("foo; exec bar").is_ok());
-        assert!(validate_sway_string_argument("foo\nexec bar").is_ok());
+    }
+
+    #[test]
+    fn validate_sway_string_argument_accepts_tab_and_carriage_return() {
+        // Probed live against a real compositor: both round-trip
+        // byte-for-byte through `mark`, unlike the newline below -- so
+        // rejecting control characters as a class would over-reject.
+        assert!(validate_sway_string_argument("foo\tbar").is_ok());
+        assert!(validate_sway_string_argument("foo\rbar").is_ok());
+    }
+
+    #[test]
+    fn validate_sway_string_argument_rejects_a_newline() {
+        // Regression test: confirmed live that Sway rewrites a newline inside
+        // a quoted value to ";" when storing it (`mark "a<LF>b"` is stored as
+        // `a;b`), so --mark/--mark-match could never round-trip such a value
+        // -- the same failure as `"`/`\`, missed when those were fixed because
+        // the newline tests asserted safe storage rather than the round trip.
+        let error = validate_sway_string_argument("foo\nexec bar")
+            .expect_err("a newline should be rejected");
+        assert!(
+            error.contains("newline"),
+            "error should name the offending character: {error:?}"
+        );
     }
 
     #[test]

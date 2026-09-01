@@ -3347,32 +3347,51 @@ fn mark_containing_command_separators_still_round_trips_through_mark_match() {
 fn mark_with_an_embedded_newline_is_not_executed_as_a_separate_command() {
     // Companion to the comma/semicolon case above, for a character
     // quote_sway_string() doesn't escape at all (only `\`/`"` are).
-    // Confirmed live (this project's security review, 2026-08-21) that
-    // Sway's own command parser normalizes a raw newline inside the quoted
-    // mark into a literal `;` when storing it -- so, unlike the comma case,
-    // this does NOT assert byte-identical storage of the input; it asserts
-    // what was actually observed: the newline becomes `;` in the stored
-    // mark, and critically, still as part of ONE literal mark rather than
-    // splitting into a separate executed command.
-    let mut connection = connect();
+    //
+    // This used to assert that Sway stored such a mark as one literal mark
+    // with the newline normalized to `;` -- true, and it proved nothing was
+    // executed. What it missed is that the normalization means the value
+    // never comes back out again: a mark set as "a<LF>b" is stored as "a;b",
+    // so --mark-match could never find it. That's the same round-trip failure
+    // `"`/`\` were rejected for, and it survived because this test asked what
+    // Sway *stored* rather than whether the value survived.
+    //
+    // The value is now rejected before it reaches Sway, so this asserts the
+    // rejection and, still, that nothing was executed as a side effect --
+    // which is the part worth checking against a real compositor rather than
+    // at the clap level.
     let marker = test_temp_dir().join("newline-injection-pwned");
     let malicious_mark = format!(
         "live-sway-test-newline-injection\nexec touch {}",
         marker.display()
     );
-    let expected_stored_mark = format!(
-        "live-sway-test-newline-injection;exec touch {}",
-        marker.display()
-    );
     let _ = std::fs::remove_file(&marker);
 
-    let (container_id, _guard) = launch_foot(&["--mark", &malicious_mark]);
+    let output = sway_launch_command()
+        .args([
+            "--app-id",
+            "foot",
+            "--timeout",
+            "10",
+            "--mark",
+            &malicious_mark,
+            "foot",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
 
-    let node = get_node(&mut connection, container_id);
-    assert!(node.marks.contains(&expected_stored_mark));
+    assert!(
+        !output.status.success(),
+        "a mark containing a newline should be rejected, not silently rewritten by Sway"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("newline"),
+        "the error should name the offending character: {stderr:?}"
+    );
     assert!(
         !marker.exists(),
-        "mark should be stored as one literal mark, not executed as a separate command"
+        "nothing in the mark may be executed, whether it is accepted or rejected"
     );
 }
 
