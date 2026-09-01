@@ -613,7 +613,18 @@ their *shape* on stderr does follow `--json`: a `{"error": "...", "rolled_back":
 instead of a plain-text line, mirroring the structured success shapes below rather than leaving a
 `--json` caller to also parse plain-text stderr on failure. `rolled_back` is only ever non-empty
 when `run_steps()`'s `--rollback-on-error` (see "`--layout`" below) actually killed something
-first — every other error path passes an empty slice. A failing multi-step run's error object also
+first — every other error path passes an empty `RollbackOutcome`. That type carries the kills that
+*failed* separately (`rollback_failed` in `--json`, present only when non-empty; a summary line in
+plain output, after the per-failure warnings `rollback()` already emitted): "closed" and "tried to
+close and couldn't" are different facts, and collapsing them loses information either way — a
+failed kill usually means the window had already closed on its own, but this run can't confirm
+that, so reporting it as still-open progress would assert something untrue while dropping it would
+hide a window the caller may still need to deal with. `fail_step()` therefore filters *every*
+attempted id out of `PartialProgress`, not just the successful ones, leaving the three lists
+non-overlapping: `container_ids` open, `rolled_back` closed, `rollback_failed` unknown. Only
+reachable with a real compositor (a step must have genuinely launched a window for it to be
+rollback-eligible at all), so it's covered by `tests/live_sway.rs`'s
+`rollback_on_error_handles_a_launched_window_that_already_closed_itself`. A failing multi-step run's error object also
 carries `container_ids`/`containers` for the steps that *did* complete (`main.rs`'s
 `PartialProgress`, threaded from `run_steps()` through `fail_step()` into `fail_with_rollback()`):
 plain output prints each id as its step finishes, so a mid-layout failure there still leaves the
