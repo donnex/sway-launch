@@ -16,3 +16,22 @@ fn completions_bash_prints_something_and_exits_zero() {
     assert!(output.status.success());
     assert!(!output.stdout.is_empty());
 }
+
+#[test]
+fn completions_rejects_json_rather_than_ignoring_it() {
+    // Regression test: --completions' conflict list already covers every
+    // other argument it could only discard (a command, the per-window flags,
+    // --bindings/--apps, --dry-run/--validate), but --json was missing, so
+    // `--completions bash --json` printed the ordinary shell script and threw
+    // the flag away. Unlike --list-templates/--show-template, a completion
+    // script has no JSON shape to take.
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--completions", "bash", "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        !output.status.success(),
+        "--completions --json should be rejected, not silently ignored"
+    );
+}

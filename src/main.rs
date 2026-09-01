@@ -127,12 +127,17 @@ struct Args {
     debug_events: bool,
 
     /// Generate a shell completion script and print it to stdout
+    ///
+    /// Conflicts with --json, unlike the other standalone modes: a completion
+    /// script is shell source, so there is no JSON shape for it to take, and
+    /// accepting the flag could only discard it. --list-templates and
+    /// --show-template both do have one, which is why they don't conflict.
     #[clap(long, value_enum, conflicts_with_all = [
         "command", "con_id", "existing", "app_id", "class", "mark_match", "split",
         "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
         "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
         "layout", "template", "list_templates", "bindings", "apps", "rollback_on_error", "dry_run", "validate",
-        "show_template",
+        "show_template", "json",
     ])]
     completions: Option<clap_complete::Shell>,
 
