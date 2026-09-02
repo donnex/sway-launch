@@ -345,6 +345,20 @@ sway-launch --layout layout.toml --rollback-on-error
 Only windows this invocation itself launched (a step's `command`) are ever closed — a step that
 retargeted an already-open window via `con_id`/`existing`/`target_id` is left alone, since that
 window existed before this run and isn't this run's to close. Requires `--layout` or `--template`.
+
+One more window is left alone: one this run matched but couldn't confirm it launched. `sway-launch`
+tags the process it starts with a private marker and prefers a window whose process carries it, but
+falls back to matching on `app_id`/`class` alone when no marked window appears — which is what makes
+single-instance applications (browsers, editors, anything that hands a second invocation off to an
+already-running process) work. When that fallback is used because the launched process is *gone*,
+nothing marked can still be coming and the window is treated as this run's own. When it's used
+because the wait simply elapsed while the launched process is still running, the matching window
+came from somewhere else — another launcher, another `sway-launch`, or something the user opened at
+the wrong moment — and rollback leaves it open rather than killing a window it can't prove is its
+own. It's still reported as an open container id (see `container_ids` under
+[JSON output](#json-output)), so a script that wants it closed can do so itself. `--verbose` says
+when this happens.
+
 Rollback doesn't check whether a launched window has since been put to other use — it kills any
 window it recognizes as its own, best-effort, regardless of what's happened to it since launch.
 A kill that fails (usually: that window had already closed on its own) is reported and skipped
