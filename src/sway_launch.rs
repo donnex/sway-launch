@@ -753,37 +753,49 @@ impl SwayAction<'_> {
     /// a `get_tree()` issued after receiving the event already reflects it —
     /// this is not a settle race. If the state genuinely isn't there, the
     /// event was someone else's and waiting for the next one is correct.
+    ///
+    /// Split in two: this half fetches, `state_satisfies()` below decides. The
+    /// decision is the part worth testing exhaustively and the part with no
+    /// business talking to a socket, so it takes a `ContainerState` and stays
+    /// ordinary pure logic — the same shape `position_matches()`/
+    /// `expected_position()` already use, and what this project asks of any new
+    /// matcher (see CLAUDE.md's coverage note). One `get_tree()` answers for
+    /// every variant, where the previous per-arm helpers each fetched their
+    /// own.
     fn state_satisfied(&self) -> Result<bool, String> {
+        let Some(container_id) = self.container_id() else {
+            return Ok(false);
+        };
+        // Every variant `state_satisfies()` answers `false` for regardless of
+        // state is one with no confirming event, so there's nothing to read a
+        // tree for.
+        if self.matching_window_change_events().is_none() {
+            return Ok(false);
+        }
+        Ok(self.state_satisfies(self::container_state(container_id)?.as_ref()))
+    }
+
+    /// Whether `state` is the state this action asked for. `None` — the
+    /// container isn't in the tree at all — is never satisfied: a window that
+    /// has closed isn't floating, focused or on the target workspace, and
+    /// reporting it as already-there would short-circuit an action into
+    /// claiming success over a container that no longer exists.
+    fn state_satisfies(&self, state: Option<&ContainerState>) -> bool {
+        let Some(state) = state else {
+            return false;
+        };
+
         match self {
-            SwayAction::Workspace {
-                container_id,
-                workspace,
-                ..
-            } => Ok(self::current_workspace(*container_id)?.as_deref() == Some(*workspace)),
-            SwayAction::Output {
-                container_id,
-                output,
-                ..
-            } => Ok(self::current_output(*container_id)?.as_deref() == Some(*output)),
-            SwayAction::Floating { container_id, .. } => {
-                Ok(self::find_container_node(*container_id)?
-                    .is_some_and(|node| self::node_is_floating(&node)))
+            SwayAction::Workspace { workspace, .. } => {
+                state.workspace.as_deref() == Some(*workspace)
             }
-            SwayAction::Fullscreen { container_id, .. } => {
-                Ok(self::find_container_node(*container_id)?
-                    .is_some_and(|node| node.fullscreen_mode.is_some_and(|mode| mode != 0)))
-            }
-            SwayAction::Focus { container_id, .. } => {
-                Ok(self::find_container_node(*container_id)?.is_some_and(|node| node.focused))
-            }
-            SwayAction::Scratchpad { container_id, .. } => {
-                self::container_is_in_scratchpad(*container_id)
-            }
-            SwayAction::Mark {
-                container_id, mark, ..
-            } => Ok(self::find_container_node(*container_id)?
-                .is_some_and(|node| self::window_mark_match(&node, mark))),
-            _ => Ok(false),
+            SwayAction::Output { output, .. } => state.output.as_deref() == Some(*output),
+            SwayAction::Floating { .. } => state.floating,
+            SwayAction::Fullscreen { .. } => state.fullscreen,
+            SwayAction::Focus { .. } => state.focused,
+            SwayAction::Scratchpad { .. } => state.in_scratchpad,
+            SwayAction::Mark { mark, .. } => state.marks.iter().any(|held| held == mark),
+            _ => false,
         }
     }
 
@@ -1945,46 +1957,61 @@ fn resolve_matches(matches: Vec<i64>, criteria: &str) -> Result<i64, String> {
     }
 }
 
-/// The name of the workspace currently containing `con_id`, or `None` if
-/// `con_id` isn't found in the tree at all. Used by
-/// `SwayAction::already_at_target()` to detect a no-op `--workspace` move
-/// before waiting on an event Sway won't fire for it.
-fn current_workspace(con_id: i64) -> Result<Option<String>, String> {
-    self::containing_node_name(con_id, NodeType::Workspace)
+/// A container's state, as far as any `SwayAction` cares about it: everything
+/// `SwayAction::state_satisfies()` needs to decide whether what an action asked
+/// for is what's in effect, and nothing else.
+///
+/// Exists so that decision can be pure. Each of these fields used to be read by
+/// its own IPC helper called straight from the arm that needed it, which left
+/// the interpretation ("is 300px what this window is?", "is this the workspace
+/// asked for?") wedged behind a socket and therefore only reachable by the
+/// live-Sway suite. Fetching once, up front, leaves the fetch as the only part
+/// needing a compositor.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct ContainerState {
+    workspace: Option<String>,
+    output: Option<String>,
+    floating: bool,
+    fullscreen: bool,
+    focused: bool,
+    in_scratchpad: bool,
+    marks: Vec<String>,
 }
 
-/// The name of the output currently containing `con_id`, or `None` if
-/// `con_id` isn't found in the tree at all. Used by
-/// `SwayAction::already_at_target()` to detect a no-op `--output` move
-/// before waiting on an event Sway won't fire for it.
-fn current_output(con_id: i64) -> Result<Option<String>, String> {
-    self::containing_node_name(con_id, NodeType::Output)
+impl ContainerState {
+    /// Derives `container_id`'s state from an already-fetched tree, or `None`
+    /// when the container isn't in it.
+    fn from_tree(tree: &Node, container_id: i64) -> Option<Self> {
+        let node = self::find_node(tree, container_id)?;
+
+        Some(ContainerState {
+            workspace: self::find_containing_name(tree, container_id, NodeType::Workspace, None),
+            output: self::find_containing_name(tree, container_id, NodeType::Output, None),
+            floating: self::node_is_floating(node),
+            fullscreen: node.fullscreen_mode.is_some_and(|mode| mode != 0),
+            focused: node.focused,
+            in_scratchpad: self::tree_shows_container_in_scratchpad(tree, container_id),
+            marks: node.marks.clone(),
+        })
+    }
 }
 
-fn containing_node_name(con_id: i64, kind: NodeType) -> Result<Option<String>, String> {
+/// Reads `container_id`'s `ContainerState`, or `None` if it isn't in the tree.
+///
+/// Unlike `node_by_id()` (used by the poll-then-fallback machinery, where a
+/// transient IPC failure is deliberately swallowed into "not confirmed yet"),
+/// this propagates a genuine connection/`get_tree()` failure as an error: it's
+/// used to check state *before* deciding whether to act, where silently
+/// treating a real IPC failure as "not already there" would let a later step
+/// fail with a confusing timeout instead of surfacing the actual problem
+/// immediately.
+fn container_state(container_id: i64) -> Result<Option<ContainerState>, String> {
     let tree = match self::new_connection()?.get_tree() {
         Ok(tree) => tree,
         Err(error) => return Err(self::ipc_error(error)),
     };
 
-    Ok(self::find_containing_name(&tree, con_id, kind, None))
-}
-
-/// `container_id`'s own tree node, or `None` if it isn't found. Unlike
-/// `node_by_id()` (used by the poll-then-fallback machinery, where a
-/// transient IPC failure is deliberately swallowed into "not confirmed
-/// yet"), this propagates a genuine connection/`get_tree()` failure as an
-/// error — matching `containing_node_name()`'s contract, since both are
-/// used by `SwayAction::already_at_target()` to check state *before*
-/// deciding whether to act, where silently treating a real IPC failure as
-/// "not already there" would let a later step fail with a confusing
-/// timeout instead of surfacing the actual problem immediately.
-fn find_container_node(container_id: i64) -> Result<Option<Node>, String> {
-    let tree = match self::new_connection()?.get_tree() {
-        Ok(tree) => tree,
-        Err(error) => return Err(self::ipc_error(error)),
-    };
-    Ok(self::find_node(&tree, container_id).cloned())
+    Ok(ContainerState::from_tree(&tree, container_id))
 }
 
 /// Whether `node` is currently floating. Sway 1.9 (still what `apt` installs
@@ -2045,19 +2072,6 @@ fn tree_shows_container_in_scratchpad(tree: &Node, container_id: i64) -> bool {
             == Some("__i3_scratch");
     let node_flagged = self::find_node(tree, container_id).is_some_and(self::node_is_in_scratchpad);
     in_scratchpad_workspace || node_flagged
-}
-
-/// `tree_shows_container_in_scratchpad()`, fetching the tree itself. Used by
-/// `SwayAction::already_at_target()`'s `Scratchpad` arm.
-fn container_is_in_scratchpad(container_id: i64) -> Result<bool, String> {
-    let tree = match self::new_connection()?.get_tree() {
-        Ok(tree) => tree,
-        Err(error) => return Err(self::ipc_error(error)),
-    };
-    Ok(self::tree_shows_container_in_scratchpad(
-        &tree,
-        container_id,
-    ))
 }
 
 /// Recursively walks `node` tracking the name of the nearest ancestor whose
@@ -4851,6 +4865,235 @@ mod tests {
         let leaf = leaf_node_value(10, Some("foot"), None);
         let tree = workspace_node_tree(2, "1", vec![leaf], vec![]);
         assert!(!tree_shows_container_in_scratchpad(&tree, 10));
+    }
+
+    // ContainerState::from_tree
+
+    fn named_node_value(
+        container_id: i64,
+        kind: &str,
+        name: &str,
+        nodes: Vec<serde_json::Value>,
+    ) -> serde_json::Value {
+        let mut value = container_node_value(container_id, nodes, vec![]);
+        value["type"] = serde_json::json!(kind);
+        value["name"] = serde_json::json!(name);
+        value
+    }
+
+    /// A root → output → workspace → leaf tree, the shape `get_tree()`
+    /// actually returns, so the ancestor lookups have real ancestors to walk.
+    fn state_tree(workspace_name: &str, leaf: serde_json::Value) -> Node {
+        let workspace = named_node_value(2, "workspace", workspace_name, vec![leaf]);
+        let output = named_node_value(1, "output", "HEADLESS-1", vec![workspace]);
+        serde_json::from_value(named_node_value(0, "root", "root", vec![output]))
+            .expect("valid Node test fixture")
+    }
+
+    #[test]
+    fn container_state_from_tree_reads_the_containing_workspace_and_output() {
+        let state = ContainerState::from_tree(
+            &state_tree("3", leaf_node_value(10, Some("foot"), None)),
+            10,
+        )
+        .expect("the container is in the tree");
+
+        assert_eq!(state.workspace.as_deref(), Some("3"));
+        assert_eq!(state.output.as_deref(), Some("HEADLESS-1"));
+    }
+
+    #[test]
+    fn container_state_from_tree_is_none_for_a_container_not_in_the_tree() {
+        let tree = state_tree("3", leaf_node_value(10, Some("foot"), None));
+        assert_eq!(ContainerState::from_tree(&tree, 99), None);
+    }
+
+    #[test]
+    fn container_state_from_tree_reads_the_containers_own_flags_and_marks() {
+        let mut leaf = leaf_node_value(10, Some("foot"), None);
+        leaf["type"] = serde_json::json!("floating_con");
+        leaf["fullscreen_mode"] = serde_json::json!(1);
+        leaf["focused"] = serde_json::json!(true);
+        leaf["marks"] = serde_json::json!(["dropdown-term"]);
+
+        let state = ContainerState::from_tree(&state_tree("3", leaf), 10)
+            .expect("the container is in the tree");
+
+        assert!(state.floating);
+        assert!(state.fullscreen);
+        assert!(state.focused);
+        assert_eq!(state.marks, vec!["dropdown-term".to_string()]);
+        assert!(!state.in_scratchpad);
+    }
+
+    #[test]
+    fn container_state_from_tree_defaults_a_plain_tiled_window_to_every_flag_unset() {
+        let state = ContainerState::from_tree(
+            &state_tree("3", leaf_node_value(10, Some("foot"), None)),
+            10,
+        )
+        .expect("the container is in the tree");
+
+        assert!(!state.floating);
+        assert!(!state.fullscreen);
+        assert!(!state.focused);
+        assert!(!state.in_scratchpad);
+        assert!(state.marks.is_empty());
+    }
+
+    #[test]
+    fn container_state_from_tree_reports_a_scratchpadded_container() {
+        let state = ContainerState::from_tree(
+            &state_tree("__i3_scratch", leaf_node_value(10, Some("foot"), None)),
+            10,
+        )
+        .expect("the container is in the tree");
+
+        assert!(state.in_scratchpad);
+    }
+
+    #[test]
+    fn container_state_from_tree_reports_fullscreen_mode_zero_as_not_fullscreen() {
+        // Sway populates the field with 0 for an ordinary window rather than
+        // leaving it unset, so "present" is not the same as "fullscreen".
+        let mut leaf = leaf_node_value(10, Some("foot"), None);
+        leaf["fullscreen_mode"] = serde_json::json!(0);
+
+        let state = ContainerState::from_tree(&state_tree("3", leaf), 10)
+            .expect("the container is in the tree");
+
+        assert!(!state.fullscreen);
+    }
+
+    // SwayAction::state_satisfies
+
+    fn state_with(mutate: impl FnOnce(&mut ContainerState)) -> ContainerState {
+        let mut state = ContainerState::default();
+        mutate(&mut state);
+        state
+    }
+
+    fn workspace_action(workspace: &str) -> SwayAction<'_> {
+        SwayAction::Workspace {
+            container_id: 42,
+            workspace,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        }
+    }
+
+    fn output_action(output: &str) -> SwayAction<'_> {
+        SwayAction::Output {
+            container_id: 42,
+            output,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        }
+    }
+
+    fn mark_action(mark: &str) -> SwayAction<'_> {
+        SwayAction::Mark {
+            container_id: 42,
+            mark,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        }
+    }
+
+    fn floating_action() -> SwayAction<'static> {
+        SwayAction::Floating {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        }
+    }
+
+    #[test]
+    fn state_satisfies_workspace_only_for_the_requested_workspace() {
+        let state = state_with(|state| state.workspace = Some("3".to_string()));
+
+        assert!(workspace_action("3").state_satisfies(Some(&state)));
+        assert!(!workspace_action("2").state_satisfies(Some(&state)));
+    }
+
+    #[test]
+    fn state_satisfies_workspace_false_when_the_workspace_is_unknown() {
+        let state = ContainerState::default();
+        assert!(!workspace_action("3").state_satisfies(Some(&state)));
+    }
+
+    #[test]
+    fn state_satisfies_output_only_for_the_requested_output() {
+        let state = state_with(|state| state.output = Some("HEADLESS-1".to_string()));
+
+        assert!(output_action("HEADLESS-1").state_satisfies(Some(&state)));
+        assert!(!output_action("HEADLESS-2").state_satisfies(Some(&state)));
+    }
+
+    #[test]
+    fn state_satisfies_floating_fullscreen_focus_and_scratchpad_read_their_own_flag() {
+        let floating = state_with(|state| state.floating = true);
+        let fullscreen = state_with(|state| state.fullscreen = true);
+        let focused = state_with(|state| state.focused = true);
+        let scratchpadded = state_with(|state| state.in_scratchpad = true);
+
+        let fullscreen_action = SwayAction::Fullscreen {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        let focus_action = SwayAction::Focus {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        let scratchpad_action = SwayAction::Scratchpad {
+            container_id: 42,
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+
+        assert!(floating_action().state_satisfies(Some(&floating)));
+        assert!(!floating_action().state_satisfies(Some(&fullscreen)));
+        assert!(fullscreen_action.state_satisfies(Some(&fullscreen)));
+        assert!(!fullscreen_action.state_satisfies(Some(&floating)));
+        assert!(focus_action.state_satisfies(Some(&focused)));
+        assert!(!focus_action.state_satisfies(Some(&floating)));
+        assert!(scratchpad_action.state_satisfies(Some(&scratchpadded)));
+        assert!(!scratchpad_action.state_satisfies(Some(&floating)));
+    }
+
+    #[test]
+    fn state_satisfies_mark_matches_any_held_mark() {
+        let state = state_with(|state| {
+            state.marks = vec!["other".to_string(), "dropdown-term".to_string()]
+        });
+
+        assert!(mark_action("dropdown-term").state_satisfies(Some(&state)));
+        assert!(!mark_action("missing").state_satisfies(Some(&state)));
+    }
+
+    #[test]
+    fn state_satisfies_is_false_for_an_action_with_no_state_to_check() {
+        let state = state_with(|state| state.floating = true);
+        let action = SwayAction::Split {
+            container_id: 42,
+            split: Split::H,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+
+        assert!(!action.state_satisfies(Some(&state)));
+    }
+
+    #[test]
+    fn state_satisfies_is_false_when_the_container_is_gone() {
+        // A window that has closed isn't floating, focused, or on the target
+        // workspace — short-circuiting an action into success over a container
+        // that no longer exists would be worse than letting the command fail.
+        assert!(!floating_action().state_satisfies(None));
+        assert!(!workspace_action("3").state_satisfies(None));
+        assert!(!mark_action("dropdown-term").state_satisfies(None));
     }
 
     // compute_center_position
