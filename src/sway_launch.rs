@@ -1356,6 +1356,19 @@ impl SwayAction<'_> {
         // on later events arriving: the *last* event-confirmed action's reader
         // does stay blocked until the process exits, which is why the bound is
         // a small constant rather than zero.
+        //
+        // That last reader was raised again (2026-09-02) as a lifetime problem
+        // rather than a leak: an operation returns while resources it opened
+        // are still held, released only by process exit. Accurate, and left as
+        // is. The suggested fix — one owned event reader per SwayLaunch run,
+        // with an explicit shutdown protocol — buys nothing for a CLI that
+        // exits moments later, and would replace a per-action subscription
+        // (which is also what makes each action's wait independent, see
+        // Scratchpad's shared WindowChange::Move in
+        // matching_window_change_events()) with shared mutable state to
+        // coordinate. Revisit if this ever becomes a library, gains a
+        // long-lived mode, or needs cancellation — at which point the reader's
+        // lifetime stops being bounded by the process's.
         let (event_sender, event_receiver) = mpsc::channel();
         thread::spawn(move || {
             for event in event_loop {
@@ -1678,6 +1691,16 @@ fn process_has_env_var(pid: i32, var_name: &str, expected_value: &str) -> bool {
 /// `exec env <marker> <command>`, so there is no child pid to inspect — which
 /// is the entire reason the environment marker exists. A "just look at the pid
 /// we spawned" design has nothing to look at.
+///
+/// Raised a second time (2026-09-02) with a correctness rather than performance
+/// framing: on a restricted `/proc` an unreadable process is indistinguishable
+/// from one without the marker, so confirmation degrades into the content-match
+/// fallback. True, and deliberate — the fallback exists precisely so an
+/// unconfirmable case still resolves rather than timing out. What it must not
+/// do is quietly *claim* the window: the degraded path yields
+/// `LaunchOwnership::Adopted`, which keeps `--rollback-on-error` from killing
+/// it, and the `read_dir` failure below is logged under `--verbose`. Same
+/// conclusion as the first raise: no change.
 fn any_process_has_env_var(var_name: &str, expected_value: &str, verbose: bool) -> bool {
     // A per-process /proc/<pid>/environ read failing (the process already
     // exited) is expected and common, and needs no signal — but read_dir on
