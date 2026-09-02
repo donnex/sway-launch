@@ -183,6 +183,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An action that waits on a Sway IPC event (`--floating`, `--fullscreen`, `--focus`, `--workspace`,
+  `--output`, `--scratchpad`) no longer times out when another client puts the window into the
+  requested state a moment before it sends its own command. The check for "already there, nothing
+  to do" ran before subscribing to the event stream, leaving a short window in which a competing
+  `sway-launch`, keybinding, or `swaymsg` could make the command a no-op — and a no-op fires no
+  event, so the action waited out the whole `--timeout` and then errored, having asked for a state
+  that was in effect the entire time. It now subscribes first, so a change landing on either side of
+  the check is seen.
 - A compositor that accepts an IPC connection and then stops answering no longer hangs
   `sway-launch` indefinitely. `--timeout` bounded only the wait for a confirmation event, never the
   IPC round trips around it, so every tree read and command dispatch was an unbounded blocking

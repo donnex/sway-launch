@@ -637,19 +637,17 @@ impl SwayAction<'_> {
     /// are not equally strong results. `Exec` is always `Changed` — a freshly
     /// launched window is inherently a change, and `already_at_target()` never
     /// short-circuits it.
+    ///
+    /// `already_at_target()`'s no-op short-circuit is deliberately *not* run
+    /// here, ahead of the dispatch below: it belongs inside
+    /// `run_wait_matching_events()`, after that function has subscribed. See
+    /// its doc comment for why the ordering is load-bearing. Every variant this
+    /// function routes elsewhere — `Exec`, and the seven that confirm by
+    /// polling — answers `false` from `state_satisfied()` unconditionally, so
+    /// moving the check has no effect on them.
     fn run(&self) -> Result<(i64, ActionOutcome), String> {
         if self.verbose() {
             eprintln!("Sway action: {}", self);
-        }
-
-        if let Some(container_id) = self.already_at_target()? {
-            if self.verbose() {
-                eprintln!(
-                    "Already at target, nothing to move (container id: {})",
-                    container_id
-                );
-            }
-            return Ok((container_id, ActionOutcome::AlreadySatisfied));
         }
 
         match self {
@@ -657,9 +655,7 @@ impl SwayAction<'_> {
                 .run_wait_matching_exec_event()
                 .map(|container_id| (container_id, ActionOutcome::Changed)),
             _ => match self.matching_window_change_events() {
-                Some(_) => self
-                    .run_wait_matching_events()
-                    .map(|container_id| (container_id, ActionOutcome::Changed)),
+                Some(_) => self.run_wait_matching_events(),
                 None => self.run_wait_time().map(|(container_id, confirmed)| {
                     let outcome = if confirmed {
                         ActionOutcome::Changed
@@ -702,6 +698,19 @@ impl SwayAction<'_> {
     /// mark the container already has *does* fire `WindowChange::Mark`, so
     /// there's no hang to avoid, and short-circuiting would report it as
     /// `AlreadySatisfied` when the command genuinely does re-apply.
+    ///
+    /// **Call this only once a subscription is already open.** This check reads
+    /// state that another client can change a moment later, and the no-op it
+    /// exists to detect is precisely the case Sway fires no event for — so if
+    /// the state flips between reading it here and subscribing, the command
+    /// becomes a no-op, no event ever arrives, and the action waits out the
+    /// full `--timeout` before erroring. Subscribing first closes the window
+    /// completely rather than narrowing it: a change landing before this read
+    /// is caught by the read, and one landing after it is caught by the
+    /// subscription, with no instant belonging to neither. Measured against a
+    /// live compositor while the check still ran ahead of the subscription:
+    /// sweeping a competing `floating enable` across a 0-20ms window after
+    /// spawn, 5 of 40 trials hung the full timeout, clustered 2.5-4ms in.
     fn already_at_target(&self) -> Result<Option<i64>, String> {
         if matches!(self, SwayAction::Mark { .. }) {
             return Ok(None);
@@ -1218,7 +1227,30 @@ impl SwayAction<'_> {
         }
     }
 
-    fn run_wait_matching_events(&self) -> Result<i64, String> {
+    /// Subscribes, confirms the requested state isn't already in effect, sends
+    /// the command, and waits for an event that — together with a second state
+    /// read — confirms it applied.
+    ///
+    /// The subscription is opened before the no-op check and before the
+    /// command, and that ordering is the whole point rather than an incidental
+    /// detail: it's what makes the check-then-command sequence safe against
+    /// another client racing it. See `already_at_target()`'s doc comment. The
+    /// cost is one Sway IPC connection opened and immediately dropped on the
+    /// short-circuit path, which is the cheap half of the trade — that path
+    /// already pays for a `get_tree()`.
+    ///
+    /// The container-exists check stays ahead of the subscription, though, and
+    /// that ordering is load-bearing too, for an unrelated reason:
+    /// `new_event_connection()` deliberately sets no socket timeout (a
+    /// subscription's job is to block), but `subscribe()` itself is a
+    /// request/response handshake, so a compositor that accepts a connection
+    /// and then stops answering would hang there forever. Every other IPC call
+    /// this function makes goes through `new_connection()`, which is bounded by
+    /// `IPC_ROUND_TRIP_TIMEOUT` — so keeping a bounded read first is what makes
+    /// a wedged compositor fail with a message instead of hanging. Found by
+    /// `tests/live_sway.rs`'s `a_stalled_sway_socket_fails_instead_of_hanging_forever`
+    /// after an earlier version of this ordering fix put the subscription first.
+    fn run_wait_matching_events(&self) -> Result<(i64, ActionOutcome), String> {
         // Same check, same reason, and the same error text as
         // run_wait_time()'s: on Sway 1.9 (still what `apt` installs on
         // Ubuntu 24.04/CI) a [con_id=N] criteria matching zero containers is
@@ -1248,6 +1280,16 @@ impl SwayAction<'_> {
         }
 
         let event_loop = self::event_loop(&[EventType::Window])?;
+
+        if let Some(container_id) = self.already_at_target()? {
+            if self.verbose() {
+                eprintln!(
+                    "Already at target, nothing to move (container id: {})",
+                    container_id
+                );
+            }
+            return Ok((container_id, ActionOutcome::AlreadySatisfied));
+        }
 
         let sway_command = self.sway_command();
         if self.verbose() {
@@ -1353,7 +1395,7 @@ impl SwayAction<'_> {
                         );
                     }
 
-                    return Ok(window.container.id);
+                    return Ok((window.container.id, ActionOutcome::Changed));
                 }
                 Err(error_result) => {
                     if self.verbose() {
