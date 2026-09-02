@@ -295,11 +295,11 @@ stated goal (safer internals, less repeated parsing) to actually land.
   `state_satisfied()` unconditionally, so nothing else changed behavior. Pinned by
   `tests/live_sway.rs`'s `floating_still_succeeds_when_another_client_wins_the_race`.
 
-  `Workspace`/`Output` were the first two found needing this (via
-  `current_workspace()`/`current_output()`); `Floating`/`Fullscreen`/`Focus` were found live to have
+  `Workspace`/`Output` were the first two found needing this (via the containing workspace/output
+  name); `Floating`/`Fullscreen`/`Focus` were found live to have
   the identical failure mode later — re-running `--floating`/`--fullscreen`/`--focus` on a window
   already in that state hung the full `--timeout` and then errored, before this was added (checked
-  via `find_container_node()`'s `floating`/`fullscreen_mode`/`focused` fields). `Floating`'s own
+  via the container node's own `floating`/`fullscreen_mode`/`focused` fields). `Floating`'s own
   check is `node_is_floating()`, not `node.floating` alone: a CI-failure investigation found Sway
   1.9 (still what `apt` installs on Ubuntu 24.04/`ubuntu-latest`, confirmed live against a headless
   compositor) never populates a floating container's own `floating` field — it stays `null` even
@@ -309,7 +309,8 @@ stated goal (safer internals, less repeated parsing) to actually land.
   reproducing the exact pre-fix hang/error this paragraph describes; confirmed live in both
   directions (broken on 1.9, fixed on both 1.9 and 1.11) during that investigation. `Scratchpad`
   was found to need this the same way, live: re-running `--scratchpad` on an already-scratchpadded
-  window fires no event at all. Its own check is `container_is_in_scratchpad()`, which primarily
+  window fires no event at all. Its own check is `tree_shows_container_in_scratchpad()`, which
+  primarily
   checks the container's ancestor workspace name — Sway's scratchpad is always the fixed internal
   workspace named `__i3_scratch` — rather than `node_is_floating()`, deliberately, since the
   auto-float event described above would otherwise make `already_at_target()` misreport a window
@@ -333,6 +334,25 @@ stated goal (safer internals, less repeated parsing) to actually land.
   `floating_is_a_no_op_when_already_floating`, `fullscreen_is_a_no_op_when_already_fullscreen`,
   `focus_is_a_no_op_when_already_focused`, and
   `scratchpad_is_a_no_op_when_already_in_the_scratchpad`.
+
+  **`state_satisfied()` fetches; `state_satisfies()` decides.** The first reads one `get_tree()`
+  into a `ContainerState` (`workspace`/`output`/`floating`/`fullscreen`/`focused`/`in_scratchpad`/
+  `marks` — everything any action needs to answer for, and nothing else) via
+  `ContainerState::from_tree()`; the second is pure, takes an `Option<&ContainerState>`, and holds
+  the actual per-variant comparisons. Before this split each arm called its own IPC helper
+  (`current_workspace()`, `current_output()`, `find_container_node()`,
+  `container_is_in_scratchpad()`, all now gone), which put the *interpretation* behind a socket and
+  left it reachable only by the live-Sway suite — the same problem `expected_position()`/
+  `position_matches()` were already split to avoid, so this follows that precedent rather than
+  inventing one (an external review's suggestion, scoped to this function rather than the wholesale
+  `sway_client.rs`/`state.rs`/`executor.rs` split it proposed). Two things fell out: every arm is
+  now covered headlessly (`state_satisfies_*`/`container_state_from_tree_*` in `sway_launch.rs`),
+  measured at +1.3 line/+2.1 function coverage points, and a state check costs one tree read
+  instead of one per arm. `None` — the container isn't in the tree — is deliberately never
+  satisfied: a closed window isn't floating, focused, or on the target workspace, and
+  short-circuiting an action into claiming success over a container that no longer exists would be
+  worse than letting its command fail. Prefer this shape for any new state check, the same way the
+  Testing bullet under Rust conventions asks for it for any new poll matcher.
 - **`Exec`** → `run_wait_matching_exec_event()`. Matching purely on event content (app_id/class, or
   nothing at all with no filter) is ambiguous whenever more than one qualifying `New` window can
   appear around the same time — Sway broadcasts window events to every IPC connection, so a second,
@@ -1324,8 +1344,7 @@ comments, name things clearly instead" style). Two rule-specific overrides:
     functions that open, read, or write the Sway IPC socket directly (`new_connection`,
     `event_loop`, `run_sway_command`'s connection call, `kill_container`, `run_wait_time`,
     `run_wait_matching_events`, `run_wait_matching_exec_event`, `run_poll_then_fallback`,
-    `container_exists`, `parent_node_layout`, `node_by_id`, `find_container_node`,
-    `container_is_in_scratchpad`,
+    `container_exists`, `parent_node_layout`, `node_by_id`, `container_state`,
     `position_matches`, `node_and_output_name`, `output_rect`, `SwayAction::poll_matches`
     (`expected_position` and `node_position` are *not* exempt: `expected_position` used to look the
     output geometry up itself, which made its `"center"` arm unreachable without a live socket, and
@@ -1335,9 +1354,13 @@ comments, name things clearly instead" style). Two rule-specific overrides:
     new matcher: keep the decision pure and let the IPC layer fetch, rather than burying a
     comparison behind a `&mut Connection` where the coverage gate can't see it),
     `find_existing_container_id`'s connection call,
-    `SwayAction::run`, `SwayAction::already_at_target`, `SwayAction::state_satisfied`,
+    `SwayAction::run`, `SwayAction::already_at_target`, `SwayAction::state_satisfied` (its
+    *fetching* half only — `SwayAction::state_satisfies` and `ContainerState::from_tree`, which
+    hold the actual decision, are pure and stay coverage-measured; see "`state_satisfied()`
+    fetches; `state_satisfies()` decides" above, and prefer that same split for any new state
+    check),
     `SwayAction::poll_baseline`'s
-    `NewColumn`/`NewRow` arm, `current_workspace`, `current_output`, `containing_node_name`,
+    `NewColumn`/`NewRow` arm,
     `relocates_to_another_output`, `SwayLaunch::run`, `SwayLaunch::build_actions`'s
     `NewColumn`/`NewRow` arms (their `relocates_to_another_output()` call — the rest of
     `build_actions()` is ordinary pure logic and stays coverage-measured; see "Orchestration" below
