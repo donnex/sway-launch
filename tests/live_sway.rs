@@ -1789,6 +1789,151 @@ fn rollback_on_error_handles_a_launched_window_that_already_closed_itself() {
 }
 
 #[test]
+fn rollback_on_error_leaves_a_window_it_only_adopted_open() {
+    // --rollback-on-error kills windows, and a kill can't be undone, so it
+    // must only ever kill a window this run can prove it launched.
+    //
+    // run_wait_matching_exec_event() deliberately falls back to a content
+    // match (app_id/class) when no PID-marker-confirmed window appears, and
+    // that fallback covers two different situations. Here it's the ambiguous
+    // one: this invocation's own marked process (`sleep 30`) is still running,
+    // and the matching window came from somewhere else entirely -- launched
+    // directly below, standing in for another launcher, another sway-launch,
+    // or the user opening something at the wrong moment. sway-launch adopts it
+    // once PID_MARKER_FALLBACK_GRACE elapses, because it matches the requested
+    // app_id, but it never confirmed the window was its own.
+    //
+    // Step 2 then fails (a con_id that was never opened), triggering rollback.
+    // The adopted window must survive it. The other branch of the same
+    // fallback -- the marked process being *gone*, the single-instance
+    // browser/editor case -- is treated as launched and does get rolled back:
+    // rollback_on_error_still_kills_a_window_matched_after_its_launcher_exited
+    // is the same scenario with that one difference, and asserts the opposite.
+    let mut connection = connect();
+    let path = TempToml::write(
+        "rollback-adopted",
+        "[[step]]\ncommand = \"sleep 30\"\napp_id = \"adopt-probe\"\ntimeout = 20\n\n\
+         [[step]]\ncon_id = 999999999\nmark = \"x\"\n",
+    );
+
+    let child = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--rollback-on-error",
+            "--json",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to run sway-launch binary");
+
+    std::thread::sleep(Duration::from_millis(500));
+    connection
+        .run_command("exec foot --app-id=adopt-probe")
+        .expect("exec should succeed")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("exec should succeed");
+
+    let output = child
+        .wait_with_output()
+        .expect("failed to wait for sway-launch");
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let adopted_id = first_app_id_window(&tree, "adopt-probe");
+    let _guard = adopted_id.map(KillOnDrop);
+
+    assert!(
+        !output.status.success(),
+        "sway-launch should fail on the bad second step"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        adopted_id.is_some(),
+        "--rollback-on-error killed a window this run only adopted: {stderr:?}"
+    );
+    assert!(
+        stderr.contains("\"rolled_back\":[]"),
+        "an adopted window must not be reported as rolled back: {stderr:?}"
+    );
+    // Not rolled back, so it's still open -- and still reported as partial
+    // progress, so a caller that does want it closed knows its id.
+    assert!(
+        stderr.contains("\"container_ids\":["),
+        "the adopted window should be reported as still-open progress: {stderr:?}"
+    );
+}
+
+#[test]
+fn rollback_on_error_still_kills_a_window_matched_after_its_launcher_exited() {
+    // The other branch of the same fallback, and the reason ownership isn't
+    // simply "was the PID marker confirmed": a single-instance application
+    // hands the request to an already-running process and exits, so the window
+    // that appears carries no marker of ours — but nothing marker-confirmed can
+    // still be coming, and the window appeared because we asked for it. That's
+    // this run's own window, and --rollback-on-error must still close it.
+    //
+    // Simulated the same way exec_falls_back_to_a_content_match_when_its_own_
+    // process_already_exited does: step 1's command is `true` (exits at once,
+    // never creating a window), while an unmarked window appears shortly after,
+    // standing in for the forwarding instance's.
+    let mut connection = connect();
+    let path = TempToml::write(
+        "rollback-forwarded",
+        "[[step]]\ncommand = \"true\"\napp_id = \"forward-probe\"\ntimeout = 20\n\n\
+         [[step]]\ncon_id = 999999999\nmark = \"x\"\n",
+    );
+
+    connection
+        .run_command("exec sh -c 'sleep 1; exec foot --app-id=forward-probe'")
+        .expect("exec should succeed")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("exec should succeed");
+
+    let output = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--rollback-on-error",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        !output.status.success(),
+        "sway-launch should fail on the bad second step"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        stderr.contains("\"rolled_back\":[") && !stderr.contains("\"rolled_back\":[]"),
+        "a window matched after its launcher exited is this run's own and should have been \
+         rolled back: {stderr:?}"
+    );
+
+    std::thread::sleep(Duration::from_millis(300));
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let survivor = first_app_id_window(&tree, "forward-probe");
+    let _guard = survivor.map(KillOnDrop);
+    assert_eq!(
+        survivor, None,
+        "the window should have been closed by --rollback-on-error"
+    );
+}
+
+fn first_app_id_window(node: &Node, app_id: &str) -> Option<i64> {
+    if node.app_id.as_deref() == Some(app_id) {
+        return Some(node.id);
+    }
+    node.nodes
+        .iter()
+        .chain(node.floating_nodes.iter())
+        .find_map(|child| first_app_id_window(child, app_id))
+}
+
+#[test]
 fn layout_target_id_references_an_earlier_steps_real_window() {
     let mut connection = connect();
     let path = TempToml::write(

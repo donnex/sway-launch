@@ -378,6 +378,9 @@ stated goal (safer internals, less repeated parsing) to actually land.
   `tests/live_sway.rs`'s `concurrent_exec_invocations_do_not_collide_on_the_same_container_id`
   (0 collisions across 90 manual trials during development, versus every trial colliding before
   this) and `exec_falls_back_to_a_content_match_when_its_own_process_already_exited`.
+  Which of the two ends the wait is reported back as a `LaunchOwnership` (`Launched` for the
+  marked-process-gone branch, `Adopted` for the grace-elapsed one), the distinction
+  `--rollback-on-error` keys its destructive cleanup off — see its own section below.
   `any_process_has_env_var()` treats a per-process `/proc/<pid>/environ` read failure (the process
   already exited) as an expected, silent `false` — but a `read_dir("/proc")` failure itself is a
   different, environment-level condition (restricted `/proc`, unusual containerization), so that
@@ -916,11 +919,34 @@ manually checked in `main()` the same way `--bindings`/`--apps` requires `--temp
 automatic instead. `run_steps()` tracks `launched_container_ids: Vec<i64>` alongside
 `container_ids` — only ids a step resolved via `Target::Exec`, never one retargeted via
 `con_id`/`existing`/`target_id`, since those windows already existed before this invocation started
-and weren't this run's to close. Read directly off the step's own `command` field
-(`step.command.is_some()`) rather than matching the resolved `SwayLaunch`'s `target` — equivalent,
-since `to_sway_launch()` having just succeeded guarantees exactly one of
-`command`/`con_id`/`existing`/`target_id` was set, but avoids a local `sway_launch` binding
-shadowing the `sway_launch` module path in the same scope. On any failure — an id collision, a step failing to convert, or a
+and weren't this run's to close.
+
+**Eligibility is read off what the run actually observed (`RunOutcome.launch_ownership ==
+Some(LaunchOwnership::Launched)`), not off the step's shape.** It used to be `step.command.is_some()`
+— true for every `Target::Exec` step — which quietly assumed that resolving a window and launching
+it are the same thing. They aren't: `run_wait_matching_exec_event()`'s PID-marker fallback
+(see "`Exec`" under the core model above) deliberately accepts a content-matching window it never
+confirmed, and that fallback has two branches worth telling apart, which is what `LaunchOwnership`
+now does. The marked process being *gone* means nothing marker-confirmed can still arrive and a
+matching window appeared regardless — the single-instance browser/editor case, ours by elimination,
+`Launched`. The grace period merely elapsing while the marked process is still *running* means the
+window came from somewhere else — another `sway-launch`, another launcher, a user opening something
+at the wrong moment — and was adopted only because its app_id/class matched: `Adopted`, and not
+rolled back. An external review raised rollback ownership as a risk on the grounds that a recorded
+container id might later name a different window; that specific premise was checked live and is
+false (Sway ids come from a monotonic counter and are never reused — opened 5/6/7, killed all
+three, next three were 8/9/10), but the fallback path is a real way to hold an id that was never
+this run's, and a kill can't be undone. An adopted window stays in `container_ids`/`containers`, so
+a caller that does want it closed still learns its id, and `--verbose` says why it was spared.
+Both branches are pinned live, as the same scenario differing only in whether the launched process
+is still running: `tests/live_sway.rs`'s `rollback_on_error_leaves_a_window_it_only_adopted_open`
+(still running → adopted → survives) and
+`rollback_on_error_still_kills_a_window_matched_after_its_launcher_exited` (exited → launched →
+killed). Keep them together — either assertion alone reads as the whole rule and isn't.
+
+`SwayAction::run()` returns `ActionResult { container_id, outcome, launch_ownership }` rather than a
+tuple to carry this — `launch_ownership` is `None` for every action except `Exec`, which is the only
+one that creates a window rather than acting on one already resolved. On any failure — an id collision, a step failing to convert, or a
 step's own `.run()` failing — `fail_step()` calls `rollback()` first (if the flag is set), which
 best-effort `[con_id] kill`s every tracked id, most-recently-launched first, via the new
 `sway_launch::kill_container()` (a thin `pub` wrapper around the existing private
