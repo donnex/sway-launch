@@ -732,6 +732,84 @@ fn floating_is_a_no_op_when_already_floating() {
 }
 
 #[test]
+fn floating_still_succeeds_when_another_client_wins_the_race() {
+    // Regression test for a TOCTOU race between already_at_target()'s no-op
+    // check and the subscription that waits for the confirming event. When the
+    // check ran first, another client satisfying the state in between left this
+    // invocation's own command a no-op — which Sway fires no window event for
+    // (the very reason already_at_target() exists) — so it waited out the full
+    // --timeout and then errored, having asked for a state that was in effect
+    // the whole time.
+    //
+    // Subscribing before the check closes the window rather than narrowing it,
+    // so this passes for every offset rather than most of them: a change
+    // landing before the check is seen by the check, and one landing after it
+    // is seen by the subscription.
+    //
+    // The offsets sweep the window rather than targeting it, since where it
+    // falls is a function of process startup on the machine running this.
+    // Measured against the pre-fix binary on a headless compositor, a 0-20ms
+    // sweep hung 5 of 40 trials, clustered 2.5-4ms after spawn; the fixed
+    // binary hung 0 of 160 over the same sweep.
+    const TRIALS: u64 = 24;
+
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&[]);
+
+    for trial in 0..TRIALS {
+        connection
+            .run_command(format!("[con_id={}] floating disable", container_id))
+            .expect("failed to reset the window to tiled");
+        wait_until_not_floating(&mut connection, container_id);
+
+        let started = Instant::now();
+        let child = sway_launch_command()
+            .args([
+                "--con-id",
+                &container_id.to_string(),
+                "--floating",
+                "--timeout",
+                "5",
+            ])
+            .spawn()
+            .expect("failed to run sway-launch binary");
+
+        std::thread::sleep(Duration::from_micros(500 * trial));
+        connection
+            .run_command(format!("[con_id={}] floating enable", container_id))
+            .expect("failed to float the window from the competing client");
+
+        let output = child
+            .wait_with_output()
+            .expect("failed to wait for sway-launch");
+        assert!(
+            output.status.success(),
+            "--floating failed when another client floated the window {}us after spawn: {}",
+            500 * trial,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "--floating took {:?} when another client floated the window {}us after spawn, \
+             suggesting it waited on an event Sway never fired for the resulting no-op",
+            started.elapsed(),
+            500 * trial
+        );
+    }
+}
+
+fn wait_until_not_floating(connection: &mut Connection, con_id: i64) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if !node_is_floating(&get_node(connection, con_id)) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    panic!("container {} never returned to a tiled state", con_id);
+}
+
+#[test]
 fn fullscreen_is_a_no_op_when_already_fullscreen() {
     // Same as floating_is_a_no_op_when_already_floating, for --fullscreen.
     let (container_id, _guard) = launch_foot(&["--fullscreen"]);

@@ -215,10 +215,11 @@ stated goal (safer internals, less repeated parsing) to actually land.
 - **Has an event** (`Exec`, `Floating`, `Fullscreen`, `Focus`, `Workspace`, `Output`, `Mark`,
   `Scratchpad`) →
   `run_wait_matching_events()` for every variant except `Exec` (which gets its own
-  `run_wait_matching_exec_event()`, below): connects to Sway, sends the command, then reads the
-  event stream until a `Window` event matches (checked via `matches_window_event()`, container id
-  for every one of these variants) **and** `state_satisfied()` confirms the requested state is
-  actually in effect, or the `--timeout` is hit.
+  `run_wait_matching_exec_event()`, below): confirms the container still exists, subscribes to the
+  event stream, checks `already_at_target()` (see below), sends the command, then reads the event
+  stream until a `Window` event matches (checked via `matches_window_event()`, container id for
+  every one of these variants) **and** `state_satisfied()` confirms the requested state is actually
+  in effect, or the `--timeout` is hit.
 
   That second check is the difference between "Sway emitted this event type for this container" and
   "what this action asked for is what applied". Container id gives object identity, not causality:
@@ -256,10 +257,45 @@ stated goal (safer internals, less repeated parsing) to actually land.
   case, though: re-applying a state the container already has doesn't fire the corresponding event
   either (moving to the workspace/output it's already on doesn't reparent anything; re-floating,
   re-fullscreening, re-focusing, or re-scratchpadding an already-floating/fullscreen/focused/
-  scratchpadded window doesn't change anything for Sway to report). `SwayAction::run()` calls
-  `already_at_target()` first to check for
+  scratchpadded window doesn't change anything for Sway to report). `run_wait_matching_events()`
+  calls `already_at_target()` to check for
   this and short-circuit with immediate success rather than waiting on an event Sway will never
-  send. `Workspace`/`Output` were the first two found needing this (via
+  send.
+
+  **That check runs after the subscription is open, and the ordering is load-bearing rather than
+  incidental.** It reads state another client can change a moment later, and the no-op it exists to
+  detect is exactly the case Sway fires no event for — so while the check ran first (in
+  `SwayAction::run()`, before dispatching here), a competing `sway-launch`/keybinding/`swaymsg`
+  satisfying the state in that gap left this invocation's own command a no-op, no event ever
+  arrived, and the action waited out the full `--timeout` before erroring about a state that had
+  been in effect the whole time. Not theoretical: measured against a live compositor by sweeping a
+  competing `floating enable` across a 0–20ms window after spawn, 5 of 40 trials hung, clustered
+  2.5–4ms in (a debug build's own startup puts the gap there); the same sweep against the fixed
+  ordering hung 0 of 160. Subscribing first *closes* the window rather than narrowing it — a change
+  landing before the check is caught by the check, one landing after it is caught by the
+  subscription, and no instant belongs to neither. The cost is one Sway IPC connection opened and
+  immediately dropped whenever the short-circuit does fire.
+
+  The `container_exists()` check stays *ahead* of the subscription, though, and that ordering is
+  load-bearing too, for an unrelated reason found by moving it: `new_event_connection()`
+  deliberately sets no socket timeout, but `subscribe()` is itself a request/response handshake, so
+  with nothing bounded before it a wedged compositor hung there forever — turning
+  `a_stalled_sway_socket_fails_instead_of_hanging_forever` from a 10-second failure into an
+  indefinite hang. Every other IPC call here goes through `new_connection()` and is bounded by
+  `IPC_ROUND_TRIP_TIMEOUT`, so keeping a bounded read first is what makes a stalled socket fail
+  with a message. Don't reorder these three without re-reading both constraints: the state check
+  must come *after* the subscription, a bounded read *before* it.
+
+  Rejected alternative: treating a
+  post-command state read as an accepted completion path (an external review's suggestion, and it
+  does also close the race) — confirmed live that Sway applies a command before replying to it, so
+  that read would succeed on essentially every invocation, making the event wait dead code and
+  quietly replacing event confirmation with a single tree read. `SwayAction::run()` therefore no
+  longer calls `already_at_target()` at all; every variant it routes elsewhere answers `false` from
+  `state_satisfied()` unconditionally, so nothing else changed behavior. Pinned by
+  `tests/live_sway.rs`'s `floating_still_succeeds_when_another_client_wins_the_race`.
+
+  `Workspace`/`Output` were the first two found needing this (via
   `current_workspace()`/`current_output()`); `Floating`/`Fullscreen`/`Focus` were found live to have
   the identical failure mode later — re-running `--floating`/`--fullscreen`/`--focus` on a window
   already in that state hung the full `--timeout` and then errored, before this was added (checked
