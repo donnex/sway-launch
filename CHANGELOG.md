@@ -183,6 +183,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--rollback-on-error` no longer closes a window it can't prove this run launched. When no window
+  carrying the private per-launch marker appears, `sway-launch` falls back to matching on
+  `app_id`/`class` alone — and if that fallback fires while the launched process is still running,
+  the window it matched came from somewhere else (another launcher, another `sway-launch`, or
+  something opened at the wrong moment). Rolling back used to kill it anyway. It's now left open
+  and reported as an open container id instead, with `--verbose` saying so. A window matched after
+  the launched process exited — the single-instance browser/editor case — is still treated as this
+  run's own and still rolled back.
 - An action that waits on a Sway IPC event (`--floating`, `--fullscreen`, `--focus`, `--workspace`,
   `--output`, `--scratchpad`) no longer times out when another client puts the window into the
   requested state a moment before it sends its own command. The check for "already there, nothing

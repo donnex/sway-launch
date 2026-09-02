@@ -645,24 +645,31 @@ impl SwayAction<'_> {
     /// function routes elsewhere — `Exec`, and the seven that confirm by
     /// polling — answers `false` from `state_satisfied()` unconditionally, so
     /// moving the check has no effect on them.
-    fn run(&self) -> Result<(i64, ActionOutcome), String> {
+    fn run(&self) -> Result<ActionResult, String> {
         if self.verbose() {
             eprintln!("Sway action: {}", self);
         }
 
         match self {
-            SwayAction::Exec { .. } => self
-                .run_wait_matching_exec_event()
-                .map(|container_id| (container_id, ActionOutcome::Changed)),
+            SwayAction::Exec { .. } => {
+                self.run_wait_matching_exec_event()
+                    .map(|(container_id, ownership)| ActionResult {
+                        container_id,
+                        outcome: ActionOutcome::Changed,
+                        launch_ownership: Some(ownership),
+                    })
+            }
             _ => match self.matching_window_change_events() {
-                Some(_) => self.run_wait_matching_events(),
+                Some(_) => self
+                    .run_wait_matching_events()
+                    .map(|(container_id, outcome)| ActionResult::acted(container_id, outcome)),
                 None => self.run_wait_time().map(|(container_id, confirmed)| {
                     let outcome = if confirmed {
                         ActionOutcome::Changed
                     } else {
                         ActionOutcome::Unconfirmed
                     };
-                    (container_id, outcome)
+                    ActionResult::acted(container_id, outcome)
                 }),
             },
         }
@@ -1103,13 +1110,20 @@ impl SwayAction<'_> {
     /// `PID_MARKER_FALLBACK_GRACE` elapses, whichever comes first, bounding
     /// how long a genuinely ambiguous case can add to the wait.
     ///
+    /// Which of those two ends the wait is reported back as the returned
+    /// `LaunchOwnership` (see its own doc comment): a marked process that's
+    /// gone means the window is ours by elimination, while the grace period
+    /// merely elapsing means we adopted a window we never confirmed was ours.
+    /// Only `--rollback-on-error` reads this, and only to decide whether
+    /// killing the window is this run's business.
+    ///
     /// Same background-thread/socket lifetime as `run_wait_matching_events()`:
     /// the thread reading this action's event stream may outlive this function
     /// if still blocked on the socket when we return, but is retired by the
     /// next window event to arrive — which, in a multi-step run, is the next
     /// step's own. Measured bounded, not accumulating; see the comment at that
     /// function's `thread::spawn` call for the mechanism and the numbers.
-    fn run_wait_matching_exec_event(&self) -> Result<i64, String> {
+    fn run_wait_matching_exec_event(&self) -> Result<(i64, LaunchOwnership), String> {
         let SwayAction::Exec {
             command,
             verbose,
@@ -1167,11 +1181,12 @@ impl SwayAction<'_> {
                     if verbose {
                         eprintln!(
                             "No PID-marker-confirmed match arrived; using earlier \
-                             content-matched container id {}",
+                             content-matched container id {} (adopted, not confirmed as \
+                             launched by this run)",
                             container_id
                         );
                     }
-                    return Ok(container_id);
+                    return Ok((container_id, LaunchOwnership::Adopted));
                 }
                 return Err(format!("{} sec timeout reached", timeout.as_secs()));
             }
@@ -1210,7 +1225,7 @@ impl SwayAction<'_> {
                         window.change, window.container.id
                     );
                 }
-                return Ok(window.container.id);
+                return Ok((window.container.id, LaunchOwnership::Launched));
             }
 
             if fallback.is_none() {
@@ -1230,11 +1245,13 @@ impl SwayAction<'_> {
                 let (container_id, _) = fallback.expect("just set above if it wasn't already");
                 if verbose {
                     eprintln!(
-                        "Marked process no longer running; using fallback container id {}",
+                        "Marked process no longer running; using fallback container id {} \
+                         (nothing marker-confirmed can still arrive, so this window is this \
+                         run's own)",
                         container_id
                     );
                 }
-                return Ok(container_id);
+                return Ok((container_id, LaunchOwnership::Launched));
             }
         }
     }
@@ -2533,7 +2550,10 @@ impl<'a> SwayLaunch<'a> {
         Ok(())
     }
 
-    fn resolve_container_id(&self) -> Result<i64, String> {
+    /// The container every action in this run will target, plus how it was
+    /// arrived at — `Some(..)` only for `Target::Exec`, the one mode that
+    /// creates a window rather than picking an existing one out.
+    fn resolve_container_id(&self) -> Result<(i64, Option<LaunchOwnership>), String> {
         match self.target {
             Target::Exec { command } => SwayAction::Exec {
                 command,
@@ -2543,13 +2563,14 @@ impl<'a> SwayLaunch<'a> {
                 timeout: self.timeout,
             }
             .run()
-            .map(|(container_id, _outcome)| container_id),
-            Target::ConId(container_id) => Ok(container_id),
+            .map(|result| (result.container_id, result.launch_ownership)),
+            Target::ConId(container_id) => Ok((container_id, None)),
             Target::Existing => self::find_existing_container_id(
                 self.app_id_match,
                 self.class_match,
                 self.mark_match,
-            ),
+            )
+            .map(|container_id| (container_id, None)),
         }
     }
 
@@ -2753,7 +2774,7 @@ impl<'a> SwayLaunch<'a> {
     }
 
     pub fn run(&self) -> Result<RunOutcome, String> {
-        let container_id = self.resolve_container_id()?;
+        let (container_id, launch_ownership) = self.resolve_container_id()?;
 
         if self.verbose {
             eprintln!("Target container id: {}", container_id);
@@ -2764,10 +2785,10 @@ impl<'a> SwayLaunch<'a> {
             let record = match planned {
                 PlannedAction::Run(action) => {
                     let verb = action.sway_command_verb();
-                    let (_, outcome) = action.run()?;
+                    let result = action.run()?;
                     ActionRecord {
                         action: verb,
-                        status: match outcome {
+                        status: match result.outcome {
                             ActionOutcome::Changed => ActionStatus::Changed,
                             ActionOutcome::AlreadySatisfied => ActionStatus::AlreadySatisfied,
                             ActionOutcome::Unconfirmed => ActionStatus::Unconfirmed,
@@ -2787,6 +2808,7 @@ impl<'a> SwayLaunch<'a> {
         Ok(RunOutcome {
             container_id,
             actions,
+            launch_ownership,
         })
     }
 }
@@ -2802,6 +2824,41 @@ impl<'a> SwayLaunch<'a> {
 pub struct RunOutcome {
     pub container_id: i64,
     pub actions: Vec<ActionRecord>,
+    /// How `container_id` came to be this run's target — `None` for a window
+    /// that was retargeted rather than launched (`--con-id`/`--existing`, and
+    /// a layout step's `target_id`). Only `Some(LaunchOwnership::Launched)`
+    /// means this invocation can prove the window is its own, which is what
+    /// `main.rs`'s `--rollback-on-error` keys its destructive cleanup off.
+    pub launch_ownership: Option<LaunchOwnership>,
+}
+
+/// Whether a launched window is one this invocation can prove it created.
+///
+/// `SwayAction::Exec` tags the process it spawns with a per-invocation marker
+/// and prefers a window whose pid carries it, but deliberately falls back to a
+/// content match (app_id/class) when no marked window appears — see
+/// `run_wait_matching_exec_event()`. That fallback covers two very different
+/// situations, and only one of them is evidence of ownership:
+///
+/// - The marked process is *gone*. Nothing marker-confirmed can still be
+///   coming, and a matching window appeared anyway — the single-instance
+///   application case (a browser or editor forwarding the request to an
+///   already-running process, which then maps the window). Our command caused
+///   that window, as directly as can be observed from outside: `Launched`.
+/// - The marked process is still *running* and the grace period simply
+///   elapsed. The matching window came from somewhere else — another
+///   `sway-launch`, another launcher, a user opening something at the wrong
+///   moment — and this invocation adopted it only because it matched the
+///   requested app_id/class: `Adopted`.
+///
+/// The distinction exists because `--rollback-on-error` kills windows, and a
+/// kill can't be undone. Reporting an adopted window as this run's own would
+/// mean destroying a window some other process launched, on the strength of a
+/// match this code already knows it couldn't confirm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchOwnership {
+    Launched,
+    Adopted,
 }
 
 /// One entry in `RunOutcome.actions`: either an action that actually ran
@@ -2836,6 +2893,29 @@ pub enum ActionStatus {
     AlreadySatisfied,
     Unconfirmed,
     Skipped { reason: &'static str },
+}
+
+/// What one `SwayAction::run()` call reports back: which container it acted
+/// on, how confidently, and — for `Exec` alone — whether the window it settled
+/// on is one this invocation can prove it launched. Every other action targets
+/// a container that was already resolved before it ran, so it has no launch to
+/// claim and leaves `launch_ownership` unset.
+struct ActionResult {
+    container_id: i64,
+    outcome: ActionOutcome,
+    launch_ownership: Option<LaunchOwnership>,
+}
+
+impl ActionResult {
+    /// The result of an action applied to an already-resolved container, which
+    /// is every action except `Exec`.
+    fn acted(container_id: i64, outcome: ActionOutcome) -> Self {
+        ActionResult {
+            container_id,
+            outcome,
+            launch_ownership: None,
+        }
+    }
 }
 
 /// What `SwayAction::run()` observed, before `SwayLaunch::run()` folds it

@@ -987,23 +987,27 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
             ),
         };
 
-        // Equivalent to matching Target::Exec on the resolved SwayLaunch,
-        // read directly off the step instead: to_sway_launch() having just
-        // succeeded above guarantees exactly one of command/con_id/existing/
-        // target_id was set, so a non-empty `command` here is exactly the
-        // case it resolved to Target::Exec (a step this invocation is about
-        // to launch a new window for, as opposed to retargeting one that
-        // already existed via con_id/existing/target_id).
-        let launched_a_new_window = step.command.is_some();
-
         match sway_launch.run() {
             Ok(outcome) => {
                 if !args.json {
                     print_line(&outcome.container_id.to_string());
                 }
                 container_ids.push(outcome.container_id);
-                if launched_a_new_window {
+                // Only a window this run can prove it launched is eligible for
+                // --rollback-on-error's kill. A step that retargets an existing
+                // window (con_id/existing/target_id) reports no ownership at
+                // all, and neither does one whose window was adopted via the
+                // PID-marker fallback rather than confirmed — see
+                // sway_launch::LaunchOwnership.
+                if outcome.launch_ownership == Some(sway_launch::LaunchOwnership::Launched) {
                     launched_container_ids.push(outcome.container_id);
+                } else if args.verbose && step.command.is_some() {
+                    eprintln!(
+                        "step {}: container {} was adopted rather than confirmed as launched by \
+                         this run, so --rollback-on-error will leave it open",
+                        index + 1,
+                        outcome.container_id
+                    );
                 }
                 if let Some(id) = step.id.as_deref() {
                     resolved_ids.insert(id.to_string(), outcome.container_id);
@@ -1171,10 +1175,12 @@ fn steps_source(args: &Args) -> String {
 /// is caught *before* that step's own `SwayLaunch::run()` ever executes, but
 /// earlier steps may already have launched real windows needing the same
 /// `--rollback-on-error` cleanup as a later step's own `run()` failure.
-/// `launched_container_ids` is only ever ids `Target::Exec` resolved —
-/// windows this invocation retargeted via con_id/existing/target_id were
-/// already open before this invocation started, so rolling them back would
-/// close something the user, not this run, created.
+/// `launched_container_ids` is only ever ids a `Target::Exec` step resolved
+/// *and* could prove it launched (`LaunchOwnership::Launched`) — windows this
+/// invocation retargeted via con_id/existing/target_id were already open before
+/// this invocation started, and a window merely adopted through the PID-marker
+/// fallback was never confirmed to be ours either, so rolling either back would
+/// close something this run didn't create.
 ///
 /// `container_ids`/`resolved_ids` are every step that completed before this
 /// failure, reported under `--json` so a caller can identify the windows
