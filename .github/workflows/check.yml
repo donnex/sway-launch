@@ -83,6 +83,14 @@ jobs:
       # coverage sits at 91.13% -- barely a point over a 90 gate, which is the
       # exact squeeze lowering it to 88 was meant to end. Extract predicates
       # because it makes the logic testable, not to chase the threshold back up.
+      #
+      # Re-measured 2026-09-02 after splitting state_satisfied() into an IPC
+      # half and a pure state_satisfies()/ContainerState::from_tree() half (and
+      # deleting the four per-arm IPC helpers it replaced): 91.91% functions,
+      # 88.34% lines, 87.97% regions, up 2.1/1.3/1.7 points. Still not a reason
+      # to restore 90 -- that would be back to under two points of headroom,
+      # which is the squeeze this gate was lowered to end. Same conclusion as
+      # above, now with a second data point behind it.
       - name: cargo llvm-cov (coverage regression gate, excluding main.rs)
         run: |
           cargo llvm-cov --locked --ignore-filename-regex 'main\.rs' \
