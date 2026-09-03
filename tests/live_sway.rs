@@ -2197,6 +2197,7 @@ fn new_column_confirms_via_poll_when_swapping_past_a_sibling() {
             "--new-column",
             "--wait-time",
             "2000",
+            "--json",
         ])
         .output()
         .expect("failed to run sway-launch binary");
@@ -2210,6 +2211,15 @@ fn new_column_confirms_via_poll_when_swapping_past_a_sibling() {
         "--new-column took {:?} against a 2000ms --wait-time (fallback would take ~4000ms), \
          suggesting it fell back to sleeping instead of confirming via poll",
         started.elapsed()
+    );
+    // Asserted directly rather than inferred from the timing above, because
+    // this is what guards MOVE_POLL_GRACE against being tightened too far: a
+    // real move has to still confirm inside that much shorter window, and
+    // "unconfirmed" here is exactly what a too-small bound would produce.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("\"status\":\"changed\""),
+        "a real sibling swap should confirm via poll, not fall back: {stdout:?}"
     );
 
     let after = get_node(&mut connection, first_id).rect;
@@ -2241,6 +2251,7 @@ fn new_row_confirms_via_poll_when_swapping_past_a_sibling() {
             "--new-row",
             "--wait-time",
             "2000",
+            "--json",
         ])
         .output()
         .expect("failed to run sway-launch binary");
@@ -2254,6 +2265,13 @@ fn new_row_confirms_via_poll_when_swapping_past_a_sibling() {
         "--new-row took {:?} against a 2000ms --wait-time (fallback would take ~4000ms), \
          suggesting it fell back to sleeping instead of confirming via poll",
         started.elapsed()
+    );
+    // Same reasoning as the --new-column test above: this is what keeps
+    // MOVE_POLL_GRACE honest against a real move.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("\"status\":\"changed\""),
+        "a real sibling swap should confirm via poll, not fall back: {stdout:?}"
     );
 
     let after = get_node(&mut connection, first_id).rect;

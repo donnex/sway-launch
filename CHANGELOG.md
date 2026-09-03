@@ -87,6 +87,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `--new-column`/`--new-row` now stop looking for confirmation 25ms after sending their command,
+  rather than up to 200ms. These two confirm by noticing the window's geometry changed at all —
+  the only thing Sway offers for a relative move — so a longer window mostly meant more chances to
+  mistake another program's change to the same window for this one's. A real move is observable
+  almost immediately, so this doesn't change what a normal run reports; a move that somehow takes
+  longer now reports `unconfirmed` instead of `changed`, and still runs exactly as before. Only
+  affects invocations with `--wait-time` above 25ms (the default is 20).
 - `--position <x>,<y>` (and the matching `--layout`/`--template` step field) now accepts negative
   coordinates — a real, valid position on a multi-monitor setup where an output sits left of or
   above the primary one.
