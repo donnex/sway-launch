@@ -101,10 +101,20 @@ impl fmt::Display for Split {
 /// needs for its human-readable `Sway action: ...` line — this makes
 /// `sway_command()` a pure serialization step for these variants, not a
 /// second place the format is defined.
+///
+/// `i32`, not `u32`, deliberately: the geometry these values are ultimately
+/// compared against is `swayipc::Rect`'s, which is `i32`. Carrying them as
+/// `u32` meant `poll_matches()` had to cast (`*pixels as i32`), so a value
+/// above `i32::MAX` — which `validate_size_argument()` used to accept, since
+/// it only checked `u32` — wrapped negative and could never match anything
+/// the compositor reported. Negative values never reach here regardless
+/// (`validate_size_argument()`'s `\d+` rejects the sign outright), so the
+/// signed type costs nothing and removes the cast rather than moving the
+/// mismatch somewhere else.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Size {
-    Pixels(u32),
-    Percent(u32),
+    Pixels(i32),
+    Percent(i32),
 }
 
 impl fmt::Display for Size {
@@ -126,7 +136,7 @@ pub fn parse_size(value: &str) -> Size {
         Size::Pixels(
             pixels
                 .parse()
-                .expect("validate_size_argument guarantees this parses as u32"),
+                .expect("validate_size_argument guarantees this parses as i32"),
         )
     } else {
         let percent = value
@@ -135,7 +145,7 @@ pub fn parse_size(value: &str) -> Size {
         Size::Percent(
             percent
                 .parse()
-                .expect("validate_size_argument guarantees this parses as u32"),
+                .expect("validate_size_argument guarantees this parses as i32"),
         )
     }
 }
@@ -876,12 +886,12 @@ impl SwayAction<'_> {
                 height: Size::Pixels(pixels),
                 ..
             } => self::node_by_id(connection, container_id)
-                .is_some_and(|node| self::height_matches(&node, *pixels as i32)),
+                .is_some_and(|node| self::height_matches(&node, *pixels)),
             SwayAction::Width {
                 width: Size::Pixels(pixels),
                 ..
             } => self::node_by_id(connection, container_id)
-                .is_some_and(|node| self::width_matches(&node, *pixels as i32)),
+                .is_some_and(|node| self::width_matches(&node, *pixels)),
             SwayAction::Position { position, .. } => {
                 self::position_matches(connection, container_id, position)
             }
@@ -1738,14 +1748,25 @@ fn quote_sway_string(value: &str) -> String {
 
 /// Validates a `--height`/`--width` value, or a `LayoutStep`'s `height`/
 /// `width` field — both take the same `\d+(px|ppt)` format. Also confirms
-/// the digits actually fit in a `u32`, not just that the regex's unbounded
+/// the digits actually fit in an `i32`, not just that the regex's unbounded
 /// `\d+` matched — `parse_size()` trusts a value that passed this check to
 /// parse infallibly, so a value that matches the shape but overflows (e.g.
 /// 11+ digits) must be rejected here, not discovered as a panic later.
+///
+/// The bound is `i32`, matching `Size`'s own representation and therefore the
+/// `swayipc::Rect` geometry a pixel size is eventually compared against. It
+/// used to be `u32`, which was the wrong invariant to promise: a value in
+/// `i32::MAX+1..=u32::MAX` passed validation, was rendered into a real Sway
+/// command, and then wrapped negative on its way into `width_matches()`/
+/// `height_matches()`, so it could never be confirmed — the accepted domain
+/// was larger than the domain the rest of the program could represent.
+/// Rejecting it here is what keeps validation's promise ("anything that
+/// passes is something the whole pipeline can handle") true, rather than only
+/// true of the parser.
 pub fn validate_size_argument(value: &str) -> Result<String, String> {
     let re = Regex::new(r"^(\d+)(?:px|ppt)$").unwrap();
     match re.captures(value) {
-        Some(captures) if captures[1].parse::<u32>().is_ok() => Ok(value.to_string()),
+        Some(captures) if captures[1].parse::<i32>().is_ok() => Ok(value.to_string()),
         _ => Err("Must be in format <HEIGHT>px|ppt. E.g. 300px/20ppt. ppt = percent".to_string()),
     }
 }
@@ -3276,12 +3297,49 @@ mod tests {
     }
 
     #[test]
-    fn validate_size_argument_rejects_a_value_that_overflows_u32() {
+    fn validate_size_argument_rejects_a_value_that_overflows_i32() {
         // Regression test: the regex's \d+ has no digit-count bound, but
         // parse_size() trusts a validated value to parse infallibly --
-        // matches the shape (all digits) while overflowing u32 (max
-        // 4294967295, 10 digits) must still be rejected here.
+        // matches the shape (all digits) while overflowing i32 must still be
+        // rejected here.
         assert!(validate_size_argument("99999999999px").is_err());
+    }
+
+    #[test]
+    fn validate_size_argument_accepts_the_largest_representable_pixel_value() {
+        assert_eq!(
+            validate_size_argument("2147483647px"),
+            Ok("2147483647px".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_size_argument_rejects_one_past_the_largest_representable_value() {
+        // The old bound was u32, which accepted everything up to 4294967295
+        // -- but Size holds an i32 (matching swayipc::Rect's geometry), so
+        // anything above i32::MAX used to validate, reach Sway as a real
+        // command, and then wrap negative before width_matches()/
+        // height_matches() ever saw it, making it unconfirmable by
+        // construction. Both of these were accepted before that was fixed.
+        assert!(validate_size_argument("2147483648px").is_err());
+        assert!(validate_size_argument("4294967295px").is_err());
+    }
+
+    #[test]
+    fn validate_size_argument_applies_the_same_bound_to_ppt() {
+        assert_eq!(
+            validate_size_argument("2147483647ppt"),
+            Ok("2147483647ppt".to_string())
+        );
+        assert!(validate_size_argument("4294967295ppt").is_err());
+    }
+
+    #[test]
+    fn parse_size_round_trips_the_largest_representable_pixel_value() {
+        // parse_size()'s expect() is only sound because validation rejects
+        // anything it couldn't parse -- pin the boundary the two agree on.
+        assert_eq!(parse_size("2147483647px"), Size::Pixels(i32::MAX));
+        assert_eq!(parse_size("2147483647px").to_string(), "2147483647px");
     }
 
     #[test]
