@@ -4,12 +4,14 @@ use std::io::Write;
 use std::sync::mpsc;
 use std::{fmt, thread, time};
 use swayipc::{
-    Connection, Event, EventStream, EventType, Node, NodeLayout, NodeType, WindowChange,
-    WindowEvent,
+    Connection, Event, EventType, Node, NodeLayout, NodeType, WindowChange, WindowEvent,
 };
 
+mod ipc;
 mod process_marker;
 
+pub use ipc::kill_container;
+use ipc::{event_loop, ipc_error, new_connection, quote_sway_string, run_sway_command};
 use process_marker::{
     any_process_has_env_var, generate_pid_marker_token, process_has_env_var,
     PID_MARKER_FALLBACK_GRACE, PID_MARKER_VAR,
@@ -68,23 +70,6 @@ const MOVE_POLL_GRACE: time::Duration = time::Duration::from_millis(25);
 /// this often without meaningfully loading the compositor, while still
 /// avoiding a zero-sleep busy loop.
 const WAIT_TIME_POLL_INTERVAL: time::Duration = time::Duration::from_millis(10);
-
-/// How long a single Sway IPC request/response round trip may take before the
-/// socket read or write gives up (see `new_connection()`).
-///
-/// Deliberately *not* `--timeout`, and not derived from it. The two bound
-/// different things: `--timeout` is how long to wait for a window *event*,
-/// which legitimately takes seconds because it's waiting on an application to
-/// map a window. This bounds one request/response exchange with the compositor,
-/// which on a healthy system is sub-millisecond regardless of `--timeout`.
-/// Tying them together would mean `--timeout 1` making ordinary tree reads
-/// fail on a merely-slow machine, and `--timeout 60` re-opening a minute-long
-/// hang.
-///
-/// 10s is therefore far above any legitimate round trip while still turning a
-/// wedged compositor into a prompt, clear failure instead of an indefinite
-/// block.
-const IPC_ROUND_TRIP_TIMEOUT: time::Duration = time::Duration::from_secs(10);
 
 // Serialize is test-only, so main.rs's schema-parity test can serialize a
 // LayoutStep/TemplateStep to read its field names back — see
@@ -1113,7 +1098,7 @@ impl SwayAction<'_> {
         // read opening its own. Failing to open one isn't fatal: there's
         // simply nothing to poll with, so this falls back to the original
         // unconditional sleep, exactly as a variant with no matcher does.
-        let mut poll_connection = self::new_connection().ok();
+        let mut poll_connection = new_connection().ok();
 
         // Captured before the command runs, not after — see
         // poll_baseline()'s doc comment for why NewColumn/NewRow need a
@@ -1195,7 +1180,7 @@ impl SwayAction<'_> {
             unreachable!("run_wait_matching_exec_event is only called for SwayAction::Exec");
         };
 
-        let event_loop = self::event_loop(&[EventType::Window])?;
+        let event_loop = event_loop(&[EventType::Window])?;
 
         let token = generate_pid_marker_token();
         let sway_command = format!("exec env {}={} {}", PID_MARKER_VAR, token, command);
@@ -1369,7 +1354,7 @@ impl SwayAction<'_> {
             ));
         }
 
-        let event_loop = self::event_loop(&[EventType::Window])?;
+        let event_loop = event_loop(&[EventType::Window])?;
 
         if let Some(container_id) = self.already_at_target()? {
             if self.verbose() {
@@ -1559,155 +1544,6 @@ impl SwayAction<'_> {
 
         Err(WindowEventMatchError::NoMatchingEvent)
     }
-}
-
-/// A request/response Sway IPC connection whose reads and writes are bounded
-/// by `IPC_ROUND_TRIP_TIMEOUT`, so a compositor that accepts a connection and
-/// then stops answering fails instead of blocking forever.
-///
-/// Without this, `--timeout` bounded only the wait for a confirmation *event*,
-/// not the IPC round trips around it — every `get_tree()`, `get_outputs()` and
-/// `run_command()` was an unbounded blocking read. Confirmed by pointing
-/// `SWAYSOCK` at a socket that accepts and never replies:
-/// `sway-launch --con-id 42 --floating --timeout 2` hung until killed
-/// externally at 15s, because the first thing it does is read the tree.
-///
-/// `swayipc`'s own `Connection::new()` gives no way to configure the socket,
-/// but it does expose `From<UnixStream>`, so the stream is built here instead.
-/// Socket discovery is `I3SOCK`/`SWAYSOCK`, matching `swayipc`'s own order;
-/// when neither is set it falls back to `Connection::new()`, whose remaining
-/// discovery step shells out to `sway --get-socketpath`. That fallback is
-/// unbounded, which is accepted: it only applies when the environment doesn't
-/// name a socket at all, and the subprocess it runs is not the wedged
-/// compositor's IPC socket.
-fn new_connection() -> Result<Connection, String> {
-    if let Some(path) = self::socket_path() {
-        let stream = std::os::unix::net::UnixStream::connect(path)
-            .map_err(|error| format!("failed to connect to the Sway IPC socket: {}", error))?;
-        // Applied to both directions: a wedged compositor can stall a write
-        // (socket buffer full, nothing draining it) as readily as a read.
-        stream
-            .set_read_timeout(Some(IPC_ROUND_TRIP_TIMEOUT))
-            .and_then(|()| stream.set_write_timeout(Some(IPC_ROUND_TRIP_TIMEOUT)))
-            .map_err(|error| format!("failed to set a Sway IPC socket timeout: {}", error))?;
-        return Ok(Connection::from(stream));
-    }
-
-    match Connection::new() {
-        Ok(connection) => Ok(connection),
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-/// Renders a `swayipc` error, turning the socket-timeout case into something
-/// that names the actual problem.
-///
-/// A read or write that hits `IPC_ROUND_TRIP_TIMEOUT` surfaces as a bare
-/// `Resource temporarily unavailable (os error 11)`, which tells a user
-/// nothing about what happened or which knob (if any) relates to it. Every
-/// other error keeps `swayipc`'s own wording, which is already specific —
-/// `command failed with 'No matching node.'` and friends.
-fn ipc_error(error: swayipc::Error) -> String {
-    if let swayipc::Error::Io(io_error) = &error {
-        if matches!(
-            io_error.kind(),
-            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-        ) {
-            return format!(
-                "Sway IPC did not respond within {} sec — the compositor accepted the connection \
-                 but stopped answering (this bounds one request/response exchange, and is \
-                 separate from --timeout)",
-                IPC_ROUND_TRIP_TIMEOUT.as_secs()
-            );
-        }
-    }
-    error.to_string()
-}
-
-/// The Sway IPC socket path from the environment, in `swayipc`'s own
-/// precedence order. `None` when neither variable is set, which is what sends
-/// `new_connection()` down its unbounded fallback.
-fn socket_path() -> Option<std::path::PathBuf> {
-    std::env::var_os("I3SOCK")
-        .or_else(|| std::env::var_os("SWAYSOCK"))
-        .map(std::path::PathBuf::from)
-}
-
-/// The connection `event_loop()` subscribes on, deliberately *without* a read
-/// timeout.
-///
-/// A subscription's whole purpose is to block until an event arrives, so a
-/// socket read timeout would surface a perfectly normal quiet period as an
-/// error. It doesn't need one either: the blocking read happens on a reader
-/// thread whose output the caller collects with `recv_timeout()`, so the
-/// invocation is already bounded by `--timeout` no matter what the socket
-/// does. Only the reader thread can be left blocked, which is the bounded,
-/// measured behaviour documented at `run_wait_matching_events()`'s
-/// `thread::spawn`.
-fn new_event_connection() -> Result<Connection, String> {
-    match Connection::new() {
-        Ok(connection) => Ok(connection),
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-fn event_loop(subscriptions: &[EventType]) -> Result<EventStream, String> {
-    match self::new_event_connection()?.subscribe(subscriptions) {
-        Ok(event_iterator) => Ok(event_iterator),
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-fn run_sway_command(command: &str) -> Result<(), String> {
-    let outcomes = match self::new_connection()?.run_command(command) {
-        Ok(outcomes) => outcomes,
-        Err(error) => return Err(self::ipc_error(error)),
-    };
-
-    first_outcome_error(outcomes, command)
-}
-
-/// Kills `container_id` via `[con_id] kill`. Used by `main.rs`'s
-/// `--rollback-on-error`: best-effort cleanup of a window this invocation
-/// itself launched earlier in the same `--layout`/`--template` run, once a
-/// later step fails.
-pub fn kill_container(container_id: i64) -> Result<(), String> {
-    run_sway_command(&format!("[con_id={}] kill", container_id))
-}
-
-/// Sway splits a command string into multiple sub-commands on unquoted
-/// `,`/`;`, so `run_command()` can return more than one outcome for a single
-/// call. Report the first failure found among all of them, rather than only
-/// the first outcome — an early success must not hide a later failure.
-fn first_outcome_error<E: fmt::Display>(
-    outcomes: Vec<Result<(), E>>,
-    command: &str,
-) -> Result<(), String> {
-    // Every SwayAction::sway_command() builds a non-empty string, and
-    // swayipc always returns at least one outcome for one, so this branch
-    // isn't known to be reachable in practice — it's defensive against a
-    // theoretical empty reply rather than a case this crate can construct
-    // a test for without mocking swayipc.
-    if outcomes.is_empty() {
-        return Err(format!("{} command failed", command));
-    }
-
-    for outcome in outcomes {
-        if let Err(error) = outcome {
-            return Err(error.to_string());
-        }
-    }
-
-    Ok(())
-}
-
-/// Quotes a value for safe interpolation into a Sway IPC command string.
-/// Sway's command parser splits on `,`/`;` and whitespace outside quotes, so
-/// an unquoted value containing one of those could inject additional
-/// commands; wrapping it in escaped double quotes forces it to be read back
-/// as a single literal argument.
-fn quote_sway_string(value: &str) -> String {
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 /// Validates a `--height`/`--width` value, or a `LayoutStep`'s `height`/
@@ -1940,9 +1776,9 @@ fn find_existing_container_id(
     class_match: &str,
     mark_match: &str,
 ) -> Result<i64, String> {
-    let tree = match self::new_connection()?.get_tree() {
+    let tree = match new_connection()?.get_tree() {
         Ok(tree) => tree,
-        Err(error) => return Err(self::ipc_error(error)),
+        Err(error) => return Err(ipc_error(error)),
     };
 
     let criteria = if !app_id_match.is_empty() {
@@ -2031,9 +1867,9 @@ impl ContainerState {
 /// fail with a confusing timeout instead of surfacing the actual problem
 /// immediately.
 fn container_state(container_id: i64) -> Result<Option<ContainerState>, String> {
-    let tree = match self::new_connection()?.get_tree() {
+    let tree = match new_connection()?.get_tree() {
         Ok(tree) => tree,
-        Err(error) => return Err(self::ipc_error(error)),
+        Err(error) => return Err(ipc_error(error)),
     };
 
     Ok(ContainerState::from_tree(&tree, container_id))
@@ -2174,11 +2010,11 @@ fn relocates_to_another_output(
     // and the early return below means the tree fetch only happens on a
     // multi-output setup anyway — same reasoning as `run_wait_time()`'s shared
     // poll connection, just without a loop to amplify the cost.
-    let mut connection = self::new_connection()?;
+    let mut connection = new_connection()?;
 
     let outputs = match connection.get_outputs() {
         Ok(outputs) => outputs,
-        Err(error) => return Err(self::ipc_error(error)),
+        Err(error) => return Err(ipc_error(error)),
     };
     if outputs.len() < 2 {
         return Ok(false);
@@ -2186,7 +2022,7 @@ fn relocates_to_another_output(
 
     let tree = match connection.get_tree() {
         Ok(tree) => tree,
-        Err(error) => return Err(self::ipc_error(error)),
+        Err(error) => return Err(ipc_error(error)),
     };
 
     Ok(self::is_at_the_trailing_workspace_edge(
@@ -2241,9 +2077,9 @@ fn find_workspace_node(node: &Node, container_id: i64) -> Option<&Node> {
 /// redundant there but still required for 1.9 — see `node_is_floating()`'s
 /// doc comment for the same version split.
 fn container_exists(container_id: i64) -> Result<bool, String> {
-    let tree = match self::new_connection()?.get_tree() {
+    let tree = match new_connection()?.get_tree() {
         Ok(tree) => tree,
-        Err(error) => return Err(self::ipc_error(error)),
+        Err(error) => return Err(ipc_error(error)),
     };
     Ok(self::contains_id(&tree, container_id))
 }
@@ -2534,7 +2370,7 @@ impl<'a> SwayLaunch<'a> {
             EventType::Input,
         ];
 
-        for (i, event) in self::event_loop(&subscriptions)?.enumerate() {
+        for (i, event) in event_loop(&subscriptions)?.enumerate() {
             let event = match event {
                 Ok(event) => event,
                 Err(error) => return Err(error.to_string()),
@@ -3072,94 +2908,6 @@ mod tests {
         value["type"] = serde_json::json!("workspace");
         value["name"] = serde_json::json!(name);
         serde_json::from_value(value).expect("valid Node test fixture")
-    }
-
-    // quote_sway_string
-
-    #[test]
-    fn quote_sway_string_wraps_plain_value() {
-        assert_eq!(quote_sway_string("foo"), "\"foo\"");
-    }
-
-    #[test]
-    fn quote_sway_string_escapes_embedded_quotes() {
-        assert_eq!(quote_sway_string("foo\"bar"), "\"foo\\\"bar\"");
-    }
-
-    #[test]
-    fn quote_sway_string_escapes_backslashes() {
-        assert_eq!(quote_sway_string("foo\\bar"), "\"foo\\\\bar\"");
-    }
-
-    #[test]
-    fn quote_sway_string_wraps_a_value_containing_a_newline() {
-        // Regression test: confirmed live (this project's security review,
-        // 2026-08-21) that a literal newline embedded in a --mark value
-        // can't break out of the quoting either -- Sway's own parser treats
-        // it as part of the quoted literal, not a command separator, the
-        // same as the comma/semicolon case below. quote_sway_string()
-        // itself needs no special handling for `\n` (only `\`/`"` are
-        // escaped) since it's neither of those; this test just pins that
-        // the newline survives untouched inside the quotes rather than
-        // being stripped or otherwise mishandled. See
-        // mark_with_special_characters_is_stored_literally_not_executed in
-        // tests/live_sway.rs for the live-Sway proof this is actually safe.
-        let injected = "foo\nexec malicious-command";
-        let quoted = quote_sway_string(injected);
-        assert_eq!(quoted, "\"foo\nexec malicious-command\"");
-    }
-
-    #[test]
-    fn quote_sway_string_neutralizes_command_separators() {
-        // Regression test: an unquoted mark containing a command separator
-        // used to let extra Sway commands be injected into the same call.
-        let injected = "foo, exec malicious-command";
-        let quoted = quote_sway_string(injected);
-        assert_eq!(quoted, "\"foo, exec malicious-command\"");
-        assert!(!quoted.trim_matches('"').contains('"'));
-    }
-
-    // ipc_error
-
-    #[test]
-    fn ipc_error_explains_a_socket_timeout() {
-        // A read that hits IPC_ROUND_TRIP_TIMEOUT arrives as a bare
-        // "Resource temporarily unavailable (os error 11)", which says nothing
-        // about what happened. Both kinds are mapped: Linux reports a timed-out
-        // socket read as WouldBlock, other platforms as TimedOut.
-        for kind in [std::io::ErrorKind::WouldBlock, std::io::ErrorKind::TimedOut] {
-            let error = ipc_error(swayipc::Error::Io(std::io::Error::from(kind)));
-            assert!(
-                error.contains("did not respond") && error.contains("10 sec"),
-                "should name the condition and the bound, got {error:?}"
-            );
-            assert!(
-                error.contains("--timeout"),
-                "should say which knob this is *not*, got {error:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn ipc_error_leaves_other_errors_alone() {
-        // swayipc's own wording is already specific for these; rewriting them
-        // would lose the compositor's actual complaint.
-        let error = ipc_error(swayipc::Error::CommandFailed(
-            "No matching node.".to_string(),
-        ));
-        assert!(
-            error.contains("No matching node."),
-            "should keep swayipc's own message, got {error:?}"
-        );
-        assert!(!error.contains("did not respond"));
-    }
-
-    #[test]
-    fn ipc_error_leaves_a_non_timeout_io_error_alone() {
-        let error = ipc_error(swayipc::Error::Io(std::io::Error::from(
-            std::io::ErrorKind::ConnectionRefused,
-        )));
-        assert!(!error.contains("did not respond"), "got {error:?}");
     }
 
     // validate_size_argument / validate_position_argument
@@ -5422,43 +5170,6 @@ mod tests {
             999,
             MoveDirection::Right
         ));
-    }
-
-    // first_outcome_error
-
-    #[test]
-    fn first_outcome_error_ok_when_all_succeed() {
-        let outcomes: Vec<Result<(), String>> = vec![Ok(()), Ok(())];
-        assert_eq!(first_outcome_error(outcomes, "cmd"), Ok(()));
-    }
-
-    #[test]
-    fn first_outcome_error_fails_when_empty() {
-        let outcomes: Vec<Result<(), String>> = vec![];
-        assert_eq!(
-            first_outcome_error(outcomes, "cmd"),
-            Err("cmd command failed".to_string())
-        );
-    }
-
-    #[test]
-    fn first_outcome_error_surfaces_a_leading_failure() {
-        let outcomes: Vec<Result<(), String>> = vec![Err("boom".to_string()), Ok(())];
-        assert_eq!(
-            first_outcome_error(outcomes, "cmd"),
-            Err("boom".to_string())
-        );
-    }
-
-    #[test]
-    fn first_outcome_error_surfaces_a_trailing_failure() {
-        // Regression test: a prior version only inspected the first outcome
-        // and returned Ok(()) here, silently dropping this failure.
-        let outcomes: Vec<Result<(), String>> = vec![Ok(()), Err("boom".to_string())];
-        assert_eq!(
-            first_outcome_error(outcomes, "cmd"),
-            Err("boom".to_string())
-        );
     }
 
     // Display impls for the private matching-result enums
