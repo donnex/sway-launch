@@ -1021,6 +1021,19 @@ successfully but a later action *within that same step* then failed — `SwayLau
 succeeded on the *failing* step itself, a narrower window than the earlier-steps case this feature
 was written for.
 
+**Declined (2026-09-03): a `mutations_not_rolled_back` field in the `--json` error.** An external
+review noted that "rollback" can be read as "restore my desktop", while what it does is close
+windows this run launched — mutations to retargeted windows (a workspace move, a resize, a mark)
+stay applied. That reading is a fair risk, and the same review agreed emulating transactions over
+Sway isn't worth it. But the suggested field isn't a clarification, it's a feature: nothing
+currently records what a step changed, so populating it means tracking every mutation per step —
+the bookkeeping half of transactional rollback, with none of the payoff, and reporting a list of
+things deliberately left alone invites the reading that they *should* have been undone. What was
+genuinely missing was a test, since the guarantee was documented but unpinned; that's
+`rollback_on_error_undoes_launches_not_mutations_to_existing_windows`. Revisit only alongside real
+state restoration (the review's own `--restore-on-error` sketch), where recording prior state is
+the point rather than an aside.
+
 ### `--template`
 
 A layer on top of `--layout`, not a replacement: `--template <FILE>` decouples a layout's shape
@@ -1064,6 +1077,19 @@ reference an earlier `slot` step via the **existing** `id`/`target_id`/`resolved
 above (since the slot name *is* the id), and two `TemplateStep`s accidentally sharing a `slot` name
 trip `run_steps()`'s **existing** "id already used by an earlier step" check, rather than needing a
 separate duplicate-slot check in `resolve()` itself.
+
+**Declined (2026-09-03): giving `TemplateStep` its own optional `id`, defaulting to the slot name.**
+An external review read the identity coupling above as a schema-evolution risk — a slot is an
+application-binding key, a step `id` is an execution-graph reference, and tying them means renaming
+a slot silently changes what a `target_id` refers to. The two concepts really are distinct, but the
+failure it describes isn't silent: a `target_id` naming a slot that no longer exists is caught by
+`to_sway_launch()`'s own lookup and reported as a step error, before anything launches, and
+`--validate` catches it without a compositor at all. Against that, a second identity field is a new
+TOML key on every template step, another entry in `main.rs`'s mirror-test allowlists, another
+README field list, and a second namespace a reader has to hold in mind to answer "what does this
+`target_id` point at". Revisit if a template ever needs two steps bound to the same slot, or a
+`target_id` that must survive a slot rename — either is a concrete reason the two need to vary
+independently, which is exactly what's missing today.
 
 **Template-level workspace/output context (`[layout]` table).** A template file may declare an
 optional `[layout]` table (`Template.layout: TemplateLayoutContext`, `workspace`/`output`, both
