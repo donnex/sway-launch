@@ -22,7 +22,7 @@ rules both apply in full because of this — there's no "private repo" fallback 
 - Run: `cargo run -- [OPTIONS] [COMMAND]` (e.g. `cargo run -- -a foot foot`)
 - Format: `cargo fmt`
 - Lint: `cargo clippy`
-- Test: `cargo test` — runs the unit tests in `src/sway_launch.rs` and `src/main.rs` (covering all
+- Test: `cargo test` — runs the unit tests in `src/sway_launch/`'s modules and `src/main.rs` (covering all
   pure/logic functions; see the Testing bullet under Rust conventions for what's exempted and why)
   plus the integration tests in `tests/` (driving the compiled binary directly, for the couple of
   things that need a real subprocess — see Architecture below). This never touches a real Sway
@@ -43,13 +43,14 @@ See the CI section below for how GitHub Actions runs these same checks.
 
 ## Architecture
 
-The crate is four source files plus five integration test files:
+The crate is `main.rs`, two TOML-schema modules, the `sway_launch` module (itself nine files, see
+below) plus five integration test files:
 
 - `src/main.rs` — defines the `clap`-derived `Args` struct (CLI flags) and constructs a
   `sway_launch::SwayLaunch` (direct CLI mode) or dispatches to `run_layout()`/`layout.rs`
   (`--layout` mode) or `run_template()`/`template.rs` (`--template` mode) — both funnel into the
   shared `run_steps()` (see "`--template`" below). Argument validation itself (e.g.
-  `--height`/`--width` must match `\d+(px|ppt)`) lives in `sway_launch.rs` as
+  `--height`/`--width` must match `\d+(px|ppt)`) lives in `sway_launch/values.rs` as
   `pub fn validate_size_argument`/`validate_position_argument`/
   `validate_sway_string_argument`, referenced from `main.rs`'s
   `#[clap(value_parser = ...)]` attributes, so both the CLI parser and `layout.rs`'s TOML steps
@@ -62,7 +63,35 @@ The crate is four source files plus five integration test files:
   is the generic "this named field must not be empty or whitespace-only" check the layout/template
   schemas apply to free-form identifiers (`id`, `target_id`, `slot`, a binding's `command`, a
   template's `description`/`category`) that have no dedicated format of their own.
-- `src/sway_launch.rs` — all the core logic (see below), plus the shared validators above.
+- `src/sway_launch.rs` plus `src/sway_launch/` — all the core logic (see below), plus the shared
+  validators above. The file itself is a 98-line façade: module declarations, the public surface
+  the three files above use, and the poll-timing constants shared between modules. Everything else
+  lives in one of nine submodules, layered so that what needs a live compositor is confined to two
+  of them:
+
+  | Module | Holds |
+  | --- | --- |
+  | `values.rs` | `Split`/`Size`/`Position`, the `validate_*` functions and their `parse_*` pairs |
+  | `ipc.rs` | connections, socket discovery, command dispatch, the event subscription, `kill_container` |
+  | `tree.rs` | every pure `&Node` predicate — matching, geometry, `ContainerState::from_tree` |
+  | `query.rs` | fetch-a-tree-then-delegate wrappers, and nothing else |
+  | `process_marker.rs` | the PID marker and its `/proc` reads |
+  | `action.rs` | `SwayAction` itself: variants, `Display`, `sway_command_verb()` |
+  | `confirmation.rs` | how an action's effect is established: event matching, state checks, polling, the `run_*` drivers |
+  | `outcome.rs` | `RunOutcome`/`ActionRecord`/`ActionStatus`/`LaunchOwnership` and their internal counterparts |
+  | `launch.rs` | `SwayLaunch`, `Target`, `build_actions()`/`run()`, `--debug-events` |
+
+  Split out of a single 5,847-line file on 2026-09-03, on an external review's recommendation, one
+  module per commit with `cargo test` green at every step. The review proposed a single `state.rs`;
+  it was split into `tree.rs`/`query.rs` instead, because merging fetching with interpretation is
+  the exact arrangement an earlier finding from the same review was about. **`impl SwayAction` is
+  deliberately split across `action.rs` and `confirmation.rs`** — legal in Rust, since an inherent
+  impl needs the same crate rather than the same module — along the line of what an action *is*
+  versus how its effect is confirmed; either file would otherwise be ~1,400 lines. Unit tests moved
+  with their code; `test_support.rs` (`#[cfg(test)]`) holds the `Node`/`WindowEvent` JSON fixtures
+  more than one module's tests need. Adding to this module means picking the layer first: a new
+  predicate belongs in `tree.rs` unless it genuinely cannot answer from a `&Node`, in which case
+  the fetching half goes in `query.rs` and the deciding half still goes in `tree.rs`.
 - `src/layout.rs` — `--layout`'s TOML schema (`Layout`/`LayoutStep`) and
   `LayoutStep::to_sway_launch()`, which converts one step into a `sway_launch::SwayLaunch` (see
   "Layout files" below).
@@ -124,7 +153,7 @@ The crate is four source files plus five integration test files:
   `--debug-events` (which runs until killed, unlike everything else here) is covered by
   `debug_events_prints_a_real_window_event`, spawned as a background child via the `KillChildOnDrop`
   guard (mirrors `KillOnDrop`, but for a `Child` rather than a container id) with its stdout read on
-  a separate thread and forwarded through a channel — the same shape `sway_launch.rs`'s own event
+  a separate thread and forwarded through a channel — the same shape `confirmation.rs`'s own event
   loop uses internally. `--scratchpad` is covered by
   `scratchpad_moves_a_tiled_window_to_the_scratchpad`/
   `scratchpad_is_a_no_op_when_already_in_the_scratchpad`; `--existing`'s reach into the scratchpad
@@ -366,7 +395,8 @@ stated goal (safer internals, less repeated parsing) to actually land.
   `position_matches()` were already split to avoid, so this follows that precedent rather than
   inventing one (an external review's suggestion, scoped to this function rather than the wholesale
   `sway_client.rs`/`state.rs`/`executor.rs` split it proposed). Two things fell out: every arm is
-  now covered headlessly (`state_satisfies_*`/`container_state_from_tree_*` in `sway_launch.rs`),
+  now covered headlessly (`state_satisfies_*` in `confirmation.rs`, `container_state_from_tree_*`
+  in `tree.rs`),
   measured at +1.3 line/+2.1 function coverage points, and a state check costs one tree read
   instead of one per arm. `None` — the container isn't in the tree — is deliberately never
   satisfied: a closed window isn't floating, focused, or on the target workspace, and
@@ -610,7 +640,7 @@ self.build_actions(container_id)? { action.run()?; }`. A mechanical extraction, 
 `SwayAction<'a>`'s existing lifetime already matched `SwayLaunch<'a>`'s, so no data ever needed to
 change shape, only *when* each `SwayAction` gets constructed. This is also what makes
 `build_actions()` itself unit-testable headlessly for the first time (see its tests in
-`sway_launch.rs`, `build_actions_includes_every_flag_in_the_documented_fixed_order` in particular,
+`launch.rs`, `build_actions_includes_every_flag_in_the_documented_fixed_order` in particular,
 which pins the exact order above) — before the split, testing the order meant testing `run()`
 end-to-end against live Sway, since building and running were the same inseparable step. `Sticky`
 runs immediately after `Floating` — a conventional pairing (sticky is most useful on a small
@@ -723,9 +753,10 @@ resulting `WouldBlock`/`TimedOut` into a message naming the condition, since the
 arrives, so a read timeout would turn a normal quiet period into an error, and it needs no bound
 because the caller collects from the reader thread with `recv_timeout()`. Covered by
 `tests/live_sway.rs`'s `a_stalled_sway_socket_fails_instead_of_hanging_forever` (which needs no
-compositor, but lives there because it costs ~10s) and `sway_launch.rs`'s `ipc_error` unit tests.
+compositor, but lives there because it costs ~10s) and `ipc.rs`'s `ipc_error` unit tests.
 
-Each Sway IPC call opens its own fresh `Connection` (`new_connection()` in `sway_launch.rs`) — there
+Each Sway IPC call opens its own fresh `Connection` (`new_connection()` in `sway_launch/ipc.rs`) —
+there
 is no persistent/shared connection across actions. Two exceptions, both places where more than one
 read answers a single question:
 
@@ -746,7 +777,8 @@ Everything else still opens its own.
 
 stdout is reserved for that one result value (bare id or the `--json` object) and nothing else, so
 `container_id="$(sway-launch ...)"`-style capture always gets exactly one clean line. Every
-diagnostic/debug `println!` behind `if self.verbose()` in `sway_launch.rs` is `eprintln!`, not
+diagnostic/debug `println!` behind `if self.verbose()` in the `sway_launch` module is `eprintln!`,
+not
 `println!`, for this reason — `--verbose` output goes to stderr. Two exceptions:
 `SwayLaunch::debug_events()`'s event dump and `--dry-run`'s planned-command listing are each the
 command's actual output in that mode, so both stay on stdout — neither is meant to be captured as a
@@ -1008,7 +1040,8 @@ step's own `.run()` failing — `fail_step()` calls `rollback()` first (if the f
 best-effort `[con_id] kill`s every tracked id, most-recently-launched first, via the new
 `sway_launch::kill_container()` (a thin `pub` wrapper around the existing private
 `run_sway_command()`, added specifically so `main.rs` can reach it — every other Sway-IPC-touching
-function in `sway_launch.rs` stays private, called only from within that module). A kill that
+function in the `sway_launch` module stays crate-internal, reachable only from within it). A kill
+that
 itself fails (e.g. the window already closed on its own) is logged and skipped rather than treated
 as fatal — it doesn't stop the rest of the rollback, and the original step failure stays the error
 actually reported. `fail_step()` is shared by all three failure branches specifically so an id
@@ -1449,45 +1482,37 @@ comments, name things clearly instead" style). Two rule-specific overrides:
   fine for genuinely untestable paths (e.g. something that can't run headless) to stay uncovered —
   note why in the project's issue tracker rather than forcing a brittle test.
   - This project's agreed target: cover every pure/logic function (command-string building, event
-    dispatch tables, window-match logic, CLI argument validation/parsing) via `cargo test`. The
-    functions that open, read, or write the Sway IPC socket directly (`new_connection`,
-    `event_loop`, `run_sway_command`'s connection call, `kill_container`, `run_wait_time`,
-    `run_wait_matching_events`, `run_wait_matching_exec_event`, `run_poll_then_fallback`,
-    `container_exists`, `parent_node_layout`, `node_by_id`, `container_state`,
-    `position_matches`, `node_and_output_name`, `output_rect`, `SwayAction::poll_matches`
-    (`expected_position` and `node_position` are *not* exempt: `expected_position` used to look the
-    output geometry up itself, which made its `"center"` arm unreachable without a live socket, and
-    the decoration-frame-vs-`rect` choice used to sit inline in `position_matches` for the same
-    reason — both now take resolved values as arguments, so every arm is ordinary pure logic and
-    stays coverage-measured, with `position_matches` doing the lookups. Prefer this shape for any
-    new matcher: keep the decision pure and let the IPC layer fetch, rather than burying a
-    comparison behind a `&mut Connection` where the coverage gate can't see it),
-    `find_existing_container_id`'s connection call,
-    `SwayAction::run`, `SwayAction::already_at_target`, `SwayAction::state_satisfied` (its
-    *fetching* half only — `SwayAction::state_satisfies` and `ContainerState::from_tree`, which
-    hold the actual decision, are pure and stay coverage-measured; see "`state_satisfied()`
-    fetches; `state_satisfies()` decides" above, and prefer that same split for any new state
-    check),
-    `SwayAction::poll_baseline`'s
-    `NewColumn`/`NewRow` arm,
-    `relocates_to_another_output`, `SwayLaunch::run`, `SwayLaunch::build_actions`'s
-    `NewColumn`/`NewRow` arms (their `relocates_to_another_output()` call — the rest of
-    `build_actions()` is ordinary pure logic and stays coverage-measured; see "Orchestration" below
-    for why it's split out from `run()` at
-    all), `SwayLaunch::debug_events`) are exempted from
-    the `cargo llvm-cov` line-
-    coverage measurement — they require a live Sway compositor, so `cargo test`/`cargo llvm-cov`
-    (which run headlessly, without one) never execute them. They're no longer *unverifiable*,
-    though: `tests/live_sway.rs` (see the Testing section below) exercises them for real against a
-    throwaway headless Sway compositor via `scripts/run-live-sway-tests`, both in CI and locally —
-    it's just a separate test tier from `cargo test`'s coverage-measured suite, gated behind the
-    `live-sway-tests` Cargo feature so it stays fully opt-in. No mocking layer has been introduced
-    for these on the judgment that a trait-based abstraction purely to unit-test thin IPC wiring
-    isn't worth the added indirection for a tool this size; revisit if the IPC-touching logic grows
-    more complex than it is today.
-    `SwayLaunch::resolve_container_id`'s `Target::ConId` branch is the one exception — it never
-    touches the socket, so it's covered headlessly by `tests/json_output.rs` driving the compiled
-    binary with `--con-id` instead.
+    dispatch tables, window-match logic, CLI argument validation/parsing) via `cargo test`.
+    Functions that open, read, or write the Sway IPC socket directly are exempt from the
+    `cargo llvm-cov` measurement — they need a live compositor, which `cargo test`/`cargo llvm-cov`
+    (headless) can't provide.
+
+    **Since the module split (2026-09-03) that exemption is a rule about modules, not a list of
+    function names:** `sway_launch/ipc.rs` and `sway_launch/query.rs` are the compositor-bound
+    layers and are exempt; everything else is measured. The layering is what makes that true —
+    `query.rs` fetches and immediately delegates to a pure predicate in `tree.rs`, so almost
+    nothing but the fetch itself sits where the gate can't see it. The measured result backs this
+    up: `values.rs` 100%, `tree.rs` 99.7%, `process_marker.rs` 94.9%, against `query.rs` at 5.5%.
+    Two modules straddle the line, and both are deliberate: `confirmation.rs` holds the `run_*`
+    drivers and the `state_satisfied`/`poll_matches` fetching halves (exempt) *alongside* the pure
+    deciding halves — `state_satisfies`, `poll_grace`, `polls`, `matches_window_event` — that stay
+    measured, and
+    `launch.rs`'s `run`/`resolve_container_id`/`debug_events` and `build_actions()`'s
+    `relocates_to_another_output()` call are exempt while the rest of `build_actions()` is not.
+    `SwayLaunch::resolve_container_id`'s `Target::ConId` branch never touches the socket and is
+    covered headlessly by `tests/json_output.rs` driving the binary with `--con-id`.
+
+    **Adding IPC-touching code means putting it in the right module, not extending an exemption
+    list.** Keep the decision pure and let the IPC layer fetch — the shape `expected_position`/
+    `position_matches` and `state_satisfies`/`state_satisfied` already use — rather than burying a
+    comparison behind a `&mut Connection` where the coverage gate can't see it.
+
+    None of this is *unverifiable*: `tests/live_sway.rs` exercises it for real against a throwaway
+    headless Sway compositor via `scripts/run-live-sway-tests`, in CI and locally — a separate test
+    tier from `cargo test`'s coverage-measured suite, gated behind the `live-sway-tests` Cargo
+    feature so it stays opt-in. No mocking layer has been introduced on the judgment that a
+    trait-based abstraction purely to unit-test thin IPC wiring isn't worth the indirection for a
+    tool this size; revisit if the IPC-touching logic grows more complex than it is today.
 - Measure coverage with `cargo llvm-cov` (requires the `cargo-llvm-cov` subcommand and the
   `llvm-tools-preview` rustup component):
   - `cargo llvm-cov --summary-only --ignore-filename-regex 'main\.rs'` — summary
