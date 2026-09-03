@@ -2401,6 +2401,51 @@ fn wait_time_action_errors_clearly_when_its_container_already_closed() {
 }
 
 #[test]
+fn wait_time_action_does_not_sleep_out_the_wait_before_noticing_its_container_is_gone() {
+    // run_wait_time() sleeps --wait-time before sending its command, to let
+    // other IPC clients finish theirs. That sleep used to come before the
+    // container_exists() check, so an action whose target had already closed
+    // waited out the entire wait before reporting a foregone answer -- with a
+    // large --wait-time (the caller's own knob, deliberately unbounded) that
+    // reads as a hang. The check now runs before the sleep too; the one after
+    // it stays, for the different case of a window closing *during* the wait.
+    let mut connection = connect();
+    let (container_id, guard) = launch_foot(&[]);
+    connection
+        .run_command(format!("[con_id={container_id}] kill"))
+        .expect("kill should succeed")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("kill should succeed");
+    std::mem::forget(guard); // already closed — nothing left for KillOnDrop to clean up
+    wait_for_container_gone(&mut connection, container_id);
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--split",
+            "h",
+            "--wait-time",
+            "8000",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        !output.status.success(),
+        "--split against an already-closed container should fail"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "took {:?} against an already-closed container with --wait-time 8000, so the wait was \
+         slept out before the container was checked",
+        started.elapsed()
+    );
+}
+
+#[test]
 fn event_confirmed_action_errors_clearly_when_its_container_already_closed() {
     // Companion to wait_time_action_errors_clearly_when_its_container_already_closed
     // above, for the other dispatch half. Until this check was added, only

@@ -183,6 +183,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An action that waits out `--wait-time` (`--split`, `--sticky`, `--new-column`, `--new-row`,
+  `--height`, `--width`, `--position`) now reports a target window that has already closed straight
+  away, instead of sleeping the full wait first and only then saying so. With a large `--wait-time`
+  that looked like a hang. A window that closes *during* the wait is still caught as before.
 - `--height`/`--width` (and the matching `--layout`/`--template` step fields) now reject a pixel
   value above 2147483647 instead of accepting it. Such a value passed validation and was sent to
   Sway, but wrapped negative internally before the resize could be confirmed, so it could only ever
