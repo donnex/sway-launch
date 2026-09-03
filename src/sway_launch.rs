@@ -1030,14 +1030,36 @@ impl SwayAction<'_> {
             );
         }
 
+        let container_id = self
+            .container_id()
+            .expect("run_wait_time() is only ever called for variants other than Exec");
+
+        // Checked before the sleep as well as after it, and both are wanted.
+        //
+        // This one is a fast fail: --wait-time is the caller's own knob and is
+        // deliberately unbounded, so sleeping it out in full only to report
+        // that the target had already closed before the wait even began is
+        // pure delay in front of a foregone answer. A step with
+        // `wait_time = 3600000` against a window that's already gone used to
+        // sit there for an hour before saying so.
+        //
+        // It doesn't replace the post-sleep check below, which covers the
+        // different case of a window closing *during* the wait, and is the one
+        // guaranteeing the container still exists at the moment the command is
+        // actually sent. Two get_tree() calls per wait-time action, then,
+        // where there used to be one — a handful per invocation, none of them
+        // in a loop.
+        if !self::container_exists(container_id)? {
+            return Err(format!(
+                "container id {} no longer exists — window may have closed",
+                container_id
+            ));
+        }
+
         // Wait before and after running the Sway command: before, to let
         // other running IPC clients finish their own commands; after, to
         // let this command finish before the next action runs.
         thread::sleep(wait_time);
-
-        let container_id = self
-            .container_id()
-            .expect("run_wait_time() is only ever called for variants other than Exec");
 
         // On Sway 1.9 (still what `apt` installs on Ubuntu 24.04/CI — see
         // node_is_floating()'s doc comment for the same version split), a
