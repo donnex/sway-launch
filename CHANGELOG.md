@@ -183,6 +183,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--height`/`--width` (and the matching `--layout`/`--template` step fields) now reject a pixel
+  value above 2147483647 instead of accepting it. Such a value passed validation and was sent to
+  Sway, but wrapped negative internally before the resize could be confirmed, so it could only ever
+  report as unconfirmed. Values at or below that limit are unaffected.
 - `--rollback-on-error` no longer closes a window it can't prove this run launched. When no window
   carrying the private per-launch marker appears, `sway-launch` falls back to matching on
   `app_id`/`class` alone — and if that fallback fires while the launched process is still running,

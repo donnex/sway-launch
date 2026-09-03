@@ -183,7 +183,7 @@ Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`,
 - report its `--timeout`/`--wait-time` value, whichever field the variant actually has
   (`duration()`)
 
-**`Height`/`Width` hold a `Size` (`Pixels(u32)`/`Percent(u32)`), `Position` holds a `Position`
+**`Height`/`Width` hold a `Size` (`Pixels(i32)`/`Percent(i32)`), `Position` holds a `Position`
 (`Center`/`Coordinates { x: i32, y: i32 }`)** — both real types, not the validated strings this
 project originally carried all the way from the CLI/TOML through to `sway_command()`. An external
 review suggested this (typed values instead of repeatedly re-parsing/re-validating strings); the
@@ -194,12 +194,25 @@ constructed (`main.rs`'s `Args`, `layout.rs`'s `LayoutStep::to_sway_launch()`) o
 validation (unchanged contract: `Result<String, String>`, still what `main.rs`'s `#[clap(value_parser
 = ...)]` and `layout.rs`'s manual `to_sway_launch()` checks call) — `parse_size()`/`parse_position()`
 are new, separate, **infallible** functions that convert an already-validated string into the typed
-form, `.expect()`-ing that the digits parse as `u32`/`i32` cleanly. That `.expect()` is only sound
+form, `.expect()`-ing that the digits parse as `i32` cleanly. That `.expect()` is only sound
 because both validators were tightened in the same change to also reject a value that matches the
-`\d+` shape but overflows `u32`/`i32` (e.g. an absurd 11-digit pixel count) — without that, a
+`\d+` shape but overflows (e.g. an absurd 11-digit pixel count) — without that, a
 value passing validation but failing to parse would panic instead of erroring cleanly, the exact
 failure mode this project treats as a bug elsewhere (see the Content/security-review discipline
-generally). `sway_command()` becomes each variant's serialization point (`Size`/`Position` both
+generally).
+
+`Size`'s bound was `u32` at first, and that was the wrong invariant to promise: `swayipc::Rect` is
+`i32`, so `poll_matches()` had to cast (`*pixels as i32`), and a value in `i32::MAX+1..=u32::MAX`
+validated, reached Sway as a real `resize set` command, and *then* wrapped negative — accepted by
+the front door, unrepresentable by the time anything tried to confirm it. An external review caught
+the mismatch. Fixed by moving `Size` itself to `i32` (which deletes the cast rather than relocating
+the mismatch) and bounding the validator to match; negative values can't arrive regardless, since
+the `\d+` regex rejects the sign. The lesson generalizes: a validator's bound has to be the
+narrowest domain anything downstream uses, not the widest one the parser happens to accept — pinned
+by `validate_size_argument_accepts_the_largest_representable_pixel_value`/
+`validate_size_argument_rejects_one_past_the_largest_representable_value`.
+
+`sway_command()` becomes each variant's serialization point (`Size`/`Position` both
 implement `Display`, rendering the identical `<n>px`/`<n>ppt`/`center`/`<x>,<y>` text the CLI/TOML
 side accepts, so `SwayAction::Display`'s human-readable line and the actual Sway command text stay
 in sync by construction rather than by two independently-written format strings), and
