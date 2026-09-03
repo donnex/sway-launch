@@ -1789,6 +1789,71 @@ fn rollback_on_error_handles_a_launched_window_that_already_closed_itself() {
 }
 
 #[test]
+fn rollback_on_error_undoes_launches_not_mutations_to_existing_windows() {
+    // Pins the public semantic README.md states: --rollback-on-error is
+    // *window-launch* rollback, not transactional rollback. A layout that
+    // mutates an already-open window and then fails leaves that mutation in
+    // place -- there's no mechanism tracking or reversing individual
+    // mutations, only whether this invocation created the window.
+    //
+    // Raised by an external review as a semantic mismatch a user could read
+    // the wrong way. The behavior is intentional and documented; what it
+    // lacked was a test, so a future change can't quietly widen or narrow it
+    // without saying so.
+    let mut connection = connect();
+    let (existing_id, _existing_guard) = launch_foot(&[]);
+
+    let path = TempToml::write(
+        "rollback-scope",
+        &format!(
+            "[[step]]\ncon_id = {existing_id}\nmark = \"survives-rollback\"\n\n\
+             [[step]]\ncommand = \"foot --app-id=rollback-scope-probe\"\n\
+             app_id = \"rollback-scope-probe\"\n\n\
+             [[step]]\ncon_id = 999999999\nmark = \"x\"\n"
+        ),
+    );
+
+    let output = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--rollback-on-error",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        !output.status.success(),
+        "sway-launch should fail on the bad third step"
+    );
+
+    std::thread::sleep(Duration::from_millis(300));
+    let tree = connection.get_tree().expect("get_tree should succeed");
+
+    // Step 2's window was launched by this run, so rollback closed it.
+    let launched = first_app_id_window(&tree, "rollback-scope-probe");
+    let _launched_guard = launched.map(KillOnDrop);
+    assert_eq!(
+        launched, None,
+        "the window this run launched should have been rolled back"
+    );
+
+    // Step 1's window was only retargeted, so it's still open -- and step 1's
+    // mark is still on it. That mark is the mutation rollback deliberately
+    // does not reverse.
+    let existing = get_node(&mut connection, existing_id);
+    assert!(
+        existing
+            .marks
+            .iter()
+            .any(|mark| mark == "survives-rollback"),
+        "a mutation applied to an already-open window is not rolled back, but its mark is \
+         gone: {:?}",
+        existing.marks
+    );
+}
+
+#[test]
 fn rollback_on_error_leaves_a_window_it_only_adopted_open() {
     // --rollback-on-error kills windows, and a kill can't be undone, so it
     // must only ever kill a window this run can prove it launched.
