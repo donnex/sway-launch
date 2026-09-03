@@ -146,6 +146,11 @@ The crate is four source files plus five integration test files:
   time that check runs, without needing an external process to race a kill against it. (Step 2's
   own window is still alive for the *first*, fast-fail check — see `run_wait_time()`'s own section
   below for why there are two.)
+  `rollback_on_error_undoes_launches_not_mutations_to_existing_windows` pins the semantic README.md
+  states: rollback closes windows this run launched and leaves mutations to retargeted windows in
+  place. Intentional and already documented, but untested until an external review raised it as
+  something a user could read the wrong way — a documented guarantee with no test is one a future
+  change can widen or narrow without noticing.
 
   **This file's coverage must stay complete, not just present.** It's the one place anything
   IPC-touching actually gets exercised against real Sway, and — same as `.github/workflows/`'s
