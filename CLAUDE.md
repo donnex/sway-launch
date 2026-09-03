@@ -141,9 +141,11 @@ The crate is four source files plus five integration test files:
   where a step-1-launched window closes on its own before a later step's failure triggers
   rollback — `rollback()`'s own `kill_container()` call against that already-gone container is
   confirmed to log-and-skip rather than hang or panic. Deterministic, not racy: step 2 retargets
-  step 1's window with a `NewColumn`/large-`wait_time` action, whose `container_exists()` check
-  runs *after* the sleep (see `run_wait_time()`), so the window is reliably already gone by the
-  time step 2's own check runs, without needing an external process to race a kill against it.
+  step 1's window with a `NewColumn`/large-`wait_time` action, and `run_wait_time()`'s *second*
+  `container_exists()` check runs after the sleep, so the window is reliably already gone by the
+  time that check runs, without needing an external process to race a kill against it. (Step 2's
+  own window is still alive for the *first*, fast-fail check — see `run_wait_time()`'s own section
+  below for why there are two.)
 
   **This file's coverage must stay complete, not just present.** It's the one place anything
   IPC-touching actually gets exercised against real Sway, and — same as `.github/workflows/`'s
@@ -427,6 +429,22 @@ stated goal (safer internals, less repeated parsing) to actually land.
   what `apt` installs on Ubuntu 24.04/CI) silently no-ops, while Sway 1.11 already errors clearly
   with `"No matching node."` on its own. `container_exists()` is therefore redundant on 1.11 but
   still required for 1.9 — don't remove it on the strength of testing against a newer Sway alone.
+
+  It's called **twice**, on either side of the pre-command sleep, and both calls earn their keep.
+  The one after the sleep is the correctness check above: it's what guarantees the container is
+  still there at the moment the command is actually sent, covering a window that closes *during*
+  the wait. The one before it is a fast fail, added after an external review pointed out that
+  `--wait-time` is an unbounded caller-supplied number slept *before* anything is validated — so a
+  step with `wait_time = 3600000` against an already-closed window sat for an hour before reporting
+  a foregone answer. Declined in the same review: capping `--wait-time`. It's the caller's own
+  knob, `--timeout` isn't capped either, and any specific ceiling would be arbitrary; the real
+  complaint was the pointless wait, which the early check removes. Pinned by `tests/live_sway.rs`'s
+  `wait_time_action_does_not_sleep_out_the_wait_before_noticing_its_container_is_gone`, alongside
+  the original `wait_time_action_errors_clearly_when_its_container_already_closed` for the
+  post-sleep half. Note that
+  `rollback_on_error_handles_a_launched_window_that_already_closed_itself` depends on the *second*
+  check specifically (its window is still alive when the first one runs, and closes during the
+  1.2s wait) — so removing either one breaks a test that documents why the other exists.
 
   After sending the command, what happens next depends on `SwayAction::polls()`/`poll_matches()`,
   which between them cover every one of these seven variants (per
