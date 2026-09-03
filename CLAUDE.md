@@ -544,6 +544,27 @@ stated goal (safer internals, less repeated parsing) to actually land.
     `new_row_confirms_via_poll_when_swapping_past_a_sibling` (fast path, a real sibling swap) and
     `new_column_falls_back_gracefully_at_the_edge_with_a_large_wait_time` (fallback path).
 
+    **This is the project's weakest confirmation predicate, and it's weak on purpose — but it's
+    bounded to `MOVE_POLL_GRACE` (25ms) rather than the usual 200ms.** "The rect changed" is
+    evidence that geometry changed, not that *this command* changed it: if the move was a no-op and
+    another client resizes or moves the same window while the poll is still looking, that change
+    gets credited here. An external review raised this, correctly, and its suggested fix —
+    snapshotting parent/sibling index and requiring a direction-consistent structural transition —
+    was measured against a live compositor and rejected: a genuine `move down` left the target's
+    parent *and* index unchanged (Sway wrapped the *sibling* in a new container and resized the
+    target in place, 640x695 → 1280x335), so that predicate false-*negatives* on a real move, the
+    mirror image of the children-id-list attempt above. Of everything tried, `rect` is the only
+    signal that separated all four cases (real `move right`, real `move down`, and both edge
+    no-ops). The review's own fallback — always report `Unconfirmed` — would discard a signal
+    that's correct in essentially every real case.
+    So the exposure is narrowed instead of closed: the same measurements found a real move's `rect`
+    change visible on the very first tree read after Sway's reply (0.29-0.59ms across five moves,
+    one 3.42ms outlier), so 25ms keeps ~7x margin while cutting the window ~8x. Note this only
+    bites when `--wait-time` exceeds it — the grace is `min`'d with `--wait-time`, and the CLI
+    default is 20ms, so default invocations were never polling for longer than that anyway. The
+    two fast-path tests above assert `"status":"changed"` explicitly (not just elapsed time), which
+    is what would catch this bound being tightened past what a real move can meet.
+
 ### Orchestration: `SwayLaunch::build_actions()`/`run()`
 
 `SwayLaunch` no longer always launches a new window — it has a `target: Target` field
