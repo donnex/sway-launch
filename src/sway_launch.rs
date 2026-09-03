@@ -33,7 +33,9 @@ const PID_MARKER_FALLBACK_GRACE: time::Duration = time::Duration::from_millis(20
 /// wait-time action's own confirmation before giving up and falling back to
 /// the original blind sleep-the-rest-of-`--wait-time` behavior — capped at
 /// the actual `--wait-time` in play (`run_poll_then_fallback()` computes
-/// `WAIT_TIME_POLL_GRACE.min(wait_time)`), not used directly. Several of
+/// `self.poll_grace().min(wait_time)`), not used directly, and not the bound
+/// every variant gets — `NewColumn`/`NewRow` use the much shorter
+/// `MOVE_POLL_GRACE` instead, for the reason documented there. Several of
 /// these actions have legitimate no-op outcomes (e.g. resizing a solo
 /// window, per docs/plan-poll-based-wait-time-actions.md) where the
 /// expected tree state never arrives at all, so — like
@@ -48,6 +50,32 @@ const PID_MARKER_FALLBACK_GRACE: time::Duration = time::Duration::from_millis(20
 /// `Width`, `Position`, `NewColumn`, `NewRow`), all confirmed live to
 /// converge in a handful of milliseconds when they converge at all.
 const WAIT_TIME_POLL_GRACE: time::Duration = time::Duration::from_millis(200);
+
+/// The same bound for `NewColumn`/`NewRow` specifically, which need a much
+/// shorter one — see `SwayAction::poll_grace()`.
+///
+/// Every other matcher compares against a fixed target the action itself
+/// asked for ("is it 300px?", "is the parent splith?"), so time spent waiting
+/// can only ever confirm that exact request. These two have no fixed target —
+/// a relative move can land the window anywhere — so they compare the
+/// container's `rect` against a snapshot taken before the command and treat
+/// *any* difference as confirmation. That predicate can't tell our move apart
+/// from someone else's change to the same window, so every millisecond the
+/// window stays open is a millisecond in which an unrelated resize or move
+/// gets credited to this action.
+///
+/// It can't be closed, only narrowed: Sway offers no way to attribute a
+/// geometry change to a specific command. 25ms is where the measurements put
+/// it. Against a live compositor, a real move's `rect` change was visible on
+/// the very first tree read after Sway acknowledged the command — 0.29, 0.39,
+/// 0.41, 0.47, 0.59ms across six moves, with one 3.42ms outlier — because
+/// Sway arranges before it replies. 25ms keeps ~7x margin over the worst of
+/// those while cutting the exposure window 8x. A move that somehow takes
+/// longer than this reports `Unconfirmed` rather than failing, which is the
+/// safe direction: the command still ran, and the fallback sleep still
+/// happens, so nothing about the layout changes — only how confidently the
+/// result is described.
+const MOVE_POLL_GRACE: time::Duration = time::Duration::from_millis(25);
 
 /// How often `run_wait_time()`'s poll loop re-queries `get_tree()` while
 /// inside `WAIT_TIME_POLL_GRACE`. Cheap enough on a local Unix socket to run
@@ -816,6 +844,21 @@ impl SwayAction<'_> {
         }
     }
 
+    /// How long `run_poll_then_fallback()` may keep polling for this
+    /// variant's own confirmation. Pure, so the choice stays unit-testable
+    /// headlessly; the caller still caps it at the actual `--wait-time`.
+    ///
+    /// `NewColumn`/`NewRow` get a much shorter window than everything else
+    /// because their matcher answers a weaker question — "did the geometry
+    /// change?" rather than "is it what was asked for?" — and only for as
+    /// long as it keeps looking. See `MOVE_POLL_GRACE`.
+    fn poll_grace(&self) -> time::Duration {
+        match self {
+            SwayAction::NewColumn { .. } | SwayAction::NewRow { .. } => MOVE_POLL_GRACE,
+            _ => WAIT_TIME_POLL_GRACE,
+        }
+    }
+
     /// Whether this variant confirms its own command via polling at all.
     /// Pure — no IPC — so `run_wait_time()` can decide whether to enter the
     /// poll loop before opening a connection for it, and so the decision
@@ -953,7 +996,7 @@ impl SwayAction<'_> {
         }
     }
 
-    /// Polls for up to `WAIT_TIME_POLL_GRACE` for `poll_matches()` to confirm
+    /// Polls for up to `poll_grace()` for `poll_matches()` to confirm
     /// the command `run_wait_time()` just sent took effect, returning as
     /// soon as it does (the fast path). Several wait-time actions have
     /// legitimate no-op outcomes where confirmation never arrives (see
@@ -986,7 +1029,7 @@ impl SwayAction<'_> {
         // costs `wait_time` (pre-sleep) + at most `wait_time` (grace, now
         // capped, plus whatever's left of the sleep) — back to roughly
         // `2 * wait_time`, same worst case as before polling existed.
-        let grace = WAIT_TIME_POLL_GRACE.min(wait_time);
+        let grace = self.poll_grace().min(wait_time);
         let poll_started = time::Instant::now();
         loop {
             if self.poll_matches(connection, container_id, baseline) {
@@ -4203,6 +4246,68 @@ mod tests {
         assert_eq!(height.matching_window_change_events(), None);
         assert_eq!(width.matching_window_change_events(), None);
         assert_eq!(position.matching_window_change_events(), None);
+    }
+
+    // SwayAction::poll_grace
+
+    #[test]
+    fn move_actions_poll_for_a_shorter_grace_than_everything_else() {
+        // NewColumn/NewRow confirm on "the rect changed at all", which can't
+        // distinguish this action's own move from another client's change to
+        // the same window — so the window in which that confusion is possible
+        // is deliberately much shorter for them. See MOVE_POLL_GRACE.
+        let new_column = SwayAction::NewColumn {
+            container_id: 42,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        let new_row = SwayAction::NewRow {
+            container_id: 42,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        let split = SwayAction::Split {
+            container_id: 42,
+            split: Split::H,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+
+        assert_eq!(new_column.poll_grace(), MOVE_POLL_GRACE);
+        assert_eq!(new_row.poll_grace(), MOVE_POLL_GRACE);
+        assert_eq!(split.poll_grace(), WAIT_TIME_POLL_GRACE);
+        assert!(MOVE_POLL_GRACE < WAIT_TIME_POLL_GRACE);
+    }
+
+    #[test]
+    fn every_other_polling_variant_keeps_the_full_grace() {
+        let height = SwayAction::Height {
+            container_id: 42,
+            height: Size::Pixels(300),
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        let width = SwayAction::Width {
+            container_id: 42,
+            width: Size::Pixels(300),
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        let position = SwayAction::Position {
+            container_id: 42,
+            position: Position::Center,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+        let sticky = SwayAction::Sticky {
+            container_id: 42,
+            verbose: false,
+            wait_time: time::Duration::from_millis(20),
+        };
+
+        for action in [height, width, position, sticky] {
+            assert_eq!(action.poll_grace(), WAIT_TIME_POLL_GRACE);
+        }
     }
 
     // SwayAction::polls
