@@ -34,8 +34,13 @@ jobs:
       - name: cargo fmt --check
         run: cargo fmt -- --check
 
+      # --all-features matters: tests/live_sway.rs is behind
+      # #![cfg(feature = "live-sway-tests")], so without it that file compiles
+      # to nothing and clippy lints none of its ~4,000 lines -- the one file
+      # CLAUDE.md insists must stay complete, silently exempt from the lint
+      # gate. Clippy needs no compositor, only the cfg flag.
       - name: cargo clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Build
         run: cargo build --locked
