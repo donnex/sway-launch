@@ -481,26 +481,18 @@ mod tests {
             .any(|planned| matches!(planned, PlannedAction::Run(SwayAction::Mark { .. }))));
     }
 
-    #[test]
-    fn build_actions_propagates_the_relocation_check_error_for_new_column() {
-        // Headless environments have no reachable Sway socket, so
-        // relocates_to_another_output()'s own get_outputs() call fails —
-        // confirming build_actions() surfaces that as an error rather than
-        // silently building an incomplete plan. The actual guard behavior
-        // (skip vs. include NewColumn) needs a live compositor; see
-        // tests/live_sway.rs's new_column_does_not_relocate_*/
-        // new_column_combined_with_workspace_* tests for that.
-        let mut sway_launch = minimal_sway_launch();
-        sway_launch.new_column = true;
-        assert!(sway_launch.build_actions(42, true).is_err());
-    }
-
-    #[test]
-    fn build_actions_propagates_the_relocation_check_error_for_new_row() {
-        let mut sway_launch = minimal_sway_launch();
-        sway_launch.new_row = true;
-        assert!(sway_launch.build_actions(42, true).is_err());
-    }
+    // build_actions()'s error propagation when relocates_to_another_output()
+    // can't read the tree is covered by tests/json_output.rs's
+    // new_column_and_new_row_report_the_relocation_checks_error, not here.
+    // Two unit tests used to assert it directly, by assuming the machine
+    // running them had no reachable Sway socket — which is true on a CI runner
+    // and false in a Sway session, where both failed outright. A unit test
+    // can't state that precondition safely (std::env::set_var is
+    // process-global, and this harness is multi-threaded), so the assertion
+    // moved to a test that can set it per-invocation on the child process.
+    //
+    // The guard's actual behavior (skip vs. include) needs a live compositor
+    // either way: see tests/live_sway.rs's new_column_does_not_relocate_*.
 
     #[test]
     fn build_actions_with_check_relocation_false_never_touches_ipc() {
