@@ -151,13 +151,20 @@ class HeadlessSway:
     def __init__(self, resolution, gaps_px):
         self.resolution = resolution
         self.gaps_px = gaps_px
+        self._runtime_dir = None
         self.runtime_dir = None
         self.process = None
         self.socket_path = None
         self.wayland_display = None
 
     def __enter__(self):
-        self.runtime_dir = Path(tempfile.mkdtemp(prefix="sway-launch-screenshots-"))
+        # TemporaryDirectory rather than mkdtemp so the directory owns its own
+        # cleanup, per CLAUDE.md's Scripts conventions; __exit__ below still
+        # calls it explicitly, since the compositor has to be stopped first.
+        self._runtime_dir = tempfile.TemporaryDirectory(
+            prefix="sway-launch-screenshots-"
+        )
+        self.runtime_dir = Path(self._runtime_dir.name)
         log_path = self.runtime_dir / "sway.log"
         env = {
             "WLR_BACKENDS": "headless",
@@ -224,8 +231,10 @@ class HeadlessSway:
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.wait()
-        if self.runtime_dir is not None:
-            shutil.rmtree(self.runtime_dir, ignore_errors=True)
+        if self._runtime_dir is not None:
+            self._runtime_dir.cleanup()
+            self._runtime_dir = None
+            self.runtime_dir = None
         return False
 
     def _ipc_env(self):
@@ -292,16 +301,18 @@ class HeadlessSway:
         return rects
 
 
-def write_bindings_file(sway, bindings_toml):
-    with tempfile.NamedTemporaryFile(
-        "w", suffix=".toml", dir=sway.runtime_dir, delete=False
-    ) as bindings_file:
-        bindings_file.write(bindings_toml)
-        return Path(bindings_file.name)
+def write_bindings_file(sway, template_path, bindings_toml):
+    """Writes this template's bindings into the compositor's own runtime
+    directory, which HeadlessSway removes on exit — rather than a delete=False
+    temp file that outlives its own handle and relies on someone else to clean
+    it up."""
+    bindings_path = sway.runtime_dir / f"bindings-{template_path.stem}.toml"
+    bindings_path.write_text(bindings_toml)
+    return bindings_path
 
 
 def run_template(sway, sway_launch_binary, template_path, bindings_toml, wait_time_ms):
-    bindings_path = write_bindings_file(sway, bindings_toml)
+    bindings_path = write_bindings_file(sway, template_path, bindings_toml)
     sway.run_sway_launch(
         sway_launch_binary,
         [
