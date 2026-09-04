@@ -2,8 +2,33 @@
 // no connection needed), so these exercise main()'s actual output
 // formatting against the compiled binary without requiring a live Sway
 // session.
+//
+// A test that needs an IPC call to *fail* says so explicitly, via
+// sway_launch_without_a_compositor() below, rather than assuming the machine
+// running it has no Sway session.
 
 use std::process::Command;
+
+/// The binary, pointed at a socket path that cannot exist.
+///
+/// Some tests here assert that an IPC-touching invocation fails. Left to the
+/// ambient environment, that assertion holds on a bare CI runner and breaks in
+/// a terminal inside a Sway session — which is where this project is developed,
+/// and where CLAUDE.md's own "run `cargo test` before committing" gate runs. It
+/// was worse than a false failure for the `--con-id 42` cases: with a session
+/// reachable, whether the command failed depended on whether container id 42
+/// happened to exist, and if it did, the test floated a real window.
+///
+/// `I3SOCK` is removed as well as `SWAYSOCK` set, since `socket_path()` reads
+/// it first. Both together mean the connect attempt fails on a missing path
+/// rather than reaching a compositor, no matter what the environment holds.
+fn sway_launch_without_a_compositor() -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_sway-launch"));
+    command
+        .env("SWAYSOCK", "/nonexistent/sway-launch-test-socket")
+        .env_remove("I3SOCK");
+    command
+}
 
 #[test]
 fn con_id_plain_output_is_a_bare_container_id() {
@@ -32,23 +57,21 @@ fn con_id_json_output_is_a_clean_json_object() {
 #[test]
 fn con_id_json_error_output_is_a_structured_object() {
     // --con-id alone never touches the socket, but combining it with an
-    // action flag does (already_at_target()'s find_container_node() call),
-    // which reliably fails headlessly since there's no Sway instance
-    // running here — exercises --json's error-output shape
-    // (fail()/fail_with_rollback() in main.rs) without needing a live
-    // compositor.
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    // action flag does (the container-state read behind already_at_target()),
+    // which is made to fail here by pointing the binary at a socket that
+    // cannot exist — exercises --json's error-output shape
+    // (fail()/fail_with_rollback() in main.rs) deterministically, on a machine
+    // with or without a live compositor.
+    let output = sway_launch_without_a_compositor()
         .args(["--con-id", "42", "--floating", "--json"])
         .output()
         .expect("failed to run sway-launch binary");
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
-    // fail_with_rollback() always writes our JSON as the last line, but on a
-    // machine with a real `sway` binary on PATH and no live compositor,
-    // swayipc's own socket-path fallback (`sway --get-socketpath`) prints an
-    // inherited "sway socket not detected." diagnostic to stderr first — so
-    // check the last line rather than requiring stderr to start with '{'.
+    // Checked as the last line rather than the whole of stderr: the JSON error
+    // object is always written last, but a failure that reaches swayipc's own
+    // socket-path fallback can print an inherited diagnostic ahead of it.
     let last_line = stderr.lines().next_back().unwrap_or_default();
     assert!(
         last_line.starts_with('{') && last_line.contains("\"error\""),
@@ -58,6 +81,36 @@ fn con_id_json_error_output_is_a_structured_object() {
         stderr.contains("\"rolled_back\":[]"),
         "expected an empty rolled_back array outside --rollback-on-error: {stderr:?}"
     );
+}
+
+#[test]
+fn new_column_and_new_row_report_the_relocation_checks_error() {
+    // build_actions() consults relocates_to_another_output() before including
+    // NewColumn/NewRow, which needs a live get_outputs()/get_tree() call even
+    // to build the plan. When that read fails, the error has to surface rather
+    // than the guard being silently skipped and the action silently included.
+    //
+    // This replaces two unit tests that asserted the same propagation by
+    // assuming the machine running them had no reachable Sway socket at all —
+    // true on a CI runner, false in a Sway session, where both failed
+    // outright. Pointing the binary at a socket that cannot exist states the
+    // precondition instead of inheriting it.
+    for flag in ["--new-column", "--new-row"] {
+        let output = sway_launch_without_a_compositor()
+            .args(["--con-id", "42", flag])
+            .output()
+            .expect("failed to run sway-launch binary");
+
+        assert!(
+            !output.status.success(),
+            "{flag} should fail when the relocation check can't read the tree"
+        );
+        let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+        assert!(
+            stderr.contains("Sway IPC socket"),
+            "{flag}'s error should name the failed connection: {stderr:?}"
+        );
+    }
 }
 
 #[test]
