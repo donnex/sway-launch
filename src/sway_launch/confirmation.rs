@@ -213,22 +213,23 @@ impl SwayAction<'_> {
     /// short-circuit `run()` with success, or `None` to proceed normally.
     ///
     /// `Workspace`/`Output` were the first two found needing this (checked
-    /// via `current_workspace()`/`current_output()`). `Floating`/
+    /// against the containing workspace/output name). `Floating`/
     /// `Fullscreen`/`Focus` were found to have the identical failure mode —
     /// confirmed live: re-running `--floating`/`--fullscreen`/`--focus` on
     /// a window already in that state hangs 5s and then errors out, rather
-    /// than completing promptly — so they're checked the same way, via
-    /// `find_container_node()`'s own `floating`/`fullscreen_mode`/`focused`
-    /// fields. `Mark` was checked live too and found *not* to need this:
+    /// than completing promptly — so they're checked the same way, against
+    /// the container's own `floating`/`fullscreen_mode`/`focused` fields.
+    /// `Mark` was checked live too and found *not* to need this:
     /// re-applying a mark the container already has still fires
     /// `WindowChange::Mark`, unlike these three. `Scratchpad` was found to
     /// need it as well — re-running `[con_id] move scratchpad` on a window
     /// already in the scratchpad fires no event at all, confirmed live —
-    /// checked via `container_is_in_scratchpad()` (ancestor workspace name,
-    /// not `floating`, since a scratchpad window also reports as floating
-    /// for the unrelated reason `matching_window_change_events()`'s doc
-    /// comment covers). Every other action falls through to `None`
-    /// unconditionally, which this never touches.
+    /// checked against the ancestor workspace name rather than `floating`,
+    /// since a scratchpad window also reports as floating for the unrelated
+    /// reason `matching_window_change_events()`'s doc comment covers. Every
+    /// state above is read in one pass by `ContainerState::from_tree()`; every
+    /// other action falls through to `None` unconditionally, which this never
+    /// touches.
     ///
     /// `Mark` is the one event-confirmed action deliberately excluded here
     /// even though `state_satisfied()` below can answer for it: re-applying a

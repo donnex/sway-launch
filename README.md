@@ -207,6 +207,12 @@ concurrent invocations both targeting a single-instance application can still co
 specific case; a heavily loaded system can, in principle, also delay marker observation long enough
 to hit the same fallback even for an ordinary application. When in doubt, chain calls sequentially.
 
+The marker is read back through `/proc`, so on a system without it (a BSD running Sway, an unusual
+container) every launch resolves through that same bounded fallback rather than the deterministic
+path. Nothing breaks — the fallback is what the single-instance case already uses, and a window it
+can't confirm is never treated as this run's own for `--rollback-on-error` — but correlation is
+best-effort there, so sequential chaining matters more.
+
 ## Recreatable layouts
 
 Since `sway-launch` blocks on every command, its arguments can be combined into scripts that
@@ -841,7 +847,7 @@ socket, the `sway --get-socketpath` fallback the IPC library shells out to can p
 
 ```shell
 $ sway-launch --json --con-id 999999 --floating
-{"error":"command failed with 'No matching node.'","rolled_back":[]}
+{"error":"container id 999999 no longer exists — window may have closed","rolled_back":[]}
 ```
 
 `rolled_back` is only ever non-empty when `--rollback-on-error` (see "Layout files" above) actually

@@ -97,9 +97,12 @@ pub(super) fn container_state(container_id: i64) -> Result<Option<ContainerState
 /// out to become a new direct child of the workspace — see
 /// `tests/live_sway.rs`'s
 /// `new_column_does_not_relocate_a_nested_window_to_a_different_output`.
-/// Returns `false` (safe to proceed) if outputs/tree can't be read or
-/// `container_id`/its workspace can't be found, rather than blocking the
-/// action on an inconclusive check.
+/// A failed `get_outputs()`/`get_tree()` propagates as an error rather than
+/// being treated as "safe to proceed": the caller (`build_actions()`) is about
+/// to run a command whose safety this check exists to establish, so an
+/// unanswerable check is a reason to stop, not to guess. Only an unfindable
+/// `container_id`/workspace yields `false`, since that genuinely means the
+/// escalation this guards against can't apply.
 pub(super) fn relocates_to_another_output(
     container_id: i64,
     direction: MoveDirection,
@@ -220,10 +223,9 @@ pub(super) fn position_matches(
 
 /// `container_id`'s tree node together with the name of the output
 /// containing it (`None` if it isn't on any output, e.g. the scratchpad),
-/// read via a single `get_tree()` call — used by `position_matches()`
-/// rather than combining `node_by_id()` with the existing `current_output()`
-/// helper, which would cost a second, redundant tree fetch per poll
-/// iteration.
+/// read via a single `get_tree()` call — used by `position_matches()` rather
+/// than combining `node_by_id()` with a separate output lookup, which would
+/// cost a second, redundant tree fetch per poll iteration.
 pub(super) fn node_and_output_name(
     connection: &mut Connection,
     container_id: i64,

@@ -933,7 +933,7 @@ before any real execution begins) — `describe_target()` renders `SwayLaunch.ta
 never naming a container id even for `Target::ConId` (its id *is* already known, but showing it on
 that one target mode while every action line stays id-free would be an inconsistent preview
 format). `run_steps_dry_run()` still needs `to_sway_launch()`'s `target_id` lookups to resolve, so
-a step's own 1-based index is inserted into `resolved_ids` as a synthetic placeholder wherever a
+a step's own index is inserted into `resolved_ids` as a synthetic placeholder wherever a
 step has an `id` — never rendered either, same reasoning as `container_id: 0`. Plain output is one
 continuously-numbered line per target/action across every step (matching the external review's own
 illustrative example); `--json` is a single `{"steps": [{"target": ..., "actions": [...]}, ...]}`

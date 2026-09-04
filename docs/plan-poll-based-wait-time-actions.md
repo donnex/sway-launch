@@ -1,9 +1,16 @@
 # Plan: poll-based completion for the wait-time actions
 
 **Status:** done (2026-08-16) — all six variants (`Split`, `Height`, `Width`, `Position`,
-`NewColumn`, `NewRow`) now confirm via `SwayAction::poll_matches()`/`run_poll_then_fallback()` in
-`src/sway_launch.rs` instead of always blind-sleeping `2 * --wait-time`. `Sticky` was added as a
-seventh afterwards, on the same mechanism.
+`NewColumn`, `NewRow`) now confirm via `SwayAction::poll_matches()`/`run_poll_then_fallback()`
+instead of always blind-sleeping `2 * --wait-time`. `Sticky` was added as a seventh afterwards, on
+the same mechanism.
+
+**File layout (2026-09-03):** `src/sway_launch.rs` was split into modules, so the code this document
+describes now lives in `src/sway_launch/confirmation.rs` (the `poll_*`/`run_*` machinery),
+`src/sway_launch/tree.rs` (`width_matches()`/`height_matches()`/`expected_position()` and the other
+pure predicates) and `src/sway_launch/query.rs` (the tree reads they delegate through). The
+`WAIT_TIME_POLL_*` constants stayed in `src/sway_launch.rs` itself. Paths below are pre-split; the
+reasoning is unchanged.
 
 **Later changes (2026-08-31):** `poll_matches()` was split in two — `polls()` for the pure "does
 this variant poll at all" decision, `poll_matches()` for the tree read — and now takes a
@@ -92,7 +99,7 @@ Don't wait-until-confirmed-or-error. Poll for a **short, fixed grace period**
 converges, return immediately (fast path). If the grace period elapses without convergence, fall
 back to the original behavior — assume success, sleep the remainder of `--wait-time`, return —
 rather than erroring. This mirrors the pattern already used for `SwayAction::Exec`'s PID-marker
-fallback (`PID_MARKER_FALLBACK_GRACE`, `run_wait_matching_exec_event()` in `src/sway_launch.rs`):
+fallback (`PID_MARKER_FALLBACK_GRACE`, `run_wait_matching_exec_event()`):
 try to confirm precisely, fall back gracefully within a bounded extra delay if confirmation never
 comes, never regress into a hang. Implemented as `SwayAction::poll_matches()` +
 `run_poll_then_fallback()`, called from `run_wait_time()`.
@@ -136,8 +143,8 @@ Each action's own definition of "confirmed", as shipped:
   command, with no minimum settle time — could coincidentally match a *pre-resize* width against
   the *newly requested* one, reporting "confirmed" before Sway has actually processed the command.
   Judged low-risk enough not to warrant requiring a genuine change (a `poll_baseline()`-style
-  snapshot, like `NewColumn`/`NewRow` use) purely for this; see `width_matches()`'s own doc comment
-  in `src/sway_launch.rs`.
+  snapshot, like `NewColumn`/`NewRow` use) purely for this; see `width_matches()`'s own doc
+  comment.
 - **`Position`** — `position_matches()` compares `deco_rect.x`/`deco_rect.y` (the
   decoration-inclusive frame `move position` actually targets, confirmed in
   `position_moves_a_floating_window_to_given_coordinates`) against either the parsed `<x>,<y>` or,
@@ -196,6 +203,11 @@ Confirmed live by `tests/live_sway.rs`'s
 - `WAIT_TIME_POLL_GRACE` = 200ms, `WAIT_TIME_POLL_INTERVAL` = 10ms, both hardcoded in
   `src/sway_launch.rs`, naming pattern borrowed from `PID_MARKER_FALLBACK_GRACE`. Not
   re-benchmarked per-action after `Split`'s initial tuning — see "Open questions" below.
+- **Superseded for `NewColumn`/`NewRow` (2026-09-03):** those two now use `MOVE_POLL_GRACE` (25ms)
+  instead, because their matcher answers "did the geometry change" rather than "is it what was
+  asked for", and every millisecond of polling is a millisecond in which another client's change to
+  the same window could be credited to the move. See that constant's own doc comment for the
+  measurements behind the number.
 
 ## Testing (per CLAUDE.md's live-Sway coverage policy)
 
