@@ -1480,8 +1480,11 @@ comments, name things clearly instead" style). Two rule-specific overrides:
   regular `//` comment only when the code is genuinely hard to follow without one: a non-obvious
   constraint, a workaround for a specific bug or quirk, or logic that isn't self-evident from
   reading it — in that case, add the comment rather than leaving a future reader to puzzle it out.
-- Use `cargo fmt` for formatting and `cargo clippy` for linting. Both must pass with no errors
-  before committing.
+- Use `cargo fmt` for formatting and `cargo clippy --all-targets --all-features` for linting. Both
+  must pass with no errors before committing. `--all-features` is not optional: `tests/live_sway.rs`
+  is gated behind `#![cfg(feature = "live-sway-tests")]`, so a plain `cargo clippy` compiles that
+  file to nothing and lints none of it — a review found both CI workflows had the same gap, leaving
+  the single largest test file unlinted.
 - Aim for high test coverage on every new feature or fix; agree the target threshold with the user
   per project and keep coverage at or above it as code is added, rather than letting it slip. It's
   fine for genuinely untestable paths (e.g. something that can't run headless) to stay uncovered —
@@ -1529,7 +1532,8 @@ comments, name things clearly instead" style). Two rule-specific overrides:
 
 ### Rust workflow
 
-- After making changes, run `cargo fmt` and `cargo clippy` and fix all findings before committing.
+- After making changes, run `cargo fmt` and `cargo clippy --all-targets --all-features` and fix all
+  findings before committing.
 - Run the full test suite (`cargo test`) before committing.
 - Integration tests that drive a compiled binary (e.g. under a pseudo-terminal) require the binary
   to be built first — run `cargo build` before running them.
@@ -1889,7 +1893,9 @@ out-of-date workflow as a bug, the same way a stale doc would be. This applies t
 live-Sway case is exactly as much a bug as a missing lint step — see the coverage note under
 `tests/live_sway.rs` in the Architecture section and the matching Rust workflow bullet above.
 
-GitHub Actions is set up: `.github/workflows/check.yml` runs `cargo fmt --check`, `cargo clippy`,
+GitHub Actions is set up: `.github/workflows/check.yml` runs `cargo fmt --check`,
+`cargo clippy --all-targets --all-features` (see the Rust conventions above for why the feature flag
+is load-bearing),
 `cargo build`, `cargo test`, and a `cargo llvm-cov` coverage-regression gate (`--fail-under-lines
 82 --fail-under-regions 80 --fail-under-functions 88`, calibrated to this project's actual measured
 baseline — see the comment above that step in `check.yml` for why a flat number this project didn't
