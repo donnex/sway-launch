@@ -57,7 +57,7 @@ jobs:
         id: shell-scripts
         run: |
           set -euo pipefail
-          files="$(grep -rlE '^#!/bin/sh' scripts examples/scripts | sort | tr '\n' ' ')"
+          files="$(grep -rlE '^#!.*[ /](sh|bash|dash)$' scripts examples/scripts | sort | tr '\n' ' ')"
           test -n "$files" || { echo "::error::no shell scripts found to lint"; exit 1; }
           echo "files=$files" >> "$GITHUB_OUTPUT"
           echo "Linting: $files"
