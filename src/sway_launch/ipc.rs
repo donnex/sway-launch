@@ -93,7 +93,7 @@ pub(super) fn ipc_error(error: swayipc::Error) -> String {
 /// The Sway IPC socket path from the environment, in `swayipc`'s own
 /// precedence order. `None` when neither variable is set, which is what sends
 /// `new_connection()` down its unbounded fallback.
-pub(super) fn socket_path() -> Option<std::path::PathBuf> {
+fn socket_path() -> Option<std::path::PathBuf> {
     std::env::var_os("I3SOCK")
         .or_else(|| std::env::var_os("SWAYSOCK"))
         .map(std::path::PathBuf::from)
