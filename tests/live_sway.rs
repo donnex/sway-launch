@@ -1887,6 +1887,7 @@ fn rollback_on_error_leaves_a_window_it_only_adopted_open() {
             path.to_str().unwrap(),
             "--rollback-on-error",
             "--json",
+            "--verbose",
         ])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -1927,6 +1928,13 @@ fn rollback_on_error_leaves_a_window_it_only_adopted_open() {
     assert!(
         stderr.contains("\"container_ids\":["),
         "the adopted window should be reported as still-open progress: {stderr:?}"
+    );
+    // Being spared silently would leave a user with a window they didn't ask
+    // to keep and no way to know why -- --verbose is the only signal, so it's
+    // asserted rather than assumed.
+    assert!(
+        stderr.contains("adopted rather than confirmed as launched"),
+        "--verbose should say why the window was left open: {stderr:?}"
     );
 }
 
@@ -2333,6 +2341,105 @@ fn new_column_falls_back_gracefully_at_the_edge_with_a_large_wait_time() {
     assert_eq!(
         before, after,
         "the rightmost window's own rect should be unaffected by a no-op move"
+    );
+}
+
+#[test]
+fn new_column_does_not_credit_a_geometry_change_that_arrives_after_its_poll_window() {
+    // The direction MOVE_POLL_GRACE (25ms) exists for, and the one the two
+    // fast-path tests can't check: NewColumn/NewRow confirm on "this window's
+    // rect differs from the snapshot", which cannot tell this action's own
+    // move from another client's change to the same window. Narrowing the poll
+    // window from 200ms to 25ms is what bounds how long that confusion is
+    // possible, and nothing asserted the bound actually holds.
+    //
+    // The setup has to satisfy three things at once, which took some finding:
+    // the move must be a geometric no-op (so any rect change is provably not
+    // ours), the multi-output relocation guard must *not* skip the action (or
+    // no poll happens at all -- and by the time this test runs, earlier tests
+    // have left several outputs behind), and the competing change must
+    // actually move the window. A solo window on a splitv workspace does it:
+    // "move right" there restructures in place without changing the rect
+    // (CLAUDE.md's Orchestration section documents this case), and the
+    // workspace's axis doesn't match the move, so is_at_the_trailing_workspace
+    // _edge() returns false and the action runs.
+    //
+    // run_wait_time() sleeps --wait-time (2000ms) before sending the command,
+    // so the poll window runs from ~2000ms to ~2025ms after spawn. The
+    // competing change lands at ~2100ms: after the poll has stopped looking,
+    // but comfortably inside the old 200ms window -- so this reports
+    // "unconfirmed" where the pre-narrowing code would have reported "changed"
+    // for a change it did not cause.
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&[
+        "--workspace",
+        "live-sway-test-new-column-late-change",
+        "--split",
+        "v",
+    ]);
+    std::thread::sleep(Duration::from_millis(300));
+
+    let before = get_node(&mut connection, container_id).rect;
+
+    let child = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--new-column",
+            "--wait-time",
+            "2000",
+            "--json",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to run sway-launch binary");
+
+    std::thread::sleep(Duration::from_millis(2100));
+    // A gap change rather than a resize: a solo window's own resize is the
+    // clamped no-op height_and_width_fall_back_gracefully_when_solo_window
+    // _clamps_the_resize covers, so it would leave the rect untouched and make
+    // this test vacuous. Reset below, since it applies compositor-wide and
+    // every later test in this shared session would otherwise inherit it.
+    connection
+        .run_command("gaps inner all set 40")
+        .expect("the competing gap change should be accepted")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("the competing gap change should succeed");
+
+    let output = child
+        .wait_with_output()
+        .expect("failed to wait for sway-launch");
+
+    // Read while the gap change is still in effect — the reset below restores
+    // the original geometry, so reading after it would compare `before`
+    // against itself.
+    let after = get_node(&mut connection, container_id).rect;
+    connection
+        .run_command("gaps inner all set 0")
+        .expect("resetting gaps should be accepted")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("resetting gaps should succeed");
+
+    assert!(
+        output.status.success(),
+        "sway-launch --new-column failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // The competing change has to have actually landed, or this test would
+    // pass for the wrong reason -- "unconfirmed" only means something if there
+    // was a change the poll could have wrongly credited.
+    assert_ne!(
+        before, after,
+        "the competing gap change should have moved the window"
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("\"status\":\"unconfirmed\""),
+        "a change arriving after the poll window must not be credited to the move: {stdout:?}"
     );
 }
 
