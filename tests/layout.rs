@@ -619,7 +619,13 @@ fn layout_json_error_output_omits_progress_for_a_single_invocation() {
     // invocation either resolved its one container or didn't, so reporting
     // an empty array there would suggest a run that got nowhere rather than
     // one the concept never applied to.
+    //
+    // Needs the invocation to fail, so it names a socket that cannot exist
+    // rather than assuming none is reachable — see the same helper's doc
+    // comment in tests/json_output.rs for what that assumption cost.
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .env("SWAYSOCK", "/nonexistent/sway-launch-test-socket")
+        .env_remove("I3SOCK")
         .args(["--con-id", "42", "--floating", "--json"])
         .output()
         .expect("failed to run sway-launch binary");
