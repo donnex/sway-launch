@@ -115,11 +115,17 @@ jobs:
       # instead of silently escaping both checks. Selecting by shebang (not
       # by directory) is what keeps the one Python script in scripts/ out of
       # it -- that has its own black/ruff steps below.
+      #
+      # The pattern matches any sh/bash/dash shebang, not just the literal
+      # `#!/bin/sh` every current script uses: a review pointed out that a
+      # script added with `#!/usr/bin/env sh` would have matched neither the
+      # old pattern nor anything else, and escaped both checks silently --
+      # exactly what discovering by shebang is meant to prevent.
       - name: Find shell scripts
         id: shell-scripts
         run: |
           set -euo pipefail
-          files="$(grep -rlE '^#!/bin/sh' scripts examples/scripts | sort | tr '\n' ' ')"
+          files="$(grep -rlE '^#!.*[ /](sh|bash|dash)$' scripts examples/scripts | sort | tr '\n' ' ')"
           test -n "$files" || { echo "::error::no shell scripts found to lint"; exit 1; }
           echo "files=$files" >> "$GITHUB_OUTPUT"
           echo "Linting: $files"
