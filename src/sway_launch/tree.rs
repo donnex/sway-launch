@@ -177,9 +177,9 @@ pub(super) fn node_is_floating(node: &Node) -> bool {
 /// doc comment documents for the `floating` field, just not caught locally
 /// beforehand since this project's own dev/CI environments so far have only
 /// ever run Sway 1.11, where the field *is* populated correctly. Kept as a
-/// secondary, OR'd check in `container_is_in_scratchpad()` below, alongside
-/// the version-independent ancestor-workspace-name check that function uses
-/// as its primary signal.
+/// secondary, OR'd check in `tree_shows_container_in_scratchpad()` below,
+/// alongside the version-independent ancestor-workspace-name check that
+/// function uses as its primary signal.
 pub(super) fn node_is_in_scratchpad(node: &Node) -> bool {
     !matches!(
         node.scratchpad_state,
@@ -837,9 +837,6 @@ mod tests {
     }
 
     // ContainerState::from_tree
-
-    /// A root → output → workspace → leaf tree, the shape `get_tree()`
-    /// actually returns, so the ancestor lookups have real ancestors to walk.
 
     #[test]
     fn container_state_from_tree_reads_the_containing_workspace_and_output() {

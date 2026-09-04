@@ -71,7 +71,7 @@ impl fmt::Display for Size {
 
 /// Parses a value already validated by `validate_size_argument()` — never
 /// called on unvalidated input. `validate_size_argument()` itself confirms
-/// the digits fit in a `u32`, not just that they're digits, specifically so
+/// the digits fit in an `i32`, not just that they're digits, specifically so
 /// the `.expect()`s here are trusting an already-checked invariant rather
 /// than gambling on one.
 pub fn parse_size(value: &str) -> Size {
@@ -169,7 +169,7 @@ pub fn validate_size_argument(value: &str) -> Result<String, String> {
 /// the regex's unbounded `\d+` matched — `parse_position()` trusts a value
 /// that passed this check to parse infallibly, so a value that matches the
 /// shape but overflows must be rejected here, not discovered as a panic
-/// later (same reasoning as `validate_size_argument`'s `u32` check).
+/// later (same reasoning as `validate_size_argument`'s own `i32` check).
 pub fn validate_position_argument(value: &str) -> Result<String, String> {
     if value == "center" {
         return Ok(value.to_string());

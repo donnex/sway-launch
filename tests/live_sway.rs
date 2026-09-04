@@ -1727,10 +1727,10 @@ fn rollback_on_error_handles_a_launched_window_that_already_closed_itself() {
     // Step 1 launches a foot window running a shell that exits after a
     // short sleep, closing the window on its own. Step 2 retargets that
     // same window (via target_id) with a NewColumn action and a large
-    // wait_time -- run_wait_time() sleeps *before* its container_exists()
-    // check (not after), so by the time that check runs the window is
-    // reliably already gone, failing step 2 deterministically without any
-    // race against an external kill.
+    // wait_time. run_wait_time() checks container_exists() twice, on either
+    // side of that wait: step 2's window is still alive for the first,
+    // fast-fail check, and reliably gone by the *second*, which is what fails
+    // step 2 deterministically -- no race against an external kill needed.
     let path = TempToml::write(
         "rollback-exit",
         "[[step]]\n\
