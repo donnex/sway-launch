@@ -249,6 +249,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--dry-run` and `--validate` combined now error immediately as conflicting flags, instead of
   `--dry-run` silently winning and `--validate` being ignored with no indication anything was
   skipped.
+- `--debug-events` combined with `--json` now errors, instead of printing the ordinary plain-text
+  event dump and discarding the flag — the same fix `--completions` already had, for the same
+  reason: a raw event stream has no JSON shape to take.
 - `--completions` combined with `--json` now errors, instead of printing the ordinary shell
   completion script and discarding the flag. A completion script is shell source, so there is no
   JSON shape for it to take — unlike `--list-templates`/`--show-template`, which both have one and
