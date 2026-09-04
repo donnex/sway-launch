@@ -10,6 +10,7 @@
 //! holds the rest of this same impl.
 
 use super::ipc::quote_sway_string;
+use super::process_marker::PID_MARKER_VAR;
 use super::values::{Position, Size, Split};
 use std::{fmt, time};
 
@@ -221,7 +222,18 @@ impl SwayAction<'_> {
     /// there's exactly one place that does it.
     pub(super) fn sway_command(&self) -> String {
         match self {
-            SwayAction::Exec { command, .. } => format!("exec {}", command),
+            // Exec's own command needs the per-invocation PID marker, which
+            // only exists once the action is actually running, so it can't be
+            // rendered from `&self` alone — see exec_sway_command() below,
+            // which is what run_wait_matching_exec_event() calls instead.
+            //
+            // This arm used to render `exec <command>`, which nothing ever
+            // sent: the real string was built independently at the call site,
+            // marker included. A change made here (to quoting, say) would have
+            // passed its own test and altered nothing.
+            SwayAction::Exec { .. } => {
+                unreachable!("Exec renders through exec_sway_command(), which carries the marker")
+            }
             other => {
                 let container_id = other
                     .container_id()
@@ -229,6 +241,28 @@ impl SwayAction<'_> {
                 format!("[con_id={}] {}", container_id, other.sway_command_verb())
             }
         }
+    }
+
+    /// `Exec`'s own Sway command: the user's command with a per-invocation
+    /// marker prepended to its environment, so the window it eventually
+    /// produces can be correlated back to the process this invocation spawned
+    /// (see `process_marker.rs`, and `run_wait_matching_exec_event()`'s doc
+    /// comment for the full mechanism).
+    ///
+    /// The marker and the command are deliberately raw, unquoted text rather
+    /// than passed through `quote_sway_string()`: Sway's own variable
+    /// substitution mangles a literal `$` inside a quoted argument, which broke
+    /// an earlier design, and the command is the one value this tool exists to
+    /// run as given.
+    ///
+    /// Lives here, alongside every other variant's command text, rather than
+    /// inline at the call site — that split is what let `sway_command()`'s own
+    /// `Exec` arm drift into rendering something nothing ever sent.
+    pub(super) fn exec_sway_command(&self, token: &str) -> String {
+        let SwayAction::Exec { command, .. } = self else {
+            unreachable!("exec_sway_command() is only ever called for SwayAction::Exec");
+        };
+        format!("exec env {}={} {}", PID_MARKER_VAR, token, command)
     }
 
     /// The `swaymsg` command *without* the `[con_id=N]` target prefix —
@@ -343,7 +377,27 @@ mod tests {
     // SwayAction::sway_command
 
     #[test]
-    fn sway_command_exec() {
+    fn exec_sway_command_prepends_the_marker_to_the_users_command() {
+        // Replaces a test that asserted sway_command() rendered "exec foot"
+        // for this variant -- a string nothing ever sent, since the real
+        // command was built separately with the marker. This asserts the text
+        // that actually reaches Sway.
+        let action = SwayAction::Exec {
+            command: "foot --app-id=probe",
+            app_id_match: "",
+            class_match: "",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(
+            action.exec_sway_command("1234-5678"),
+            "exec env SWAY_LAUNCH_PID_MARKER=1234-5678 foot --app-id=probe"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "exec_sway_command")]
+    fn sway_command_refuses_to_render_exec() {
         let action = SwayAction::Exec {
             command: "foot",
             app_id_match: "",
@@ -351,7 +405,7 @@ mod tests {
             verbose: false,
             timeout: time::Duration::from_secs(5),
         };
-        assert_eq!(action.sway_command(), "exec foot");
+        let _ = action.sway_command();
     }
 
     #[test]

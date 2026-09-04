@@ -691,10 +691,7 @@ impl SwayAction<'_> {
     /// function's `thread::spawn` call for the mechanism and the numbers.
     fn run_wait_matching_exec_event(&self) -> Result<(i64, LaunchOwnership), String> {
         let SwayAction::Exec {
-            command,
-            verbose,
-            timeout,
-            ..
+            verbose, timeout, ..
         } = *self
         else {
             unreachable!("run_wait_matching_exec_event is only called for SwayAction::Exec");
@@ -703,7 +700,7 @@ impl SwayAction<'_> {
         let event_loop = event_loop(&[EventType::Window])?;
 
         let token = generate_pid_marker_token();
-        let sway_command = format!("exec env {}={} {}", PID_MARKER_VAR, token, command);
+        let sway_command = self.exec_sway_command(&token);
         if verbose {
             eprintln!("Sway command: {}", sway_command);
         }
