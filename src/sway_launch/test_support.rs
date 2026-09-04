@@ -123,6 +123,8 @@ pub(super) fn named_node_value(
     value
 }
 
+/// A root → output → workspace → leaf tree, the shape `get_tree()` actually
+/// returns, so the ancestor lookups have real ancestors to walk.
 pub(super) fn state_tree(workspace_name: &str, leaf: serde_json::Value) -> Node {
     let workspace = named_node_value(2, "workspace", workspace_name, vec![leaf]);
     let output = named_node_value(1, "output", "HEADLESS-1", vec![workspace]);
