@@ -302,6 +302,24 @@ fn debug_events_conflicts_with_a_command() {
 }
 
 #[test]
+fn debug_events_rejects_json_rather_than_ignoring_it() {
+    // Same reasoning as completions_rejects_json_rather_than_ignoring_it:
+    // debug_events() writes plain `Event: N` lines and never sees the flag, so
+    // a raw event dump has no JSON shape for --json to take. It was accepted
+    // and discarded until a review noticed the inconsistency with
+    // --completions, which had already been fixed for exactly this.
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--debug-events", "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        !output.status.success(),
+        "--debug-events --json should be rejected, not silently ignored"
+    );
+}
+
+#[test]
 fn debug_events_conflicts_with_a_per_window_flag() {
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
         .args(["--debug-events", "--con-id", "42", "--floating"])

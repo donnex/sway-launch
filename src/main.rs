@@ -119,10 +119,15 @@ struct Args {
     /// A standalone mode like --completions/--list-templates: it never acts
     /// on a window, so a command or per-window flag alongside it could only
     /// be discarded. Rejected rather than ignored, same as those.
+    ///
+    /// --json is in that list for the same reason it's in --completions': a
+    /// raw event dump has no JSON shape to take, and debug_events() writes
+    /// plain `Event: N` lines regardless, so accepting the flag could only
+    /// throw it away.
     #[clap(short, long, conflicts_with_all = [
         "command", "con_id", "existing", "app_id", "class", "mark_match", "split",
         "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
-        "workspace", "output", "height", "width", "position", "scratchpad",
+        "workspace", "output", "height", "width", "position", "scratchpad", "json",
     ])]
     debug_events: bool,
 
