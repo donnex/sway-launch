@@ -214,7 +214,12 @@ Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`,
   `Size`/`Position` values (see below), not arbitrary strings — `sway_command()` is their
   serialization point, formatting a `Size`/`Position` back into Sway's `<n>px`/`<n>ppt` or
   space-separated `move position <x> <y>` syntax, rather than interpolating a pre-validated string,
-  and `Exec`'s command is passed through unquoted by design (the tool's whole job is to run it)
+  and `Exec`'s command is passed through unquoted by design (the tool's whole job is to run it).
+  `Exec` renders through `exec_sway_command(token)` rather than `sway_command()`, since its command
+  carries the per-invocation PID marker, which doesn't exist until the action runs —
+  `sway_command()`'s own `Exec` arm is `unreachable!()`. It used to render a plain `exec <command>`
+  that nothing ever sent (the real string was built inline at the call site, marker included), so a
+  change made there would have passed its own test and altered nothing; a code review caught it
 - declare which `WindowChange` event(s) would confirm it completed (`matching_window_change_events()`)
 - report its `--timeout`/`--wait-time` value, whichever field the variant actually has
   (`duration()`)
