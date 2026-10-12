@@ -178,6 +178,8 @@ impl LayoutStep {
                 .ok_or_else(|| {
                     "step needs one of: command, con_id, existing, target_id".to_string()
                 })?;
+            sway_launch::validate_exec_command(command)
+                .map_err(|error| format!("command: {}", error))?;
             sway_launch::Target::Exec { command }
         };
 

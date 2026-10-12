@@ -222,6 +222,7 @@ struct Args {
     rollback_on_error: bool,
 
     /// Command to execute
+    #[clap(value_parser = sway_launch::validate_exec_command)]
     command: Option<String>,
 }
 

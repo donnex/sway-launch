@@ -165,6 +165,20 @@ contains spaces, e.g. `'firefox --new-window https://example.com'`. It runs as a
 line, exactly as `swaymsg exec` would run it, so shell syntax works too: `'cd ~/project && foot'`,
 `'exec foot'`.
 
+Sway's own command parser reads the command before the shell does, which has three consequences:
+
+- An unquoted `,` or `;` would end the `exec` and start a separate Sway command, so `sway-launch`
+  rejects one up front. Wrap the part containing it in quotes (`'foot -T "a,b"'`), escape it with a
+  backslash, or move the command into a script. This rules out an unquoted shell `;` too:
+  `'sh -c "if true; then foot; fi"'` works, a bare `if true; then foot; fi` doesn't.
+- A newline (or carriage return) is rejected anywhere in the command, even inside quotes, since
+  Sway turns it into a `;` before it looks at quotes at all. Put a multi-line command in a script.
+- Sway substitutes its own `set $name` variables (`$term`, `$mod`, ...) in the command before
+  running it.
+
+The same rules apply to a `command` in a layout or bindings file (see [Layout files](#layout-files)
+and [Templates](#templates)), where a NUL character (`\u0000`) is rejected along with a newline.
+
 Since the container id of the matching window is returned, it's also possible to combine
 `sway-launch` with custom `swaymsg` commands.
 
@@ -321,7 +335,9 @@ sway-launch --layout layout.toml
 > (see [Templates](#templates) below). Template files themselves are safe: they contain no commands
 > at all, which is what makes them shareable on their own.
 
-A step's keys mirror the CLI flags of the same name (`app_id`, `class`, `mark_match`, `con_id`,
+A step's `command` is checked against the same Sway-parsing rules as the CLI's positional command
+(see [Basic usage](#basic-usage)), so `--validate` catches an unquoted `,`/`;` or an embedded
+newline before anything launches. A step's other keys mirror the CLI flags of the same name (`app_id`, `class`, `mark_match`, `con_id`,
 `existing`, `split`, `floating`, `sticky`, `fullscreen`, `focus`, `mark`, `new_column`, `new_row`,
 `workspace`, `output`, `height`, `width`, `position`, `scratchpad`, `timeout`, `wait_time`) —
 `height`/`width`/`position` are validated the same way their CLI equivalents are, and a step
@@ -430,7 +446,8 @@ sway-launch --template template.toml --apps code,foot
 `--apps` splits its argument on plain commas, with no escaping — a command that itself needs to
 contain a literal comma (a URL query string, a `sh -c 'a, b'`) can't be represented this way. Use
 `--bindings` instead for that case, since each command there is its own TOML field, not part of a
-comma-separated list. Each entry is trimmed of leading/trailing whitespace, so `--apps "foot,
+comma-separated list (quoting the comma is still required there, per
+[Basic usage](#basic-usage)). Each entry is trimmed of leading/trailing whitespace, so `--apps "foot,
 firefox"` works the same as `--apps "foot,firefox"`.
 
 Or applied via a bindings file, for full control over each slot's identity — including matching an

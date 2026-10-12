@@ -530,6 +530,91 @@ fn exec_runs_a_command_that_starts_with_a_shell_builtin() {
 }
 
 #[test]
+fn exec_passes_a_quoted_separator_through_to_the_shell_intact() {
+    // Sway splits an exec on an unquoted `,`/`;`, but leaves a quoted one --
+    // quotes included -- for the shell, so the title must arrive verbatim.
+    let mut connection = connect();
+    let title = "live-sway,quoted;title";
+    let output = sway_launch_command()
+        .args([
+            "--app-id",
+            "foot",
+            "--timeout",
+            "10",
+            &format!("foot -T '{title}'"),
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let container_id: i64 = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .expect("stdout should be a container id");
+    let _guard = KillOnDrop(container_id);
+
+    // foot can map its window a moment before it sets the title.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let name = get_node(&mut connection, container_id).name;
+        if name.as_deref() == Some(title) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the title should arrive intact, got {name:?}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn exec_rejects_an_unquoted_separator_before_sway_can_split_it() {
+    // `foot -T x; mark ...` used to launch foot and then run the mark against
+    // whatever window was focused -- exiting 0. Now nothing reaches Sway.
+    let mut connection = connect();
+    let (_container_id, _guard) = launch_foot(&[]);
+    let injected_mark = "live-sway-test-exec-split-injection";
+
+    let output = sway_launch_command()
+        .args([
+            "--app-id",
+            "foot",
+            "--timeout",
+            "10",
+            &format!("foot -T x; mark {injected_mark}"),
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        !output.status.success(),
+        "a command Sway would split must be rejected"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "nothing should have been launched or reported"
+    );
+
+    fn has_mark(node: &Node, mark: &str) -> bool {
+        node.marks.iter().any(|existing| existing == mark)
+            || node.nodes.iter().any(|child| has_mark(child, mark))
+            || node
+                .floating_nodes
+                .iter()
+                .any(|child| has_mark(child, mark))
+    }
+    let tree = connection.get_tree().expect("failed to read the tree");
+    assert!(
+        !has_mark(&tree, injected_mark),
+        "the injected Sway command must never run"
+    );
+}
+
+#[test]
 fn floating_with_width_and_height_applies_all_three() {
     let mut connection = connect();
     let (container_id, _guard) =

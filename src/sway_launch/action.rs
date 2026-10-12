@@ -263,7 +263,9 @@ impl SwayAction<'_> {
     /// than passed through `quote_sway_string()`: Sway's own variable
     /// substitution mangles a literal `$` inside a quoted argument, which broke
     /// an earlier design, and the command is the one value this tool exists to
-    /// run as given.
+    /// run as given. The cost is that Sway's parser sees the command first and
+    /// would split it on an unquoted `,`/`;` or a newline, which is why every
+    /// command is checked by `validate_exec_command()` before it gets here.
     ///
     /// Lives here, alongside every other variant's command text, rather than
     /// inline at the call site — that split is what let `sway_command()`'s own

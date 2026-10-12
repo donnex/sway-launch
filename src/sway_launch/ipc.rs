@@ -155,6 +155,37 @@ pub(super) fn run_sway_command(command: &str) -> Result<(), String> {
     first_outcome_error(outcomes, command)
 }
 
+/// `run_sway_command()` for a command that must reach Sway as exactly one
+/// command — the launch's `exec`. `validate_exec_command()` already rejects
+/// anything Sway would split, so this is the backstop: if Sway's reply still
+/// carries more than one outcome, the text was split after all, and the
+/// launch is reported as failed rather than as whatever its first piece did.
+pub(super) fn run_single_sway_command(command: &str) -> Result<(), String> {
+    let outcomes = match new_connection()?.run_command(command) {
+        Ok(outcomes) => outcomes,
+        Err(error) => return Err(ipc_error(error)),
+    };
+
+    single_outcome_error(outcomes, command)
+}
+
+/// The pure half of `run_single_sway_command()`: more than one outcome is an
+/// error of its own, naming the split, ahead of any per-outcome failure.
+pub(super) fn single_outcome_error<E: fmt::Display>(
+    outcomes: Vec<Result<(), E>>,
+    command: &str,
+) -> Result<(), String> {
+    if outcomes.len() > 1 {
+        return Err(format!(
+            "Sway split {:?} into {} separate commands; only the first was meant to run",
+            command,
+            outcomes.len()
+        ));
+    }
+
+    first_outcome_error(outcomes, command)
+}
+
 /// Kills `container_id` via `[con_id] kill`. Used by `main.rs`'s
 /// `--rollback-on-error`: best-effort cleanup of a window this invocation
 /// itself launched earlier in the same `--layout`/`--template` run, once a
@@ -348,5 +379,31 @@ mod tests {
             first_outcome_error(outcomes, "cmd"),
             Err("boom".to_string())
         );
+    }
+
+    // single_outcome_error
+
+    #[test]
+    fn single_outcome_error_ok_for_one_success() {
+        let outcomes: Vec<Result<(), String>> = vec![Ok(())];
+        assert_eq!(single_outcome_error(outcomes, "cmd"), Ok(()));
+    }
+
+    #[test]
+    fn single_outcome_error_surfaces_a_single_failure() {
+        let outcomes: Vec<Result<(), String>> = vec![Err("boom".to_string())];
+        assert_eq!(
+            single_outcome_error(outcomes, "cmd"),
+            Err("boom".to_string())
+        );
+    }
+
+    #[test]
+    fn single_outcome_error_fails_when_sway_split_the_command_even_if_all_succeeded() {
+        // The `foot -T x; mark INJECTED` case: every piece succeeded, so
+        // first_outcome_error() alone reports success for a split launch.
+        let outcomes: Vec<Result<(), String>> = vec![Ok(()), Ok(())];
+        let error = single_outcome_error(outcomes, "cmd").expect_err("a split must fail");
+        assert!(error.contains("2 separate commands"), "{error:?}");
     }
 }

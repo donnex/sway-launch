@@ -925,3 +925,31 @@ fn template_conflicts_with_layout() {
 
     assert!(!output.status.success());
 }
+
+#[test]
+fn template_validate_rejects_a_binding_command_sway_would_split() {
+    let template = TempToml::write(
+        "split-binding-template",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n",
+    );
+    let bindings = TempToml::write(
+        "split-binding-bindings",
+        "[[binding]]\nslot = \"editor\"\ncommand = \"code; kill\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            template.to_str().unwrap(),
+            "--bindings",
+            bindings.to_str().unwrap(),
+            "--validate",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("step 1"), "{stderr}");
+    assert!(stderr.contains("command:"), "{stderr}");
+}

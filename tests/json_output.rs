@@ -355,3 +355,44 @@ fn con_id_verbose_diagnostics_go_to_stderr_not_stdout() {
     assert_eq!(stdout.trim(), "42");
     assert!(stderr.contains("Target container id: 42"));
 }
+
+#[test]
+fn a_command_sway_would_split_is_rejected_before_anything_runs() {
+    // Sway's command parser splits on an unquoted `,`/`;`, so `foot -T a,b`
+    // used to launch `foot -T a` and then fail on `b`, and `foot; mark x`
+    // ran `mark x` against the focused window. Rejected at parse time, so
+    // this never reaches the (missing) compositor.
+    for command in ["foot -T a,b", "foot -T x; mark INJECTED", "foot\nmark x"] {
+        let output = sway_launch_without_a_compositor()
+            .arg(command)
+            .output()
+            .expect("failed to run sway-launch binary");
+
+        assert!(!output.status.success(), "{command:?} should be rejected");
+        let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+        assert!(
+            stderr.contains("Sway"),
+            "the error should explain Sway's splitting for {command:?}: {stderr}"
+        );
+        assert!(
+            !stderr.contains("socket"),
+            "{command:?} should fail validation, not reach IPC: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn a_quoted_separator_in_a_command_is_accepted() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--dry-run", "foot -T 'a,b; c'"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(stdout.trim(), "1. launch foot -T 'a,b; c'");
+}

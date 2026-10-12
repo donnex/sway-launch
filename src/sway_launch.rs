@@ -39,8 +39,9 @@ pub use ipc::kill_container;
 pub use launch::{SwayLaunch, Target};
 pub use outcome::{ActionRecord, ActionStatus, LaunchOwnership};
 pub use values::{
-    parse_position, parse_size, require_non_blank, validate_non_blank_argument,
-    validate_position_argument, validate_size_argument, validate_sway_string_argument, Split,
+    parse_position, parse_size, require_non_blank, validate_exec_command,
+    validate_non_blank_argument, validate_position_argument, validate_size_argument,
+    validate_sway_string_argument, Split,
 };
 
 /// The upper bound `run_poll_then_fallback()` polls `get_tree()` for a
