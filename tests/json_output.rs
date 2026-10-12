@@ -4,32 +4,13 @@
 // session.
 //
 // A test that needs an IPC call to *fail* says so explicitly, via
-// sway_launch_without_a_compositor() below, rather than assuming the machine
-// running it has no Sway session.
+// sway_launch_without_a_compositor() (tests/common/), rather than assuming
+// the machine running it has no Sway session.
 
+mod common;
+
+use common::sway_launch_without_a_compositor;
 use std::process::Command;
-
-/// The binary, pointed at a socket path that cannot exist.
-///
-/// Some tests here assert that an IPC-touching invocation fails. Left to the
-/// ambient environment, that assertion holds on a bare CI runner and breaks in
-/// a terminal inside a Sway session — which is where this project is developed,
-/// and where CLAUDE.md's own "run `cargo test` before committing" gate runs. It
-/// was worse than a false failure for the `--con-id 42` cases: with a session
-/// reachable, whether the command failed depended on whether container id 42
-/// happened to exist, and if it did, the test floated a real window.
-///
-/// `I3SOCK` is removed as well as `SWAYSOCK` set. `socket_path()` reads
-/// `SWAYSOCK` first, so the override alone would do today, but both together
-/// mean the connect attempt fails on a missing path rather than reaching a
-/// compositor no matter what the environment holds or which order wins.
-fn sway_launch_without_a_compositor() -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_sway-launch"));
-    command
-        .env("SWAYSOCK", "/nonexistent/sway-launch-test-socket")
-        .env_remove("I3SOCK");
-    command
-}
 
 #[test]
 fn con_id_plain_output_is_a_bare_container_id() {

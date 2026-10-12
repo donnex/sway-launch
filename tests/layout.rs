@@ -3,46 +3,12 @@
 // formatting) against the compiled binary without requiring a live Sway
 // session.
 
+mod common;
+
+use common::{sway_launch_without_a_compositor, TempToml};
 use std::fs;
-use std::ops::Deref;
-use std::path::{Path, PathBuf};
-use std::process::{self, Command};
-
-/// A layout file fixture written to the OS temp directory, removed again
-/// when it goes out of scope (even if an assertion panics mid-test).
-struct TempToml(PathBuf);
-
-impl TempToml {
-    fn write(name: &str, contents: &str) -> Self {
-        // Scoped to a per-process directory rather than written straight
-        // into the shared temp dir under a fixed name. Two of these test
-        // files independently used the fixture name "malformed", so both
-        // wrote the same path -- harmless while cargo runs test binaries one
-        // at a time, but a real collision under a parallel runner (cargo
-        // nextest), under two concurrent `cargo test --test ...` runs, or
-        // with two users on one machine. A predictable path in a shared
-        // /tmp is also writable through a symlink planted by another user.
-        let directory = std::env::temp_dir().join(format!("sway-launch-test-{}", process::id()));
-        fs::create_dir_all(&directory).expect("failed to create temp fixture directory");
-        let path = directory.join(format!("{}.toml", name));
-        fs::write(&path, contents).expect("failed to write temp fixture file");
-        Self(path)
-    }
-}
-
-impl Deref for TempToml {
-    type Target = Path;
-
-    fn deref(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for TempToml {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
-    }
-}
+use std::path::Path;
+use std::process::Command;
 
 #[test]
 fn layout_plain_output_prints_one_container_id_per_step() {
@@ -629,9 +595,7 @@ fn layout_json_error_output_names_the_failing_step_s_container() {
     );
 
     for extra in [&[][..], &["--rollback-on-error"][..]] {
-        let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
-            .env("SWAYSOCK", "/nonexistent/sway-launch-test-socket")
-            .env_remove("I3SOCK")
+        let output = sway_launch_without_a_compositor()
             .args(["--layout", path.to_str().unwrap(), "--json"])
             .args(extra)
             .output()
@@ -657,11 +621,10 @@ fn layout_json_error_output_omits_progress_for_a_single_invocation() {
     // one the concept never applied to.
     //
     // Needs the invocation to fail, so it names a socket that cannot exist
-    // rather than assuming none is reachable — see the same helper's doc
-    // comment in tests/json_output.rs for what that assumption cost.
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
-        .env("SWAYSOCK", "/nonexistent/sway-launch-test-socket")
-        .env_remove("I3SOCK")
+    // rather than assuming none is reachable — see
+    // sway_launch_without_a_compositor()'s doc comment in tests/common/ for
+    // what that assumption cost.
+    let output = sway_launch_without_a_compositor()
         .args(["--con-id", "42", "--floating", "--json"])
         .output()
         .expect("failed to run sway-launch binary");

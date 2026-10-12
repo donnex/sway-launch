@@ -25,10 +25,8 @@ from pathlib import Path
 
 if sys.version_info < (3, 11):
     found = f"{sys.version_info.major}.{sys.version_info.minor}"
-    print(f"✗ requires Python 3.11+ for tomllib (found {found})", file=sys.stderr)
+    print(f"✗ requires Python 3.11+ (found {found})", file=sys.stderr)
     sys.exit(1)
-
-import tomllib
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = REPO_ROOT / "templates"
@@ -96,16 +94,20 @@ def check_required_commands():
         die(f"missing required command(s) on PATH: {', '.join(missing)}")
 
 
-def ordered_slots(template_path):
-    """Slot names in first-appearance order, the same order main.rs's
-    bindings_from_apps() zips --apps onto."""
-    document = tomllib.loads(template_path.read_text())
-    slots = []
-    for step in document.get("step", []):
-        slot = step.get("slot")
-        if slot is not None and slot not in slots:
-            slots.append(slot)
-    return slots
+def ordered_slots(sway_launch_binary, template_name):
+    """Slot names in the order --apps binds them, as sway-launch's own
+    --list-templates --json reports them, so this never works the order out
+    separately from the binary."""
+    result = subprocess.run(
+        [str(sway_launch_binary), "--list-templates", "--json"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    for template in json.loads(result.stdout)["templates"]:
+        if template["name"] == template_name:
+            return template["slot_names"]
+    die(f"{template_name} is not listed by sway-launch --list-templates")
 
 
 def figlet_render_size(text, font):
@@ -357,7 +359,7 @@ def run_template(sway, sway_launch_binary, template_path, bindings_toml, wait_ti
 def generate_screenshot(
     sway, sway_launch_binary, template_path, output_dir, wait_time_ms, font
 ):
-    slots = ordered_slots(template_path)
+    slots = ordered_slots(sway_launch_binary, template_path.stem)
     if not slots:
         status(f"skipping {template_path.name} (no slots)")
         return
