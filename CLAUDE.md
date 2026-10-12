@@ -1426,7 +1426,30 @@ it immediately, not as a follow-up. A new template file needs a row added to REA
   as a copy of the commit title: describe the effect, not the implementation.
 - Purely internal changes (refactors, test-only additions, CI/tooling, contributor-facing doc
   updates to this file) don't get a changelog entry — `CHANGELOG.md` is for users, not
-  contributors.
+  contributors. Neither do dependency bumps, unless one changes behavior or adds something a user
+  has to install, nor review bookkeeping. The test for an entry is whether someone who didn't make
+  the change would want to know about it — not whether it was hard, or how many files it touched.
+- How an entry is written:
+  - An entry naming files or functions is a commit message in the wrong place — the reader doesn't
+    have the code open. Lead with the change itself; the reason goes in the sentence after, where
+    it can be skipped.
+  - Where a change replaced something that was wrong, **say what was wrong** ("`--floating` no
+    longer hangs until `--timeout` on an already-floating window" over "improved `--floating`").
+  - End with the issue number in parentheses where the work is tracked, matching the `(#N)` commit
+    title suffix.
+  - A change needing more than a few sentences gets a second paragraph under the same bullet, not
+    several entries. Within a subsection, lead with the largest change.
+  - The repo is public, so the strict Content policy applies here like anywhere else, and no shared
+    context can be assumed: an entry names what it's talking about the first time it comes up in a
+    release.
+- A commit that only fixes a not-yet-merged commit is squashed into it (see "History rewriting"),
+  so its entry is folded into that commit's entry rather than added as a second one.
+- `## [Unreleased]` stays in the file even when empty, so there's always somewhere for the next
+  entry to go.
+- `.markdownlint.json` sets `"MD024": { "siblings_only": true }`: every release repeats `### Added`
+  and friends, which MD024's default (no duplicate heading anywhere in the file) would reject.
+  `siblings_only` permits a repeated heading under a different parent, exactly the changelog shape
+  and nothing looser. Don't instead make headings artificially unique (`### Added (2026-09-12)`).
 - At release time, see "Merging to main" below: `## [Unreleased]` is renamed to the new version
   heading and a fresh empty `## [Unreleased]` is added above it, as part of the version-bump
   commit.
