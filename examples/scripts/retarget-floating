@@ -1,10 +1,6 @@
 #!/bin/sh
 #
-# Launch a foot terminal, then retarget it two ways without relaunching:
-# first via --con-id using the captured container id, then via --existing
-# matching --app-id against the already-open window. The terminal gets its
-# own app_id, so --existing matches only it, not other open foot windows
-# (such as the one running this script).
+# Launch a foot terminal, then retarget it via --con-id and --existing.
 #
 set -eu
 
@@ -13,6 +9,11 @@ readonly APP_ID='sway-launch-example'
 print_usage() {
   printf 'Usage: %s\n' "$(basename "$0")"
   printf 'Launch a terminal, then retarget it via --con-id and --existing.\n'
+  printf '\n'
+  printf 'First via --con-id using the captured container id, then via the\n'
+  printf 'already-open window matched with --existing and --app-id. The terminal\n'
+  printf 'gets its own app_id, so --existing matches only it, not other open\n'
+  printf 'foot windows (such as the one running this script).\n'
 }
 
 usage() {
@@ -24,6 +25,11 @@ usage() {
   exit "${1:-0}"
 }
 
+die() {
+  printf '✗ %s\n' "$*" >&2
+  exit 1
+}
+
 case "${1:-}" in
 -h | --help)
   usage 0
@@ -33,6 +39,8 @@ case "${1:-}" in
   usage 1
   ;;
 esac
+
+command -v sway-launch >/dev/null 2>&1 || die "sway-launch not found on PATH. Install sway-launch first."
 
 container_id="$(sway-launch -a "$APP_ID" "foot --app-id $APP_ID")"
 sway-launch --con-id "$container_id" --floating --width 800px --height 600px

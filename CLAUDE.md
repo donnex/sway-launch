@@ -1586,14 +1586,18 @@ kind of shipped layout file, `--template` files, lives at the repo root instead,
   several apps, `--floating`, `--mark`, `--width`/`--height`). README.md's "Recreatable layouts"
   section links to and groups all of these; they are full scripts a user runs directly, so they
   follow every Scripts/Shell convention below, including `-h`/`--help`. Keep this set and README's
-  list of them in sync when either changes. The six basic scripts are a confirmed exception to the
-  Scripts conventions' "every script needs a `die` error-reporting mechanism by default" rule:
-  `foot` is the one dependency they launch, and this project already treats it as always present
-  (see `tests/live_sway.rs`'s note above on why it needs no stand-in substitution), so none of these
-  six ever has an error condition to report beyond bad CLI usage, which `usage 1` already covers —
-  unlike the five advanced scripts, each of which checks for an app (Firefox/Chromium/Thunar/VS
-  Code) that isn't guaranteed present and so does need `die`. Revisit this if a basic script ever
-  grows a real failure path of its own.
+  list of them in sync when either changes. Every one of the eleven preflights `sway-launch` itself
+  (`command -v sway-launch ... || die ...`) before its first call, per the Dependency preflight
+  pattern below — it's the one command all of them run, and a missing one would otherwise fail on
+  the first line, or on an `exec` whose own failure skips any `die`. That preflight is also why the
+  six basic scripts carry `die` like the advanced ones: they used to be a confirmed exception to the
+  "every script needs a `die`" rule, on the grounds that `foot` (treated as always present, see
+  `tests/live_sway.rs`'s note above) was their only dependency and they had no error condition
+  beyond bad CLI usage — an exemption that explicitly lapsed once a basic script grew a real
+  failure path. The five advanced scripts additionally check for the app(s) they launch
+  (Firefox/Chromium/Thunar/VS Code), none of which is guaranteed present. `tests/live_sway.rs`'s
+  `every_basic_example_script_launches_successfully` satisfies the `sway-launch` preflight by
+  prepending a directory holding the compiled binary to `PATH`.
 - `examples/layouts/` (`quad-terminals.toml`, `retarget-by-id.toml`) — `--layout` files, run via
   `sway-launch --layout <file>` rather than executed directly.
 

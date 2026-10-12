@@ -1,7 +1,6 @@
 #!/bin/sh
 #
-# Launch a dev workspace: VS Code on the left, two foot terminals stacked
-# in a column on the right.
+# Launch VS Code on the left and two stacked foot terminals on the right.
 #
 set -eu
 
@@ -34,6 +33,7 @@ case "${1:-}" in
   ;;
 esac
 
+command -v sway-launch >/dev/null 2>&1 || die "sway-launch not found on PATH. Install sway-launch first."
 command -v code >/dev/null 2>&1 || die "code not found on PATH. Install VS Code first."
 
 sway-launch -a code --split h --width 65ppt code

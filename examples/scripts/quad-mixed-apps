@@ -1,7 +1,6 @@
 #!/bin/sh
 #
-# Launch a 2x2 grid of four different applications: a foot terminal,
-# Firefox, Thunar, and VS Code.
+# Launch a 2x2 grid of foot, Firefox, Thunar, and VS Code.
 #
 set -eu
 
@@ -33,6 +32,8 @@ case "${1:-}" in
   usage 1
   ;;
 esac
+
+command -v sway-launch >/dev/null 2>&1 || die "sway-launch not found on PATH. Install sway-launch first."
 
 for required_command in firefox thunar code; do
   command -v "$required_command" >/dev/null 2>&1 ||

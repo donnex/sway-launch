@@ -18,6 +18,11 @@ usage() {
   exit "${1:-0}"
 }
 
+die() {
+  printf '✗ %s\n' "$*" >&2
+  exit 1
+}
+
 case "${1:-}" in
 -h | --help)
   usage 0
@@ -27,6 +32,8 @@ case "${1:-}" in
   usage 1
   ;;
 esac
+
+command -v sway-launch >/dev/null 2>&1 || die "sway-launch not found on PATH. Install sway-launch first."
 
 sway-launch -a foot --split h foot
 sway-launch -a foot foot

@@ -1,7 +1,6 @@
 #!/bin/sh
 #
-# Launch VS Code full-width, then a small floating foot terminal on top of
-# it for quick one-off commands.
+# Launch VS Code full-width with a small floating foot terminal on top.
 #
 set -eu
 
@@ -34,6 +33,7 @@ case "${1:-}" in
   ;;
 esac
 
+command -v sway-launch >/dev/null 2>&1 || die "sway-launch not found on PATH. Install sway-launch first."
 command -v code >/dev/null 2>&1 || die "code not found on PATH. Install VS Code first."
 
 sway-launch -a code code
