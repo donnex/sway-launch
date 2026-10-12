@@ -4,11 +4,18 @@
 // rather than just exit codes. Gated behind the `live-sway-tests` feature so
 // a normal `cargo test` (and the main CI job) never needs Sway installed.
 //
-// All tests here share one compositor's tree and focused workspace, so they
-// must run single-threaded (`cargo test ... -- --test-threads=1`), which
-// scripts/run-live-sway-tests already does. Each test cleans up the windows
-// it launches via `KillOnDrop`, so a failing assertion still leaves the tree
-// clean for the next test.
+// All tests here share one compositor, so they must run single-threaded
+// (`cargo test ... -- --test-threads=1`), which scripts/run-live-sway-tests
+// already does, and libtest then runs them in name order. So that what a test
+// covers doesn't depend on that order, each one starts from the same state:
+// it calls `fresh_workspace()` first (an empty workspace of its own on the
+// compositor's original output), adds outputs only through `CreatedOutput`
+// (removed again on drop), and cleans up the windows it launches via
+// `KillOnDrop` — all three hold even when an assertion panics. Running one
+// test on its own therefore exercises the same paths as the full run. A new
+// test must follow the same pattern; where it is about one specific path,
+// assert that path through `--json`'s per-action status as well, so taking
+// a different one fails instead of passing quietly.
 #![cfg(feature = "live-sway-tests")]
 
 use std::io::BufRead;
@@ -279,6 +286,20 @@ fn output_containing<'a>(node: &'a Node, con_id: i64, current: Option<&'a str>) 
         .find_map(|child| output_containing(child, con_id, current))
 }
 
+/// The `status` of the one action a single `--json` invocation reports.
+fn single_action_status(stdout: &[u8]) -> String {
+    let json: serde_json::Value =
+        serde_json::from_slice(stdout).expect("stdout should be a JSON object");
+    let actions = json["actions"]
+        .as_array()
+        .expect("--json output should carry an actions array");
+    assert_eq!(actions.len(), 1, "expected exactly one action: {json}");
+    actions[0]["status"]
+        .as_str()
+        .expect("an action should carry a status")
+        .to_string()
+}
+
 /// Blocks until `con_id` is genuinely absent from Sway's tree, so a test
 /// that deliberately closes a window before asserting on the
 /// already-closed behaviour isn't racing the compositor.
@@ -322,6 +343,92 @@ impl Drop for KillChildOnDrop {
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
+    }
+}
+
+/// Runs a Sway command and panics unless every part of it succeeded.
+fn run_command_ok(connection: &mut Connection, command: &str) {
+    connection
+        .run_command(command)
+        .unwrap_or_else(|error| panic!("`{command}` should be accepted: {error}"))
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap_or_else(|error| panic!("`{command}` should succeed: {error}"));
+}
+
+/// The output the throwaway compositor started with. Every output a test adds
+/// goes through `CreatedOutput`, which removes it again, so this is the only
+/// output present whenever a test begins.
+fn original_output() -> &'static str {
+    static OUTPUT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    OUTPUT.get_or_init(|| {
+        connect()
+            .get_outputs()
+            .expect("get_outputs should succeed")
+            .into_iter()
+            .map(|output| output.name)
+            .min()
+            .expect("the compositor should have at least one output")
+    })
+}
+
+/// Focuses the original output and switches to a workspace named after the
+/// running test, returning its name — called first thing in every test, so
+/// a test's windows start on an empty workspace whatever the tests sorted
+/// before it left focused. libtest names each test's thread after the test,
+/// which is what makes the name unique.
+fn fresh_workspace() -> String {
+    let test_name = std::thread::current()
+        .name()
+        .unwrap_or("unnamed")
+        .replace("::", "-");
+    let workspace = format!("live-{test_name}");
+    let mut connection = connect();
+    run_command_ok(
+        &mut connection,
+        &format!("focus output {}", original_output()),
+    );
+    run_command_ok(&mut connection, &format!("workspace {workspace}"));
+    workspace
+}
+
+/// A headless output added with `create_output` and removed again with
+/// `output <name> unplug` when dropped, even on assertion panic — so every
+/// test begins with the compositor's one original output, rather than with
+/// however many the tests sorted before it added. Declare it before the
+/// test's `KillOnDrop` guards: locals drop in reverse order, so the windows
+/// are killed before their output goes away.
+struct CreatedOutput(String);
+
+impl CreatedOutput {
+    fn new(connection: &mut Connection) -> Self {
+        let outputs_before: Vec<String> = connection
+            .get_outputs()
+            .expect("get_outputs should succeed")
+            .into_iter()
+            .map(|output| output.name)
+            .collect();
+        run_command_ok(connection, "create_output");
+        let name = connection
+            .get_outputs()
+            .expect("get_outputs should succeed")
+            .into_iter()
+            .map(|output| output.name)
+            .find(|name| !outputs_before.contains(name))
+            .expect("create_output should have added a new output");
+        CreatedOutput(name)
+    }
+
+    fn name(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Drop for CreatedOutput {
+    fn drop(&mut self) {
+        if let Ok(mut connection) = try_connect(live_socket()) {
+            let _ = connection.run_command(format!("output {} unplug", self.0));
+        }
     }
 }
 
@@ -491,6 +598,7 @@ fn a_stalled_sway_socket_fails_instead_of_hanging_forever() {
 
 #[test]
 fn event_reader_threads_stay_bounded_across_a_long_layout() {
+    fresh_workspace();
     // Every event-confirmed action spawns a thread owning a Sway IPC event
     // stream, and that thread outlives the action whenever it's still blocked
     // on the socket -- there's no way to interrupt a blocking EventStream read
@@ -572,6 +680,7 @@ fn event_reader_threads_stay_bounded_across_a_long_layout() {
 
 #[test]
 fn a_layout_finishes_every_step_when_its_output_pipes_are_already_closed() {
+    fresh_workspace();
     // `sway-launch --layout ... | head -n1` is an ordinary way to capture the
     // first id. Once the reader went away, the next stdout write used to end
     // the process with exit 0 between steps -- a layout cut short and reported
@@ -663,6 +772,7 @@ fn launch_foot(extra_args: &[&str]) -> (i64, KillOnDrop) {
 
 #[test]
 fn exec_matches_by_app_id_and_returns_its_container_id() {
+    fresh_workspace();
     let mut connection = connect();
     let (container_id, _guard) = launch_foot(&[]);
 
@@ -672,6 +782,7 @@ fn exec_matches_by_app_id_and_returns_its_container_id() {
 
 #[test]
 fn exec_runs_a_command_that_starts_with_a_shell_builtin() {
+    fresh_workspace();
     // The PID marker used to be prepended as `env VAR=value <command>`, and
     // `env` can only run an executable: `cd` failed, the `&&` short-circuited,
     // nothing launched, and the wait ran out the full --timeout. The `exec`
@@ -708,6 +819,7 @@ fn exec_runs_a_command_that_starts_with_a_shell_builtin() {
 
 #[test]
 fn exec_runs_in_sway_s_directory_and_environment_not_the_caller_s() {
+    fresh_workspace();
     // Sway's own `exec` forks the command from the compositor, so it inherits
     // Sway's working directory and environment rather than sway-launch's.
     // README.md's "Basic usage" documents this; pinned here so a future
@@ -767,6 +879,7 @@ fn exec_runs_in_sway_s_directory_and_environment_not_the_caller_s() {
 
 #[test]
 fn exec_passes_a_quoted_separator_through_to_the_shell_intact() {
+    fresh_workspace();
     // Sway splits an exec on an unquoted `,`/`;`, but leaves a quoted one --
     // quotes included -- for the shell, so the title must arrive verbatim.
     let mut connection = connect();
@@ -809,6 +922,7 @@ fn exec_passes_a_quoted_separator_through_to_the_shell_intact() {
 
 #[test]
 fn exec_rejects_an_unquoted_separator_before_sway_can_split_it() {
+    fresh_workspace();
     // `foot -T x; mark ...` used to launch foot and then run the mark against
     // whatever window was focused -- exiting 0. Now nothing reaches Sway.
     let mut connection = connect();
@@ -852,6 +966,7 @@ fn exec_rejects_an_unquoted_separator_before_sway_can_split_it() {
 
 #[test]
 fn floating_with_width_and_height_applies_all_three() {
+    fresh_workspace();
     let mut connection = connect();
     let (container_id, _guard) =
         launch_foot(&["--floating", "--width", "400px", "--height", "300px"]);
@@ -873,6 +988,7 @@ fn floating_with_width_and_height_applies_all_three() {
 
 #[test]
 fn swaysock_wins_over_a_stale_i3sock() {
+    fresh_workspace();
     // Sway exports both SWAYSOCK and I3SOCK to everything it spawns, so the way
     // to aim a Sway tool at a different compositor is to override SWAYSOCK
     // alone — which swaymsg honors. sway-launch used to read I3SOCK first, so
@@ -904,6 +1020,7 @@ fn swaysock_wins_over_a_stale_i3sock() {
 
 #[test]
 fn sticky_sets_the_sticky_flag_even_on_a_tiled_window() {
+    fresh_workspace();
     // Confirmed live (manual investigation, not automated here since it's a
     // one-off design finding rather than a regression risk): unlike
     // Position, which Sway rejects outright against a tiled window, `sticky
@@ -920,6 +1037,7 @@ fn sticky_sets_the_sticky_flag_even_on_a_tiled_window() {
 
 #[test]
 fn sticky_confirms_via_poll_well_under_a_large_wait_time() {
+    fresh_workspace();
     // Mirrors split_confirms_via_poll_well_under_a_large_wait_time: Sticky
     // has no dedicated WindowChange event (confirmed live — see
     // matching_window_change_events()'s Sticky arm), so it's a wait-time
@@ -960,6 +1078,7 @@ fn sticky_confirms_via_poll_well_under_a_large_wait_time() {
 
 #[test]
 fn mark_applies_the_given_mark() {
+    fresh_workspace();
     let mut connection = connect();
     let (container_id, _guard) = launch_foot(&["--mark", "live-sway-test-mark"]);
 
@@ -969,6 +1088,7 @@ fn mark_applies_the_given_mark() {
 
 #[test]
 fn workspace_moves_window_to_named_workspace() {
+    fresh_workspace();
     // Proves the WindowChange::Move assumption documented for --workspace:
     // if Move didn't fire reliably, this would hang until --timeout instead
     // of returning promptly with the window actually moved.
@@ -982,6 +1102,7 @@ fn workspace_moves_window_to_named_workspace() {
 
 #[test]
 fn output_moves_window_to_named_output() {
+    fresh_workspace();
     // Proves the WindowChange::Move assumption documented for --output:
     // moving to a *different* output reliably fires the event, confirmed by
     // this actually completing promptly with the window moved rather than
@@ -989,25 +1110,8 @@ fn output_moves_window_to_named_output() {
     // on is a separate, already-there no-op case — see
     // output_is_a_no_op_when_already_on_the_target_output below.
     let mut connection = connect();
-    let outputs_before: Vec<String> = connection
-        .get_outputs()
-        .expect("get_outputs should succeed")
-        .into_iter()
-        .map(|output| output.name)
-        .collect();
-    connection
-        .run_command("create_output")
-        .expect("create_output should succeed")
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()
-        .expect("create_output should succeed");
-    let new_output = connection
-        .get_outputs()
-        .expect("get_outputs should succeed")
-        .into_iter()
-        .map(|output| output.name)
-        .find(|name| !outputs_before.contains(name))
-        .expect("create_output should have added a new output");
+    let created_output = CreatedOutput::new(&mut connection);
+    let new_output = created_output.name().to_string();
 
     let (container_id, _guard) = launch_foot(&["--output", &new_output]);
 
@@ -1015,12 +1119,8 @@ fn output_moves_window_to_named_output() {
     let output = output_containing(&tree, container_id, None);
     assert_eq!(output, Some(new_output.as_str()));
 
-    // Combination coverage, reusing this test's own create_output call
-    // rather than budgeting a second one (see the note on
-    // new_column_does_not_relocate_a_solo_window_to_a_different_output for
-    // why this headless backend's create_output budget is shared across the
-    // whole file): --output+--split and --output+--fullscreen, each
-    // combined in one invocation.
+    // Combination coverage on the same output: --output+--split and
+    // --output+--fullscreen, each combined in one invocation.
     //
     // output+split: --split v on a window that's solo on the new output
     // (build_actions() runs Output before Split, so by the time Split runs
@@ -1072,6 +1172,7 @@ fn output_moves_window_to_named_output() {
 
 #[test]
 fn workspace_is_a_no_op_when_already_on_the_target_workspace() {
+    fresh_workspace();
     // Regression test: Sway doesn't fire WindowChange::Move for a "move
     // workspace" that doesn't actually change anything, so without
     // SwayAction::already_at_target()'s short-circuit this would hang until
@@ -1110,6 +1211,7 @@ fn workspace_is_a_no_op_when_already_on_the_target_workspace() {
 
 #[test]
 fn output_is_a_no_op_when_already_on_the_target_output() {
+    fresh_workspace();
     // Same as workspace_is_a_no_op_when_already_on_the_target_workspace,
     // for --output.
     let mut connection = connect();
@@ -1146,6 +1248,7 @@ fn output_is_a_no_op_when_already_on_the_target_output() {
 
 #[test]
 fn floating_is_a_no_op_when_already_floating() {
+    fresh_workspace();
     // Regression test found during a bug hunt prompted by this crate's own
     // pattern: Workspace/Output/NewColumn/NewRow all turned out to have a
     // no-op case Sway doesn't fire an event for, so the same was checked
@@ -1183,6 +1286,7 @@ fn floating_is_a_no_op_when_already_floating() {
 
 #[test]
 fn floating_still_succeeds_when_another_client_wins_the_race() {
+    fresh_workspace();
     // Regression test for a TOCTOU race between already_at_target()'s no-op
     // check and the subscription that waits for the confirming event. When the
     // check ran first, another client satisfying the state in between left this
@@ -1261,6 +1365,7 @@ fn wait_until_not_floating(connection: &mut Connection, con_id: i64) {
 
 #[test]
 fn fullscreen_is_a_no_op_when_already_fullscreen() {
+    fresh_workspace();
     // Same as floating_is_a_no_op_when_already_floating, for --fullscreen.
     let (container_id, _guard) = launch_foot(&["--fullscreen"]);
 
@@ -1290,6 +1395,7 @@ fn fullscreen_is_a_no_op_when_already_fullscreen() {
 
 #[test]
 fn focus_is_a_no_op_when_already_focused() {
+    fresh_workspace();
     // Same as floating_is_a_no_op_when_already_floating, for --focus.
     // Explicitly focuses first rather than relying on a freshly-launched
     // window already being focused by default, to guarantee the
@@ -1323,6 +1429,7 @@ fn focus_is_a_no_op_when_already_focused() {
 
 #[test]
 fn scratchpad_moves_a_tiled_window_to_the_scratchpad() {
+    fresh_workspace();
     // Also proves the WindowChange::Move confirmation actually fires despite
     // Sway auto-floating a still-tiled window as part of the move (see
     // SwayAction::matching_window_change_events()'s Scratchpad doc comment)
@@ -1353,6 +1460,7 @@ fn scratchpad_moves_a_tiled_window_to_the_scratchpad() {
 
 #[test]
 fn scratchpad_is_a_no_op_when_already_in_the_scratchpad() {
+    fresh_workspace();
     // Same as floating_is_a_no_op_when_already_floating, for --scratchpad:
     // re-running "move scratchpad" on a window already there fires no event
     // at all, confirmed live, so SwayAction::already_at_target()'s
@@ -1385,6 +1493,7 @@ fn scratchpad_is_a_no_op_when_already_in_the_scratchpad() {
 
 #[test]
 fn scratchpad_hides_a_window_currently_shown_from_the_scratchpad() {
+    fresh_workspace();
     // Regression test: a window brought out with `scratchpad show` keeps
     // scratchpad_state "fresh" on Sway 1.11 while sitting on an ordinary
     // workspace, which used to make --scratchpad short-circuit as
@@ -1442,6 +1551,7 @@ fn scratchpad_hides_a_window_currently_shown_from_the_scratchpad() {
 
 #[test]
 fn existing_matches_a_window_in_the_scratchpad() {
+    fresh_workspace();
     // Coverage gap found during a review pass: README.md/CLAUDE.md document
     // that --existing's tree walk reaches Sway's __i3_scratch scratchpad —
     // a hidden window is just as eligible a match as a visible one — but
@@ -1473,6 +1583,7 @@ fn existing_matches_a_window_in_the_scratchpad() {
 
 #[test]
 fn new_column_does_not_relocate_a_solo_window_to_a_different_output() {
+    fresh_workspace();
     // Regression test for the multi-monitor NewColumn/NewRow escalation
     // documented in SwayAction::matching_window_change_events()'s reasoning
     // comment: "move right" on a window with no sibling to move past within
@@ -1481,26 +1592,14 @@ fn new_column_does_not_relocate_a_solo_window_to_a_different_output() {
     // SwayLaunch::run() guards against this via relocates_to_another_output();
     // this proves the guard actually prevents the relocation. Also asserts
     // on --json's unified "actions" array reporting the skip (RunOutcome)
-    // rather than adding a second, near-identical test with its own
-    // create_output call: this
-    // headless backend was confirmed live (manual probing, isolated from
-    // any other test activity) to crash deterministically and unrecoverably
-    // on its *8th* create_output call, and this file's tests already sit at
-    // exactly 7 such calls — every one already at its limit, no budget left
-    // for a new dedicated setup. Reusing an *existing* output instead of a
-    // fresh one was tried first and rejected: the guard's escalation is
-    // directional (whether "move right" actually crosses into another
-    // output depends on Sway's own output arrangement and which output
-    // happens to be focused), so reusing whatever an unrelated earlier
-    // test left behind doesn't reliably reproduce the same scenario a
-    // dedicated, freshly created output does.
+    // rather than adding a second, near-identical test. The output is a
+    // dedicated, freshly created one rather than one an earlier test left
+    // behind: the guard's escalation is directional (whether "move right"
+    // actually crosses into another output depends on Sway's own output
+    // arrangement and which output is focused), so only a known arrangement
+    // reliably reproduces the scenario.
     let mut connection = connect();
-    connection
-        .run_command("create_output")
-        .expect("create_output should succeed")
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()
-        .expect("create_output should succeed");
+    let _created_output = CreatedOutput::new(&mut connection);
 
     let (container_id, _guard) = launch_foot(&[]);
     let tree_before = connection.get_tree().expect("get_tree should succeed");
@@ -1547,6 +1646,7 @@ fn new_column_does_not_relocate_a_solo_window_to_a_different_output() {
 
 #[test]
 fn new_column_does_not_relocate_a_non_solo_window_at_the_trailing_edge() {
+    fresh_workspace();
     // Regression test for a gap found in relocates_to_another_output()
     // while developing docs/plan-poll-based-wait-time-actions.md's
     // NewColumn/NewRow poll matcher: the original guard only checked "is
@@ -1560,12 +1660,7 @@ fn new_column_does_not_relocate_a_non_solo_window_at_the_trailing_edge() {
     // the workspace's own layout plus trailing-child position, not just
     // child count.
     let mut connection = connect();
-    connection
-        .run_command("create_output")
-        .expect("create_output should succeed")
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()
-        .expect("create_output should succeed");
+    let _created_output = CreatedOutput::new(&mut connection);
 
     let (_first_id, _first_guard) =
         launch_foot(&["--workspace", "live-sway-test-new-column-non-solo-edge"]);
@@ -1599,8 +1694,8 @@ fn new_column_does_not_relocate_a_non_solo_window_at_the_trailing_edge() {
 
 #[test]
 fn new_column_does_not_relocate_a_nested_window_to_a_different_output() {
-    // Covers both nested shapes, against the one output this test creates
-    // (CLAUDE.md's create_output budget rules out a second test).
+    fresh_workspace();
+    // Covers both nested shapes, against the one output this test creates.
     //
     // A window that is the trailing child of an axis-matched sub-container
     // *with* a sibling: probed live, "move right" pops it out of the
@@ -1612,12 +1707,7 @@ fn new_column_does_not_relocate_a_nested_window_to_a_different_output() {
     // the guard must skip it. Checked for a `layout tabbed` wrapper and for
     // a `splitv` wrapper left with one child after its sibling closed.
     let mut connection = connect();
-    connection
-        .run_command("create_output")
-        .expect("create_output should succeed")
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()
-        .expect("create_output should succeed");
+    let _created_output = CreatedOutput::new(&mut connection);
 
     let (_first_id, _first_guard) =
         launch_foot(&["--workspace", "live-sway-test-new-column-nested"]);
@@ -1691,6 +1781,7 @@ fn new_column_does_not_relocate_a_nested_window_to_a_different_output() {
 
 #[test]
 fn new_column_combined_with_workspace_lands_on_the_target_workspace_correctly() {
+    fresh_workspace();
     // Regression test for external-review.md's #14 investigation (see ISSUES.md/CLAUDE.md):
     // SwayLaunch::run()'s fixed order runs NewColumn before Workspace, so
     // `--new-column --workspace <target>` restructures the window relative
@@ -1737,6 +1828,7 @@ fn new_column_combined_with_workspace_lands_on_the_target_workspace_correctly() 
 
 #[test]
 fn new_column_and_new_row_output_guard_still_applies_when_combined_with_output() {
+    fresh_workspace();
     // Companion to the workspace case above: when --new-column/--new-row and
     // --output are combined in one invocation and the window is at the
     // trailing edge of an axis-matched, multi-output-eligible workspace,
@@ -1744,29 +1836,10 @@ fn new_column_and_new_row_output_guard_still_applies_when_combined_with_output()
     // in a single-output world dangerous) "move right"/"move down" exactly
     // as it does when --new-column/--new-row runs alone -- confirmed live
     // this combination doesn't bypass or double up on the existing guard.
-    // Covers --new-row+--output in the same test (reusing this test's own
-    // create_output call) rather than budgeting a second one for it -- see
-    // the note on new_column_does_not_relocate_a_solo_window_to_a_different_output.
+    // Covers --new-row+--output in the same test, against the same output.
     let mut connection = connect();
-    let outputs_before: Vec<String> = connection
-        .get_outputs()
-        .expect("get_outputs should succeed")
-        .into_iter()
-        .map(|output| output.name)
-        .collect();
-    connection
-        .run_command("create_output")
-        .expect("create_output should succeed")
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()
-        .expect("create_output should succeed");
-    let new_output = connection
-        .get_outputs()
-        .expect("get_outputs should succeed")
-        .into_iter()
-        .map(|output| output.name)
-        .find(|name| !outputs_before.contains(name))
-        .expect("create_output should have added a new output");
+    let created_output = CreatedOutput::new(&mut connection);
+    let new_output = created_output.name().to_string();
 
     let (first_id, _first_guard) =
         launch_foot(&["--workspace", "live-sway-test-new-column-output-combo"]);
@@ -1820,6 +1893,7 @@ fn new_column_and_new_row_output_guard_still_applies_when_combined_with_output()
 
 #[test]
 fn fullscreen_enables_fullscreen_mode() {
+    fresh_workspace();
     let mut connection = connect();
     let (container_id, _guard) = launch_foot(&["--fullscreen"]);
 
@@ -1829,6 +1903,7 @@ fn fullscreen_enables_fullscreen_mode() {
 
 #[test]
 fn fullscreen_combined_with_workspace_lands_on_the_target_workspace_fullscreen() {
+    fresh_workspace();
     // Combination coverage: --workspace runs before --fullscreen in
     // build_actions()'s fixed order, so a step combining both should end up
     // both on the target workspace and fullscreen, not one or the other.
@@ -1855,6 +1930,7 @@ fn fullscreen_combined_with_workspace_lands_on_the_target_workspace_fullscreen()
 
 #[test]
 fn split_combined_with_workspace_configures_the_target_workspace_not_the_origin() {
+    fresh_workspace();
     // Combination coverage: --workspace runs before --split in
     // build_actions()'s fixed order, so a step combining both should
     // configure the *target* workspace's own layout (via the solo-window
@@ -1898,6 +1974,7 @@ fn split_combined_with_workspace_configures_the_target_workspace_not_the_origin(
 
 #[test]
 fn floating_centered_and_scratchpadded_together_lands_hidden_but_correctly_configured() {
+    fresh_workspace();
     // Combination coverage: --scratchpad always runs last (after Floating/
     // Position/etc.), specifically so earlier actions like centering still
     // apply to a visible window before it's hidden away -- the classic
@@ -1934,6 +2011,7 @@ fn floating_centered_and_scratchpadded_together_lands_hidden_but_correctly_confi
 
 #[test]
 fn focus_focuses_a_previously_unfocused_window() {
+    fresh_workspace();
     let mut connection = connect();
     let (first_id, _first_guard) = launch_foot(&[]);
     // Launching a second window steals focus from the first, giving this
@@ -1957,6 +2035,7 @@ fn focus_focuses_a_previously_unfocused_window() {
 
 #[test]
 fn position_moves_a_floating_window_to_given_coordinates() {
+    fresh_workspace();
     let mut connection = connect();
     let (container_id, _guard) = launch_foot(&["--floating", "--position", "100,200"]);
 
@@ -1971,6 +2050,7 @@ fn position_moves_a_floating_window_to_given_coordinates() {
 
 #[test]
 fn position_accepts_negative_coordinates_on_a_negatively_offset_output() {
+    fresh_workspace();
     // Regression test for the negative-coordinates fix
     // (validate_position_argument's regex, plus --position's clap
     // `allow_hyphen_values` -- clap otherwise rejects a value starting with
@@ -1982,25 +2062,8 @@ fn position_accepts_negative_coordinates_on_a_negatively_offset_output() {
     // absolute coordinate on it end to end, not just that the CLI accepts
     // the flag.
     let mut connection = connect();
-    let outputs_before: Vec<String> = connection
-        .get_outputs()
-        .expect("get_outputs should succeed")
-        .into_iter()
-        .map(|output| output.name)
-        .collect();
-    connection
-        .run_command("create_output")
-        .expect("create_output should succeed")
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()
-        .expect("create_output should succeed");
-    let new_output = connection
-        .get_outputs()
-        .expect("get_outputs should succeed")
-        .into_iter()
-        .map(|output| output.name)
-        .find(|name| !outputs_before.contains(name))
-        .expect("create_output should have added a new output");
+    let created_output = CreatedOutput::new(&mut connection);
+    let new_output = created_output.name().to_string();
     connection
         .run_command(format!("output {new_output} position -1920 0"))
         .expect("repositioning the output should succeed")
@@ -2023,6 +2086,7 @@ fn position_accepts_negative_coordinates_on_a_negatively_offset_output() {
 
 #[test]
 fn position_confirms_via_poll_for_a_floating_window() {
+    fresh_workspace();
     // Regression test for docs/plan-poll-based-wait-time-actions.md's
     // poll-then-fallback mechanism reaching Position: confirms via
     // SwayAction::poll_matches()'s position_matches() (a get_tree() +
@@ -2062,6 +2126,7 @@ fn position_confirms_via_poll_for_a_floating_window() {
 
 #[test]
 fn position_confirms_via_poll_for_a_fullscreen_window() {
+    fresh_workspace();
     // Regression test: confirmed live that a fullscreen window's deco_rect
     // stays {0, 0, 0, 0} permanently (stable across a multi-second sweep,
     // not a transient race), since Sway never computes decoration geometry
@@ -2115,6 +2180,7 @@ fn position_confirms_via_poll_for_a_fullscreen_window() {
 
 #[test]
 fn position_errors_clearly_for_a_tiled_window() {
+    fresh_workspace();
     // Corrects an assumption docs/plan-poll-based-wait-time-actions.md
     // carried over from earlier conversation exploration: a tiled window
     // isn't a silent "move position" no-op the way Height/Width's
@@ -2160,6 +2226,7 @@ fn position_errors_clearly_for_a_tiled_window() {
 
 #[test]
 fn con_id_and_existing_target_an_already_open_window() {
+    fresh_workspace();
     let mut connection = connect();
     let (container_id, _guard) = launch_foot(&[]);
 
@@ -2197,6 +2264,7 @@ fn con_id_and_existing_target_an_already_open_window() {
 
 #[test]
 fn rollback_on_error_kills_earlier_launched_windows_when_a_later_step_fails() {
+    fresh_workspace();
     // Regression test for --rollback-on-error: without it, an earlier
     // step's real window stays open when a later step fails; with it,
     // run_steps() kills every window this invocation itself launched
@@ -2248,6 +2316,7 @@ fn rollback_on_error_kills_earlier_launched_windows_when_a_later_step_fails() {
 
 #[test]
 fn rollback_on_error_handles_a_launched_window_that_already_closed_itself() {
+    fresh_workspace();
     // Regression test: if step 1's launched window closes on its own before
     // a later step's failure triggers --rollback-on-error, rollback()'s own
     // kill_container() call against that already-gone container must not be
@@ -2321,6 +2390,7 @@ fn rollback_on_error_handles_a_launched_window_that_already_closed_itself() {
 
 #[test]
 fn rollback_on_error_undoes_launches_not_mutations_to_existing_windows() {
+    fresh_workspace();
     // Pins the public semantic README.md states: --rollback-on-error is
     // *window-launch* rollback, not transactional rollback. A layout that
     // mutates an already-open window and then fails leaves that mutation in
@@ -2386,6 +2456,7 @@ fn rollback_on_error_undoes_launches_not_mutations_to_existing_windows() {
 
 #[test]
 fn rollback_on_error_leaves_a_window_it_only_adopted_open() {
+    fresh_workspace();
     // --rollback-on-error kills windows, and a kill can't be undone, so it
     // must only ever kill a window this run can prove it launched.
     //
@@ -2471,6 +2542,7 @@ fn rollback_on_error_leaves_a_window_it_only_adopted_open() {
 
 #[test]
 fn rollback_on_error_still_kills_a_window_matched_after_its_launcher_exited() {
+    fresh_workspace();
     // The other branch of the same fallback, and the reason ownership isn't
     // simply "was the PID marker confirmed": a single-instance application
     // hands the request to an already-running process and exits, so the window
@@ -2532,6 +2604,7 @@ fn rollback_on_error_still_kills_a_window_matched_after_its_launcher_exited() {
 
 #[test]
 fn rollback_on_error_leaves_a_window_opened_while_an_env_dropping_wrapper_waits() {
+    fresh_workspace();
     // A launcher that drops the environment (systemd-run, an app launcher, a
     // wrapper doing `env -u`) means the marker is never observed at all, while
     // the real program is still seconds away. "No process carries the marker"
@@ -2621,6 +2694,7 @@ fn window_titled(node: &Node, title: &str) -> Option<i64> {
 
 #[test]
 fn concurrent_template_runs_report_disjoint_container_ids() {
+    fresh_workspace();
     // Two multi-step runs started together give each one many chances to see
     // the other's `New` window in the gap between sending `exec` and its own
     // marked process starting. With nothing yet carrying its marker, a run used
@@ -2719,6 +2793,7 @@ fn first_app_id_window(node: &Node, app_id: &str) -> Option<i64> {
 
 #[test]
 fn layout_target_id_references_an_earlier_steps_real_window() {
+    fresh_workspace();
     let mut connection = connect();
     let path = TempToml::write(
         "target-id",
@@ -2751,6 +2826,7 @@ fn layout_target_id_references_an_earlier_steps_real_window() {
 
 #[test]
 fn template_apps_resolve_to_real_windows() {
+    fresh_workspace();
     let mut connection = connect();
     let path = TempToml::write(
         "template",
@@ -2796,6 +2872,7 @@ fn template_apps_resolve_to_real_windows() {
 
 #[test]
 fn template_layout_context_moves_a_step_without_its_own_workspace_to_the_template_s_workspace() {
+    fresh_workspace();
     // Proves the [layout] table's workspace fallback (template::resolve())
     // actually reaches a real window, not just the resolved LayoutStep --
     // the step itself sets no workspace of its own.
@@ -2831,13 +2908,17 @@ fn template_layout_context_moves_a_step_without_its_own_workspace_to_the_templat
 
 #[test]
 fn new_column_and_new_row_complete_promptly_when_already_at_the_edge() {
+    fresh_workspace();
     // Regression test for the bug this crate's own README/CLAUDE.md
     // describe: "move right"/"move down" don't fire WindowChange::Move when
     // the window is already at the tree's rightmost/bottommost position —
     // the ordinary two-window case — so the old event-confirmed dispatch
     // hung until --timeout (5s default) instead of completing. Asserting
     // "well under the default --timeout" is the proxy for "did not hang
-    // waiting on an event that never fires".
+    // waiting on an event that never fires". Asserting on --json's status
+    // as well is what keeps it testing that path: with a second output to
+    // the right, the relocation guard skips "move right" outright, which
+    // finishes just as quickly without ever sending the command.
     let (_first_id, _first_guard) = launch_foot(&[]);
     let (second_id, _second_guard) = launch_foot(&[]);
 
@@ -2849,6 +2930,7 @@ fn new_column_and_new_row_complete_promptly_when_already_at_the_edge() {
             "--new-column",
             "--wait-time",
             "50",
+            "--json",
         ])
         .output()
         .expect("failed to run sway-launch binary");
@@ -2862,6 +2944,11 @@ fn new_column_and_new_row_complete_promptly_when_already_at_the_edge() {
         "--new-column took {:?}, suggesting it hung waiting for an event",
         started.elapsed()
     );
+    assert_ne!(
+        single_action_status(&output.stdout),
+        "skipped",
+        "--new-column should have sent its move, not been skipped by the relocation guard"
+    );
 
     let started = Instant::now();
     let output = sway_launch_command()
@@ -2871,6 +2958,7 @@ fn new_column_and_new_row_complete_promptly_when_already_at_the_edge() {
             "--new-row",
             "--wait-time",
             "50",
+            "--json",
         ])
         .output()
         .expect("failed to run sway-launch binary");
@@ -2884,10 +2972,16 @@ fn new_column_and_new_row_complete_promptly_when_already_at_the_edge() {
         "--new-row took {:?}, suggesting it hung waiting for an event",
         started.elapsed()
     );
+    assert_ne!(
+        single_action_status(&output.stdout),
+        "skipped",
+        "--new-row should have sent its move, not been skipped by the relocation guard"
+    );
 }
 
 #[test]
 fn new_column_confirms_via_poll_when_swapping_past_a_sibling() {
+    fresh_workspace();
     // Regression test for docs/plan-poll-based-wait-time-actions.md's
     // poll-then-fallback mechanism reaching NewColumn: confirms via
     // SwayAction::poll_matches()'s rect-snapshot comparison (see
@@ -2950,6 +3044,7 @@ fn new_column_confirms_via_poll_when_swapping_past_a_sibling() {
 
 #[test]
 fn new_row_confirms_via_poll_when_swapping_past_a_sibling() {
+    fresh_workspace();
     // Same as new_column_confirms_via_poll_when_swapping_past_a_sibling,
     // for NewRow — needs a vertically-arranged sibling to swap past, same
     // as new_row_places_window_below_the_first. Isolated via --workspace
@@ -3002,6 +3097,7 @@ fn new_row_confirms_via_poll_when_swapping_past_a_sibling() {
 
 #[test]
 fn new_column_falls_back_gracefully_at_the_edge_with_a_large_wait_time() {
+    fresh_workspace();
     // The documented "already at the edge" no-op (see
     // matching_window_change_events()'s comment in src/sway_launch.rs) —
     // confirmed during this feature's development that Sway can still
@@ -3014,12 +3110,9 @@ fn new_column_falls_back_gracefully_at_the_edge_with_a_large_wait_time() {
     // 50ms, so a false-positive "confirmed" would be caught by the rect
     // assertion below even if the timing alone looked fine. Isolated via
     // --workspace so this window is genuinely at the tree's edge,
-    // regardless of ambient state left behind by other tests in this
-    // shared compositor — this is exactly the kind of test where ambient
-    // extra windows/outputs (e.g. from tests that call create_output)
-    // would otherwise produce a misleading rect delta unrelated to
-    // --new-column itself, confirmed while chasing down this test's own
-    // first failed run during development.
+    // with no other window on its workspace to produce a misleading rect
+    // delta unrelated to --new-column itself, confirmed while chasing down
+    // this test's own first failed run during development.
     let mut connection = connect();
     let (_first_id, _first_guard) = launch_foot(&["--workspace", "live-sway-test-new-column-edge"]);
     let (second_id, _second_guard) =
@@ -3057,6 +3150,7 @@ fn new_column_falls_back_gracefully_at_the_edge_with_a_large_wait_time() {
 
 #[test]
 fn new_column_does_not_credit_a_geometry_change_that_arrives_after_its_poll_window() {
+    fresh_workspace();
     // The direction MOVE_POLL_GRACE (25ms) exists for, and the one the two
     // fast-path tests can't check: NewColumn/NewRow confirm on "this window's
     // rect differs from the snapshot", which cannot tell this action's own
@@ -3067,9 +3161,9 @@ fn new_column_does_not_credit_a_geometry_change_that_arrives_after_its_poll_wind
     // The setup has to satisfy three things at once, which took some finding:
     // the move must be a geometric no-op (so any rect change is provably not
     // ours), the multi-output relocation guard must *not* skip the action (or
-    // no poll happens at all -- and by the time this test runs, earlier tests
-    // have left several outputs behind), and the competing change must
-    // actually move the window. A solo window on a splitv workspace does it:
+    // no poll happens at all -- it would whenever a second output sits to the
+    // right, so this must keep holding if one is ever added here), and the
+    // competing change must actually move the window. A solo window on a splitv workspace does it:
     // "move right" there restructures in place without changing the rect
     // (CLAUDE.md's Orchestration section documents this case), and the
     // workspace's axis doesn't match the move, so is_at_the_trailing_workspace
@@ -3156,6 +3250,7 @@ fn new_column_does_not_credit_a_geometry_change_that_arrives_after_its_poll_wind
 
 #[test]
 fn concurrent_exec_invocations_do_not_collide_on_the_same_container_id() {
+    fresh_workspace();
     // Regression test for the critical concurrent-invocation bug this
     // crate's README warns about: two sway-launch processes launching
     // matching windows at the same time used to be able to both match the
@@ -3211,6 +3306,7 @@ fn concurrent_exec_invocations_do_not_collide_on_the_same_container_id() {
 
 #[test]
 fn exec_falls_back_to_a_content_match_when_its_own_process_already_exited() {
+    fresh_workspace();
     // Regression test for the other half of run_wait_matching_exec_event():
     // some applications (browsers, editors) are single-instance and forward
     // a second invocation's request to an already-running process before
@@ -3260,6 +3356,7 @@ fn exec_falls_back_to_a_content_match_when_its_own_process_already_exited() {
 
 #[test]
 fn wait_time_action_errors_clearly_when_its_container_already_closed() {
+    fresh_workspace();
     // Regression test: on Sway 1.9, a [con_id=N] criteria matching zero
     // containers is treated as success, not an error, so a wait-time action
     // (Split/NewColumn/NewRow/Height/Width/Position) used to silently no-op
@@ -3302,6 +3399,7 @@ fn wait_time_action_errors_clearly_when_its_container_already_closed() {
 
 #[test]
 fn wait_time_action_does_not_sleep_out_the_wait_before_noticing_its_container_is_gone() {
+    fresh_workspace();
     // run_wait_time() sleeps --wait-time before sending its command, to let
     // other IPC clients finish theirs. That sleep used to come before the
     // container_exists() check, so an action whose target had already closed
@@ -3347,6 +3445,7 @@ fn wait_time_action_does_not_sleep_out_the_wait_before_noticing_its_container_is
 
 #[test]
 fn event_confirmed_action_errors_clearly_when_its_container_already_closed() {
+    fresh_workspace();
     // Companion to wait_time_action_errors_clearly_when_its_container_already_closed
     // above, for the other dispatch half. Until this check was added, only
     // the wait-time actions pre-checked that their container still exists;
@@ -3406,6 +3505,7 @@ fn event_confirmed_action_errors_clearly_when_its_container_already_closed() {
 
 #[test]
 fn debug_events_exits_cleanly_when_its_reader_goes_away() {
+    fresh_workspace();
     // The deterministic half of tests/json_output.rs's
     // a_closed_stdout_exits_cleanly_instead_of_panicking. --debug-events is
     // the one mode that writes until killed, so `sway-launch --debug-events
@@ -3706,6 +3806,7 @@ fn focused_workspace_name(connection: &mut Connection) -> String {
 
 #[test]
 fn every_shipped_template_resolves_and_launches_successfully() {
+    fresh_workspace();
     // Unlike template_apps_resolve_to_real_windows above (a hand-written,
     // minimal template), this drives the actual files under templates/ and
     // compares the shape each one builds — layout, child order, relative
@@ -3806,6 +3907,7 @@ fn every_shipped_template_resolves_and_launches_successfully() {
 
 #[test]
 fn builtin_template_name_resolves_and_launches_without_a_toml_extension() {
+    fresh_workspace();
     // --template <name> (no .toml extension, no path) is a separate
     // dispatch path from --template <file>.toml (main.rs's
     // resolve_template_contents()), driving the same embedded content
@@ -3838,6 +3940,7 @@ fn count_app_id_windows(node: &Node, app_id: &str) -> usize {
 
 #[test]
 fn every_basic_example_script_launches_successfully() {
+    fresh_workspace();
     // Drives the actual shipped shell scripts under examples/scripts/,
     // which use only foot — CLAUDE.md's live-Sway coverage rule names "an
     // example script" alongside --layout/--template files, which already
@@ -3915,34 +4018,15 @@ fn every_basic_example_script_launches_successfully() {
 
 #[test]
 fn dual_output_template_moves_windows_to_separate_outputs() {
+    fresh_workspace();
     // dual-output.toml ships with HDMI-A-1/DP-1 as placeholder output names
     // (documented in the file's own header comment) — a real user swaps
     // those for their own setup's names, so this test does the equivalent:
     // create a second headless output and substitute its real name in.
     let mut connection = connect();
-    let outputs_before: Vec<String> = connection
-        .get_outputs()
-        .expect("get_outputs should succeed")
-        .into_iter()
-        .map(|output| output.name)
-        .collect();
-    connection
-        .run_command("create_output")
-        .expect("create_output should succeed")
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()
-        .expect("create_output should succeed");
-    let new_output = connection
-        .get_outputs()
-        .expect("get_outputs should succeed")
-        .into_iter()
-        .map(|output| output.name)
-        .find(|name| !outputs_before.contains(name))
-        .expect("create_output should have added a new output");
-    let first_output = outputs_before
-        .first()
-        .expect("at least one output should already exist")
-        .clone();
+    let created_output = CreatedOutput::new(&mut connection);
+    let new_output = created_output.name().to_string();
+    let first_output = original_output().to_string();
 
     let contents = std::fs::read_to_string(templates_dir().join("dual-output.toml"))
         .expect("dual-output.toml should be readable");
@@ -3996,6 +4080,7 @@ fn dual_output_template_moves_windows_to_separate_outputs() {
 
 #[test]
 fn quad_terminals_layout_launches_four_windows_in_a_grid() {
+    fresh_workspace();
     // Drives the actual examples/layouts/quad-terminals.toml file directly,
     // rather than a hand-written stand-in.
     //
@@ -4004,12 +4089,10 @@ fn quad_terminals_layout_launches_four_windows_in_a_grid() {
     // window's own state, so it switches to a workspace of its own rather
     // than relying on killing leftover windows in the shared one. It also
     // sleeps briefly after the layout command completes, before querying
-    // tree state: under this suite's cumulative load (several earlier tests
-    // create extra outputs via create_output, never removed), the last
-    // window's surface can still be settling into its final geometry for a
-    // short while after sway-launch's own process has already exited —
-    // --wait-time alone (which only sleeps *between* sway-launch's own
-    // actions) isn't enough to cover that.
+    // tree state: the last window's surface can still be settling into its
+    // final geometry for a short while after sway-launch's own process has
+    // already exited — --wait-time alone (which only sleeps *between*
+    // sway-launch's own actions) isn't enough to cover that.
     let mut connection = connect();
     connection
         .run_command("workspace live-sway-test-quad-terminals")
@@ -4061,6 +4144,7 @@ fn quad_terminals_layout_launches_four_windows_in_a_grid() {
 
 #[test]
 fn retarget_by_id_layout_floats_the_first_step_by_name() {
+    fresh_workspace();
     // Drives the actual examples/layouts/retarget-by-id.toml file, proving
     // the shipped file (not just the concept, already covered by
     // layout_target_id_references_an_earlier_steps_real_window's inline
@@ -4126,6 +4210,7 @@ fn retarget_by_id_layout_floats_the_first_step_by_name() {
 
 #[test]
 fn split_h_places_windows_side_by_side() {
+    fresh_workspace();
     let mut connection = connect();
     let (first_id, _first_guard) = launch_foot(&["--split", "h"]);
     let (second_id, _second_guard) = launch_foot(&[]);
@@ -4154,6 +4239,7 @@ fn split_h_places_windows_side_by_side() {
 
 #[test]
 fn split_v_stacks_windows() {
+    fresh_workspace();
     let mut connection = connect();
     let (first_id, _first_guard) = launch_foot(&["--split", "v"]);
     let (second_id, _second_guard) = launch_foot(&[]);
@@ -4179,6 +4265,7 @@ fn split_v_stacks_windows() {
 
 #[test]
 fn split_confirms_via_poll_well_under_a_large_wait_time() {
+    fresh_workspace();
     // Regression test for docs/plan-poll-based-wait-time-actions.md's
     // poll-then-fallback mechanism: Split now confirms via
     // SwayAction::poll_matches() (a get_tree() poll of the container's
@@ -4232,6 +4319,7 @@ fn split_confirms_via_poll_well_under_a_large_wait_time() {
 
 #[test]
 fn split_is_idempotent_and_still_confirms_promptly_when_already_set() {
+    fresh_workspace();
     // Split has no genuine no-op ambiguity (unlike Height/Width's
     // solo-window clamp or NewColumn/NewRow's edge-of-tree case, per
     // docs/plan-poll-based-wait-time-actions.md): re-applying the split
@@ -4270,6 +4358,7 @@ fn split_is_idempotent_and_still_confirms_promptly_when_already_set() {
 
 #[test]
 fn new_row_places_window_below_the_first() {
+    fresh_workspace();
     let mut connection = connect();
     let (first_id, _first_guard) = launch_foot(&[]);
     let (second_id, _second_guard) = launch_foot(&["--new-row"]);
@@ -4297,6 +4386,7 @@ fn new_row_places_window_below_the_first() {
 
 #[test]
 fn height_alone_resizes_a_non_solo_window() {
+    fresh_workspace();
     // Resizing a window is a no-op while it's still the workspace's only
     // occupant (see templates/master-dual-stack.toml's header
     // comment) — this needs a sibling present for --height to take effect
@@ -4316,6 +4406,7 @@ fn height_alone_resizes_a_non_solo_window() {
 
 #[test]
 fn height_confirms_via_poll_when_resized_with_a_sibling() {
+    fresh_workspace();
     // Regression test for docs/plan-poll-based-wait-time-actions.md's
     // poll-then-fallback mechanism reaching Height: confirms via
     // SwayAction::poll_matches()'s height_matches() (a get_tree() poll for
@@ -4325,8 +4416,7 @@ fn height_confirms_via_poll_when_resized_with_a_sibling() {
     // see height_alone_resizes_a_non_solo_window. Both windows use an
     // explicit --workspace (rather than whatever's currently focused) so
     // this test's "just these two windows" assumption holds regardless of
-    // ambient state left behind by other tests in this shared compositor
-    // (e.g. accumulated outputs from tests that call create_output) —
+    // ambient state left behind by other tests in this shared compositor —
     // confirmed during this feature's development that --workspace doesn't
     // switch the *current* focused workspace, so every launch in an
     // isolated test needs it, not just the first.
@@ -4376,6 +4466,7 @@ fn height_confirms_via_poll_when_resized_with_a_sibling() {
 
 #[test]
 fn width_confirms_via_poll_when_resized_with_a_sibling() {
+    fresh_workspace();
     // Same as height_confirms_via_poll_when_resized_with_a_sibling, for
     // Width — a freshly-tiled window's width_matches() formula is an exact
     // rect.width match (no border adjustment), confirmed live earlier in
@@ -4415,6 +4506,7 @@ fn width_confirms_via_poll_when_resized_with_a_sibling() {
 
 #[test]
 fn height_and_width_fall_back_gracefully_when_solo_window_clamps_the_resize() {
+    fresh_workspace();
     // Resizing a window that's the sole occupant of its workspace is
     // silently clamped by Sway (see templates/master-dual-stack.toml's
     // header comment) — height_matches()/width_matches() can never confirm
@@ -4487,6 +4579,7 @@ fn height_and_width_fall_back_gracefully_when_solo_window_clamps_the_resize() {
 
 #[test]
 fn fallback_path_stays_bounded_at_the_default_wait_time() {
+    fresh_workspace();
     // Regression test found during a code-review bug hunt: WAIT_TIME_POLL_GRACE
     // (200ms) is 10x the CLI's own --wait-time default (20ms), so before
     // run_poll_then_fallback() capped its grace period at
@@ -4529,12 +4622,11 @@ fn fallback_path_stays_bounded_at_the_default_wait_time() {
 
 #[test]
 fn position_center_centers_a_floating_window() {
+    fresh_workspace();
     // Determines which output the window actually landed on (rather than
-    // assuming get_outputs()'s first entry, which isn't necessarily where
-    // the current workspace lives — several earlier tests in this suite
-    // call create_output, and cumulative extra outputs can shift which one
-    // a new workspace defaults to) and centers against that output's own
-    // dimensions.
+    // assuming get_outputs()'s first entry, which needn't be where the
+    // current workspace lives once a test adds an output) and centers
+    // against that output's own dimensions.
     let mut connection = connect();
 
     let (container_id, _guard) = launch_foot(&[
@@ -4577,6 +4669,7 @@ fn position_center_centers_a_floating_window() {
 
 #[test]
 fn json_output_for_a_real_exec_is_a_clean_container_id_object() {
+    fresh_workspace();
     // con_id_json_output_is_a_clean_json_object in tests/json_output.rs
     // covers --json's formatting for --con-id, which never touches the
     // socket; this covers the same formatting for a real exec+match, with
@@ -4608,6 +4701,7 @@ fn json_output_for_a_real_exec_is_a_clean_container_id_object() {
 
 #[test]
 fn json_output_lists_the_actions_that_actually_ran() {
+    fresh_workspace();
     // Companion to the test above: with real action flags, "actions" should
     // list each one's sway_command_verb() text with a "changed" status (a
     // freshly launched window is neither already floating nor already
@@ -4654,6 +4748,7 @@ fn json_output_lists_the_actions_that_actually_ran() {
 
 #[test]
 fn json_output_reports_already_satisfied_when_re_applying_an_unchanged_state() {
+    fresh_workspace();
     // Companion to the test above: re-running --floating against a window
     // that's already floating should report "already_satisfied", not
     // "changed" — SwayAction::already_at_target() already computes this
@@ -4687,6 +4782,7 @@ fn json_output_reports_already_satisfied_when_re_applying_an_unchanged_state() {
 
 #[test]
 fn existing_errors_with_zero_matches() {
+    fresh_workspace();
     let output = sway_launch_command()
         .args([
             "--existing",
@@ -4706,6 +4802,7 @@ fn existing_errors_with_zero_matches() {
 
 #[test]
 fn existing_matches_a_window_by_mark() {
+    fresh_workspace();
     // --mark-match: retargets a previously-marked window by its mark, the
     // classic "dropdown terminal" scripting pattern, instead of tracking a
     // container id or matching by app_id/class.
@@ -4736,6 +4833,7 @@ fn existing_matches_a_window_by_mark() {
 
 #[test]
 fn existing_mark_match_errors_with_zero_matches() {
+    fresh_workspace();
     let output = sway_launch_command()
         .args([
             "--existing",
@@ -4755,6 +4853,7 @@ fn existing_mark_match_errors_with_zero_matches() {
 
 #[test]
 fn existing_errors_listing_ids_with_multiple_matches() {
+    fresh_workspace();
     let mut connection = connect();
     connection
         .run_command("[app_id=foot] kill")
@@ -4777,6 +4876,7 @@ fn existing_errors_listing_ids_with_multiple_matches() {
 
 #[test]
 fn mark_with_special_characters_is_stored_literally_not_executed() {
+    fresh_workspace();
     // Live version of quote_sway_string's unit tests (sway_launch.rs):
     // proves the injection-style mark actually ends up stored as one
     // literal mark against a real compositor, rather than being split into
@@ -4801,6 +4901,7 @@ fn mark_with_special_characters_is_stored_literally_not_executed() {
 
 #[test]
 fn mark_containing_command_separators_still_round_trips_through_mark_match() {
+    fresh_workspace();
     // The other half of the `"`/`\` rejection added alongside this test (see
     // sway_launch.rs's validate_sway_string_argument): proving the new
     // validation didn't over-reject. A `,`/`;` in a mark *is* genuinely
@@ -4836,6 +4937,7 @@ fn mark_containing_command_separators_still_round_trips_through_mark_match() {
 
 #[test]
 fn mark_with_an_embedded_newline_is_not_executed_as_a_separate_command() {
+    fresh_workspace();
     // Companion to the comma/semicolon case above, for a character
     // quote_sway_string() doesn't escape at all (only `\`/`"` are).
     //
@@ -4888,6 +4990,7 @@ fn mark_with_an_embedded_newline_is_not_executed_as_a_separate_command() {
 
 #[test]
 fn verbose_prints_real_diagnostics_to_stderr_for_a_live_action() {
+    fresh_workspace();
     // con_id_verbose_diagnostics_go_to_stderr_not_stdout in
     // tests/json_output.rs covers --verbose's stream separation via
     // --con-id, which never touches the socket — this covers the same
@@ -4931,6 +5034,7 @@ fn verbose_prints_real_diagnostics_to_stderr_for_a_live_action() {
 
 #[test]
 fn bindings_file_resolves_existing_and_command_slots_to_real_windows() {
+    fresh_workspace();
     // tests/template.rs exercises --bindings headlessly with con_id-only
     // bindings; this drives the same flag against real windows, covering
     // both a Binding's `existing = true` and `command` forms (mirroring
@@ -4992,6 +5096,7 @@ fn bindings_file_resolves_existing_and_command_slots_to_real_windows() {
 
 #[test]
 fn debug_events_prints_a_real_window_event() {
+    fresh_workspace();
     // --debug-events runs until killed, so it doesn't fit this file's usual
     // spawn-and-wait-for-exit pattern — spawns it as a background child with
     // its stdout read on a separate thread and forwarded through a channel,
@@ -5047,6 +5152,7 @@ fn debug_events_prints_a_real_window_event() {
 
 #[test]
 fn launch_timeout_names_the_window_its_app_id_filter_rejected() {
+    fresh_workspace();
     // A wrong --app-id used to end in the same bare timeout as a typo'd
     // command, with the window it rejected left open and never mentioned --
     // not even under --verbose. The error now names that window, says it came
@@ -5109,6 +5215,7 @@ fn launch_timeout_names_the_window_its_app_id_filter_rejected() {
 
 #[test]
 fn layout_launch_timeout_reports_its_step_and_rolls_back_earlier_steps() {
+    fresh_workspace();
     // A wrong app_id in a layout step is the timeout a real user hits most,
     // and the one --rollback-on-error exists for: the error must name the
     // step, arrive at --timeout, and close what earlier steps launched.
@@ -5173,6 +5280,7 @@ fn layout_launch_timeout_reports_its_step_and_rolls_back_earlier_steps() {
 
 #[test]
 fn launch_timeout_says_when_the_command_exited_without_a_window() {
+    fresh_workspace();
     // A command that isn't on PATH exits at once, and Sway's exec reports
     // nothing -- this used to wait out --timeout and say only that it had.
     let output = sway_launch_command()
