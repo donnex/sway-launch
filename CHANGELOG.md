@@ -259,6 +259,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--timeout` is unchanged and still means "how long to wait for the confirmation event"; the two
   are deliberately separate, so a short `--timeout` doesn't break ordinary tree reads on a slow
   machine.
+
+  Launching a command — the default invocation, and every `command` step of a `--layout` or
+  `--template` — was still exposed until later, along with `--debug-events`: both start by
+  subscribing to Sway's event stream, and that handshake had no bound, so `sway-launch --timeout 2
+  foot` against a wedged socket never returned. The subscription handshake now has the same
+  10-second bound. (#51)
 - An action that waits on a Sway IPC event (`--floating`, `--fullscreen`, `--focus`,
   `--workspace`, `--output`, `--mark`, `--scratchpad`) now confirms that the state it asked for is
   actually in effect, instead of treating the arrival of the matching event as proof on its own. An

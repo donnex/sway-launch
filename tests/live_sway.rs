@@ -326,6 +326,13 @@ fn a_stalled_sway_socket_fails_instead_of_hanging_forever() {
     // read. `--con-id 42 --floating --timeout 2` against this socket ran until
     // killed externally at 15s, because reading the tree is the first thing it
     // does. IPC_ROUND_TRIP_TIMEOUT now bounds the socket itself.
+    //
+    // A plain launch and --debug-events go through a different first call:
+    // both subscribe to the event stream before anything else, and that
+    // handshake used to run unbounded, so `--timeout 2 foot` here never
+    // returned even after the request path was fixed (#51). All three are run
+    // concurrently so the test still costs one IPC_ROUND_TRIP_TIMEOUT, not
+    // three.
     let socket_path = test_temp_dir().join("stalled-sway.sock");
     let _ = std::fs::remove_file(&socket_path);
     let listener =
@@ -344,31 +351,62 @@ fn a_stalled_sway_socket_fails_instead_of_hanging_forever() {
         }
     });
 
+    let invocations: [&[&str]; 3] = [
+        &["--con-id", "42", "--floating", "--timeout", "2"],
+        &["--timeout", "2", "foot"],
+        &["--debug-events"],
+    ];
     let started = std::time::Instant::now();
-    let output = sway_launch_command()
-        .env("SWAYSOCK", &socket_path)
-        .env_remove("I3SOCK")
-        .args(["--con-id", "42", "--floating", "--timeout", "2"])
-        .output()
-        .expect("failed to run sway-launch binary");
-    let elapsed = started.elapsed();
+    let children: Vec<_> = invocations
+        .iter()
+        .map(|arguments| {
+            let child = sway_launch_command()
+                .env("SWAYSOCK", &socket_path)
+                .env_remove("I3SOCK")
+                .args(*arguments)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("failed to run sway-launch binary");
+            (arguments, KillChildOnDrop(child))
+        })
+        .collect();
 
-    assert!(
-        !output.status.success(),
-        "a compositor that never answers must be a failure, not a success"
-    );
     // The bound is IPC_ROUND_TRIP_TIMEOUT (10s), deliberately not --timeout;
     // see that constant's doc comment for why the two are separate. The
-    // ceiling here only has to be low enough to prove it terminates on its own.
-    assert!(
-        elapsed < std::time::Duration::from_secs(25),
-        "should fail on its own rather than hang; took {elapsed:?}"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("did not respond"),
-        "the error should explain that the compositor stopped answering, got {stderr:?}"
-    );
+    // ceiling here only has to be low enough to prove each one terminates on
+    // its own -- one that doesn't is killed rather than left to hang the suite.
+    let deadline = started + std::time::Duration::from_secs(25);
+    for (arguments, mut child) in children {
+        let status = loop {
+            if let Some(status) = child.0.try_wait().expect("failed to poll sway-launch") {
+                break status;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{arguments:?} should fail on its own rather than hang; still running after \
+                 {:?}",
+                started.elapsed()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        let mut stderr = String::new();
+        std::io::Read::read_to_string(
+            child.0.stderr.as_mut().expect("stderr was piped"),
+            &mut stderr,
+        )
+        .expect("failed to read sway-launch stderr");
+
+        assert!(
+            !status.success(),
+            "{arguments:?}: a compositor that never answers must be a failure, not a success"
+        );
+        assert!(
+            stderr.contains("did not respond"),
+            "{arguments:?}: the error should explain that the compositor stopped answering, \
+             got {stderr:?}"
+        );
+    }
 
     drop(accepted);
     let _ = std::fs::remove_file(&socket_path);

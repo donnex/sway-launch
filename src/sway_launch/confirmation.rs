@@ -946,17 +946,14 @@ impl SwayAction<'_> {
     /// short-circuit path, which is the cheap half of the trade — that path
     /// already pays for a `get_tree()`.
     ///
-    /// The container-exists check stays ahead of the subscription, though, and
-    /// that ordering is load-bearing too, for an unrelated reason:
-    /// `new_event_connection()` deliberately sets no socket timeout (a
-    /// subscription's job is to block), but `subscribe()` itself is a
-    /// request/response handshake, so a compositor that accepts a connection
-    /// and then stops answering would hang there forever. Every other IPC call
-    /// this function makes goes through `new_connection()`, which is bounded by
-    /// `IPC_ROUND_TRIP_TIMEOUT` — so keeping a bounded read first is what makes
-    /// a wedged compositor fail with a message instead of hanging. Found by
-    /// `tests/live_sway.rs`'s `a_stalled_sway_socket_fails_instead_of_hanging_forever`
-    /// after an earlier version of this ordering fix put the subscription first.
+    /// The container-exists check stays ahead of the subscription. It used to
+    /// be load-bearing there for a second reason: `subscribe()` is itself a
+    /// request/response handshake, and while it ran unbounded, a compositor
+    /// that accepted a connection and then stopped answering hung there
+    /// forever unless a bounded read came first. `event_loop()` now bounds the
+    /// handshake itself (by `IPC_ROUND_TRIP_TIMEOUT`, like every other request),
+    /// so that reason is gone and the order is only about failing fast on a
+    /// closed window before opening a subscription for it.
     fn run_wait_matching_events(&self) -> Result<(i64, ActionOutcome), String> {
         // Same check, same reason, and the same error text as
         // run_wait_time()'s: on Sway 1.9 (still what `apt` installs on
