@@ -469,3 +469,28 @@ fn to_sway_launch_falls_back_to_default_timeout() {
     let sway_launch = convert(&step).expect("valid step should convert");
     assert_eq!(sway_launch.timeout, time::Duration::from_secs(5));
 }
+
+#[test]
+fn to_sway_launch_rejects_a_zero_timeout() {
+    let mut step = minimal_step();
+    step.timeout = Some(0);
+    let error = convert(&step)
+        .err()
+        .expect("a zero timeout should be rejected");
+    assert!(error.starts_with("timeout:"), "{error}");
+}
+
+#[test]
+fn to_sway_launch_rejects_an_unrepresentable_timeout() {
+    let mut step = minimal_step();
+    step.timeout = Some(u64::MAX);
+    assert!(convert(&step).is_err());
+}
+
+#[test]
+fn to_sway_launch_accepts_an_explicit_timeout() {
+    let mut step = minimal_step();
+    step.timeout = Some(30);
+    let launch = convert(&step).expect("a 30-second timeout should be accepted");
+    assert_eq!(launch.timeout, time::Duration::from_secs(30));
+}

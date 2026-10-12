@@ -199,6 +199,10 @@ impl LayoutStep {
             }
         }
 
+        if let Some(timeout) = self.timeout {
+            sway_launch::validate_timeout_seconds(timeout)
+                .map_err(|error| format!("timeout: {}", error))?;
+        }
         if let Some(height) = self.height.as_deref() {
             sway_launch::validate_size_argument(height)
                 .map_err(|error| format!("height: {}", error))?;

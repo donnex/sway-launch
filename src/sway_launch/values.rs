@@ -338,6 +338,45 @@ pub fn validate_non_blank_argument(value: &str) -> Result<String, String> {
     Ok(value.to_string())
 }
 
+/// The largest `--timeout`/`timeout` value accepted, in seconds — `u32::MAX`,
+/// about 136 years. Not a policy ceiling on how long a caller may wait (any
+/// such number would be arbitrary, and neither `--timeout` nor `--wait-time`
+/// is capped on those grounds); it exists because the deadline is computed as
+/// `Instant::now() + timeout`, and `Instant` publishes no maximum, so a value
+/// near `u64::MAX` overflowed it. `u32::MAX` seconds is representable on every
+/// platform Rust's `Instant` supports, and far beyond any real wait.
+pub const MAX_TIMEOUT_SECONDS: u64 = u32::MAX as u64;
+
+/// Validates a `--timeout` value, or a `LayoutStep`'s `timeout` field, in
+/// seconds. Zero is rejected because it can never succeed: every
+/// timeout-bounded action sends its command first and then waits for the
+/// event confirming it, so `0` reported a timeout over a command that had
+/// already taken effect — a launched window with no container id printed, and
+/// nothing for `--rollback-on-error` to clean up. The upper bound is
+/// `MAX_TIMEOUT_SECONDS`, for the reason documented there.
+pub fn validate_timeout_seconds(seconds: u64) -> Result<u64, String> {
+    if (1..=MAX_TIMEOUT_SECONDS).contains(&seconds) {
+        Ok(seconds)
+    } else {
+        Err(format!(
+            "Must be between 1 and {} seconds",
+            MAX_TIMEOUT_SECONDS
+        ))
+    }
+}
+
+/// `validate_timeout_seconds()` for the CLI's `--timeout`, which arrives as
+/// text — the form `#[clap(value_parser)]` hands over.
+pub fn validate_timeout_argument(value: &str) -> Result<u64, String> {
+    let seconds = value.parse::<u64>().map_err(|_| {
+        format!(
+            "Must be a whole number of seconds between 1 and {}",
+            MAX_TIMEOUT_SECONDS
+        )
+    })?;
+    validate_timeout_seconds(seconds)
+}
+
 /// Rejects an empty or whitespace-only value for a named field — shared by
 /// every layout/template schema field that's a free-form identifier or
 /// required string (`id`, `target_id`, `slot`, a binding's `command`, a

@@ -202,6 +202,25 @@ fn rollback_on_error_without_layout_or_template_errors() {
 }
 
 #[test]
+fn zero_timeout_is_rejected_before_touching_the_socket() {
+    // A zero timeout used to send the command and only then report a
+    // timeout, leaving the change applied but the run failed. It's now a
+    // parse error, so it fails before anything reaches Sway -- shown by using
+    // a binary pointed at no compositor and getting clap's error, not an IPC one.
+    for timeout in ["0", "18446744073709551615"] {
+        let output = sway_launch_without_a_compositor()
+            .args(["--con-id", "42", "--floating", "--timeout", timeout])
+            .output()
+            .expect("failed to run sway-launch binary");
+
+        assert_eq!(output.status.code(), Some(2), "--timeout {timeout}");
+        let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+        assert!(stderr.contains("--timeout"), "{stderr}");
+        assert!(!stderr.contains("Sway IPC socket"), "{stderr}");
+    }
+}
+
+#[test]
 fn dry_run_never_touches_the_socket_even_for_new_column_and_new_row() {
     // --dry-run's whole point: NewColumn/NewRow normally need a live
     // get_outputs()/get_tree() call (relocates_to_another_output()) even

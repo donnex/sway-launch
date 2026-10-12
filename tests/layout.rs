@@ -717,6 +717,20 @@ fn layout_validate_rejects_a_mark_containing_a_nul() {
 }
 
 #[test]
+fn layout_validate_rejects_a_zero_timeout() {
+    let path = TempToml::write("zero-timeout", "[[step]]\ncon_id = 42\ntimeout = 0\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap(), "--validate"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("timeout:"), "{stderr}");
+}
+
+#[test]
 fn every_shipped_example_layout_passes_validate() {
     // The live suite drives these against a real compositor, but that job
     // isn't part of the release gate; --validate needs none, so a broken

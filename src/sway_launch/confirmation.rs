@@ -659,6 +659,7 @@ impl SwayAction<'_> {
             return Ok(ActionOutcome::AlreadySatisfied);
         }
 
+        let deadline = deadline_after(self.timing)?;
         let sway_command = self.sway_command();
         if self.verbose {
             diagnostic!("Sway command: {}", sway_command);
@@ -717,13 +718,6 @@ impl SwayAction<'_> {
             }
         });
 
-        // checked_add rather than a plain `+`: an unrepresentable deadline
-        // (a pathological --timeout) is treated as already expired instead
-        // of panicking.
-        let deadline = match time::Instant::now().checked_add(self.timing) {
-            Some(deadline) => deadline,
-            None => return Err(event_timeout_message(self.timing)),
-        };
         loop {
             let remaining = deadline.saturating_duration_since(time::Instant::now());
             if remaining.is_zero() {
@@ -907,6 +901,7 @@ impl ExecAction<'_> {
 
         let event_loop = event_loop(&[EventType::Window])?;
 
+        let deadline = deadline_after(timeout)?;
         let token = generate_pid_marker_token();
         let sway_command = self.sway_command(&token);
         if verbose {
@@ -922,15 +917,6 @@ impl ExecAction<'_> {
                 }
             }
         });
-
-        let deadline = match time::Instant::now().checked_add(timeout) {
-            Some(deadline) => deadline,
-            None => {
-                return Err(
-                    exec_timeout_message(timeout, app_id_match, class_match, &[], None).into(),
-                )
-            }
-        };
 
         // Every New window the app_id/class filter turned away, reported if
         // the wait ends without a match — see exec_timeout_message().
@@ -1133,6 +1119,24 @@ impl ExecAction<'_> {
 
         Ok(WindowEventMatch::NewWindowMatchWithoutCheck)
     }
+}
+
+/// The instant a timeout-bounded action gives up, computed *before* its
+/// command is sent rather than after. `checked_add` rather than `+`, so an
+/// unrepresentable deadline errors instead of panicking — and doing it first
+/// means that error arrives before anything has happened: computed afterwards
+/// (as it once was), it reported a timeout over a command that had already
+/// taken effect, leaving a launched window behind with no container id
+/// printed. `validate_timeout_seconds()` already rejects any value this could
+/// fail on, so this is the backstop for a caller that builds a `SwayLaunch`
+/// directly.
+fn deadline_after(timeout: time::Duration) -> Result<time::Instant, String> {
+    time::Instant::now().checked_add(timeout).ok_or_else(|| {
+        format!(
+            "timeout of {} sec is too large to represent",
+            timeout.as_secs()
+        )
+    })
 }
 
 /// An event-confirmed action's timeout. `SwayAction::run()` prefixes it with

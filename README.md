@@ -359,7 +359,7 @@ environment, not the layout file's directory or the caller's (see [Basic usage](
 step's other keys mirror the CLI flags of the same name (`app_id`, `class`, `mark_match`, `con_id`,
 `existing`, `split`, `floating`, `sticky`, `fullscreen`, `focus`, `mark`, `new_column`, `new_row`,
 `workspace`, `output`, `height`, `width`, `position`, `scratchpad`, `timeout`, `wait_time`) —
-`height`/`width`/`position` are validated the same way their CLI equivalents are, and a step
+`height`/`width`/`position`/`timeout` are validated the same way their CLI equivalents are, and a step
 without its own `timeout`/`wait_time` inherits the top-level `--timeout`/`--wait-time` values.
 Exactly one of `command`, `con_id`, `existing = true`, or `target_id` is required per step, matching
 the CLI's own command/`--con-id`/`--existing` mutual exclusivity plus one layout-only addition:
@@ -615,6 +615,11 @@ fixed 10 seconds, so a compositor that accepts a connection and then stops answe
 clear message rather than blocking forever. The two are deliberately independent — tying them
 together would make `--timeout 1` break ordinary tree reads on a slow machine, and `--timeout 60`
 re-open a minute-long hang.
+
+`--timeout` (and a step's `timeout`) must be at least 1 second: an action sends its command before
+it starts waiting, so a zero timeout could only ever report failure over a change that had already
+happened. Values too large for the system clock to represent (above 4294967295 seconds) are
+rejected too.
 
 When a wait does run out, the error says which action it was and, for a launch, what it saw. A new
 window that opened but didn't match `--app-id`/`--class` is named — usually the one you meant,
