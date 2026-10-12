@@ -181,9 +181,26 @@ below) plus five integration test files:
   scoped out — none of Firefox/Chromium/Thunar/VS Code are installed in the `live-sway-tests` CI
   job. Several tests
   sleep briefly after their `sway-launch` invocation completes before asserting on tree state, on
-  top of `--wait-time`: under this suite's cumulative load — many tests run in one shared
-  compositor/workspace, and several call `create_output`, never removed — the last window's
-  geometry can still be settling for a short while after the process itself has already exited.
+  top of `--wait-time`: the last window's geometry can still be settling for a short while after
+  the process itself has already exited.
+
+  **Every test starts from the same compositor state, whatever ran before it.** The file runs in
+  one compositor with `--test-threads=1`, so libtest runs the tests in name order, and state one
+  test leaves behind used to change what later ones exercised — not just their timing. Outputs
+  were the worst of it: seven tests called `create_output` and never removed the output, so every
+  test sorting after `dual_output_template_*` ran with two or more outputs, enough to make
+  `relocates_to_another_output()` silently skip the `move right` that
+  `new_column_and_new_row_complete_promptly_when_already_at_the_edge` exists to send, while it kept
+  passing on elapsed time alone. Three rules now hold for every test: it calls `fresh_workspace()`
+  first (focuses the compositor's original output and switches to an empty workspace named after
+  the test); it adds an output only through the `CreatedOutput` guard, which runs
+  `output <name> unplug` on drop; and it kills its windows via `KillOnDrop`. All three hold on
+  assertion panic too, so running a single test alone exercises the same paths as the full run.
+  Removing outputs also retired the old "only seven `create_output` calls — the eighth crashes the
+  headless backend" budget: that crash came from outputs accumulating, and 12 create/unplug cycles
+  in one compositor were confirmed live (Sway 1.11) to run clean. A test that's about one specific
+  path should also assert it through `--json`'s per-action status (as that test now does for
+  `"skipped"`), so taking a different path is a failure rather than a pass.
   Every CLI flag is covered here against real Sway with one exception: `--class`/`-c` needs an
   XWayland/X11 client (a real window's `WM_CLASS`) to match against, and no such client (e.g.
   `xterm`) has been available in this project's dev/CI environments so far — `--class` stays
@@ -782,8 +799,8 @@ existing layout with the origin workspace's other windows completely undisturbed
 needed. Confirmed by `tests/live_sway.rs`'s
 `new_column_combined_with_workspace_lands_on_the_target_workspace_correctly` and
 `new_column_and_new_row_output_guard_still_applies_when_combined_with_output` (the latter covers
-both `--new-column`+`--output` and `--new-row`+`--output` in one test, reusing its own
-`create_output` call for both).
+both `--new-column`+`--output` and `--new-row`+`--output` in one test, against one created
+output).
 
 Before including `NewColumn`/`NewRow` in the plan at all, `build_actions()` calls
 `relocates_to_another_output(container_id, direction)`, which checks `get_outputs()` (skipping the
@@ -817,8 +834,7 @@ When flagged, the action is skipped (logged under `--verbose`) rather than run, 
 cross-monitor relocation for a silent no-op — confirmed by `tests/live_sway.rs`'s
 `new_column_does_not_relocate_a_solo_window_to_a_different_output`,
 `new_column_does_not_relocate_a_non_solo_window_at_the_trailing_edge`, and (both nested cases —
-with a sibling, run; as a lone child of a `tabbed` or `splitv` wrapper, skipped — sharing that
-test's one `create_output` call)
+with a sibling, run; as a lone child of a `tabbed` or `splitv` wrapper, skipped — in one test)
 `new_column_does_not_relocate_a_nested_window_to_a_different_output`. A skip is also structurally
 reported, not just logged: `build_actions()` returns `Vec<PlannedAction<'a>>` (`enum PlannedAction
 { Run(SwayAction<'a>), Skip(SkippedAction) }`) instead of a bare `Vec<SwayAction<'a>>`, interleaving
@@ -841,19 +857,13 @@ with a synthetic `ActionRecord` (`main.rs`'s
 skip, which needs a live multi-output Sway session to trigger at all — isolating the off-by-one
 risk from the live-only trigger condition. Confirmed live end to end (a real skip surfacing
 correctly in real `--json` output) by extending
-`new_column_does_not_relocate_a_solo_window_to_a_different_output` itself, rather than adding a new
-test with its own `create_output` call: this project's headless Sway backend was found live
-(manual probing, isolated from any other test activity) to crash deterministically and
-unrecoverably on its *8th* `create_output` call within one compositor session, and
-`tests/live_sway.rs` already sits at exactly 7 such calls across its existing tests — no budget
-left for a new one. Reusing an *existing* output instead of creating a fresh one was tried and
-rejected: the guard's escalation is directional (whether `move right` actually crosses into
+`new_column_does_not_relocate_a_solo_window_to_a_different_output` itself. Every such test creates
+its own output through the `CreatedOutput` guard (see `tests/live_sway.rs` above) rather than
+reusing one: the guard's escalation is directional (whether `move right` actually crosses into
 another output depends on Sway's own output arrangement and which output is currently focused), so
-reusing whatever an unrelated earlier test left behind didn't reliably reproduce the scenario a
-dedicated, freshly created output does — confirmed by first trying exactly that and observing the
-guard silently not firing. Any *future* test needing a second output should budget for this the
-same way: extend an existing `create_output`-using test rather than defaulting to a new one, unless
-genuinely unavoidable.
+an output some unrelated test left behind didn't reliably reproduce the scenario a dedicated,
+freshly created one does — confirmed by first trying exactly that and observing the guard silently
+not firing.
 
 **`new_connection()` builds the socket itself rather than calling `Connection::new()`**, so it can
 set a read and write timeout (`IPC_ROUND_TRIP_TIMEOUT`, 10s) on it — `swayipc` exposes no way to
