@@ -1,0 +1,10 @@
+workspace template-shape-six-grid
+  splitv
+    50% splith
+      33% top-left
+      33% top-middle
+      33% top-right
+    50% splith
+      33% bottom-left
+      33% bottom-middle
+      33% bottom-right

@@ -1,0 +1,12 @@
+workspace template-shape-eight-grid
+  splitv
+    50% splith
+      25% top-1
+      25% top-2
+      25% top-3
+      25% top-4
+    50% splith
+      25% bottom-1
+      25% bottom-2
+      25% bottom-3
+      25% bottom-4

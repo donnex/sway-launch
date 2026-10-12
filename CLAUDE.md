@@ -149,6 +149,26 @@ below) plus five integration test files:
   `quad_terminals_layout_launches_four_windows_in_a_grid`/
   `retarget_by_id_layout_floats_the_first_step_by_name` do the same for `examples/layouts/` — a
   broken shipped example is a live-Sway test failure, not just a manual-testing gap.
+  `every_shipped_template_resolves_and_launches_successfully` checks more than exit status: it runs
+  each template on a fresh workspace of its own, reduces the result to a normalized outline (each
+  split's layout and its children in order, each child's share of its parent as a whole
+  percentage, each window by its slot name from `--json`'s `containers` map, floating windows by
+  slot name only), and compares that against a recorded golden file,
+  `tests/template-shapes/<name>.txt`. Exiting 0 says nothing about a template's shape — a
+  reordered action, a step that silently no-ops, or a misplaced `split` all still exit 0 — so this
+  is what catches a shape regression. `UPDATE_TEMPLATE_SHAPES=1 scripts/run-live-sway-tests`
+  rewrites the files from what the templates build now, so an intended change is a reviewed diff
+  rather than a silent pass; a recorded file with no matching template fails the test too.
+  Normalization choices, each made so the outline stays the same across environments: a split
+  holding a single child is collapsed into that child (whether Sway wraps a window in one is a
+  release-dependent detail with no visible effect), and floating geometry is left out entirely
+  (it's in pixels, and depends on the output size and titlebar font, both of which differ between
+  local and CI compositors — the dedicated floating/width/height/position tests cover it). Tiled
+  shares are safe to record because every shipped template sizes tiled windows in `ppt`;
+  a tiled `px` size would make them output-dependent. The recorded files capture current behavior,
+  not intended behavior, so a known-wrong shape is recorded as it is until the fix for it lands
+  and updates the file. `builtin_template_name_resolves_and_launches_without_a_toml_extension`
+  compares the built-in `quad-grid` against the same recorded file.
   `every_basic_example_script_launches_successfully` extends this to `examples/scripts/`'s six
   foot-only "basic" scripts (`dual-terminals`, `triple-row`, `column-split`, `quad-terminals`,
   `workspace-and-position`, `retarget-floating`): unlike the TOML files, each script invokes
@@ -1411,7 +1431,8 @@ new schema.
 drives the built-in dispatch path against a real compositor (`--template quad-grid`, no path or
 extension), alongside the existing `every_shipped_template_resolves_and_launches_successfully`
 (which still drives every file by its `.toml` path, unchanged) — proving the embedded copy a bare
-name resolves to is the genuine, working template content, not just that the lookup compiles.
+name resolves to is the genuine, working template content, not just that the lookup compiles: it
+must build the same shape `tests/template-shapes/quad-grid.txt` records for the file on disk.
 
 `--show-template <NAME_OR_PATH>` (`main.rs`'s `print_template_contents()`) is a third standalone
 mode alongside `--list-templates`: prints one template's raw TOML and exits, without running it —
@@ -1542,7 +1563,9 @@ file is added, removed, or has its shape changed (a step's `split`/`floating`/`h
 `workspace`/`output`/etc. — anything that changes what the rendered layout actually looks like,
 not just prose in its header comment), regenerate the affected screenshot(s) via
 `scripts/generate-layout-screenshots --only <name>` (or a full run with no `--only` after a
-broader change) *and commit the updated PNG(s)* in the *same* piece of work, the same discipline
+broader change) *and commit the updated PNG(s)* in the *same* piece of work, along with the
+template's recorded shape under `tests/template-shapes/` (see `tests/live_sway.rs` in the
+Architecture section — a diff to one of those files is the signal that a screenshot is due), the same discipline
 `tests/live_sway.rs`'s own coverage rule above and "Keeping a workflow up to date" under CI below
 already hold this project to elsewhere. A screenshot depicting a shape the template no longer
 produces is exactly as much a bug as a stale doc or a CI workflow drifting from the tooling — fix
