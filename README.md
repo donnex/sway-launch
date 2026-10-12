@@ -161,7 +161,9 @@ See [Basic usage](#basic-usage) below for chaining and window-matching in more d
 ## Basic usage
 
 Beyond the Quickstart commands above, a command passed to `sway-launch` must be quoted when it
-contains spaces, e.g. `'firefox --new-window https://example.com'`.
+contains spaces, e.g. `'firefox --new-window https://example.com'`. It runs as a shell command
+line, exactly as `swaymsg exec` would run it, so shell syntax works too: `'cd ~/project && foot'`,
+`'exec foot'`.
 
 Since the container id of the matching window is returned, it's also possible to combine
 `sway-launch` with custom `swaymsg` commands.
@@ -793,7 +795,7 @@ the final result (the bare container id, or the `--json` object below), so
 ```shell
 $ sway-launch --split h -v foot
 Sway action: Exec "foot" (app_id_match: "") (class_match: "")
-Sway command: exec env SWAY_LAUNCH_PID_MARKER=<pid>-<nanos> foot
+Sway command: exec export SWAY_LAUNCH_PID_MARKER=<pid>-<nanos> && foot
 Event match: New container id 437 (PID-marker-confirmed)
 Target container id: 437
 Sway action: Split (container id: 437) (split: Horizontal)

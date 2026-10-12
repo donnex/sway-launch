@@ -494,6 +494,42 @@ fn exec_matches_by_app_id_and_returns_its_container_id() {
 }
 
 #[test]
+fn exec_runs_a_command_that_starts_with_a_shell_builtin() {
+    // The PID marker used to be prepended as `env VAR=value <command>`, and
+    // `env` can only run an executable: `cd` failed, the `&&` short-circuited,
+    // nothing launched, and the wait ran out the full --timeout. The `exec`
+    // after `&&` also checks the marker reaches a later command in the list,
+    // not only the first one -- the window must still be PID-marker-confirmed.
+    let mut connection = connect();
+    let output = sway_launch_command()
+        .args([
+            "--app-id",
+            "foot",
+            "--timeout",
+            "10",
+            "--verbose",
+            "cd / && exec foot",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "sway-launch failed: {stderr}");
+
+    let container_id: i64 = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .expect("stdout should be a container id");
+    let _guard = KillOnDrop(container_id);
+
+    assert!(
+        stderr.contains("(PID-marker-confirmed)"),
+        "the window should have been confirmed by its marker, not a fallback: {stderr}"
+    );
+    let node = get_node(&mut connection, container_id);
+    assert_eq!(node.app_id.as_deref(), Some("foot"));
+}
+
+#[test]
 fn floating_with_width_and_height_applies_all_three() {
     let mut connection = connect();
     let (container_id, _guard) =

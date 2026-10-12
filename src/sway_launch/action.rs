@@ -249,6 +249,16 @@ impl SwayAction<'_> {
     /// (see `process_marker.rs`, and `run_wait_matching_exec_event()`'s doc
     /// comment for the full mechanism).
     ///
+    /// The marker is set with `export ... &&` rather than an `env VAR=value`
+    /// prefix. Sway hands an `exec` line to `sh -c`, and `env` can only run an
+    /// executable, so a prefix broke any command starting with a shell builtin,
+    /// keyword or compound command (`cd dir && editor .`, `exec app`, `( ... )`)
+    /// — nothing launched and the wait timed out. `export` keeps the user's
+    /// text a shell command list exactly as `swaymsg exec` would run it, and
+    /// every command in that list inherits the marker, not just the first.
+    /// `&&` rather than `;`, because Sway's own parser splits on an unquoted
+    /// `;`; `export` always succeeds, so `&&` never changes the outcome.
+    ///
     /// The marker and the command are deliberately raw, unquoted text rather
     /// than passed through `quote_sway_string()`: Sway's own variable
     /// substitution mangles a literal `$` inside a quoted argument, which broke
@@ -262,7 +272,7 @@ impl SwayAction<'_> {
         let SwayAction::Exec { command, .. } = self else {
             unreachable!("exec_sway_command() is only ever called for SwayAction::Exec");
         };
-        format!("exec env {}={} {}", PID_MARKER_VAR, token, command)
+        format!("exec export {}={} && {}", PID_MARKER_VAR, token, command)
     }
 
     /// The `swaymsg` command *without* the `[con_id=N]` target prefix —
@@ -391,7 +401,22 @@ mod tests {
         };
         assert_eq!(
             action.exec_sway_command("1234-5678"),
-            "exec env SWAY_LAUNCH_PID_MARKER=1234-5678 foot --app-id=probe"
+            "exec export SWAY_LAUNCH_PID_MARKER=1234-5678 && foot --app-id=probe"
+        );
+    }
+
+    #[test]
+    fn exec_sway_command_keeps_a_command_led_by_a_shell_builtin_intact() {
+        let action = SwayAction::Exec {
+            command: "cd /tmp && exec foot",
+            app_id_match: "",
+            class_match: "",
+            verbose: false,
+            timeout: time::Duration::from_secs(5),
+        };
+        assert_eq!(
+            action.exec_sway_command("1234-5678"),
+            "exec export SWAY_LAUNCH_PID_MARKER=1234-5678 && cd /tmp && exec foot"
         );
     }
 

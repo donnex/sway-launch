@@ -201,6 +201,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   treated as this run's own when the launched process was seen running and has since exited;
   otherwise it's used only after the short grace period, and never closed by
   `--rollback-on-error`. (#2)
+- A launch command that starts with a shell builtin or keyword — `'cd ~/project && foot'`,
+  `'exec foot'`, a `( ... )` group — now runs the way `swaymsg exec` runs it. Before, nothing
+  launched and `sway-launch` failed with a `--timeout` error that pointed nowhere near the
+  command, because the private per-launch marker was added through `env`, which can only start a
+  program. (#3)
 - `sway-launch` now finds the Sway socket the way `swaymsg` does, preferring `SWAYSOCK` over
   `I3SOCK`. Sway sets both, so pointing a tool at a different compositor (a nested or headless
   Sway, another session) by overriding `SWAYSOCK` alone used to be silently ignored, and
