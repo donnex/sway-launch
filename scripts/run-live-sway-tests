@@ -69,6 +69,10 @@ cleanup() {
   [ -n "$sway_runtime_dir" ] && rm -rf "$sway_runtime_dir"
 }
 trap cleanup EXIT
+# POSIX sh doesn't run an EXIT trap on an unhandled signal, so without these
+# an interrupted run leaves the headless compositor and its runtime dir behind.
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 sway_runtime_dir="$(mktemp -d)"
 
