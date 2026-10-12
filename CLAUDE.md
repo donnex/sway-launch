@@ -88,7 +88,7 @@ below) plus five integration test files:
   | `process_marker.rs` | the PID marker and its `/proc` reads |
   | `action.rs` | `SwayAction` itself: variants, `Display`, `sway_command_verb()` |
   | `confirmation.rs` | how an action's effect is established: event matching, state checks, polling, the `run_*` drivers |
-  | `outcome.rs` | `RunOutcome`/`ActionRecord`/`ActionStatus`/`LaunchOwnership` and their internal counterparts |
+  | `outcome.rs` | `RunOutcome`/`RunError`/`UnmatchedWindow`/`ActionRecord`/`ActionStatus`/`LaunchOwnership` and their internal counterparts |
   | `launch.rs` | `SwayLaunch`, `Target`, `build_actions()`/`run()`, `--debug-events` |
 
   Split out of a single 5,847-line file on 2026-09-03, on an external review's recommendation, one
@@ -458,6 +458,23 @@ stated goal (safer internals, less repeated parsing) to actually land.
   `concurrent_exec_invocations_do_not_collide_on_the_same_container_id` (0 collisions across 90
   manual trials during development, versus every trial colliding before this) and
   `exec_falls_back_to_a_content_match_when_its_own_process_already_exited`.
+  A `New` window the `app_id`/`class` filter rejects isn't silently dropped: it's recorded as an
+  `UnmatchedWindow` (con_id, app_id, class, and whether its pid carries this run's marker) and
+  logged under `--verbose`. If the wait times out, `exec_timeout_message()` — pure, unit-tested —
+  builds the error from what was seen: the rejected windows with a "check `--app-id`/`--class`"
+  hint, or, with none, a fresh `scan_marker_presence()` deciding between "the launched command
+  exited without opening a window" (check `PATH`) and "still running, may be slow". Before this, a
+  typo'd command and a wrong `--app-id` both ended in a bare `N sec timeout reached`. The rejected
+  windows also travel structurally: `SwayAction::run()`/`SwayLaunch::run()` return
+  `Err(RunError { message, unmatched_windows })` rather than `Err(String)` (`From<String>` covers
+  every other failure), and `main.rs`'s `fail_with_rollback()` renders them as the `--json` error's
+  `unmatched_windows` field, omitted when empty — they're real windows left open, and a script
+  needs their ids without parsing prose. `SwayAction::run()` also prefixes every error with what
+  the action was (`launch "<command>":` for `Exec`, `sway_command_verb()` otherwise), so a timeout
+  in a multi-action invocation or a layout's `step N: ...` names the action that failed. Covered
+  live by `launch_timeout_names_the_window_its_app_id_filter_rejected` and
+  `launch_timeout_says_when_the_command_exited_without_a_window`, and headlessly (the prefix) by
+  `tests/json_output.rs`'s `a_failing_action_names_itself_in_the_error`.
   Which of the two ends the wait is reported back as a `LaunchOwnership` (`Launched` for the
   marked-process-gone branch, `Adopted` for the grace-elapsed one), the distinction
   `--rollback-on-error` keys its destructive cleanup off — see its own section below.
@@ -1117,7 +1134,8 @@ actually reported. `fail_step()` is shared by all three failure branches specifi
 collision or conversion error on step *N* still rolls back steps *1..N-1*'s real windows, not just
 a failure inside `SwayAction::run()` itself. Not handled: a step whose *own* window launched
 successfully but a later action *within that same step* then failed — `SwayLaunch::run()`'s
-`Result<i64, String>` doesn't carry a container id on the error path, so there's nothing for
+error (`RunError`, which carries only rejected-window ids, never the step's own resolved
+container) doesn't carry a container id on the error path, so there's nothing for
 `run_steps()` to roll back in that specific case; accepted as a known gap rather than reworking
 `SwayLaunch::run()`'s error type for it, since it needs `resolve_container_id()` to have already
 succeeded on the *failing* step itself, a narrower window than the earlier-steps case this feature

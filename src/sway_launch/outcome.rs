@@ -9,6 +9,7 @@
 //! merely sent) are finer than the ones worth publishing.
 
 use super::SwayAction;
+use std::fmt;
 
 /// `SwayLaunch::run()`'s result: the resolved container id, plus every
 /// planned action's outcome, in the fixed order `build_actions()` produced
@@ -56,6 +57,49 @@ pub struct RunOutcome {
 pub enum LaunchOwnership {
     Launched,
     Adopted,
+}
+
+/// Why `SwayLaunch::run()` failed: the message, plus any windows a launch saw
+/// appear while it waited but rejected because they didn't pass its
+/// `--app-id`/`--class` filter.
+///
+/// The windows are carried separately from the message, rather than only
+/// mentioned in it, because they are real windows left open on screen —
+/// usually the one the user meant, under an app_id they didn't expect — and a
+/// `--json` caller needs their ids to deal with them without parsing prose.
+/// Every other failure leaves `unmatched_windows` empty, which is what the
+/// `From<String>` conversion produces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunError {
+    pub message: String,
+    pub unmatched_windows: Vec<UnmatchedWindow>,
+}
+
+impl From<String> for RunError {
+    fn from(message: String) -> Self {
+        RunError {
+            message,
+            unmatched_windows: Vec::new(),
+        }
+    }
+}
+
+impl fmt::Display for RunError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+/// A new window that appeared while a launch was waiting, but didn't match
+/// its `--app-id`/`--class` filter. `launched_by_this_run` is whether the
+/// window's process carried this invocation's PID marker — when it did, the
+/// filter is almost certainly what's wrong, not the command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnmatchedWindow {
+    pub container_id: i64,
+    pub app_id: Option<String>,
+    pub class: Option<String>,
+    pub launched_by_this_run: bool,
 }
 
 /// One entry in `RunOutcome.actions`: either an action that actually ran

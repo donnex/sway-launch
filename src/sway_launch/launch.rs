@@ -13,8 +13,8 @@
 use super::action::SwayAction;
 use super::ipc::event_loop;
 use super::outcome::{
-    ActionOutcome, ActionRecord, ActionStatus, LaunchOwnership, PlannedAction, RunOutcome,
-    SkippedAction,
+    ActionOutcome, ActionRecord, ActionStatus, LaunchOwnership, PlannedAction, RunError,
+    RunOutcome, SkippedAction,
 };
 use super::query::{find_existing_container_id, relocates_to_another_output};
 use super::tree::MoveDirection;
@@ -101,7 +101,7 @@ impl<'a> SwayLaunch<'a> {
     /// The container every action in this run will target, plus how it was
     /// arrived at — `Some(..)` only for `Target::Exec`, the one mode that
     /// creates a window rather than picking an existing one out.
-    fn resolve_container_id(&self) -> Result<(i64, Option<LaunchOwnership>), String> {
+    fn resolve_container_id(&self) -> Result<(i64, Option<LaunchOwnership>), RunError> {
         match self.target {
             Target::Exec { command } => SwayAction::Exec {
                 command,
@@ -116,6 +116,7 @@ impl<'a> SwayLaunch<'a> {
             Target::Existing => {
                 find_existing_container_id(self.app_id_match, self.class_match, self.mark_match)
                     .map(|container_id| (container_id, None))
+                    .map_err(RunError::from)
             }
         }
     }
@@ -316,7 +317,7 @@ impl<'a> SwayLaunch<'a> {
             .collect()
     }
 
-    pub fn run(&self) -> Result<RunOutcome, String> {
+    pub fn run(&self) -> Result<RunOutcome, RunError> {
         let (container_id, launch_ownership) = self.resolve_container_id()?;
 
         if self.verbose {

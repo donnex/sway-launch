@@ -85,6 +85,33 @@ fn con_id_json_error_output_is_a_structured_object() {
 }
 
 #[test]
+fn a_failing_action_names_itself_in_the_error() {
+    // An invocation with several actions used to report a bare failure that
+    // couldn't be traced to any one of them; every action's error now leads
+    // with its own Sway command verb. Made to fail on the socket, so it runs
+    // with or without a compositor.
+    for (flags, prefix) in [
+        (&["--floating"][..], "floating enable: "),
+        (&["--workspace", "web"][..], "move workspace \"web\": "),
+        (&["--mark", "m", "--floating"][..], "floating enable: "),
+    ] {
+        let output = sway_launch_without_a_compositor()
+            .args(["--con-id", "42"])
+            .args(flags)
+            .output()
+            .expect("failed to run sway-launch binary");
+
+        assert!(!output.status.success());
+        let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+        let last_line = stderr.lines().next_back().unwrap_or_default();
+        assert!(
+            last_line.starts_with(prefix),
+            "expected {flags:?}'s error to start with {prefix:?}, got {stderr:?}"
+        );
+    }
+}
+
+#[test]
 fn new_column_and_new_row_report_the_relocation_checks_error() {
     // build_actions() consults relocates_to_another_output() before including
     // NewColumn/NewRow, which needs a live get_outputs()/get_tree() call even

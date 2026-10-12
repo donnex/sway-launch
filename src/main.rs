@@ -387,7 +387,7 @@ fn main() {
                 print_line(&outcome.container_id.to_string());
             }
         }
-        Err(error) => fail(args.json, &error),
+        Err(error) => fail_run(args.json, &error),
     };
 }
 
@@ -506,9 +506,15 @@ fn step_action_records_json(
 /// calls above) is still reported via clap's own usage-error formatting
 /// regardless of `--json`, the same as `--help` itself isn't JSON.
 fn fail(json: bool, message: &str) -> ! {
+    fail_run(json, &sway_launch::RunError::from(message.to_string()));
+}
+
+/// `fail()` for a `SwayLaunch::run()` failure, which may also carry windows a
+/// launch saw but rejected (see `sway_launch::RunError`).
+fn fail_run(json: bool, error: &sway_launch::RunError) -> ! {
     fail_with_rollback(
         json,
-        message,
+        error,
         &RollbackOutcome::default(),
         &PartialProgress::default(),
     );
@@ -571,15 +577,24 @@ impl PartialProgress {
 /// before giving up (see `RollbackOutcome`; both of its lists are empty
 /// outside that path) and whatever earlier steps had already completed (see
 /// `PartialProgress`).
+///
+/// Under `--json`, a launch's rejected windows (`RunError.unmatched_windows`)
+/// are reported as `unmatched_windows`, omitted when empty like the other
+/// optional fields. Plain output needs nothing extra: the message already
+/// names them.
 fn fail_with_rollback(
     json: bool,
-    message: &str,
+    error: &sway_launch::RunError,
     rollback: &RollbackOutcome,
     progress: &PartialProgress,
 ) -> ! {
+    let message = &error.message;
     if json {
         let mut value =
             serde_json::json!({ "error": message, "rolled_back": rollback.rolled_back });
+        if !error.unmatched_windows.is_empty() {
+            value["unmatched_windows"] = unmatched_windows_json(&error.unmatched_windows);
+        }
         // Omitted rather than reported as empty, so an ordinary failed
         // rollback-free run's error object keeps exactly the shape it always
         // had — a caller only ever sees this field when there is genuinely
@@ -616,6 +631,20 @@ fn fail_with_rollback(
         }
     }
     process::exit(1);
+}
+
+fn unmatched_windows_json(windows: &[sway_launch::UnmatchedWindow]) -> serde_json::Value {
+    windows
+        .iter()
+        .map(|window| {
+            serde_json::json!({
+                "container_id": window.container_id,
+                "app_id": window.app_id,
+                "class": window.class,
+                "launched_by_this_run": window.launched_by_this_run,
+            })
+        })
+        .collect()
 }
 
 fn join_ids(ids: &[i64]) -> String {
@@ -971,7 +1000,7 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
                     &container_ids,
                     &resolved_ids,
                     index,
-                    format!("id {:?} was already used by an earlier step", id),
+                    format!("id {:?} was already used by an earlier step", id).into(),
                 );
             }
         }
@@ -989,7 +1018,7 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
                 &container_ids,
                 &resolved_ids,
                 index,
-                error,
+                error.into(),
             ),
         };
 
@@ -1199,7 +1228,7 @@ fn fail_step(
     container_ids: &[i64],
     resolved_ids: &HashMap<String, i64>,
     index: usize,
-    error: String,
+    error: sway_launch::RunError,
 ) -> ! {
     let rollback_outcome = if args.rollback_on_error {
         rollback(launched_container_ids)
@@ -1226,7 +1255,10 @@ fn fail_step(
     };
     fail_with_rollback(
         args.json,
-        &format!("step {}: {}", index + 1, error),
+        &sway_launch::RunError {
+            message: format!("step {}: {}", index + 1, error.message),
+            ..error
+        },
         &rollback_outcome,
         &progress,
     );
