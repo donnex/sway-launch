@@ -58,64 +58,18 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
-      # Thresholds are calibrated to this project's actual measured baseline
-      # (86.54% regions / 87.46% lines / 91.59% functions as of 2026-09-01),
-      # not an arbitrary round number: the compositor-bound modules
-      # (sway_launch/ipc.rs and sway_launch/query.rs, plus the IPC-touching
-      # halves of confirmation.rs and launch.rs) are deliberately exempted from
-      # unit-test coverage (see CLAUDE.md's
-      # Rust conventions -- they're exercised by tests/live_sway.rs instead,
-      # which this job can't run headlessly), so a flat 90%+ target isn't the
-      # right bar here the way it might be for a project with no such
-      # exemption list. This gate exists to catch a *regression* (new
-      # pure-logic code added with no test) against the known baseline, not to
-      # enforce an idealized number.
-      #
-      # --fail-under-functions was lowered from 90 to 88 on 2026-09-01, a
-      # deliberate decision rather than a slip. Sharing one connection across
-      # the wait-time poll cycle moved poll_matches()'s arms from "incidentally
-      # executed while always returning false" to genuinely unreachable without
-      # a compositor, taking function coverage from 93.38% to 91.59% and
-      # leaving only ~1.6 points of headroom over a 90 gate. The next
-      # IPC-touching helper added -- exactly the kind this project exempts on
-      # purpose -- would then have failed a threshold that was never meant to
-      # constrain it, and the "fix" would have been lowering the gate anyway,
-      # under time pressure and looking like a slipped standard.
-      #
-      # The arithmetic, so this can be re-derived rather than re-guessed: 451
-      # functions, 40 currently uncovered. A 90 gate would allow 45 uncovered
-      # (room for 5 more); 88 allows 54 (room for ~14). Regions and lines keep
-      # ~6.7 and ~5.4 points of headroom respectively and are unchanged. A
-      # 3.1-point function drop would still be a lot of untested pure logic, so
-      # the regression signal survives.
-      #
-      # Revisited 2026-09-01 after an external review suggested restoring 90
-      # once the polling predicates were extracted into pure functions. The
-      # extraction was done and was worth doing on its own merit (node_position
-      # is now unit-tested rather than reachable only through a live get_tree),
-      # but restoring 90 would be wrong: state_satisfied() was added in the same
-      # cycle and is itself IPC-touching and exempt, so measured function
-      # coverage sits at 91.13% -- barely a point over a 90 gate, which is the
-      # exact squeeze lowering it to 88 was meant to end. Extract predicates
-      # because it makes the logic testable, not to chase the threshold back up.
-      #
-      # Re-measured 2026-09-02 after splitting state_satisfied() into an IPC
-      # half and a pure state_satisfies()/ContainerState::from_tree() half (and
-      # deleting the four per-arm IPC helpers it replaced): 91.91% functions,
-      # 88.34% lines, 87.97% regions, up 2.1/1.3/1.7 points. Still not a reason
-      # to restore 90 -- that would be back to under two points of headroom,
-      # which is the squeeze this gate was lowered to end. Same conclusion as
-      # above, now with a second data point behind it.
-      #
-      # The figures above all predate the 2026-09-03 split of sway_launch.rs
-      # into modules. Re-measured 2026-10-12, after it and later refactors:
-      # 88.36% regions, 87.62% lines, 91.01% functions (545 functions, 49
-      # uncovered; 88 allows 65). Headroom is ~8.4/~5.6/~3.0 points, so the
-      # thresholds stand unchanged.
-      - name: cargo llvm-cov (coverage regression gate, excluding main.rs)
+      # Excluded by filename: main.rs (CLI wiring, covered by the tests/
+      # integration suites), ipc.rs and query.rs (compositor-bound, covered by
+      # tests/live_sway.rs instead -- see CLAUDE.md's Rust conventions), and
+      # the unit-test files themselves (test_support.rs and every */tests.rs),
+      # so tests can't count as covered production code. Thresholds sit a few
+      # points under the baseline measured 2026-10-12 (72.16% regions, 71.56%
+      # lines, 80.95% functions, 28 of 147 uncovered); most of the gap is the
+      # IPC-touching run_* drivers in confirmation.rs and launch.rs.
+      - name: cargo llvm-cov (coverage regression gate)
         run: |
-          cargo llvm-cov --locked --ignore-filename-regex 'main\.rs' \
-            --fail-under-lines 82 --fail-under-regions 80 --fail-under-functions 88
+          cargo llvm-cov --locked --ignore-filename-regex '(^|/)(main|ipc|query|test_support|tests)\.rs$' \
+            --fail-under-lines 68 --fail-under-regions 68 --fail-under-functions 77
 
   lint-scripts-and-docs:
     runs-on: ubuntu-latest
