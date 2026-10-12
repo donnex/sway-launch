@@ -1719,6 +1719,74 @@ Run a script directly with `sh <script>`; make it executable first with `chmod +
 - Name scripts in lowercase. Use `-` as word separator for scripts run directly by the user (e.g.
   `run-commands`). No separator for scripts called from other scripts (e.g. `runcommands`).
 
+### Established patterns
+
+These patterns show up repeatedly in real scripts and should be followed in new ones too. Since
+this project has no `snippets/` directory (see above), every helper named here is written directly
+in the script that uses it. The canonical module's color, privilege-escalation, terminal-launcher,
+unattended-script, and picker-script patterns are left out: this project's scripts use no color
+(see Scripts above), and none of them needs root, a terminal re-exec, an unattended schedule, or a
+picker.
+
+**Usage function split**: Separate `print_usage()` (content only, writes to stdout, always custom
+per script) from `usage()` (routes to stderr and sets exit code). `usage()` takes an optional exit
+code; non-zero redirects `print_usage` to stderr.
+
+**Option parsing**: Use a POSIX `case` loop over `"$@"` with `shift`. Support `--` to end option
+processing. Validate that options requiring a value don't receive an empty string or another flag
+as their argument.
+
+**Dependency preflight**: Check every external command a script needs before doing any work, so it
+fails immediately with a clear message instead of part-way through:
+
+```sh
+command -v jq >/dev/null 2>&1 || die "jq is not installed or not in PATH"
+```
+
+Put the checks after option parsing (so `--help` works without the tools installed) and before the
+first real action. Keep the message wording consistent. Check a related group with a loop rather
+than repeating the line:
+
+```sh
+for command_name in sway swaymsg foot; do
+  command -v "$command_name" >/dev/null 2>&1 ||
+    die "$command_name not found on PATH."
+done
+```
+
+Only preflight what the script actually requires. A tool the script can do without gets a fallback
+instead of a `die`. No guard is needed for `git` or `ssh` — treat both as base tools, same as a
+POSIX/base-OS utility (`sort`, `cut`, `awk`), always assumed present rather than checked with
+`command -v`.
+
+**Error helper**: Use `die` by default for fatal errors. Switch to an `error` variant only when the
+script surfaces many distinct error conditions that benefit from an "Error:" prefix to make them
+stand out — confirm with the user before switching. Never use both in the same script.
+
+**Cleanup traps**: Use `trap cleanup EXIT` for resource cleanup. This alone is not enough: under
+POSIX `sh` (confirmed with `dash`), an `EXIT` trap does not fire when the shell is killed by an
+unhandled signal like `SIGINT` (Ctrl-C) or `SIGTERM` — only on a normal `exit` or falling off the
+end of the script. Always pair it with `trap 'exit 130' INT TERM` (130 = 128+SIGINT, the
+conventional exit code for signal termination) so an interrupt also triggers a normal exit and the
+`EXIT` trap still runs. Register a separate `trap 'trap - EXIT; abort' INT TERM` instead if
+interrupt handling needs to genuinely differ from normal exit (e.g., to remove partially-created
+state differently than the success-path cleanup) — but either way, `INT`/`TERM` must be trapped
+explicitly, since without it cleanup silently never happens on an interrupt at all, not only when
+the interrupt case needs different handling.
+
+**Temporary directories**:
+
+```sh
+work_dir="$(mktemp -d)"
+printf 'Working directory: %s\n' "$work_dir"
+cleanup() {
+  printf 'Cleaning up: %s\n' "$work_dir"
+  rm -rf "$work_dir"
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+```
+
 ### Shell workflow
 
 - After making changes to a script, always review the summary comment below the shebang and update
