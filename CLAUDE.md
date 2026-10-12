@@ -1444,8 +1444,14 @@ it immediately, not as a follow-up. A new template file needs a row added to REA
     release.
 - A commit that only fixes a not-yet-merged commit is squashed into it (see "History rewriting"),
   so its entry is folded into that commit's entry rather than added as a second one.
+- When a stretch of history is little but internal work, say so in one line rather than listing
+  it — "roughly sixty commits, most of them from two deep code reviews" tells a reader more than
+  sixty entries do.
 - `## [Unreleased]` stays in the file even when empty, so there's always somewhere for the next
   entry to go.
+- `CHANGELOG.md` is tracked and committed like any other documentation, so it survives a fresh
+  clone and can't silently disagree with what shipped. Never add it to `.gitignore` — the opposite
+  of `REVIEW.md`, whose whole purpose is to be untracked; don't reason from one to the other.
 - `.markdownlint.json` sets `"MD024": { "siblings_only": true }`: every release repeats `### Added`
   and friends, which MD024's default (no duplicate heading anywhere in the file) would reject.
   `siblings_only` permits a repeated heading under a different parent, exactly the changelog shape
@@ -1582,6 +1588,9 @@ These rules apply to every script in this repo, regardless of language.
     ever be exempt.
   - Such a script still needs its header comment to explain how it's invoked and by what, since it
     has no `--help` to carry that. Configuration it reads from the environment belongs there too.
+  - A script with subcommands must show its help message (stdout, exit 0) when invoked with no
+    subcommand at all, rather than treating a missing subcommand as an error. Reserve the
+    error-and-exit-1 behavior for an actually invalid or unrecognized subcommand.
 - For a script a user runs directly, use clear presentation — structured formatting, tables,
   progress/status indicators, etc. — for its terminal output when it makes sense: status messages
   that should stand out (success/warning/error), progress, or tabular data. Skip it for something
@@ -1610,9 +1619,19 @@ These rules apply to every script in this repo, regardless of language.
 - When an operation may fail transiently (e.g. a network call), implement retry logic rather than
   failing on the first attempt. If it's unclear whether the operation is safe to retry (e.g. it
   isn't idempotent), confirm with the user before adding retry behavior.
-- All intermediate files must be created inside a temporary directory and cleaned up on exit,
-  including on errors and signals:
-  - Shell: use `mktemp -d` and clean up with `trap cleanup EXIT`.
+- Replacing a file that already exists is the one case where a temporary file belongs beside its
+  destination rather than in a temporary directory. Write the new contents to a temporary file in
+  the destination's own directory, then `os.replace` (Python) or `mv` (shell) it into place: the
+  rename is atomic only within one filesystem, so a scratch file under `/tmp` cannot be renamed
+  over a file elsewhere without falling back to a copy — which is exactly the non-atomic write the
+  pattern exists to avoid. Remove the temporary file if anything fails before the rename.
+  - This matters most for a file that must never be seen half-written or briefly world-readable: a
+    credential, a token, a config another process reads on a timer.
+- All *other* intermediate files must be created inside a temporary directory and cleaned up on
+  exit, including on errors and signals:
+  - Shell: use `mktemp -d` and clean up with `trap cleanup EXIT` — and also `trap 'exit N' INT
+    TERM` (e.g. `exit 130` for SIGINT), since under POSIX `sh` an `EXIT` trap alone does not fire on
+    an unhandled signal, so cleanup silently never runs on an interrupt without it.
   - Python: use `tempfile.TemporaryDirectory()` as a context manager.
 - After making changes to a script, review the help output and verify it accurately reflects the
   current arguments, options, and behaviour.
@@ -1665,6 +1684,21 @@ Run a script directly with `sh <script>`; make it executable first with `chmod +
   not found"`). When the command is long or complex — a pipeline, a command substitution, an
   interactive prompt — put the `||` at the end of the command line and the action on the next
   line, indented, so the guard doesn't run past a comfortable width.
+- When a script ends by running one other command, with nothing left to do after it, `exec` that
+  command (`exec some-tool "$@"`) rather than running it as a child. The script's process becomes
+  the command, so a single process is left instead of a shell waiting on it: signals (Ctrl-C, a
+  `kill`, a service manager stopping it) reach the real program, its exit status is the script's,
+  and its PID is the one a supervisor or process list sees. A wrapper or launcher script is the
+  usual case.
+  - Don't `exec` when anything about the script still has to happen after the command, since
+    nothing does once the shell is replaced: an `EXIT` cleanup trap never fires; a step after the
+    command (a notification, a status check) never runs; an exit status the script translates
+    rather than passes through is lost; so is a message on failure (`some-tool || die 'what
+    failed'`) and a status deliberately ignored (`some-tool || true`).
+  - `exec` runs an executable, not a shell function.
+  - A failed `exec` (the command can't be found or run) ends a non-interactive script on the spot,
+    so `exec some-tool || die ...` never reaches the `die`. Check the command with `command -v`
+    first when it may be missing.
 - Do not cram multiple statements into a one-line `{ }` block (e.g. `foo() { cmd1; cmd2; cmd3;
   }`) — it hurts readability. Keep one-liner `{ }` blocks to a single statement in regular script
   code; once a function needs more than one statement, write it as a normal multi-line function.
@@ -1675,6 +1709,8 @@ Run a script directly with `sh <script>`; make it executable first with `chmod +
   this repo's script count grows enough that duplication across them becomes a real maintenance
   burden, revisit this and reintroduce a snippet convention rather than letting copies silently
   drift apart.
+- Use a retry function for retry logic instead of a bespoke inline loop — a `retry` function
+  written in the script itself, per the no-snippets rule above.
 - Before a script comes to depend on a new external command not already used elsewhere in the
   project, confirm the choice with the user first. This excludes standard POSIX/base-OS utilities
   guaranteed present on the target system (e.g. `sort`, `cut`, `awk`); confirmation is for
@@ -1888,12 +1924,13 @@ only to topic branches.
   disclaimer is accidentally removed, restore it.
 - **Commit to `dev`, or to a topic/issue branch, the moment the current piece of work is complete —
   do not ask first, and do not wait to be told to commit.** This is not a judgment call and not
-  something to soften into a question ("should I commit this?", "want me to commit?"). The instant a
-  change reaches a natural, self-contained stopping point (per the one-commit-per-concern rule under
-  Commits), commit it, then move on. "Confirm before committing" applies only to the specific,
-  separate actions the Git section calls out by name — merging to `main`, force-pushing, and the
-  like — never to an ordinary commit on `dev` or a topic/issue branch. If a task produces several
-  distinct commits back to back, make all of them without pausing in between to ask. A missing
+  something to soften into a question ("should I commit this?", "want me to commit?", "ready to
+  commit whenever you are"). The instant a change reaches a natural, self-contained stopping point
+  (per the one-commit-per-concern rule under Commits), commit it, then move on. "Confirm before
+  committing" applies only to the specific, separate actions the Git section calls out by name —
+  merging to `main`, force-pushing, and the like — never to an ordinary commit on `dev` or a
+  topic/issue branch. If a task produces several distinct commits back to back, make all of them
+  without pausing in between to ask; only pause once the whole piece of work is done. A missing
   commit at the end of a task is a bug in following this rule, not a safe default.
 - After the commit completes, show a summary of what changed and why — a report of what already
   happened, not a request for permission. If the work produces multiple commits, commit each as its
@@ -1951,18 +1988,22 @@ anything.** The scratch copy at this repo's root is the entire deliverable; the 
 across themselves. This holds however convenient it looks and however clearly correct the change
 is: the canonical repository is checked out on the same machine, so reaching into it is always one
 command away, and that is exactly why the rule has to be absolute rather than a judgement call. Do
-not offer it as an option either — offering it is how it gets picked. Two things follow:
+not offer it as an option either — a user picking it from a list is not the same as the rule not
+applying, and offering it is how it gets picked. Two things follow that are easy to get wrong in the
+moment:
 
 - **Don't touch the canonical repository's state at all** — no branch checkout, no `git config`,
-  no stash. Its own automated sync is the only thing that moves it.
+  no stash. A repo left on a different branch than it was found on is its own small mess, separate
+  from the commit. Its own automated sync is the only thing that moves it.
 - **Being unable to push is not the signal.** Read access without write access is the normal shape
   of a sandbox credential, so a failed push is a second line of defence catching a rule already
-  broken — a local commit in the canonical repo is already the mistake.
+  broken — a local commit in the canonical repo is already the mistake, whether or not it ever
+  reaches a remote.
 
 Don't wait to be asked, either: whenever a task brings in a new tool, library, pattern, or idea
 that would fit as a general convention (not just a one-off for this task), proactively suggest
 documenting it — say what you'd add and where, per the placement rules above, and let the user
-decide.
+decide. Silence is the wrong default just because nobody asked.
 
 ### Issue drafts: `new-issues.md`
 
@@ -1993,12 +2034,13 @@ doing. Never abort, roll back, or skip ongoing work because of this check, and n
 paused indefinitely waiting for an answer. An unanswered question is not a no: create nothing until
 the user says yes.
 
-**Ask again at the very next interaction.** The next time the user interacts, lead with it: put the
-summary and the question at the top of the reply to their next message, before anything else. If
-the work finishes first, put them in the final summary too. Keep asking at every interaction, in
-this session or a later one, until the user answers. While work is running between interactions,
-an unchanged `new-issues.md` doesn't trigger another one-minute pause, but a change to its contents
-does.
+**Ask again at the very next interaction.** Getting the issues filed is the priority, so an
+unanswered question never waits for a new session. The next time the user interacts, lead with it:
+put the summary and the question at the top of the reply to their next message, before anything
+else. If the work finishes first, put them in the final summary too. Keep asking at every
+interaction, in this session or a later one, until the user answers. While work is running between
+interactions, an unchanged `new-issues.md` doesn't trigger another one-minute pause, but a change to
+its contents does.
 
 **When the user says yes**, create the approved issues from the reworded versions, not the raw
 drafts, per the Issues section: check for an existing open issue covering the same thing first, and
@@ -2096,8 +2138,10 @@ Applies to every file in this repository — not just test fixtures, but source 
 commit messages, and the repo's own documentation (`CLAUDE.md`, `README.md`, any design doc,
 etc).
 
-Real content must never be committed, full stop — no confirmation step, no exception, no "just
-this once." Always use placeholders or made-up content instead. Real data leaking into the
+Real content must never be committed, full stop — no confirmation step, no "just this once," and
+no exception beyond the single narrow one called out below for non-secret public URLs (plus the
+explicitly approved exceptions listed after the rules). Always use placeholders or made-up content
+instead otherwise. Real data leaking into the
 repository at all is the failure mode to guard against here, not just an unconfirmed one — this
 matters more once the repo is public.
 
@@ -2105,7 +2149,14 @@ matters more once the repo is public.
   (e.g. "the user", "example-user").
 - Never write a real hostname, URL, IP address, command, or any other identifying detail. Use a
   made-up placeholder instead (e.g. `example-host`, `example.com`, or a documentation-range
-  address like `203.0.113.10` — never a real one).
+  address like `203.0.113.10` — never a real one). **Exception:** a real URL to a public website
+  is fine to write as-is when nothing about it looks secret or private — no token, session ID, API
+  key, or other credential embedded in the path or query string, and no private-looking host (an
+  internal hostname, a `.local`/`.internal`-style domain, or a private/loopback IP literal). This
+  exception covers a plain link to genuinely public web content (official documentation, a package
+  registry page, a public repository, an RFC, etc) — it does not extend to a hostname, IP, or
+  command used as a configuration value or infrastructure reference, even one that happens to be
+  publicly reachable, nor does it relax any other bullet in this list.
 - This applies even when writing a rule *about* real data: cite a placeholder, never an actual
   value, even as an illustrative example.
 - If the user supplies a real, non-generic example (a real hostname, a real command, a real name)
