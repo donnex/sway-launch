@@ -40,4 +40,4 @@ for required_command in firefox chromium; do
 done
 
 sway-launch -a firefox --split h 'firefox --new-window https://example.com'
-sway-launch -a chromium 'chromium --new-window https://example.com'
+exec sway-launch -a chromium 'chromium --new-window https://example.com'

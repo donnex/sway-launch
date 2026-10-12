@@ -37,4 +37,4 @@ esac
 
 command -v thunar >/dev/null 2>&1 || die "thunar not found on PATH. Install Thunar first."
 
-sway-launch -a thunar --floating --width 900px --height 600px --mark file-manager thunar
+exec sway-launch -a thunar --floating --width 900px --height 600px --mark file-manager thunar
