@@ -165,6 +165,17 @@ class HeadlessSway:
             prefix="sway-launch-screenshots-"
         )
         self.runtime_dir = Path(self._runtime_dir.name)
+        # Python only calls __exit__ once __enter__ has returned, so a failure
+        # past this point (including die()'s SystemExit) has to tear down the
+        # compositor and runtime directory itself, or both leak.
+        try:
+            self._start()
+        except BaseException:
+            self.__exit__(None, None, None)
+            raise
+        return self
+
+    def _start(self):
         log_path = self.runtime_dir / "sway.log"
         env = {
             "WLR_BACKENDS": "headless",
@@ -209,7 +220,12 @@ class HeadlessSway:
                     pass
             time.sleep(0.1)
         else:
-            die(f"timed out waiting for headless Sway to become ready; see {log_path}")
+            # The log lives in the runtime directory, which teardown removes,
+            # so its tail goes into the message rather than a path to it.
+            log_tail = "\n".join(
+                log_path.read_text(errors="replace").splitlines()[-20:]
+            )
+            die(f"timed out waiting for headless Sway to become ready:\n{log_tail}")
 
         for wayland_socket in self.runtime_dir.glob("wayland-*"):
             if wayland_socket.suffix != ".lock":
@@ -220,8 +236,6 @@ class HeadlessSway:
 
         output_name = self._run_swaymsg_json(["-t", "get_outputs"])[0]["name"]
         self._run_swaymsg(["output", output_name, "resolution", self.resolution])
-
-        return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         if self.process is not None:
@@ -276,12 +290,21 @@ class HeadlessSway:
         )
 
     def screenshot(self, output_path):
-        subprocess.run(
-            ["grim", str(output_path)],
-            env=self._ipc_env(),
-            check=True,
-            capture_output=True,
-        )
+        # Captured beside the destination and renamed into place, so an
+        # interrupted or failed capture never leaves a truncated PNG over a
+        # committed screenshot (see CLAUDE.md's Scripts conventions).
+        temporary_path = output_path.with_name(f".{output_path.name}.tmp")
+        try:
+            subprocess.run(
+                ["grim", "-t", "png", str(temporary_path)],
+                env=self._ipc_env(),
+                check=True,
+                capture_output=True,
+            )
+            os.replace(temporary_path, output_path)
+        except BaseException:
+            temporary_path.unlink(missing_ok=True)
+            raise
 
     def slot_rects(self):
         """{slot_name: (rect_width, rect_height)} for every foot window
