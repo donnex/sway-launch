@@ -716,3 +716,35 @@ fn layout_validate_rejects_a_mark_containing_a_nul() {
     assert!(stderr.contains("mark:"), "{stderr}");
     assert!(stderr.contains("NUL"), "{stderr}");
 }
+
+#[test]
+fn every_shipped_example_layout_passes_validate() {
+    // The live suite drives these against a real compositor, but that job
+    // isn't part of the release gate; --validate needs none, so a broken
+    // shipped example fails the fast check job here too.
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/layouts");
+    let mut checked = 0;
+    for entry in fs::read_dir(&directory).expect("examples/layouts should be readable") {
+        let path = entry.expect("directory entry should be readable").path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("toml") {
+            continue;
+        }
+
+        let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+            .args(["--layout", path.to_str().unwrap(), "--validate"])
+            .output()
+            .expect("failed to run sway-launch binary");
+
+        assert!(
+            output.status.success(),
+            "{} failed --validate: {}",
+            path.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        checked += 1;
+    }
+    assert!(
+        checked >= 2,
+        "expected at least 2 example layouts, checked {checked}"
+    );
+}

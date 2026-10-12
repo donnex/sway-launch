@@ -1163,6 +1163,52 @@ mod tests {
     }
 
     #[test]
+    fn every_builtin_template_resolves_and_converts_without_a_compositor() {
+        // parse() only checks TOML shape and the [template] table; the
+        // height/width/position formats, sway-string fields, target rules
+        // and target_id references are checked by resolve() and
+        // to_sway_launch(). Running both here, the way --validate does,
+        // means a broken built-in fails cargo test (and the release gate)
+        // instead of only the separate live-Sway job.
+        let mut checked = 0;
+        for file in BUILTIN_TEMPLATES.files() {
+            let name = file.path().display();
+            let template = parse(file.contents_utf8().expect("template should be UTF-8"))
+                .unwrap_or_else(|error| panic!("{name} failed to parse: {error}"));
+            let bindings = Bindings {
+                binding: distinct_slot_names(&template)
+                    .into_iter()
+                    .map(|slot| Binding {
+                        slot: slot.to_string(),
+                        ..minimal_binding()
+                    })
+                    .collect(),
+            };
+            let steps = resolve(&template, &bindings)
+                .unwrap_or_else(|error| panic!("{name} failed to resolve: {error}"));
+
+            let mut resolved_ids = HashMap::new();
+            for (index, step) in steps.iter().enumerate() {
+                step.to_sway_launch(
+                    std::time::Duration::from_secs(1),
+                    std::time::Duration::from_millis(20),
+                    false,
+                    &resolved_ids,
+                )
+                .unwrap_or_else(|error| panic!("{name} step {}: {error}", index + 1));
+                if let Some(id) = step.id.as_deref() {
+                    resolved_ids.insert(id.to_string(), index as i64);
+                }
+            }
+            checked += 1;
+        }
+        assert!(
+            checked >= 18,
+            "expected at least 18 built-in templates, checked {checked}"
+        );
+    }
+
+    #[test]
     fn distinct_slot_names_deduplicates_and_ignores_target_id_steps() {
         let mut editor_step = minimal_step();
         editor_step.slot = Some("editor".to_string());

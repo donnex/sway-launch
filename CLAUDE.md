@@ -119,7 +119,10 @@ below) plus five integration test files:
 - `tests/layout.rs` — asserts `--layout`'s end-to-end behavior (file reading, TOML parsing, step
   iteration, `--json` output, error messages) the same way, using `con_id`-only steps. Also covers
   `--layout --dry-run` (including the `target_id`-placeholder-resolution case) and
-  `--layout --validate` (success, a step error, and both `--json` shapes).
+  `--layout --validate` (success, a step error, and both `--json` shapes), and runs `--validate`
+  against every shipped `examples/layouts/*.toml` file
+  (`every_shipped_example_layout_passes_validate`), so a broken shipped example fails the fast
+  `check` job and the release gate, not only the live-Sway job.
 - `tests/template.rs` — the same headless approach applied to `--template`: `con_id`-based
   `Binding`s exercise resolution, `--apps`/`--bindings`, and error messages end to end without
   needing a live Sway session. Also covers `--template --dry-run` and `--template --validate`, the
@@ -1326,7 +1329,12 @@ this repo's own content, not a runtime condition to handle gracefully, so it pan
 file's name rather than silently dropping it from the `--list-templates` output. `description`
 must still be a complete, self-contained sentence (ending in `.`) — `template.rs`'s
 `builtin_templates_every_description_is_a_complete_sentence` test guards this, and
-`builtin_templates_every_category_is_non_empty` guards `category` similarly. Every shipped
+`builtin_templates_every_category_is_non_empty` guards `category` similarly. `parse()` alone only
+checks TOML shape and the `[template]` table, so
+`every_builtin_template_resolves_and_converts_without_a_compositor` also binds each built-in's slots
+to a placeholder command and runs `resolve()` plus `to_sway_launch()` on every step, the way
+`--validate` does — a bad `width`, `position`, blank `workspace`, or dangling `target_id` in a
+built-in fails `cargo test` (and so the release gate, which doesn't run the live suite). Every shipped
 `templates/*.toml` file was migrated to this table in the same change that added it, per
 this file's "Screenshots" section discipline of never leaving shipped content half-migrated to a
 new schema.
