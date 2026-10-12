@@ -422,8 +422,12 @@ stated goal (safer internals, less repeated parsing) to actually land.
   mistaken for the one this invocation itself launched, silently returning the wrong container id.
   To close this, the launched command's environment is tagged with a unique, per-invocation marker
   — this process's own pid plus a nanosecond timestamp, a correlation tag rather than a secret
-  (`exec env SWAY_LAUNCH_PID_MARKER=<token> <command>`, prepended without otherwise touching the
-  user's command — sending the marker and command as raw, unquoted text like this, rather than
+  (`exec export SWAY_LAUNCH_PID_MARKER=<token> && <command>`, prepended without otherwise touching
+  the user's command — an `export ... &&` prefix rather than the original `env VAR=value` one,
+  since Sway runs an `exec` line through `sh -c` and `env` can only run an executable, so a command
+  starting with a builtin/keyword (`cd dir && app`, `exec app`) launched nothing and timed out;
+  confirmed live by `tests/live_sway.rs`'s `exec_runs_a_command_that_starts_with_a_shell_builtin` —
+  sending the marker and command as raw, unquoted text like this, rather than
   wrapped in `quote_sway_string()`, was deliberate: Sway's own variable-substitution syntax
   (`$var`) mangles a literal `$` inside a quoted argument, which broke an earlier design that tried
   to capture the spawned shell's own pid via `echo "$$"`), and a content-matching event is only
