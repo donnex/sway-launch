@@ -4492,3 +4492,77 @@ fn debug_events_prints_a_real_window_event() {
         "expected --debug-events to print a New WindowEvent within 10s"
     );
 }
+
+#[test]
+fn launch_timeout_names_the_window_its_app_id_filter_rejected() {
+    // A wrong --app-id used to end in the same bare timeout as a typo'd
+    // command, with the window it rejected left open and never mentioned --
+    // not even under --verbose. The error now names that window, says it came
+    // from this command, and hands its id to a --json caller.
+    let output = sway_launch_command()
+        .args([
+            "--timeout",
+            "2",
+            "--json",
+            "--verbose",
+            "--app-id",
+            "reject-probe-wrong",
+            "foot --app-id=reject-probe",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        !output.status.success(),
+        "the filter matches nothing, so this must fail: {stderr}"
+    );
+
+    let last_line = stderr.lines().next_back().unwrap_or_default();
+    let error: serde_json::Value =
+        serde_json::from_str(last_line).expect("the last stderr line should be a JSON error");
+    let unmatched = error["unmatched_windows"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected unmatched_windows in {error}"));
+    assert_eq!(unmatched.len(), 1, "{error}");
+    let container_id = unmatched[0]["container_id"]
+        .as_i64()
+        .expect("container_id should be an integer");
+    let _guard = KillOnDrop(container_id);
+    assert_eq!(unmatched[0]["app_id"], "reject-probe", "{error}");
+    assert_eq!(unmatched[0]["launched_by_this_run"], true, "{error}");
+
+    let message = error["error"].as_str().expect("error should be a string");
+    assert!(
+        message.starts_with("launch \"foot --app-id=reject-probe\": "),
+        "the error should say which launch failed: {message}"
+    );
+    assert!(
+        message.contains(&format!("con_id {container_id}"))
+            && message.contains("check --app-id/--class"),
+        "the error should name the rejected window and the filter to check: {message}"
+    );
+    assert!(
+        stderr.contains(&format!("Event mismatch: New con_id {container_id}")),
+        "--verbose should log the rejected window: {stderr}"
+    );
+}
+
+#[test]
+fn launch_timeout_says_when_the_command_exited_without_a_window() {
+    // A command that isn't on PATH exits at once, and Sway's exec reports
+    // nothing -- this used to wait out --timeout and say only that it had.
+    let output = sway_launch_command()
+        .args(["--timeout", "1", "sway-launch-no-such-command-probe"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        !output.status.success(),
+        "nothing can open a window: {stderr}"
+    );
+    assert!(
+        stderr.contains("launch \"sway-launch-no-such-command-probe\": ")
+            && stderr.contains("exited without opening a window"),
+        "the error should say the command exited: {stderr}"
+    );
+}

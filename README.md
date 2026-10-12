@@ -594,6 +594,24 @@ clear message rather than blocking forever. The two are deliberately independent
 together would make `--timeout 1` break ordinary tree reads on a slow machine, and `--timeout 60`
 re-open a minute-long hang.
 
+When a wait does run out, the error says which action it was and, for a launch, what it saw. A new
+window that opened but didn't match `--app-id`/`--class` is named — usually the one you meant,
+under an app_id you didn't expect (it varies with version, packaging and backend, and an XWayland
+window has none, only a class). A command that exited without opening any window, typically one
+that isn't on `PATH` in Sway's environment, is called out as such:
+
+```text
+$ sway-launch --timeout 2 -a notfoot foot
+launch "foot": no window with app_id "notfoot" appeared within 2 sec; 1 other new window did (con_id 12, app_id "foot", opened by this command) — check --app-id/--class
+$ sway-launch --timeout 2 footx
+launch "footx": no window appeared within 2 sec: the launched command exited without opening a window — check that it is on PATH in Sway's environment
+$ sway-launch --con-id 31 --floating --output left --mark m
+move container to output "left": no matching window event within 5 sec
+```
+
+A rejected window stays open. With `--json`, its id is in the error object's `unmatched_windows`
+(see [JSON output](#json-output)), so a script can close it or retry with the right filter.
+
 ### Target an existing window
 
 All the actions above can also run against a window that's already open, instead of always
@@ -872,7 +890,17 @@ socket, the `i3`/`sway --get-socketpath` fallback the IPC library shells out to 
 
 ```shell
 $ sway-launch --json --con-id 999999 --floating
-{"error":"container id 999999 no longer exists — window may have closed","rolled_back":[]}
+{"error":"floating enable: container id 999999 no longer exists — window may have closed","rolled_back":[]}
+```
+
+A launch that timed out after rejecting windows its `--app-id`/`--class` didn't match lists them
+under `unmatched_windows`, present only when there are any. `launched_by_this_run` says whether the
+window's process was started by this invocation — when it was, the filter is what's wrong, and the
+window is yours to close:
+
+```shell
+$ sway-launch --json --timeout 2 -a notfoot foot
+{"error":"launch \"foot\": no window with app_id \"notfoot\" appeared within 2 sec; ...","rolled_back":[],"unmatched_windows":[{"app_id":"foot","class":null,"container_id":12,"launched_by_this_run":true}]}
 ```
 
 `rolled_back` is only ever non-empty when `--rollback-on-error` (see "Layout files" above) actually
@@ -881,7 +909,7 @@ closed on its own — the id appears under `rollback_failed` instead, a field pr
 there's something in it:
 
 ```shell
-{"error":"step 2: container id 437 no longer exists — window may have closed","rolled_back":[],"rollback_failed":[437]}
+{"error":"step 2: move right: container id 437 no longer exists — window may have closed","rolled_back":[],"rollback_failed":[437]}
 ```
 
 The three lists never overlap and mean different things: `container_ids` is still open,
@@ -895,7 +923,7 @@ guessing which ones were its own:
 
 ```shell
 $ sway-launch --layout layout.toml --json
-{"container_ids":[437,438],"containers":{"editor":437},"error":"step 3: 5 sec timeout reached","rolled_back":[]}
+{"container_ids":[437,438],"containers":{"editor":437},"error":"step 3: floating enable: no matching window event within 5 sec","rolled_back":[]}
 ```
 
 `container_ids`/`containers` carry the same meaning they do on success. Anything `rolled_back`

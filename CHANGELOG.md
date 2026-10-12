@@ -190,6 +190,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A timed-out action now says which action it was and, for a launch, why nothing matched, instead
+  of a bare `5 sec timeout reached` for every failure. A wrong `--app-id`/`--class` and a typo'd
+  command used to look identical: now a window that opened but didn't match the filter is named
+  (and listed under `unmatched_windows` in the `--json` error, so a script can close it), a command
+  that exited without opening a window is called out with a hint to check `PATH`, and `--verbose`
+  logs each rejected window as it appears. Every action's error also leads with what it was —
+  `launch "foot": ...`, `move container to output "left": ...` — so an invocation with several
+  actions, or a layout's `step 3: ...`, says which one failed. (#33)
 - A launch command containing an unquoted `,` or `;` is now rejected up front, instead of being
   split by Sway into separate commands. Sway reads the command before the shell does, so
   `'foot -T a,b'` used to open a window and then fail on `b`, leaving that window open and

@@ -12,10 +12,10 @@
 //! this module decides whether it worked.
 
 use super::ipc::{event_loop, new_connection, run_single_sway_command, run_sway_command};
-use super::outcome::{ActionOutcome, ActionResult, LaunchOwnership};
+use super::outcome::{ActionOutcome, ActionResult, LaunchOwnership, RunError, UnmatchedWindow};
 use super::process_marker::{
-    generate_pid_marker_token, process_has_env_var, scan_marker_presence, MarkerTracker,
-    MARKER_SCAN_INTERVAL, PID_MARKER_FALLBACK_GRACE, PID_MARKER_VAR,
+    generate_pid_marker_token, process_has_env_var, scan_marker_presence, MarkerPresence,
+    MarkerTracker, MARKER_SCAN_INTERVAL, PID_MARKER_FALLBACK_GRACE, PID_MARKER_VAR,
 };
 use super::query::{
     container_exists, container_state, node_by_id, parent_node_layout, position_matches,
@@ -175,19 +175,38 @@ impl SwayAction<'_> {
     /// function routes elsewhere — `Exec`, and the seven that confirm by
     /// polling — answers `false` from `state_satisfied()` unconditionally, so
     /// moving the check has no effect on them.
-    pub(super) fn run(&self) -> Result<ActionResult, String> {
+    ///
+    /// Every error is prefixed with what the action was — `launch "<command>"`
+    /// for `Exec`, the Sway command verb for everything else — so that a
+    /// timeout in an invocation with several actions, or a layout's
+    /// `step N: ...`, says which one failed rather than only how long it waited.
+    pub(super) fn run(&self) -> Result<ActionResult, RunError> {
         if self.verbose() {
             eprintln!("Sway action: {}", self);
         }
 
         match self {
+            SwayAction::Exec { command, .. } => self
+                .run_wait_matching_exec_event()
+                .map(|(container_id, ownership)| ActionResult {
+                    container_id,
+                    outcome: ActionOutcome::Changed,
+                    launch_ownership: Some(ownership),
+                })
+                .map_err(|error| RunError {
+                    message: format!("launch \"{}\": {}", command, error.message),
+                    ..error
+                }),
+            _ => self
+                .run_acting_on_container()
+                .map_err(|error| format!("{}: {}", self.sway_command_verb(), error).into()),
+        }
+    }
+
+    fn run_acting_on_container(&self) -> Result<ActionResult, String> {
+        match self {
             SwayAction::Exec { .. } => {
-                self.run_wait_matching_exec_event()
-                    .map(|(container_id, ownership)| ActionResult {
-                        container_id,
-                        outcome: ActionOutcome::Changed,
-                        launch_ownership: Some(ownership),
-                    })
+                unreachable!("run_acting_on_container() is never called for SwayAction::Exec")
             }
             _ => match self.matching_window_change_events() {
                 Some(_) => self
@@ -702,9 +721,21 @@ impl SwayAction<'_> {
     /// next window event to arrive — which, in a multi-step run, is the next
     /// step's own. Measured bounded, not accumulating; see the comment at that
     /// function's `thread::spawn` call for the mechanism and the numbers.
-    fn run_wait_matching_exec_event(&self) -> Result<(i64, LaunchOwnership), String> {
+    ///
+    /// A `New` window rejected by the `--app-id`/`--class` filter is recorded
+    /// rather than silently dropped, and a timeout is reported through
+    /// `exec_timeout_message()` using what was seen: the rejected windows, or,
+    /// with none, whether the launched command is still running at all. A typo'd
+    /// command and a wrong `--app-id` otherwise both end in the same bare
+    /// timeout, pointing the user at `--timeout` when raising it only makes the
+    /// failure slower.
+    fn run_wait_matching_exec_event(&self) -> Result<(i64, LaunchOwnership), RunError> {
         let SwayAction::Exec {
-            verbose, timeout, ..
+            verbose,
+            timeout,
+            app_id_match,
+            class_match,
+            ..
         } = *self
         else {
             unreachable!("run_wait_matching_exec_event is only called for SwayAction::Exec");
@@ -730,8 +761,16 @@ impl SwayAction<'_> {
 
         let deadline = match time::Instant::now().checked_add(timeout) {
             Some(deadline) => deadline,
-            None => return Err(format!("{} sec timeout reached", timeout.as_secs())),
+            None => {
+                return Err(
+                    exec_timeout_message(timeout, app_id_match, class_match, &[], None).into(),
+                )
+            }
         };
+
+        // Every New window the app_id/class filter turned away, reported if
+        // the wait ends without a match — see exec_timeout_message().
+        let mut unmatched_windows: Vec<UnmatchedWindow> = Vec::new();
 
         // The first content-matching-but-unconfirmed event seen, and when —
         // used both to cap how long the grace period below can run and as
@@ -762,7 +801,27 @@ impl SwayAction<'_> {
                     }
                     return Ok((container_id, LaunchOwnership::Adopted));
                 }
-                return Err(format!("{} sec timeout reached", timeout.as_secs()));
+                // Only worth asking when nothing else explains the timeout: a
+                // rejected window already says what went wrong.
+                let command_running = if unmatched_windows.is_empty() {
+                    match scan_marker_presence(PID_MARKER_VAR, &token, marker.previously_seen()) {
+                        MarkerPresence::Present(_) => Some(true),
+                        MarkerPresence::Absent => Some(false),
+                        MarkerPresence::Unknown | MarkerPresence::Unavailable => None,
+                    }
+                } else {
+                    None
+                };
+                return Err(RunError {
+                    message: exec_timeout_message(
+                        timeout,
+                        app_id_match,
+                        class_match,
+                        &unmatched_windows,
+                        command_running,
+                    ),
+                    unmatched_windows,
+                });
             }
 
             if marker.needs_scan(fallback.is_some()) && now >= next_scan {
@@ -797,13 +856,13 @@ impl SwayAction<'_> {
                 Ok(event) => event,
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err("Event stream closed unexpectedly".to_string());
+                    return Err("Event stream closed unexpectedly".to_string().into());
                 }
             };
 
             let event = match event {
                 Ok(event) => event,
-                Err(error) => return Err(error.to_string()),
+                Err(error) => return Err(error.to_string().into()),
             };
 
             let window = match event {
@@ -811,7 +870,35 @@ impl SwayAction<'_> {
                 _ => continue,
             };
 
-            if self.matches_window_event(&window).is_err() {
+            if let Err(mismatch) = self.matches_window_event(&window) {
+                if matches!(
+                    mismatch,
+                    WindowEventMatchError::WindowAppIdMismatch
+                        | WindowEventMatchError::WindowClassMismatch
+                ) {
+                    let unmatched = UnmatchedWindow {
+                        container_id: window.container.id,
+                        app_id: window.container.app_id.clone(),
+                        class: window
+                            .container
+                            .window_properties
+                            .as_ref()
+                            .and_then(|properties| properties.class.clone()),
+                        launched_by_this_run: window
+                            .container
+                            .pid
+                            .is_some_and(|pid| process_has_env_var(pid, PID_MARKER_VAR, &token)),
+                    };
+                    if verbose {
+                        eprintln!(
+                            "Event mismatch: {:?} {} ({})",
+                            window.change,
+                            describe_unmatched_window(&unmatched),
+                            mismatch
+                        );
+                    }
+                    unmatched_windows.push(unmatched);
+                }
                 continue;
             }
 
@@ -877,7 +964,7 @@ impl SwayAction<'_> {
         // "success", so without this an action whose container closed since
         // it was resolved would send its command successfully and then block
         // for the full --timeout waiting on a confirmation event that can
-        // never arrive, reporting "N sec timeout reached" — pointing the
+        // never arrive, reporting a timeout — pointing the
         // user at --timeout rather than at the closed window. Sway 1.11
         // already errors clearly ("No matching node.") from
         // run_sway_command() below, confirmed live, making this redundant
@@ -974,18 +1061,18 @@ impl SwayAction<'_> {
         // of panicking.
         let deadline = match time::Instant::now().checked_add(self.duration()) {
             Some(deadline) => deadline,
-            None => return Err(format!("{} sec timeout reached", self.duration().as_secs())),
+            None => return Err(event_timeout_message(self.duration())),
         };
         loop {
             let remaining = deadline.saturating_duration_since(time::Instant::now());
             if remaining.is_zero() {
-                return Err(format!("{} sec timeout reached", self.duration().as_secs()));
+                return Err(event_timeout_message(self.duration()));
             }
 
             let event = match event_receiver.recv_timeout(remaining) {
                 Ok(event) => event,
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    return Err(format!("{} sec timeout reached", self.duration().as_secs()));
+                    return Err(event_timeout_message(self.duration()));
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     return Err("Event stream closed unexpectedly".to_string());
@@ -1091,11 +1178,193 @@ impl SwayAction<'_> {
     }
 }
 
+/// An event-confirmed action's timeout. `SwayAction::run()` prefixes it with
+/// the action's own verb, which is what tells several such actions apart.
+fn event_timeout_message(timeout: time::Duration) -> String {
+    format!("no matching window event within {} sec", timeout.as_secs())
+}
+
+/// A launch's timeout, saying as much as the wait observed about why.
+///
+/// The common causes otherwise look identical: a `--app-id`/`--class` that
+/// doesn't match what the application actually reports (it varies with
+/// version, packaging and backend — an XWayland window has no app_id at all),
+/// and a command that never started (Sway's `exec` gives no feedback). So:
+/// rejected windows are named, with the filter to check; with none, a launched
+/// command that's no longer running (`command_running == Some(false)`) is
+/// called out as such; and only a command still running gets the hint that it
+/// may simply be slow. `None` means the marker scan couldn't tell, and adds
+/// nothing.
+fn exec_timeout_message(
+    timeout: time::Duration,
+    app_id_match: &str,
+    class_match: &str,
+    unmatched_windows: &[UnmatchedWindow],
+    command_running: Option<bool>,
+) -> String {
+    let filter = if !app_id_match.is_empty() {
+        format!(" with app_id \"{}\"", app_id_match)
+    } else if !class_match.is_empty() {
+        format!(" with class \"{}\"", class_match)
+    } else {
+        String::new()
+    };
+    let base = format!(
+        "no window{} appeared within {} sec",
+        filter,
+        timeout.as_secs()
+    );
+
+    if !unmatched_windows.is_empty() {
+        let described: Vec<String> = unmatched_windows
+            .iter()
+            .map(|window| format!("({})", describe_unmatched_window(window)))
+            .collect();
+        let noun = if unmatched_windows.len() == 1 {
+            "window"
+        } else {
+            "windows"
+        };
+        return format!(
+            "{}; {} other new {} did {} — check --app-id/--class",
+            base,
+            unmatched_windows.len(),
+            noun,
+            described.join(", ")
+        );
+    }
+
+    match command_running {
+        Some(false) => format!(
+            "{}: the launched command exited without opening a window — check that it is on \
+             PATH in Sway's environment",
+            base
+        ),
+        Some(true) => format!(
+            "{}; the launched command is still running — it may be slow to start (see \
+             --timeout) or not open a window at all",
+            base
+        ),
+        None => base,
+    }
+}
+
+fn describe_unmatched_window(window: &UnmatchedWindow) -> String {
+    let identity = match (&window.app_id, &window.class) {
+        (Some(app_id), _) => format!("app_id \"{}\"", app_id),
+        (None, Some(class)) => format!("class \"{}\"", class),
+        (None, None) => "no app_id or class".to_string(),
+    };
+    let ownership = if window.launched_by_this_run {
+        ", opened by this command"
+    } else {
+        ""
+    };
+    format!("con_id {}, {}{}", window.container_id, identity, ownership)
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::test_support::*;
     use super::super::values::Position;
     use super::*;
+
+    // exec_timeout_message / event_timeout_message
+
+    fn unmatched(container_id: i64, app_id: Option<&str>, class: Option<&str>) -> UnmatchedWindow {
+        UnmatchedWindow {
+            container_id,
+            app_id: app_id.map(str::to_string),
+            class: class.map(str::to_string),
+            launched_by_this_run: false,
+        }
+    }
+
+    #[test]
+    fn exec_timeout_message_names_a_window_the_filter_rejected() {
+        let message = exec_timeout_message(
+            time::Duration::from_secs(2),
+            "notfoot",
+            "",
+            &[UnmatchedWindow {
+                launched_by_this_run: true,
+                ..unmatched(12, Some("foot"), None)
+            }],
+            Some(true),
+        );
+        assert_eq!(
+            message,
+            "no window with app_id \"notfoot\" appeared within 2 sec; 1 other new window did \
+             (con_id 12, app_id \"foot\", opened by this command) — check --app-id/--class"
+        );
+    }
+
+    #[test]
+    fn exec_timeout_message_lists_several_rejected_windows() {
+        let message = exec_timeout_message(
+            time::Duration::from_secs(5),
+            "",
+            "Firefox",
+            &[
+                unmatched(12, Some("foot"), None),
+                unmatched(13, None, Some("XTerm")),
+                unmatched(14, None, None),
+            ],
+            None,
+        );
+        assert_eq!(
+            message,
+            "no window with class \"Firefox\" appeared within 5 sec; 3 other new windows did \
+             (con_id 12, app_id \"foot\"), (con_id 13, class \"XTerm\"), \
+             (con_id 14, no app_id or class) — check --app-id/--class"
+        );
+    }
+
+    #[test]
+    fn exec_timeout_message_says_when_the_command_exited_without_a_window() {
+        let message = exec_timeout_message(time::Duration::from_secs(2), "", "", &[], Some(false));
+        assert_eq!(
+            message,
+            "no window appeared within 2 sec: the launched command exited without opening a \
+             window — check that it is on PATH in Sway's environment"
+        );
+    }
+
+    #[test]
+    fn exec_timeout_message_suggests_slowness_only_while_the_command_still_runs() {
+        let message = exec_timeout_message(time::Duration::from_secs(2), "", "", &[], Some(true));
+        assert!(message.contains("still running"), "{message}");
+        assert!(message.contains("--timeout"), "{message}");
+    }
+
+    #[test]
+    fn exec_timeout_message_adds_nothing_when_the_command_s_state_is_unknown() {
+        assert_eq!(
+            exec_timeout_message(time::Duration::from_secs(3), "foot", "", &[], None),
+            "no window with app_id \"foot\" appeared within 3 sec"
+        );
+    }
+
+    #[test]
+    fn exec_timeout_message_prefers_rejected_windows_over_the_command_s_state() {
+        let message = exec_timeout_message(
+            time::Duration::from_secs(2),
+            "notfoot",
+            "",
+            &[unmatched(12, Some("foot"), None)],
+            Some(false),
+        );
+        assert!(message.contains("check --app-id/--class"), "{message}");
+        assert!(!message.contains("exited"), "{message}");
+    }
+
+    #[test]
+    fn event_timeout_message_names_the_wait_not_the_flag() {
+        assert_eq!(
+            event_timeout_message(time::Duration::from_secs(1)),
+            "no matching window event within 1 sec"
+        );
+    }
 
     // SwayAction::matching_window_change_events
 
