@@ -1467,13 +1467,19 @@ conventions are scoped to it rather than a general `bin/`/`lib/` project layout.
 via the repo-root `pyproject.toml`/`uv.lock` (`uv run scripts/generate-layout-screenshots ...`
 works the same as running it directly, using the same pinned tool versions). `black` (formatter)
 and `ruff` (linter) are dev-only dependencies (`[dependency-groups].dev`, never imported at
-runtime) — both must pass with no findings before committing. Adopting `uv` added `/.venv` to
+runtime) — both must pass with no findings before committing. The `dev` group is never installed
+by default (`[tool.uv] default-groups = []` in `pyproject.toml`), so every command that needs
+`black`/`ruff` — the two below, and both workflows' lint steps — asks for it with
+`uv run --group dev`; a plain `uv run <tool>` for either fails rather than silently installing it,
+and running the script itself never passes `--group dev`. Turning the default off removes nothing
+from an existing environment (`uv run`'s sync is inexact), so run a plain `uv sync` once in a
+checkout that already has the dev tools installed to drop them. Adopting `uv` added `/.venv` to
 `.gitignore` (confirmed with the user, 2026-08-19, per the Git conventions' "never modify
 `.gitignore` without explicit confirmation" rule):
 
 ```shell
-uv run black scripts/generate-layout-screenshots
-uv run ruff check scripts/generate-layout-screenshots
+uv run --group dev black scripts/generate-layout-screenshots
+uv run --group dev ruff check scripts/generate-layout-screenshots
 ```
 
 Formatting and linting only — no `mypy`/`ty` type-checking and no requirement that every function

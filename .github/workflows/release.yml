@@ -78,10 +78,10 @@ jobs:
         uses: astral-sh/setup-uv@v3
 
       - name: black --check
-        run: uv run black --check scripts/generate-layout-screenshots
+        run: uv run --group dev black --check scripts/generate-layout-screenshots
 
       - name: ruff check
-        run: uv run ruff check scripts/generate-layout-screenshots
+        run: uv run --group dev ruff check scripts/generate-layout-screenshots
 
   release:
     needs: check
