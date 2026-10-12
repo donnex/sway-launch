@@ -1087,6 +1087,48 @@ fn mark_applies_the_given_mark() {
 }
 
 #[test]
+fn mark_replaces_existing_marks_and_takes_the_mark_from_another_window() {
+    // Pins the replace semantics README.md's "Mark" section documents:
+    // `--mark` sends a plain `mark`, so it drops the window's other marks,
+    // and a mark another window holds moves rather than being shared.
+    fresh_workspace();
+    let mut connection = connect();
+    let first_mark = "live-sway-test-mark-replace-first";
+    let second_mark = "live-sway-test-mark-replace-second";
+    let (first_id, _first_guard) = launch_foot(&["--mark", first_mark]);
+    let (second_id, _second_guard) = launch_foot(&[]);
+
+    let mark = |container_id: i64, mark: &str| {
+        let output = sway_launch_command()
+            .args(["--con-id", &container_id.to_string(), "--mark", mark])
+            .output()
+            .expect("failed to run sway-launch binary");
+        assert!(
+            output.status.success(),
+            "sway-launch failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+
+    mark(first_id, second_mark);
+    assert_eq!(
+        get_node(&mut connection, first_id).marks,
+        vec![second_mark.to_string()],
+        "a second --mark should replace the window's earlier mark, not add to it"
+    );
+
+    mark(second_id, second_mark);
+    assert_eq!(
+        get_node(&mut connection, second_id).marks,
+        vec![second_mark.to_string()]
+    );
+    assert!(
+        get_node(&mut connection, first_id).marks.is_empty(),
+        "marking another window should take the mark away from the first one"
+    );
+}
+
+#[test]
 fn workspace_moves_window_to_named_workspace() {
     fresh_workspace();
     // Proves the WindowChange::Move assumption documented for --workspace:
