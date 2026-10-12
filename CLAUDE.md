@@ -1932,8 +1932,8 @@ writing it anywhere:
   the maintainer's separate shared-conventions repository, outside this one. This repo carries
   those conventions pasted inline into this file rather than `@import`ed (there is no
   `agent-instructions/` directory here), so the inline sections — Rust/Python/Shell conventions,
-  Scripts, Git, Workflow, CI, Content, Issues — are copies, and must not be edited as if this file
-  were their home:
+  Scripts, Git, Workflow, CI, Changelog, Content, Issues — are copies, and must not be edited as
+  if this file were their home:
   1. Say explicitly that the change is to a shared convention, not a project-specific one.
   2. Copy the current canonical module into the root of this repo as a scratch working copy (if
      one isn't already there), apply the change to it, and leave it untracked — never add or commit
