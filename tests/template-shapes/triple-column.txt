@@ -1,0 +1,5 @@
+workspace template-shape-triple-column
+  splitv
+    33% top
+    33% middle
+    33% bottom

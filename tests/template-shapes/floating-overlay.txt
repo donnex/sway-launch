@@ -1,0 +1,3 @@
+workspace template-shape-floating-overlay
+  main
+  floating overlay

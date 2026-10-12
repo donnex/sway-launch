@@ -1,0 +1,7 @@
+workspace template-shape-master-triple-stack-top
+  splitv
+    30% splith
+      33% stack-left
+      33% stack-middle
+      33% stack-right
+    70% main

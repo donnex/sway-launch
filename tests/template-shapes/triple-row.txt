@@ -1,0 +1,5 @@
+workspace template-shape-triple-row
+  splith
+    33% left
+    33% middle
+    33% right

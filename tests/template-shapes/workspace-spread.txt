@@ -1,0 +1,6 @@
+workspace 1
+  first
+workspace 2
+  second
+workspace 3
+  third

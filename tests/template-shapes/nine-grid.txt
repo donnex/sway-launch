@@ -1,0 +1,14 @@
+workspace template-shape-nine-grid
+  splitv
+    33% splith
+      33% top-left
+      33% top-middle
+      33% top-right
+    33% splith
+      33% middle-left
+      33% middle-middle
+      33% middle-right
+    33% splith
+      33% bottom-left
+      33% bottom-middle
+      33% bottom-right

@@ -1,0 +1,4 @@
+workspace template-shape-dual-column
+  splitv
+    50% top
+    50% bottom

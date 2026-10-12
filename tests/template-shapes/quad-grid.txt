@@ -1,0 +1,8 @@
+workspace template-shape-quad-grid
+  splitv
+    50% splith
+      50% top-left
+      50% top-right
+    50% splith
+      50% bottom-left
+      50% bottom-right

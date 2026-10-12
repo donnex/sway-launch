@@ -1,0 +1,2 @@
+workspace template-shape-floating-centered
+  floating window

@@ -3473,15 +3473,252 @@ fn templates_dir() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")
 }
 
+/// Where each built-in template's recorded shape lives: one
+/// `<template-name>.txt` per file under `templates/` (dual-output.toml
+/// aside), compared against what the template actually builds by
+/// every_shipped_template_resolves_and_launches_successfully.
+fn template_shapes_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("template-shapes")
+}
+
+/// Setting this rewrites the recorded shapes from what the templates build
+/// now, so an intended shape change lands as a reviewed diff to
+/// tests/template-shapes/ instead of either failing or passing silently.
+const UPDATE_TEMPLATE_SHAPES: &str = "UPDATE_TEMPLATE_SHAPES";
+
+/// A tiled subtree reduced to what decides how it looks: each split's
+/// layout and its children in order, each child's share of its parent as a
+/// whole percentage, and each window as its template slot name. Container
+/// ids and pixel sizes are left out, so the result is the same on any
+/// output size and across runs.
+enum TemplateShape {
+    Window(String),
+    Split(String, Vec<(i64, TemplateShape)>),
+}
+
+fn tiled_template_shape(
+    node: &Node,
+    slot_by_container: &std::collections::HashMap<i64, String>,
+) -> Option<TemplateShape> {
+    if node.nodes.is_empty() {
+        if node.node_type == NodeType::Workspace {
+            return None;
+        }
+        return Some(TemplateShape::Window(
+            slot_by_container
+                .get(&node.id)
+                .cloned()
+                .unwrap_or_else(|| format!("unexpected window {:?}", node.app_id)),
+        ));
+    }
+    let mut children: Vec<(i64, TemplateShape)> = node
+        .nodes
+        .iter()
+        .filter_map(|child| {
+            let share = (child.percent.unwrap_or(1.0) * 100.0).round() as i64;
+            tiled_template_shape(child, slot_by_container).map(|shape| (share, shape))
+        })
+        .collect();
+    // A split holding a single child looks exactly like that child, and
+    // whether Sway wraps a window in one is an implementation detail that
+    // can differ between Sway releases, so it's collapsed away here.
+    if children.len() == 1 {
+        return children.pop().map(|(_, shape)| shape);
+    }
+    Some(TemplateShape::Split(
+        format!("{:?}", node.layout).to_lowercase(),
+        children,
+    ))
+}
+
+fn render_tiled_template_shape(
+    shape: &TemplateShape,
+    share: Option<i64>,
+    depth: usize,
+    rendered: &mut String,
+) {
+    use std::fmt::Write;
+    let indent = "  ".repeat(depth);
+    let prefix = share.map(|share| format!("{share}% ")).unwrap_or_default();
+    match shape {
+        TemplateShape::Window(slot) => {
+            let _ = writeln!(rendered, "{indent}{prefix}{slot}");
+        }
+        TemplateShape::Split(layout, children) => {
+            let _ = writeln!(rendered, "{indent}{prefix}{layout}");
+            for (child_share, child) in children {
+                render_tiled_template_shape(child, Some(*child_share), depth + 1, rendered);
+            }
+        }
+    }
+}
+
+fn subtree_contains_any(node: &Node, ids: &std::collections::HashMap<i64, String>) -> bool {
+    ids.contains_key(&node.id)
+        || node
+            .nodes
+            .iter()
+            .chain(node.floating_nodes.iter())
+            .any(|child| subtree_contains_any(child, ids))
+}
+
+fn collect_workspaces<'a>(node: &'a Node, workspaces: &mut Vec<&'a Node>) {
+    if node.node_type == NodeType::Workspace {
+        workspaces.push(node);
+        return;
+    }
+    for child in &node.nodes {
+        collect_workspaces(child, workspaces);
+    }
+}
+
+/// Renders every workspace holding one of a template's windows (usually
+/// just the one it ran on; workspace-spread.toml uses three) as an indented
+/// outline: the tiled tree per `TemplateShape`, then each floating window by
+/// slot name alone. A floating window's geometry is in pixels and depends on
+/// the output's size and the titlebar font, both of which differ between
+/// environments, so it's left to the dedicated floating/width/height/position
+/// tests rather than recorded here.
+fn render_template_shape(
+    tree: &Node,
+    slot_by_container: &std::collections::HashMap<i64, String>,
+) -> String {
+    use std::fmt::Write;
+    let mut workspaces = Vec::new();
+    collect_workspaces(tree, &mut workspaces);
+    workspaces.retain(|workspace| subtree_contains_any(workspace, slot_by_container));
+    workspaces.sort_by(|left, right| left.name.cmp(&right.name));
+
+    let mut rendered = String::new();
+    for workspace in workspaces {
+        let _ = writeln!(
+            rendered,
+            "workspace {}",
+            workspace.name.as_deref().unwrap_or("?")
+        );
+        if let Some(shape) = tiled_template_shape(workspace, slot_by_container) {
+            render_tiled_template_shape(&shape, None, 1, &mut rendered);
+        }
+        for floating in &workspace.floating_nodes {
+            let slot = slot_by_container
+                .get(&floating.id)
+                .cloned()
+                .unwrap_or_else(|| format!("unexpected window {:?}", floating.app_id));
+            let _ = writeln!(rendered, "  floating {slot}");
+        }
+    }
+    rendered
+}
+
+/// Runs a template (a built-in name or a `.toml` path) with one `foot` per
+/// slot on a fresh workspace of its own and returns the shape it built, per
+/// `render_template_shape()`. Asserts the run succeeded and printed every
+/// step's container id, as the plain launch check this replaced did.
+fn launch_template_and_render_shape(
+    connection: &mut Connection,
+    template: &str,
+    name: &str,
+    slot_count: usize,
+    step_count: usize,
+) -> String {
+    connection
+        .run_command("[app_id=foot] kill")
+        .expect("kill should succeed");
+    connection
+        .run_command(format!("workspace template-shape-{name}"))
+        .expect("workspace switch should succeed");
+
+    let apps = vec!["foot"; slot_count].join(",");
+    let output = sway_launch_command()
+        .args([
+            "--template",
+            template,
+            "--apps",
+            &apps,
+            "--timeout",
+            "10",
+            "--json",
+        ])
+        .output()
+        .unwrap_or_else(|error| panic!("failed to run sway-launch for {template}: {error}"));
+    assert!(
+        output.status.success(),
+        "{template} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("{template} printed invalid --json output: {error}"));
+    // Total step count (slot steps + target_id steps, e.g.
+    // retarget-by-slot.toml's retarget step) is how many container ids
+    // --apps reports — --apps only sizes the *slot* count.
+    let container_ids = parsed["container_ids"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{template} --json output lacks container_ids: {parsed}"));
+    assert_eq!(
+        container_ids.len(),
+        step_count,
+        "{template} should report one container id per step, got {parsed}"
+    );
+    let slot_by_container: std::collections::HashMap<i64, String> = parsed["containers"]
+        .as_object()
+        .unwrap_or_else(|| panic!("{template} --json output lacks containers: {parsed}"))
+        .iter()
+        .map(|(slot, id)| {
+            let id = id
+                .as_i64()
+                .unwrap_or_else(|| panic!("{template} reported a non-id for {slot}: {id}"));
+            (id, slot.clone())
+        })
+        .collect();
+    assert_eq!(
+        slot_by_container.len(),
+        slot_count,
+        "{template} should name one container per slot, got {parsed}"
+    );
+
+    // See quad_terminals_layout_launches_four_windows_in_a_grid's comment on
+    // why geometry needs a moment to settle after sway-launch exits.
+    std::thread::sleep(Duration::from_millis(300));
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let shape = render_template_shape(&tree, &slot_by_container);
+
+    connection
+        .run_command("[app_id=foot] kill")
+        .expect("kill should succeed");
+    shape
+}
+
+fn recorded_template_shape(name: &str) -> Option<String> {
+    std::fs::read_to_string(template_shapes_dir().join(format!("{name}.txt"))).ok()
+}
+
+fn focused_workspace_name(connection: &mut Connection) -> String {
+    connection
+        .get_workspaces()
+        .expect("get_workspaces should succeed")
+        .into_iter()
+        .find(|workspace| workspace.focused)
+        .map(|workspace| workspace.name)
+        .expect("some workspace should be focused")
+}
+
 #[test]
 fn every_shipped_template_resolves_and_launches_successfully() {
     // Unlike template_apps_resolve_to_real_windows above (a hand-written,
-    // minimal template), this drives the actual files under
-    // templates/ — nothing else in the test suite would catch a
-    // shipped template that's silently broken. dual-output.toml is excluded
-    // here since it needs a second output and real (non-placeholder) output
-    // names to run at all; see dual_output_template_moves_windows_to_separate_outputs.
+    // minimal template), this drives the actual files under templates/ and
+    // compares the shape each one builds — layout, child order, relative
+    // sizes, which slot sits where — against tests/template-shapes/. Exiting
+    // 0 alone says nothing about a template's shape: a reordered action, a
+    // step that silently no-ops, or an edited split all still exit 0.
+    // Rerun with UPDATE_TEMPLATE_SHAPES=1 to record an intended change.
+    // dual-output.toml is excluded since it needs a second output and real
+    // (non-placeholder) output names to run at all; see
+    // dual_output_template_moves_windows_to_separate_outputs.
     let mut connection = connect();
+    let original_workspace = focused_workspace_name(&mut connection);
+    let updating = std::env::var_os(UPDATE_TEMPLATE_SHAPES).is_some();
     let mut paths: Vec<_> = std::fs::read_dir(templates_dir())
         .expect("templates/ should be readable")
         .filter_map(Result::ok)
@@ -3497,57 +3734,74 @@ fn every_shipped_template_resolves_and_launches_successfully() {
         paths
     );
 
-    for path in paths {
-        connection
-            .run_command("[app_id=foot] kill")
-            .expect("kill should succeed");
-
-        let contents = std::fs::read_to_string(&path)
+    let mut checked_names = std::collections::HashSet::new();
+    let mut mismatches = Vec::new();
+    for path in &paths {
+        let name = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .expect("template file names should be UTF-8")
+            .to_string();
+        let contents = std::fs::read_to_string(path)
             .unwrap_or_else(|error| panic!("failed to read {path:?}: {error}"));
         let slot_count = contents
             .lines()
             .filter(|line| line.starts_with("slot = "))
             .count();
         assert!(slot_count > 0, "{path:?} should declare at least one slot");
-        let apps = vec!["foot"; slot_count].join(",");
-        // Total step count (slot steps + target_id steps, e.g.
-        // retarget-by-slot.toml's retarget step) is how many container id
-        // lines --apps actually prints — --apps only sizes the *slot* count.
         let step_count = contents.matches("[[step]]").count();
 
-        let output = sway_launch_command()
-            .args([
-                "--template",
-                path.to_str().unwrap(),
-                "--apps",
-                &apps,
-                "--timeout",
-                "10",
-            ])
-            .output()
-            .unwrap_or_else(|error| panic!("failed to run sway-launch for {path:?}: {error}"));
-        assert!(
-            output.status.success(),
-            "{path:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let ids: Vec<&str> = stdout.lines().collect();
-        assert_eq!(
-            ids.len(),
+        let shape = launch_template_and_render_shape(
+            &mut connection,
+            path.to_str().unwrap(),
+            &name,
+            slot_count,
             step_count,
-            "{path:?} should print one container id per step, got {stdout:?}"
         );
-        for id in ids {
-            id.parse::<i64>()
-                .unwrap_or_else(|_| panic!("{path:?} printed a non-id line: {id:?}"));
+        if updating {
+            std::fs::create_dir_all(template_shapes_dir())
+                .expect("tests/template-shapes/ should be creatable");
+            std::fs::write(template_shapes_dir().join(format!("{name}.txt")), &shape)
+                .unwrap_or_else(|error| panic!("failed to record {name}'s shape: {error}"));
+        } else {
+            match recorded_template_shape(&name) {
+                Some(recorded) if recorded == shape => {}
+                Some(recorded) => mismatches.push(format!(
+                    "{name} built a different shape than recorded.\n\
+                     recorded:\n{recorded}built:\n{shape}"
+                )),
+                None => mismatches.push(format!(
+                    "{name} has no recorded shape in tests/template-shapes/.\n\
+                     built:\n{shape}"
+                )),
+            }
         }
+        checked_names.insert(name);
     }
 
     connection
-        .run_command("[app_id=foot] kill")
-        .expect("kill should succeed");
+        .run_command(format!("workspace {original_workspace}"))
+        .expect("workspace switch should succeed");
+
+    let stale: Vec<_> = std::fs::read_dir(template_shapes_dir())
+        .expect("tests/template-shapes/ should be readable")
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            let stem = path.file_stem()?.to_str()?.to_string();
+            (!checked_names.contains(&stem)).then_some(path)
+        })
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "recorded shapes with no matching template under templates/: {stale:?}"
+    );
+    assert!(
+        mismatches.is_empty(),
+        "{}\nIf a change is intended, rerun with {UPDATE_TEMPLATE_SHAPES}=1 and review the \
+         diff to tests/template-shapes/.",
+        mismatches.join("\n")
+    );
 }
 
 #[test]
@@ -3557,40 +3811,21 @@ fn builtin_template_name_resolves_and_launches_without_a_toml_extension() {
     // resolve_template_contents()), driving the same embedded content
     // every_shipped_template_resolves_and_launches_successfully above
     // drives from disk — proves the bare-name lookup finds the real
-    // embedded quad-grid template and genuinely launches real windows via
-    // it, not just that resolve_template_contents() parses successfully.
+    // embedded quad-grid template and builds the same shape from it, not
+    // just that resolve_template_contents() parses successfully.
     let mut connection = connect();
-    connection
-        .run_command("[app_id=foot] kill")
-        .expect("kill should succeed");
+    let original_workspace = focused_workspace_name(&mut connection);
 
-    let output = sway_launch_command()
-        .args([
-            "--template",
-            "quad-grid",
-            "--apps",
-            "foot,foot,foot,foot",
-            "--timeout",
-            "10",
-        ])
-        .output()
-        .expect("failed to run sway-launch binary");
-    assert!(
-        output.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
+    let shape = launch_template_and_render_shape(&mut connection, "quad-grid", "quad-grid", 4, 4);
+
+    connection
+        .run_command(format!("workspace {original_workspace}"))
+        .expect("workspace switch should succeed");
+    assert_eq!(
+        Some(shape),
+        recorded_template_shape("quad-grid"),
+        "the built-in quad-grid should build the shape recorded for templates/quad-grid.toml"
     );
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let ids: Vec<i64> = stdout
-        .lines()
-        .map(|line| line.parse().expect("each line should be a container id"))
-        .collect();
-    assert_eq!(ids.len(), 4, "quad-grid has 4 slots");
-
-    connection
-        .run_command("[app_id=foot] kill")
-        .expect("kill should succeed");
 }
 
 fn count_app_id_windows(node: &Node, app_id: &str) -> usize {

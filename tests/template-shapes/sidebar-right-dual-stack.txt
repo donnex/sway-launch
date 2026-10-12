@@ -1,0 +1,6 @@
+workspace template-shape-sidebar-right-dual-stack
+  splith
+    75% main
+    25% splitv
+      75% sidebar-top
+      25% sidebar-bottom

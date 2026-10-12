@@ -1,0 +1,4 @@
+workspace template-shape-sidebar-top
+  splitv
+    25% topbar
+    75% main

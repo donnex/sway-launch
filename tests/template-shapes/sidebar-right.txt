@@ -1,0 +1,4 @@
+workspace template-shape-sidebar-right
+  splith
+    75% main
+    25% sidebar

@@ -1,0 +1,14 @@
+workspace template-shape-eight-grid-vertical
+  splitv
+    25% splith
+      50% row1-left
+      50% row1-right
+    25% splith
+      50% row2-left
+      50% row2-right
+    25% splith
+      50% row3-left
+      50% row3-right
+    25% splith
+      50% row4-left
+      50% row4-right
