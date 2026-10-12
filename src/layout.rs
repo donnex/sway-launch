@@ -351,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn to_sway_launch_con_id_step_ignores_command() {
+    fn to_sway_launch_con_id_step_targets_that_container() {
         let mut step = minimal_step();
         step.command = None;
         step.con_id = Some(42);

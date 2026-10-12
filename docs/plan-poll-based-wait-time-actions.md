@@ -5,6 +5,14 @@
 instead of always blind-sleeping `2 * --wait-time`. `Sticky` was added as a seventh afterwards, on
 the same mechanism.
 
+**This is a historical record, not a reference.** It records why the poll matchers look the way they
+do, and the code no longer points here for how they work: CLAUDE.md's "Core model" section and the
+code's own doc comments are the maintained description. Known places where the body below no longer
+matches the code, beyond the file paths and connection handling covered next: `Size::Percent` now
+makes `polls()` return plain `false` rather than an `Option`; the per-function coverage exemption
+list it mentions was replaced by a per-module rule; and `position_matches()` also falls back to
+`rect.x`/`rect.y` for a fullscreen window, whose `deco_rect` stays zeroed.
+
 **File layout (2026-09-03):** `src/sway_launch.rs` was split into modules, so the code this document
 describes now lives in `src/sway_launch/confirmation.rs` (the `poll_*`/`run_*` machinery),
 `src/sway_launch/tree.rs` (`width_matches()`/`height_matches()`/`expected_position()` and the other

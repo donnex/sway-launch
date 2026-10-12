@@ -68,13 +68,14 @@ below) plus five integration test files:
   shell intact) and a newline/CR/NUL anywhere, since Sway rewrites those to `;` before it looks at
   quotes. `run_wait_matching_exec_event()` backs this up by sending the `exec` through
   `ipc.rs`'s `run_single_sway_command()`, which treats a reply with more than one outcome as an
-  error, so a split that somehow got past the validator can't report success. A fifth,
-  `pub fn require_non_blank`,
-  is the generic "this named field must not be empty or whitespace-only" check the layout/template
+  error, so a split that somehow got past the validator can't report success.
+  `validate_non_blank_argument` is the CLI-side check for `--app-id`/`--class`: those values are
+  only ever compared against a window, never interpolated into a command, so it rejects nothing but
+  a blank value. `pub fn require_non_blank` is its schema-side counterpart, the generic "this named field must not be empty or whitespace-only" check the layout/template
   schemas apply to free-form identifiers (`id`, `target_id`, `slot`, a binding's `command`, a
   template's `description`/`category`) that have no dedicated format of their own.
 - `src/sway_launch.rs` plus `src/sway_launch/` — all the core logic (see below), plus the shared
-  validators above. The file itself is a 98-line façade: module declarations, the public surface
+  validators above. The file itself is a roughly 100-line façade: module declarations, the public surface
   the three files above use, and the poll-timing constants shared between modules. Everything else
   lives in one of nine submodules, layered so that what needs a live compositor is confined to two
   of them:
@@ -347,8 +348,10 @@ by `validate_size_argument_accepts_the_largest_representable_pixel_value`/
 
 `sway_command()` becomes each variant's serialization point (`Size`/`Position` both
 implement `Display`, rendering the identical `<n>px`/`<n>ppt`/`center`/`<x>,<y>` text the CLI/TOML
-side accepts, so `SwayAction::Display`'s human-readable line and the actual Sway command text stay
-in sync by construction rather than by two independently-written format strings), and
+side accepts; for `Size`, `sway_command_verb()` interpolates that same `Display`, so the
+human-readable line and the actual Sway command text stay in sync by construction. `Position`
+can't: Sway's `move position` takes space-separated `<x> <y>`, not the CLI's `<x>,<y>`, so
+`sway_command_verb()` formats it with its own match, pinned by `action.rs`'s tests), and
 `SwayAction::poll_matches()`'s `Height`/`Width` arms match directly on `Size::Pixels`/`Size::Percent`
 instead of calling the now-removed `parse_pixel_value()` on every poll iteration.
 `LayoutStep`/`TemplateStep` themselves deliberately stayed `Option<String>` — they're TOML-facing
@@ -666,7 +669,7 @@ stated goal (safer internals, less repeated parsing) to actually land.
     `split_confirms_via_poll_well_under_a_large_wait_time` (a real parent-layout change, confirmed
     well under `2 * --wait-time`) and `split_is_idempotent_and_still_confirms_promptly_when_already_set`.
   - **`Height`/`Width`** — matches directly on the held `Size`: `Size::Percent` opts out of polling
-    entirely (`None`, not `Some(false)`) since there's no pixel figure to poll for without also
+    entirely (`polls()` returns `false`) since there's no pixel figure to poll for without also
     resolving the reference dimension it's a percentage of, while `Size::Pixels` opts in
     unconditionally.
     `height_matches()`/`width_matches()` then compare the container's own `rect`/`deco_rect`/
@@ -1020,14 +1023,16 @@ An external review suggested expanding `--json`'s success shapes beyond a bare i
 no version has ever shipped (`Cargo.toml` is still `0.1.0`, no `v*` tags exist), there was no
 existing consumer to stay compatible with, so this was a free redesign rather than an additive one.
 
-`SwayLaunch::run()` itself now returns `Result<RunOutcome, String>` instead of `Result<i64,
-String>` — `RunOutcome { container_id: i64, actions: Vec<ActionRecord> }`. Because `run()` still
+`SwayLaunch::run()` itself now returns `Result<RunOutcome, RunError>` instead of `Result<i64,
+String>` — `RunOutcome { container_id: i64, actions: Vec<ActionRecord>, launch_ownership }`
+(`launch_ownership` is covered under "`--rollback-on-error`" below). Because `run()` still
 stops and returns `Err` at the first action that fails (unchanged), a successful `Ok(RunOutcome)`'s
 `actions` is always the *complete* planned list, never a partial one — a failed action never
 produces an `ActionRecord` at all; it's `run()`'s `Err` instead, exactly as before this existed.
 Plain (non-`--json`) output is unaffected — still just the bare `container_id`.
 
-**Per-action status (`changed`/`already_satisfied`/`skipped`), not just present-or-absent.** A
+**Per-action status (`changed`/`already_satisfied`/`unconfirmed`/`skipped`), not just
+present-or-absent.** A
 later external review pointed out that the first version of this schema (a single invocation's
 `--json` output as `{"container_id": N, "actions": [...], "skipped": [...]}`, `actions` a bare
 `Vec<String>` of `sway_command_verb()` text) couldn't distinguish an action that actually changed
@@ -1035,7 +1040,8 @@ something from one `already_at_target()` (see above) silently no-oped — both l
 the `"actions"` array, and a skip lived in a separate `"skipped"` list with no way to tell where it
 would have fallen relative to the other actions. Fixed by unifying both into one `Vec<ActionRecord>`
 (`ActionRecord { action: String, status: ActionStatus }`, `enum ActionStatus { Changed,
-AlreadySatisfied, Skipped { reason: &'static str } }`), replacing `RunOutcome.actions: Vec<String>`
+AlreadySatisfied, Unconfirmed, Skipped { reason: &'static str } }` — `Unconfirmed` came later, see
+below), replacing `RunOutcome.actions: Vec<String>`
 and dropping `RunOutcome.skipped` entirely — its contents fold into the same list instead.
 `SwayAction::run()`'s own return type changed from `Result<i64, String>` to one carrying an
 `ActionOutcome` (today `Result<ActionOutcome, RunError>`) specifically so `run()` can read back distinctions the
@@ -1054,9 +1060,9 @@ review's point, and a fair one. Covered live on both sides by
 `height_and_width_fall_back_gracefully_when_solo_window_clamps_the_resize` (`"unconfirmed"`),
 which run the same command against a window with and without a sibling. `run()` builds each
 `ActionRecord` directly from a `PlannedAction` (see above) — `Run` becomes `Changed`/
-`AlreadySatisfied` depending on that bool, `Skip` becomes `Skipped { reason }` directly, with no
+`AlreadySatisfied`/`Unconfirmed` from the `ActionOutcome` it returned, `Skip` becomes `Skipped { reason }` directly, with no
 `.run()` call at all. `main.rs`'s `action_record_json()` renders one record as
-`{"action": ..., "status": "changed"|"already_satisfied"|"skipped"[, "reason": ...]}` — `"reason"`
+`{"action": ..., "status": "changed"|"already_satisfied"|"unconfirmed"|"skipped"[, "reason": ...]}` — `"reason"`
 only present for `"skipped"`. A single invocation's `--json` output is now `{"container_id": N,
 "actions": [...]}` (`actions_json()`).
 
@@ -1138,7 +1144,8 @@ object.
 ### `--validate`
 
 Parses and validates a `--layout`/`--template` file without launching anything or touching Sway
-IPC, exiting 0 (`valid: N step(s)`, or `{"valid": true, "steps": N}` under `--json`) or 1 (the same
+IPC, exiting 0 (`valid: <source> (N step(s))`, or `{"source": ..., "steps": N, "valid": true}`
+under `--json`, `<source>` echoing the `--layout`/`--template` argument as given) or 1 (the same
 `step N: <message>`/structured-`--json`-error shape every other runtime failure uses). Requires
 `--layout` or `--template` (the manual `Args::command().error(...)` check mirrors
 `--rollback-on-error`'s existing one exactly, same reasoning: this needs to fire in `main()`'s
@@ -1332,11 +1339,12 @@ has, minus `target_id` (which only makes sense on a `TemplateStep`, referencing 
 `template::resolve()` turns each `slot` step into a `LayoutStep` with `id` set to the slot name and
 the binding's target fields filled in, and each `target_id` step into a `LayoutStep` with no `id`
 and only `target_id` set — deliberately producing an ordinary `layout::LayoutStep` in both cases, so
-two mechanisms fall out for free without any template-specific code: a `target_id` step can
-reference an earlier `slot` step via the **existing** `id`/`target_id`/`resolved_ids` mechanism
-above (since the slot name *is* the id), and two `TemplateStep`s accidentally sharing a `slot` name
-trip `run_steps()`'s **existing** "id already used by an earlier step" check, rather than needing a
-separate duplicate-slot check in `resolve()` itself.
+a `target_id` step can reference an earlier `slot` step via the **existing**
+`id`/`target_id`/`resolved_ids` mechanism above (since the slot name *is* the id), with no
+template-specific code. Two `TemplateStep`s sharing a `slot` name would also trip `run_steps()`'s
+"id already used by an earlier step" check, but `resolve()` rejects that first with its own
+`template: slot "..." is used more than once` error, which names the authoring mistake rather than
+a resolved-step id collision (see `resolve()`'s doc comment).
 
 **Declined (2026-09-03): giving `TemplateStep` its own optional `id`, defaulting to the slot name.**
 An external review read the identity coupling above as a schema-evolution risk — a slot is an
@@ -2553,9 +2561,11 @@ Both workflows declare `GITHUB_TOKEN` permissions explicitly rather than inherit
 default, which on a repo created before GitHub changed that default (or with it set permissively)
 hands every job a read/write token it has no use for. `check.yml` declares `contents: read` at
 workflow level, with only its `audit` job re-declaring its own (`issues: write`, which the audit
-action needs to file advisories); `release.yml` does the same, scoping `contents: write` to its
-`publish` job alone so neither its `check` nor its `build` job can write. Any new job needing more
-than read access should declare it on the job, not widen the workflow-level grant.
+action needs to file advisories). `release.yml` has no workflow-level block; instead every job
+declares its own, `contents: read` on `check` and `build` and `contents: write` on the `publish`
+job alone, so neither of the others can write. Any new job needing more than read access should
+declare it on the job, not widen a workflow-level grant — and a new `release.yml` job must declare
+its permissions itself, since there is no workflow-level default there to fall back on.
 
 Every third-party action in both workflows is pinned to a full commit SHA with its tag in a
 trailing comment (`uses: actions/checkout@<sha> # v7.0.1`), never a movable tag or branch, so a

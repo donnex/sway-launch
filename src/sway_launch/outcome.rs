@@ -125,10 +125,10 @@ pub struct UnmatchedWindow {
 /// a skipped action was never turned into a real `SwayAction` to have one).
 /// Previously a skip was visible only via a `--verbose` log line or a
 /// separate `"skipped"` field; folding both into one `actions` list,
-/// alongside the `Changed`/`AlreadySatisfied` distinction
-/// `SwayAction::already_at_target()` already computed internally but
-/// discarded, is what makes a `--json` caller able to tell all three
-/// outcomes apart in their actual run order.
+/// alongside the `Changed`/`AlreadySatisfied`/`Unconfirmed` distinction
+/// `SwayAction::run()` already computed internally (`ActionOutcome`) but
+/// used to discard, is what makes a `--json` caller able to tell every
+/// outcome apart in its actual run order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActionRecord {
     pub action: String,

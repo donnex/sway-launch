@@ -273,7 +273,7 @@ fn layout_validate_json_error_output_is_a_structured_object() {
 }
 
 #[test]
-fn layout_json_output_is_a_single_array() {
+fn layout_json_output_is_a_single_object() {
     let path = TempToml::write(
         "json-output",
         "[[step]]\ncon_id = 42\n\n[[step]]\ncon_id = 91\n",

@@ -4,9 +4,9 @@
 //! compositor, how long to wait for it, how to phrase a command safely and how
 //! to report a failure — but nothing about what any particular command means.
 //! Everything here needs a live compositor, which is why it is exempt from the
-//! coverage target (see CLAUDE.md's Rust conventions); the exceptions are
-//! `preferred_socket_path()` and the three pure helpers at the bottom, which
-//! are unit-tested.
+//! coverage target (see CLAUDE.md's Rust conventions); the exceptions are the
+//! pure helpers `preferred_socket_path()`, `ipc_error()`,
+//! `first_outcome_error()` and `quote_sway_string()`, which are unit-tested.
 
 use std::{fmt, time};
 use swayipc::{Connection, EventStream, EventType};

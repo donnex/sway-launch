@@ -160,7 +160,8 @@ pub(super) fn node_by_id(connection: &mut Connection, container_id: i64) -> Opti
 }
 
 /// Whether `container_id`'s window is currently positioned where `position`
-/// (`"center"` or `"<x>,<y>"`) requests. Never propagates a `None`/error —
+/// (`Position::Center` or `Position::Coordinates`) requests. Never propagates
+/// a `None`/error —
 /// any failure to read the tree/outputs, or to resolve an expected
 /// position at all (e.g. `container_id` not found, or not on a known
 /// output), folds into `false` ("not confirmed yet"), consistent with
