@@ -136,7 +136,7 @@ fn layout_dry_run_json_output_is_a_structured_steps_array() {
     let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
     assert_eq!(
         stdout.trim(),
-        "{\"steps\":[{\"actions\":[\"focus\"],\"target\":\"target existing container\"}]}"
+        "{\"steps\":[{\"actions\":[{\"command\":\"focus\",\"kind\":\"focus\"}],\"target\":\"target existing container\"}]}"
     );
 }
 

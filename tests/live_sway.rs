@@ -202,7 +202,7 @@ fn assert_new_column_skips_a_lone_child(
     assert_eq!(
         json["actions"],
         serde_json::json!([{
-            "action": "new_column",
+            "kind": "new_column",
             "status": "skipped",
             "reason": "trailing_workspace_edge",
         }]),
@@ -1525,7 +1525,7 @@ fn scratchpad_hides_a_window_currently_shown_from_the_scratchpad() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains(r#"{"action":"move scratchpad","status":"changed"}"#),
+        stdout.contains(r#"{"command":"move scratchpad","kind":"scratchpad","status":"changed"}"#),
         "expected move scratchpad to report changed, got: {stdout}"
     );
 
@@ -1626,7 +1626,7 @@ fn new_column_does_not_relocate_a_solo_window_to_a_different_output() {
     assert_eq!(
         json["actions"],
         serde_json::json!([{
-            "action": "new_column",
+            "kind": "new_column",
             "status": "skipped",
             "reason": "trailing_workspace_edge",
         }]),
@@ -4857,8 +4857,12 @@ fn json_output_lists_the_actions_that_actually_ran() {
     assert_eq!(
         json["actions"],
         serde_json::json!([
-            { "action": "floating enable", "status": "changed" },
-            { "action": "mark \"live-sway-test-json-actions\"", "status": "changed" },
+            { "kind": "floating", "command": "floating enable", "status": "changed" },
+            {
+                "kind": "mark",
+                "command": "mark \"live-sway-test-json-actions\"",
+                "status": "changed",
+            },
         ]),
         "actions should list what actually ran, in order, with a changed status: {json:?}"
     );
@@ -4894,7 +4898,11 @@ fn json_output_reports_already_satisfied_when_re_applying_an_unchanged_state() {
         serde_json::from_str(stdout.trim()).expect("--json output should be valid JSON");
     assert_eq!(
         json["actions"],
-        serde_json::json!([{ "action": "floating enable", "status": "already_satisfied" }]),
+        serde_json::json!([{
+            "kind": "floating",
+            "command": "floating enable",
+            "status": "already_satisfied",
+        }]),
         "re-applying an already-floating state should report already_satisfied: {json:?}"
     );
 }

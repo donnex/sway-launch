@@ -67,6 +67,36 @@ pub(super) enum ActionKind<'a> {
     Scratchpad,
 }
 
+impl ActionKind<'_> {
+    /// The stable, machine-readable name of this kind: the CLI flag that
+    /// produces it, in `snake_case` (`"new_column"` for `--new-column`).
+    ///
+    /// This is `--json`'s `"kind"` field, and it exists so a caller can
+    /// identify an action without parsing Sway command text: the command
+    /// carries user data (a mark, a size) and Sway quoting, and changes
+    /// whenever its rendering does, while this never does. A skipped action
+    /// reports the same name, since a skip is decided per kind before any
+    /// `SwayAction` exists to render a command.
+    pub(super) fn flag_name(&self) -> &'static str {
+        match self {
+            ActionKind::Split(_) => "split",
+            ActionKind::Floating => "floating",
+            ActionKind::Sticky => "sticky",
+            ActionKind::Fullscreen => "fullscreen",
+            ActionKind::Focus => "focus",
+            ActionKind::NewColumn => "new_column",
+            ActionKind::NewRow => "new_row",
+            ActionKind::Workspace(_) => "workspace",
+            ActionKind::Output(_) => "output",
+            ActionKind::Mark(_) => "mark",
+            ActionKind::Height(_) => "height",
+            ActionKind::Width(_) => "width",
+            ActionKind::Position(_) => "position",
+            ActionKind::Scratchpad => "scratchpad",
+        }
+    }
+}
+
 impl fmt::Display for ExecAction<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
@@ -187,6 +217,11 @@ impl<'a> SwayAction<'a> {
             self.container_id,
             self.sway_command_verb()
         )
+    }
+
+    /// This action's stable kind name — see `ActionKind::flag_name()`.
+    pub fn kind_name(&self) -> &'static str {
+        self.kind.flag_name()
     }
 
     /// The `swaymsg` command *without* the `[con_id=N]` target prefix —

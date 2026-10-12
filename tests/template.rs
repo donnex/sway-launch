@@ -220,7 +220,7 @@ fn template_dry_run_json_output_is_a_structured_steps_array() {
     let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
     assert_eq!(
         stdout.trim(),
-        "{\"steps\":[{\"actions\":[\"focus\"],\"target\":\"launch code\"}]}"
+        "{\"steps\":[{\"actions\":[{\"command\":\"focus\",\"kind\":\"focus\"}],\"target\":\"launch code\"}]}"
     );
 }
 

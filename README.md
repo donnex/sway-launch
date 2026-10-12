@@ -884,11 +884,14 @@ Confirmed via poll (container id: 437)
 ### JSON output
 
 Print the result as a JSON object instead of a bare container id, for scripts that want structured
-output. `actions` lists every planned action, in order, each as `{"action": ..., "status": ...}`:
+output. `actions` lists every planned action, in order, each as `{"kind": ..., "command": ...,
+"status": ...}`:
 
-- `"action"` is the same text `--dry-run` would have printed for that action (its Sway command
-  verb), or, for a skipped action, the short flag name that would have produced it (e.g.
-  `"new_column"`) — a skipped action was never actually turned into a runnable Sway command.
+- `"kind"` identifies the action by the flag that produced it, in `snake_case` (`"new_column"` for
+  `--new-column`, `"mark"` for `--mark`, `"height"` for `--height`, ...) — the same whether the
+  action ran or was skipped. Match on this field: it never carries your values or Sway syntax.
+- `"command"` is the Sway command the action sent, the same text `--dry-run` prints for it (e.g.
+  `"move right"`, `"mark \"pinned\""`). It's absent for a skipped action, which never ran one.
 - `"status"` is one of:
   - `"changed"` — the action ran and actually changed something.
   - `"already_satisfied"` — the window was already in the target state (already floating, already
@@ -909,7 +912,7 @@ output. `actions` lists every planned action, in order, each as `{"action": ...,
 
 ```shell
 $ sway-launch --json --floating --mark pinned foot
-{"actions":[{"action":"floating enable","status":"changed"},{"action":"mark \"pinned\"","status":"changed"}],"container_id":437}
+{"actions":[{"command":"floating enable","kind":"floating","status":"changed"},{"command":"mark \"pinned\"","kind":"mark","status":"changed"}],"container_id":437}
 ```
 
 For `--layout`/`--template`, `container_ids` lists every step's container id positionally,
@@ -919,7 +922,7 @@ same name) to its container id — steps without a name only appear in `containe
 
 ```shell
 $ sway-launch --template quad-grid --apps foot,foot,code,foot --json
-{"actions":[{"action":"splith","status":"changed","step":1},{"action":"splitv","status":"changed","step":2},{"action":"move down","status":"changed","step":3},{"action":"splith","status":"changed","step":3}],"container_ids":[437,438,439,440],"containers":{"bottom-left":439,"bottom-right":440,"top-left":437,"top-right":438}}
+{"actions":[{"command":"splith","kind":"split","status":"changed","step":1},{"command":"splitv","kind":"split","status":"changed","step":2},{"command":"move down","kind":"new_row","status":"changed","step":3},{"command":"splith","kind":"split","status":"changed","step":3}],"container_ids":[437,438,439,440],"containers":{"bottom-left":439,"bottom-right":440,"top-left":437,"top-right":438}}
 ```
 
 This also applies to errors — a failure prints a JSON object to stderr instead of a plain-text
@@ -1007,7 +1010,8 @@ $ sway-launch --template master-triple-stack --apps code,foot,foot,foot --dry-ru
 Every line is container-id-free by design: for a fresh command, there's no real window yet to name
 one for; for `--con-id`/`--existing`, showing the id on some lines and not others would be an
 inconsistent preview. `--json` prints a structured `{"steps": [{"target": "...", "actions":
-[...]}, ...]}` object instead.
+[{"kind": "...", "command": "..."}, ...]}, ...]}` object instead, each action carrying the same
+`kind`/`command` pair a real run's [JSON output](#json-output) reports.
 
 The preview is statically planned, not a guaranteed prediction of what a real run will do: `move
 right`/`move down` (`--new-column`/`--new-row`) always show as planned here, even on a multi-monitor

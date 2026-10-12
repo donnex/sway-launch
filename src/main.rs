@@ -488,10 +488,13 @@ fn exit_on_write_failure(error: &io::Error) -> ! {
 }
 
 /// Renders one `ActionRecord` as `--json`'s per-action object:
-/// `{"action": ..., "status":
-/// "changed"|"already_satisfied"|"unconfirmed"|"skipped"}`, with a `"reason"`
-/// field added only for `"skipped"` (the same machine-readable
-/// `SkippedAction.reason` identifier this project has always used, not prose).
+/// `{"kind": ..., "command": ..., "status":
+/// "changed"|"already_satisfied"|"unconfirmed"|"skipped"}`. `"kind"` is the
+/// action's stable flag name (`"new_column"`, `"mark"`), the field to match
+/// on; `"command"` is the Sway command text it ran, absent for a skip, which
+/// never rendered one. A `"reason"` field is added only for `"skipped"` (the
+/// same machine-readable `SkippedAction.reason` identifier this project has
+/// always used, not prose).
 ///
 /// `"unconfirmed"` is deliberately its own status rather than folded into
 /// `"changed"`: the command was sent and the wait elapsed, but the change was
@@ -499,25 +502,20 @@ fn exit_on_write_failure(error: &io::Error) -> ! {
 /// chaining actions on the assumption the previous one took effect is exactly
 /// who needs to be able to tell.
 fn action_record_json(record: &sway_launch::ActionRecord) -> serde_json::Value {
-    match record.status {
-        sway_launch::ActionStatus::Changed => serde_json::json!({
-            "action": record.action,
-            "status": "changed",
-        }),
-        sway_launch::ActionStatus::AlreadySatisfied => serde_json::json!({
-            "action": record.action,
-            "status": "already_satisfied",
-        }),
-        sway_launch::ActionStatus::Unconfirmed => serde_json::json!({
-            "action": record.action,
-            "status": "unconfirmed",
-        }),
-        sway_launch::ActionStatus::Skipped { reason } => serde_json::json!({
-            "action": record.action,
-            "status": "skipped",
-            "reason": reason,
-        }),
+    let status = match record.status {
+        sway_launch::ActionStatus::Changed => "changed",
+        sway_launch::ActionStatus::AlreadySatisfied => "already_satisfied",
+        sway_launch::ActionStatus::Unconfirmed => "unconfirmed",
+        sway_launch::ActionStatus::Skipped { .. } => "skipped",
+    };
+    let mut value = serde_json::json!({ "kind": record.kind, "status": status });
+    if let Some(command) = &record.command {
+        value["command"] = serde_json::json!(command);
     }
+    if let sway_launch::ActionStatus::Skipped { reason } = record.status {
+        value["reason"] = serde_json::json!(reason);
+    }
+    value
 }
 
 /// Renders a single invocation's `RunOutcome.actions` as `--json`'s
@@ -735,12 +733,20 @@ fn join_ids(ids: &[i64]) -> String {
 }
 
 /// One step's `--dry-run` preview: its target description plus every
-/// planned action's verb, in order. Shared representation for both the
-/// direct-CLI path and `--layout`/`--template`'s `run_steps_dry_run()`, so
-/// both print identically and share one JSON shape.
+/// planned action's kind and command, in order. Shared representation for
+/// both the direct-CLI path and `--layout`/`--template`'s
+/// `run_steps_dry_run()`, so both print identically and share one JSON shape.
 struct DryRunStep {
     target: String,
-    actions: Vec<String>,
+    actions: Vec<DryRunAction>,
+}
+
+/// One planned action in a `--dry-run` preview: the same `kind`/`command`
+/// pair a real run's `--json` reports (see `action_record_json()`), so a
+/// preview and a run can be compared record for record.
+struct DryRunAction {
+    kind: &'static str,
+    command: String,
 }
 
 /// A one-line description of what a `SwayLaunch`'s `target` would do,
@@ -782,20 +788,32 @@ fn dry_run_step(sway_launch: &sway_launch::SwayLaunch) -> DryRunStep {
         actions: sway_launch
             .build_actions_for_preview()
             .iter()
-            .map(sway_launch::SwayAction::sway_command_verb)
+            .map(|action| DryRunAction {
+                kind: action.kind_name(),
+                command: action.sway_command_verb(),
+            })
             .collect(),
     }
 }
 
 /// Prints every `DryRunStep` as a continuously-numbered plain-text list
 /// (target line included as one of the numbered items), or as a single
-/// `{"steps": [{"target": ..., "actions": [...]}, ...]}` object under
-/// `--json`.
+/// `{"steps": [{"target": ..., "actions": [{"kind": ..., "command": ...},
+/// ...]}, ...]}` object under `--json`.
 fn print_dry_run_steps(steps: &[DryRunStep], json: bool) {
     if json {
         let steps: Vec<_> = steps
             .iter()
-            .map(|step| serde_json::json!({ "target": step.target, "actions": step.actions }))
+            .map(|step| {
+                let actions: Vec<_> = step
+                    .actions
+                    .iter()
+                    .map(|action| {
+                        serde_json::json!({ "kind": action.kind, "command": action.command })
+                    })
+                    .collect();
+                serde_json::json!({ "target": step.target, "actions": actions })
+            })
             .collect();
         print_line(&serde_json::json!({ "steps": steps }).to_string());
         return;
@@ -806,7 +824,7 @@ fn print_dry_run_steps(steps: &[DryRunStep], json: bool) {
         print_line(&format!("{}. {}", n, step.target));
         n += 1;
         for action in &step.actions {
-            print_line(&format!("{}. {}", n, action));
+            print_line(&format!("{}. {}", n, action.command));
             n += 1;
         }
     }
@@ -1941,19 +1959,23 @@ mod tests {
     fn actions_json_renders_changed_already_satisfied_and_skipped() {
         let actions = [
             sway_launch::ActionRecord {
-                action: "floating enable".to_string(),
+                kind: "floating",
+                command: Some("floating enable".to_string()),
                 status: sway_launch::ActionStatus::Changed,
             },
             sway_launch::ActionRecord {
-                action: "focus".to_string(),
+                kind: "focus",
+                command: Some("focus".to_string()),
                 status: sway_launch::ActionStatus::AlreadySatisfied,
             },
             sway_launch::ActionRecord {
-                action: "resize set width 400px".to_string(),
+                kind: "width",
+                command: Some("resize set width 400px".to_string()),
                 status: sway_launch::ActionStatus::Unconfirmed,
             },
             sway_launch::ActionRecord {
-                action: "new_column".to_string(),
+                kind: "new_column",
+                command: None,
                 status: sway_launch::ActionStatus::Skipped {
                     reason: "trailing_workspace_edge",
                 },
@@ -1962,10 +1984,10 @@ mod tests {
         assert_eq!(
             actions_json(&actions),
             serde_json::json!([
-                { "action": "floating enable", "status": "changed" },
-                { "action": "focus", "status": "already_satisfied" },
-                { "action": "resize set width 400px", "status": "unconfirmed" },
-                { "action": "new_column", "status": "skipped", "reason": "trailing_workspace_edge" },
+                { "kind": "floating", "command": "floating enable", "status": "changed" },
+                { "kind": "focus", "command": "focus", "status": "already_satisfied" },
+                { "kind": "width", "command": "resize set width 400px", "status": "unconfirmed" },
+                { "kind": "new_column", "status": "skipped", "reason": "trailing_workspace_edge" },
             ])
         );
     }
@@ -1981,7 +2003,8 @@ mod tests {
         // multi-output Sway session) specifically so this arithmetic is
         // verifiable headlessly.
         let actions = vec![sway_launch::ActionRecord {
-            action: "new_row".to_string(),
+            kind: "new_row",
+            command: None,
             status: sway_launch::ActionStatus::Skipped {
                 reason: "trailing_workspace_edge",
             },
@@ -1990,7 +2013,7 @@ mod tests {
             step_action_records_json(1, actions),
             vec![serde_json::json!({
                 "step": 2,
-                "action": "new_row",
+                "kind": "new_row",
                 "status": "skipped",
                 "reason": "trailing_workspace_edge",
             })]
