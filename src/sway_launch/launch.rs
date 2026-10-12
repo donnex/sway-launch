@@ -158,10 +158,10 @@ impl<'a> SwayLaunch<'a> {
             {
                 if self.verbose {
                     diagnostic!(
-                        "Skipping new-column: container id {} is at the trailing edge of a \
-                         workspace already laid out along that axis, and more than one output \
-                         exists — \"move right\" would relocate it to a different output \
-                         instead of no-oping",
+                        "Skipping new-column: container id {} is at the trailing edge of \
+                         its workspace along that axis, and more than one output exists — \
+                         \"move right\" would relocate it to a different output instead of \
+                         moving it within the workspace",
                         container_id
                     );
                 }
@@ -181,10 +181,10 @@ impl<'a> SwayLaunch<'a> {
             if check_relocation && relocates_to_another_output(container_id, MoveDirection::Down)? {
                 if self.verbose {
                     diagnostic!(
-                        "Skipping new-row: container id {} is at the trailing edge of a \
-                         workspace already laid out along that axis, and more than one output \
-                         exists — \"move down\" would relocate it to a different output \
-                         instead of no-oping",
+                        "Skipping new-row: container id {} is at the trailing edge of \
+                         its workspace along that axis, and more than one output exists — \
+                         \"move down\" would relocate it to a different output instead of \
+                         moving it within the workspace",
                         container_id
                     );
                 }
