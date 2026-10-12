@@ -1,0 +1,218 @@
+use super::*;
+
+// SwayLaunch::build_actions
+
+fn minimal_sway_launch() -> SwayLaunch<'static> {
+    SwayLaunch {
+        target: Target::ConId(42),
+        app_id_match: "",
+        class_match: "",
+        mark_match: "",
+        split: None,
+        floating: false,
+        sticky: false,
+        fullscreen: false,
+        focus: false,
+        mark: "",
+        new_column: false,
+        new_row: false,
+        workspace: None,
+        output: None,
+        height: None,
+        width: None,
+        position: None,
+        scratchpad: false,
+        verbose: false,
+        timeout: time::Duration::from_secs(5),
+        wait_time: time::Duration::from_millis(20),
+    }
+}
+
+#[test]
+fn build_actions_is_empty_when_no_flags_are_set() {
+    let sway_launch = minimal_sway_launch();
+    let actions = sway_launch
+        .build_actions(42, true)
+        .expect("no flags set means no IPC call at all, so this can't fail");
+    assert!(actions.is_empty());
+}
+
+#[test]
+fn build_actions_includes_every_flag_in_the_documented_fixed_order() {
+    // Regression test for the SwayLaunch::run() -> build_actions() split
+    // (an external review's suggestion): every flag except new_column/new_row
+    // (which need a live get_outputs()/get_tree() call inside
+    // relocates_to_another_output() even just to build the plan, so
+    // they're covered separately by tests/live_sway.rs, not headlessly
+    // here) is exercised together, asserting both that each one
+    // produces its documented action *and* that the overall order
+    // matches CLAUDE.md's Architecture section exactly: Workspace ->
+    // Output -> Split -> Floating -> Sticky -> Fullscreen -> Focus ->
+    // Height -> Width -> Position -> Mark -> Scratchpad.
+    let mut sway_launch = minimal_sway_launch();
+    sway_launch.workspace = Some("3");
+    sway_launch.output = Some("HDMI-A-1");
+    sway_launch.split = Some(Split::H);
+    sway_launch.floating = true;
+    sway_launch.sticky = true;
+    sway_launch.fullscreen = true;
+    sway_launch.focus = true;
+    sway_launch.height = Some(Size::Pixels(300));
+    sway_launch.width = Some(Size::Pixels(400));
+    sway_launch.position = Some(Position::Center);
+    sway_launch.mark = "pinned";
+    sway_launch.scratchpad = true;
+
+    let actions = sway_launch
+        .build_actions(42, true)
+        .expect("none of these flags touch IPC while building the plan");
+
+    let kinds: Vec<&str> = actions
+        .iter()
+        .map(|planned| match planned {
+            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Workspace(_)) => {
+                "workspace"
+            }
+            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Output(_)) => "output",
+            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Split(_)) => "split",
+            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Floating) => "floating",
+            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Sticky) => "sticky",
+            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Fullscreen) => {
+                "fullscreen"
+            }
+            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Focus) => "focus",
+            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Height(_)) => "height",
+            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Width(_)) => "width",
+            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Position(_)) => {
+                "position"
+            }
+            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Mark(_)) => "mark",
+            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Scratchpad) => {
+                "scratchpad"
+            }
+            other => panic!("unexpected planned action: {:?}", other),
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            "workspace",
+            "output",
+            "split",
+            "floating",
+            "sticky",
+            "fullscreen",
+            "focus",
+            "height",
+            "width",
+            "position",
+            "mark",
+            "scratchpad",
+        ]
+    );
+    for planned in &actions {
+        match planned {
+            PlannedAction::Run(action) => assert_eq!(action.container_id, 42),
+            PlannedAction::Skip(skipped) => panic!("unexpected skip: {:?}", skipped),
+        }
+    }
+}
+
+#[test]
+fn build_actions_gives_event_confirmed_actions_the_timeout_and_the_rest_the_wait_time() {
+    let mut sway_launch = minimal_sway_launch();
+    sway_launch.floating = true;
+    sway_launch.mark = "pinned";
+    sway_launch.split = Some(Split::V);
+    sway_launch.height = Some(Size::Pixels(300));
+    sway_launch.new_column = true;
+
+    let actions = sway_launch
+        .build_actions(42, false)
+        .expect("check_relocation: false makes no IPC call, so this can't fail");
+
+    for planned in &actions {
+        let PlannedAction::Run(action) = planned else {
+            panic!("unexpected skip: {:?}", planned);
+        };
+        let expected = if action.kind.is_event_confirmed() {
+            sway_launch.timeout
+        } else {
+            sway_launch.wait_time
+        };
+        assert_eq!(action.timing, expected, "{:?}", action.kind);
+        assert!(!action.verbose);
+    }
+    assert_eq!(actions.len(), 5);
+}
+
+#[test]
+fn build_actions_omits_mark_when_empty() {
+    let sway_launch = minimal_sway_launch();
+    let actions = sway_launch
+        .build_actions(42, true)
+        .expect("no flags set means no IPC call at all, so this can't fail");
+    assert!(!actions
+            .iter()
+            .any(|planned| matches!(planned, PlannedAction::Run(action) if matches!(action.kind, ActionKind::Mark(_)))));
+}
+
+// build_actions()'s error propagation when relocates_to_another_output()
+// can't read the tree is covered by tests/json_output.rs's
+// new_column_and_new_row_report_the_relocation_checks_error, not here.
+// Two unit tests used to assert it directly, by assuming the machine
+// running them had no reachable Sway socket — which is true on a CI runner
+// and false in a Sway session, where both failed outright. A unit test
+// can't state that precondition safely (std::env::set_var is
+// process-global, and this harness is multi-threaded), so the assertion
+// moved to a test that can set it per-invocation on the child process.
+//
+// The guard's actual behavior (skip vs. include) needs a live compositor
+// either way: see tests/live_sway.rs's new_column_does_not_relocate_*.
+
+#[test]
+fn build_actions_with_check_relocation_false_never_touches_ipc() {
+    // The whole point of check_relocation: false — confirms
+    // new_column/new_row are always included (never skipped, and
+    // never erroring) with no reachable Sway socket, whereas
+    // check_relocation: true would read the tree (see the note above).
+    let mut sway_launch = minimal_sway_launch();
+    sway_launch.new_column = true;
+    sway_launch.new_row = true;
+    let actions = sway_launch
+        .build_actions(42, false)
+        .expect("check_relocation: false makes no IPC call, so this can't fail");
+    assert!(actions
+            .iter()
+            .any(|planned| matches!(planned, PlannedAction::Run(action) if matches!(action.kind, ActionKind::NewColumn))));
+    assert!(actions
+            .iter()
+            .any(|planned| matches!(planned, PlannedAction::Run(action) if matches!(action.kind, ActionKind::NewRow))));
+    assert!(!actions
+        .iter()
+        .any(|planned| matches!(planned, PlannedAction::Skip(_))));
+}
+
+// SwayLaunch::build_actions_for_preview
+
+#[test]
+fn build_actions_for_preview_never_touches_ipc_even_with_new_column_set() {
+    let mut sway_launch = minimal_sway_launch();
+    sway_launch.new_column = true;
+    sway_launch.floating = true;
+    // Would panic (build_actions_for_preview()'s own .expect()) if this
+    // somehow tried an IPC call in this headless test environment —
+    // passing at all is the assertion.
+    let actions = sway_launch.build_actions_for_preview();
+    assert_eq!(actions.len(), 2);
+}
+
+#[test]
+fn build_actions_for_preview_verbs_are_container_id_free() {
+    let mut sway_launch = minimal_sway_launch();
+    sway_launch.floating = true;
+    sway_launch.mark = "pinned";
+    let actions = sway_launch.build_actions_for_preview();
+    let verbs: Vec<String> = actions.iter().map(|a| a.sway_command_verb()).collect();
+    assert_eq!(verbs, vec!["floating enable", "mark \"pinned\""]);
+}

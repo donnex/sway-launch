@@ -99,8 +99,12 @@ below) plus five integration test files:
   `impl ExecAction`) is deliberately split across `action.rs` and `confirmation.rs`** — legal in Rust, since an inherent
   impl needs the same crate rather than the same module — along the line of what an action *is*
   versus how its effect is confirmed; either file would otherwise be ~1,400 lines. Unit tests moved
-  with their code; `test_support.rs` (`#[cfg(test)]`) holds the `Node`/`WindowEvent` JSON fixtures
-  more than one module's tests need. Adding to this module means picking the layer first: a new
+  with their code, each module's into a sibling `<module>/tests.rs` (`#[cfg(test)] mod tests;`)
+  rather than an inline `mod tests { ... }` block — the same applies to `layout.rs`/`template.rs`
+  (`src/layout/tests.rs`, `src/template/tests.rs`) — so the coverage gate can exclude test code by
+  filename (see the Rust conventions' coverage bullet); `test_support.rs` (`#[cfg(test)]`) holds
+  the `Node`/`WindowEvent` JSON fixtures more than one module's tests need. A new module's unit
+  tests go in its own `tests.rs` the same way, never inline. Adding to this module means picking the layer first: a new
   predicate belongs in `tree.rs` unless it genuinely cannot answer from a `&Node`, in which case
   the fetching half goes in `query.rs` and the deciding half still goes in `tree.rs`.
 - `src/layout.rs` — `--layout`'s TOML schema (`Layout`/`LayoutStep`) and
@@ -1772,8 +1776,13 @@ comments, name things clearly instead" style). Two rule-specific overrides:
     function names:** `sway_launch/ipc.rs` and `sway_launch/query.rs` are the compositor-bound
     layers and are exempt; everything else is measured. The layering is what makes that true —
     `query.rs` fetches and immediately delegates to a pure predicate in `tree.rs`, so almost
-    nothing but the fetch itself sits where the gate can't see it. The measured result backs this
-    up: `values.rs` 100%, `tree.rs` 99.7%, `process_marker.rs` 94.9%, against `query.rs` at 5.5%.
+    nothing but the fetch itself sits where the gate can't see it. The gate excludes both files by
+    name, along with `main.rs` and the test code itself (`test_support.rs` and every `tests.rs`,
+    which is why unit tests live in sibling files rather than inline — an inline test module's
+    bodies would count as covered production code and pad the total):
+    `cargo llvm-cov --summary-only --ignore-filename-regex '(^|/)(main|ipc|query|test_support|tests)\.rs$'`
+    reproduces CI's figure. Measured that way (2026-10-12): `values.rs` 100%, `tree.rs` 99.2%,
+    `process_marker.rs` 96.5%, `layout.rs` 100%, `template.rs` 98.6% lines.
     Two modules straddle the line, and both are deliberate: `confirmation.rs` holds the `run_*`
     drivers and the `state_satisfied`/`poll_matches` fetching halves (exempt) *alongside* the pure
     deciding halves — `state_satisfies`, `poll_grace`, `polls`, `matches_window_event` — that stay
@@ -2533,17 +2542,16 @@ GitHub Actions is set up: `.github/workflows/check.yml` runs `cargo fmt --check`
 `cargo clippy --all-targets --all-features` (see the Rust conventions above for why the feature flag
 is load-bearing),
 `cargo build`, `cargo test`, and a `cargo llvm-cov` coverage-regression gate (`--fail-under-lines
-82 --fail-under-regions 80 --fail-under-functions 88`, calibrated to this project's actual measured
-baseline — see the comment above that step in `check.yml` for why a flat number this project didn't
-choose arbitrarily still coexists with the qualitative "cover every pure/logic function" target
-under Rust conventions above, and for the arithmetic behind each figure) in its `check` job;
-the functions threshold was lowered from 90 to 88 on 2026-09-01, deliberately: making the poll
-cycle share one connection left `poll_matches()`'s arms genuinely unreachable headlessly, and the
-resulting ~1.6 points of headroom meant the next deliberately-exempt IPC helper would have failed a
-gate never meant to constrain it. When adding IPC-touching code, expect the exemption list under
-Rust conventions to grow rather than the gate to be met — but check the headroom in `check.yml`'s
-comment before assuming there's room, and lower the gate as its own deliberate decision (with the
-comment updated) rather than as a side effect of an unrelated change; a separate `lint-scripts-and-docs` job that runs
+68 --fail-under-regions 68 --fail-under-functions 77`) in its `check` job. The gate excludes
+`main.rs`, the compositor-bound `ipc.rs`/`query.rs`, and the unit-test files themselves by filename
+(see the coverage bullet under Rust conventions above), and its thresholds sit a few points under
+the baseline measured on 2026-10-12, recorded in the comment above that step. They read lower than
+the 82/80/88 the gate used before that change, but measure more: the old figures counted every
+inline test module's bodies as covered production code and averaged in the exempt modules, so an
+untested new function in `tree.rs` or `values.rs` could land without moving them. Most of the
+remaining gap is the IPC-touching `run_*` drivers in `confirmation.rs` and `launch.rs`. Re-measure
+and adjust the thresholds as their own deliberate decision (with the comment updated) rather than
+as a side effect of an unrelated change; a separate `lint-scripts-and-docs` job that runs
 `shellcheck`/`shfmt` on every shell script under `scripts/`/`examples/scripts/` (discovered by
 shebang at run time, not a fixed list, so a newly added script is covered automatically — and the
 one Python script in `scripts/` is excluded by the same mechanism rather than by name),
