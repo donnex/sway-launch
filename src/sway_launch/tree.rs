@@ -158,48 +158,26 @@ pub(super) fn node_is_floating(node: &Node) -> bool {
         )
 }
 
-/// Whether `node` is currently in the scratchpad, per its own
-/// `scratchpad_state` field. `Some(ScratchpadState::None)` means an ordinary
-/// window (present but "no scratchpad state", not the same as the field
-/// being absent/`None` outright — both fold into "not in the scratchpad"
-/// here) and `Some(ScratchpadState::Fresh)`/`Some(ScratchpadState::Changed)`
-/// means one that's actually been moved there, confirmed live. Deliberately
-/// not `node_is_floating()`: a window Sway auto-floats as part of moving it
-/// to the scratchpad (see `SwayAction::matching_window_change_events()`'s
-/// doc comment on `Scratchpad`) would otherwise be misreported as already in
-/// the scratchpad the moment it's floating, before it actually is.
+/// Whether `container_id` is currently hidden in Sway's scratchpad, given an
+/// already-fetched `tree`: whether its ancestor workspace is the fixed
+/// internal workspace Sway names `__i3_scratch`, confirmed live to be
+/// populated reliably on both Sway 1.9 and 1.11. Deliberately not
+/// `node_is_floating()`: a window Sway auto-floats as part of moving it to
+/// the scratchpad (see `SwayAction::matching_window_change_events()`'s doc
+/// comment on `Scratchpad`) would otherwise be misreported as already in the
+/// scratchpad the moment it's floating, before it actually is.
 ///
-/// A CI-failure investigation found this field alone isn't reliable enough
-/// to gate `already_at_target()` on, though: Sway 1.9 (still what `apt`
-/// installs on Ubuntu 24.04/CI) leaves `scratchpad_state` at
-/// `Some(ScratchpadState::None)` even for a container genuinely in the
-/// scratchpad — the same kind of version-dependent gap `node_is_floating()`'s
-/// doc comment documents for the `floating` field, just not caught locally
-/// beforehand since this project's own dev/CI environments so far have only
-/// ever run Sway 1.11, where the field *is* populated correctly. Kept as a
-/// secondary, OR'd check in `tree_shows_container_in_scratchpad()` below,
-/// alongside the version-independent ancestor-workspace-name check that
-/// function uses as its primary signal.
-pub(super) fn node_is_in_scratchpad(node: &Node) -> bool {
-    !matches!(
-        node.scratchpad_state,
-        None | Some(swayipc::ScratchpadState::None)
-    )
-}
-
-/// Whether `container_id` is currently in Sway's scratchpad, given an
-/// already-fetched `tree`. Checks the container's ancestor workspace name
-/// first: the scratchpad is always the fixed internal workspace Sway names
-/// `__i3_scratch`, confirmed live to be populated reliably on both Sway 1.9
-/// and 1.11 — unlike `node_is_in_scratchpad()`'s own `scratchpad_state`
-/// field check (see that function's doc comment), which is kept here only
-/// as a secondary, redundant signal.
+/// Deliberately not the node's own `scratchpad_state` field either, which an
+/// earlier version OR'd in as a secondary signal. That field means "this
+/// window belongs to the scratchpad", not "it is hidden there": it stays
+/// `fresh`/`changed` while the window is *shown* on an ordinary workspace via
+/// `scratchpad show`, so on Sway 1.11 (which populates it) a shown dropdown
+/// window looked already-hidden and `--scratchpad` short-circuited without
+/// sending anything. Sway 1.9 leaves the field at `none` even for a hidden
+/// window, so it was never reliable in the other direction either.
 pub(super) fn tree_shows_container_in_scratchpad(tree: &Node, container_id: i64) -> bool {
-    let in_scratchpad_workspace =
-        find_containing_name(tree, container_id, NodeType::Workspace, None).as_deref()
-            == Some("__i3_scratch");
-    let node_flagged = find_node(tree, container_id).is_some_and(node_is_in_scratchpad);
-    in_scratchpad_workspace || node_flagged
+    find_containing_name(tree, container_id, NodeType::Workspace, None).as_deref()
+        == Some("__i3_scratch")
 }
 
 /// Recursively walks `node` tracking the name of the nearest ancestor whose
@@ -768,42 +746,6 @@ mod tests {
         assert!(!node_is_floating(&node));
     }
 
-    // node_is_in_scratchpad
-
-    fn node_with_scratchpad_state(state: Option<&str>) -> Node {
-        let mut value = leaf_node_value(10, Some("foot"), None);
-        if let Some(state) = state {
-            value["scratchpad_state"] = serde_json::json!(state);
-        }
-        serde_json::from_value(value).expect("valid Node test fixture")
-    }
-
-    #[test]
-    fn node_is_in_scratchpad_false_when_the_field_is_absent() {
-        let node = node_with_scratchpad_state(None);
-        assert!(!node_is_in_scratchpad(&node));
-    }
-
-    #[test]
-    fn node_is_in_scratchpad_false_for_scratchpad_state_none() {
-        // Present but "no scratchpad state" — an ordinary window, not one
-        // in the scratchpad.
-        let node = node_with_scratchpad_state(Some("none"));
-        assert!(!node_is_in_scratchpad(&node));
-    }
-
-    #[test]
-    fn node_is_in_scratchpad_true_for_fresh() {
-        let node = node_with_scratchpad_state(Some("fresh"));
-        assert!(node_is_in_scratchpad(&node));
-    }
-
-    #[test]
-    fn node_is_in_scratchpad_true_for_changed() {
-        let node = node_with_scratchpad_state(Some("changed"));
-        assert!(node_is_in_scratchpad(&node));
-    }
-
     // tree_shows_container_in_scratchpad
 
     #[test]
@@ -820,13 +762,20 @@ mod tests {
     }
 
     #[test]
-    fn tree_shows_container_in_scratchpad_true_via_scratchpad_state_fallback() {
-        // The node's own scratchpad_state is still honored as a secondary,
-        // redundant signal, independent of the ancestor workspace name.
-        let mut leaf = leaf_node_value(10, Some("foot"), None);
-        leaf["scratchpad_state"] = serde_json::json!("fresh");
-        let tree = workspace_node_tree(2, "1", vec![leaf], vec![]);
-        assert!(tree_shows_container_in_scratchpad(&tree, 10));
+    fn tree_shows_container_in_scratchpad_false_for_a_shown_scratchpad_window() {
+        // A scratchpad window brought onto an ordinary workspace via
+        // `scratchpad show` keeps scratchpad_state "fresh"/"changed" on Sway
+        // 1.11, but isn't hidden in the scratchpad — --scratchpad must still
+        // move it back rather than short-circuit as already satisfied.
+        for state in ["fresh", "changed"] {
+            let mut leaf = leaf_node_value(10, Some("foot"), None);
+            leaf["scratchpad_state"] = serde_json::json!(state);
+            let tree = workspace_node_tree(2, "1", vec![leaf], vec![]);
+            assert!(
+                !tree_shows_container_in_scratchpad(&tree, 10),
+                "scratchpad_state {state:?} on an ordinary workspace"
+            );
+        }
     }
 
     #[test]
