@@ -48,29 +48,31 @@ pub(super) const IPC_ROUND_TRIP_TIMEOUT: time::Duration = time::Duration::from_s
 /// only applies when the environment doesn't name a socket at all, and the
 /// subprocess it runs is not the wedged compositor's IPC socket.
 pub(super) fn new_connection() -> Result<Connection, String> {
-    connect(Some(IPC_ROUND_TRIP_TIMEOUT))
-}
-
-/// Connects to `socket_path()`'s socket — with `round_trip_timeout` applied to
-/// both directions when given — or, when the environment names no socket,
-/// falls back to `swayipc`'s own `Connection::new()` discovery.
-fn connect(round_trip_timeout: Option<time::Duration>) -> Result<Connection, String> {
     if let Some(path) = socket_path() {
-        let stream = std::os::unix::net::UnixStream::connect(path)
-            .map_err(|error| format!("failed to connect to the Sway IPC socket: {}", error))?;
-        // Applied to both directions: a wedged compositor can stall a write
-        // (socket buffer full, nothing draining it) as readily as a read.
-        stream
-            .set_read_timeout(round_trip_timeout)
-            .and_then(|()| stream.set_write_timeout(round_trip_timeout))
-            .map_err(|error| format!("failed to set a Sway IPC socket timeout: {}", error))?;
-        return Ok(Connection::from(stream));
+        return connect_stream(&path, IPC_ROUND_TRIP_TIMEOUT).map(Connection::from);
     }
 
     match Connection::new() {
         Ok(connection) => Ok(connection),
         Err(error) => Err(error.to_string()),
     }
+}
+
+/// Connects to the socket at `path` with `round_trip_timeout` applied to both
+/// directions.
+fn connect_stream(
+    path: &std::path::Path,
+    round_trip_timeout: time::Duration,
+) -> Result<std::os::unix::net::UnixStream, String> {
+    let stream = std::os::unix::net::UnixStream::connect(path)
+        .map_err(|error| format!("failed to connect to the Sway IPC socket: {}", error))?;
+    // Applied to both directions: a wedged compositor can stall a write
+    // (socket buffer full, nothing draining it) as readily as a read.
+    stream
+        .set_read_timeout(Some(round_trip_timeout))
+        .and_then(|()| stream.set_write_timeout(Some(round_trip_timeout)))
+        .map_err(|error| format!("failed to set a Sway IPC socket timeout: {}", error))?;
+    Ok(stream)
 }
 
 /// Renders a `swayipc` error, turning the socket-timeout case into something
@@ -99,8 +101,8 @@ pub(super) fn ipc_error(error: swayipc::Error) -> String {
 }
 
 /// The Sway IPC socket path from the environment. `None` when neither
-/// variable is set, which is what sends `connect()` down its unbounded
-/// fallback.
+/// variable is set, which is what sends `new_connection()` and `event_loop()`
+/// down their unbounded fallback.
 fn socket_path() -> Option<std::path::PathBuf> {
     preferred_socket_path(std::env::var_os("SWAYSOCK"), std::env::var_os("I3SOCK"))
 }
@@ -121,29 +123,50 @@ fn preferred_socket_path(
     swaysock.or(i3sock).map(std::path::PathBuf::from)
 }
 
-/// The connection `event_loop()` subscribes on, deliberately *without* a read
-/// timeout.
+/// Opens a subscription whose `subscribe()` handshake is bounded by
+/// `IPC_ROUND_TRIP_TIMEOUT`, and whose event reads afterwards are not.
 ///
-/// A subscription's whole purpose is to block until an event arrives, so a
-/// socket read timeout would surface a perfectly normal quiet period as an
-/// error. It doesn't need one either: the blocking read happens on a reader
-/// thread whose output the caller collects with `recv_timeout()`, so the
-/// invocation is already bounded by `--timeout` no matter what the socket
-/// does. Only the reader thread can be left blocked, which is the bounded,
-/// measured behaviour documented at `run_wait_matching_events()`'s
-/// `thread::spawn`.
+/// `subscribe()` is a request/response exchange like any other, run on the
+/// calling thread, so a compositor that accepts a connection and then stops
+/// answering used to block it forever: every launch subscribes before making
+/// any other IPC call, so `sway-launch --timeout 2 foot` against such a socket
+/// never returned (`--timeout` only starts counting once the subscription
+/// exists). The handshake therefore runs with the same socket timeout
+/// `new_connection()` uses.
+///
+/// The event reads that follow must *not* keep it: a subscription's whole
+/// purpose is to block until an event arrives, so a read timeout would surface
+/// a perfectly normal quiet period as an error. They don't need one either —
+/// the blocking read happens on a reader thread whose output the caller
+/// collects with `recv_timeout()`, so the invocation is already bounded by
+/// `--timeout` no matter what the socket does. So once `subscribe()` has
+/// answered, the timeout is cleared through a `try_clone()` of the stream: the
+/// clone shares the original's open socket, and socket options belong to the
+/// socket rather than to a descriptor. Only the reader thread can be left
+/// blocked, which is the bounded, measured behaviour documented at
+/// `run_wait_matching_events()`'s `thread::spawn`.
 ///
 /// It goes through the same `socket_path()` as `new_connection()`, so the
-/// subscription and the requests around it always reach the same compositor.
-pub(super) fn new_event_connection() -> Result<Connection, String> {
-    connect(None)
-}
-
+/// subscription and the requests around it always reach the same compositor,
+/// and shares its unbounded fallback when the environment names no socket.
 pub(super) fn event_loop(subscriptions: &[EventType]) -> Result<EventStream, String> {
-    match new_event_connection()?.subscribe(subscriptions) {
-        Ok(event_iterator) => Ok(event_iterator),
-        Err(error) => Err(error.to_string()),
-    }
+    let Some(path) = socket_path() else {
+        return Connection::new()
+            .and_then(|connection| connection.subscribe(subscriptions))
+            .map_err(ipc_error);
+    };
+
+    let stream = connect_stream(&path, IPC_ROUND_TRIP_TIMEOUT)?;
+    let handle = stream
+        .try_clone()
+        .map_err(|error| format!("failed to clone the Sway IPC socket: {}", error))?;
+    let events = Connection::from(stream)
+        .subscribe(subscriptions)
+        .map_err(ipc_error)?;
+    handle
+        .set_read_timeout(None)
+        .map_err(|error| format!("failed to clear a Sway IPC socket timeout: {}", error))?;
+    Ok(events)
 }
 
 pub(super) fn run_sway_command(command: &str) -> Result<(), String> {

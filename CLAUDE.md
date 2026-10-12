@@ -355,15 +355,15 @@ stated goal (safer internals, less repeated parsing) to actually land.
   subscription, and no instant belongs to neither. The cost is one Sway IPC connection opened and
   immediately dropped whenever the short-circuit does fire.
 
-  The `container_exists()` check stays *ahead* of the subscription, though, and that ordering is
-  load-bearing too, for an unrelated reason found by moving it: `new_event_connection()`
-  deliberately sets no socket timeout, but `subscribe()` is itself a request/response handshake, so
-  with nothing bounded before it a wedged compositor hung there forever — turning
-  `a_stalled_sway_socket_fails_instead_of_hanging_forever` from a 10-second failure into an
-  indefinite hang. Every other IPC call here goes through `new_connection()` and is bounded by
-  `IPC_ROUND_TRIP_TIMEOUT`, so keeping a bounded read first is what makes a stalled socket fail
-  with a message. Don't reorder these three without re-reading both constraints: the state check
-  must come *after* the subscription, a bounded read *before* it.
+  The `container_exists()` check stays *ahead* of the subscription, though. That ordering used to
+  be load-bearing for a second reason, found by moving it: `subscribe()` is itself a
+  request/response handshake, and while it ran on an unbounded socket, a wedged compositor hung
+  there forever unless a bounded read came first. The launch path had no such read, so
+  `sway-launch --timeout 2 foot` against a stalled socket never returned (#51); `event_loop()` now
+  bounds the handshake itself (see the `new_connection()` paragraph below), which protects every
+  subscriber — launches and `--debug-events` included — and leaves the existence check's position
+  about failing fast on a closed window rather than about hangs. The state check must still come
+  *after* the subscription.
 
   Rejected alternative: treating a
   post-command state read as an accepted completion path (an external review's suggestion, and it
@@ -834,14 +834,20 @@ application mapping a window (seconds are reasonable), while this bounds one req
 exchange (sub-millisecond on a healthy system), so tying them together would make `--timeout 1`
 break ordinary tree reads and `--timeout 60` restore a minute-long hang. `ipc_error()` maps the
 resulting `WouldBlock`/`TimedOut` into a message naming the condition, since the raw form is
-`Resource temporarily unavailable (os error 11)`. `event_loop()` deliberately uses
-`new_event_connection()` *without* a timeout: a subscription's job is to block until an event
-arrives, so a read timeout would turn a normal quiet period into an error, and it needs no bound
-because the caller collects from the reader thread with `recv_timeout()`. It still resolves the
-socket through the same `socket_path()` (both go through the private `connect()`), so the
+`Resource temporarily unavailable (os error 11)`. `event_loop()` applies the same timeout to the
+`subscribe()` handshake only, then clears the read timeout before handing the stream to the reader
+thread: a subscription's job is to block until an event arrives, so a read timeout would turn a
+normal quiet period into an error, and the reads need no bound because the caller collects from
+the reader thread with `recv_timeout()`. The handshake, though, is an ordinary request/response on
+the calling thread, and leaving it unbounded made every launch hang forever against a stalled
+socket, since subscribing is the first IPC call a launch makes. The timeout is cleared through a
+`try_clone()` of the stream, taken before `swayipc` consumes the original: socket options belong to
+the socket, not the descriptor, so clearing it on the clone clears it for the subscription too. Both
+resolve the socket through the same `socket_path()` (via the private `connect_stream()`), so the
 subscription and the requests around it can never reach different compositors. Covered by
 `tests/live_sway.rs`'s `a_stalled_sway_socket_fails_instead_of_hanging_forever` (which needs no
-compositor, but lives there because it costs ~10s) and `ipc.rs`'s `ipc_error` unit tests.
+compositor, but lives there because it costs ~10s per invocation, and drives the request path,
+a plain launch and `--debug-events`) and `ipc.rs`'s `ipc_error` unit tests.
 
 Each Sway IPC call opens its own fresh `Connection` (`new_connection()` in `sway_launch/ipc.rs`) —
 there
