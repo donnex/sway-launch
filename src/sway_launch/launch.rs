@@ -141,7 +141,7 @@ impl<'a> SwayLaunch<'a> {
     ///
     /// Each entry the guard above skips is interleaved in-place as
     /// `PlannedAction::Skip`, alongside why — `--verbose` already logged
-    /// this via `eprintln!` before this existed; this is what lets `run()`
+    /// this via `diagnostic!` before this existed; this is what lets `run()`
     /// also surface it in `RunOutcome`/`--json`, in its correct position in
     /// the fixed order, instead of a skip being visible only in a
     /// `--verbose` log line. Never appears when `check_relocation` is
@@ -157,7 +157,7 @@ impl<'a> SwayLaunch<'a> {
             if check_relocation && relocates_to_another_output(container_id, MoveDirection::Right)?
             {
                 if self.verbose {
-                    eprintln!(
+                    diagnostic!(
                         "Skipping new-column: container id {} is at the trailing edge of a \
                          workspace already laid out along that axis, and more than one output \
                          exists — \"move right\" would relocate it to a different output \
@@ -180,7 +180,7 @@ impl<'a> SwayLaunch<'a> {
         if self.new_row {
             if check_relocation && relocates_to_another_output(container_id, MoveDirection::Down)? {
                 if self.verbose {
-                    eprintln!(
+                    diagnostic!(
                         "Skipping new-row: container id {} is at the trailing edge of a \
                          workspace already laid out along that axis, and more than one output \
                          exists — \"move down\" would relocate it to a different output \
@@ -321,7 +321,7 @@ impl<'a> SwayLaunch<'a> {
         let (container_id, launch_ownership) = self.resolve_container_id()?;
 
         if self.verbose {
-            eprintln!("Target container id: {}", container_id);
+            diagnostic!("Target container id: {}", container_id);
         }
 
         let mut actions = Vec::new();

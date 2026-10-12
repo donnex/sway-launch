@@ -182,7 +182,7 @@ impl SwayAction<'_> {
     /// `step N: ...`, says which one failed rather than only how long it waited.
     pub(super) fn run(&self) -> Result<ActionResult, RunError> {
         if self.verbose() {
-            eprintln!("Sway action: {}", self);
+            diagnostic!("Sway action: {}", self);
         }
 
         match self {
@@ -545,7 +545,7 @@ impl SwayAction<'_> {
         loop {
             if self.poll_matches(connection, container_id, baseline) {
                 if self.verbose() {
-                    eprintln!("Confirmed via poll (container id: {})", container_id);
+                    diagnostic!("Confirmed via poll (container id: {})", container_id);
                 }
                 return (container_id, true);
             }
@@ -556,7 +556,7 @@ impl SwayAction<'_> {
         }
 
         if self.verbose() {
-            eprintln!(
+            diagnostic!(
                 "Poll grace period elapsed without confirmation, falling back to wait-time \
                  (container id: {})",
                 container_id
@@ -578,7 +578,7 @@ impl SwayAction<'_> {
         let wait_time = self.duration();
 
         if self.verbose() {
-            eprintln!(
+            diagnostic!(
                 "No matching event types for action. Will run Sway command and wait {} ms.",
                 wait_time.as_millis()
             );
@@ -649,7 +649,7 @@ impl SwayAction<'_> {
 
         let sway_command = self.sway_command();
         if self.verbose() {
-            eprintln!("Sway command: {}", sway_command);
+            diagnostic!("Sway command: {}", sway_command);
         }
 
         run_sway_command(&sway_command)?;
@@ -746,7 +746,7 @@ impl SwayAction<'_> {
         let token = generate_pid_marker_token();
         let sway_command = self.exec_sway_command(&token);
         if verbose {
-            eprintln!("Sway command: {}", sway_command);
+            diagnostic!("Sway command: {}", sway_command);
         }
         run_single_sway_command(&sway_command)?;
 
@@ -792,7 +792,7 @@ impl SwayAction<'_> {
             if remaining.is_zero() {
                 if let Some((container_id, _)) = fallback {
                     if verbose {
-                        eprintln!(
+                        diagnostic!(
                             "No PID-marker-confirmed match arrived; using earlier \
                              content-matched container id {} (adopted, not confirmed as \
                              launched by this run)",
@@ -828,14 +828,14 @@ impl SwayAction<'_> {
                 let presence =
                     scan_marker_presence(PID_MARKER_VAR, &token, marker.previously_seen());
                 if marker.observe(presence) && verbose {
-                    eprintln!(
+                    diagnostic!(
                         "Could not read /proc — PID-marker correlation is degraded on this system"
                     );
                 }
                 next_scan = now + MARKER_SCAN_INTERVAL;
                 if let (true, Some((container_id, _))) = (marker.is_gone(), fallback) {
                     if verbose {
-                        eprintln!(
+                        diagnostic!(
                             "Marked process no longer running; using fallback container id {} \
                              (nothing marker-confirmed can still arrive, so this window is this \
                              run's own)",
@@ -890,7 +890,7 @@ impl SwayAction<'_> {
                             .is_some_and(|pid| process_has_env_var(pid, PID_MARKER_VAR, &token)),
                     };
                     if verbose {
-                        eprintln!(
+                        diagnostic!(
                             "Event mismatch: {:?} {} ({})",
                             window.change,
                             describe_unmatched_window(&unmatched),
@@ -909,9 +909,10 @@ impl SwayAction<'_> {
 
             if pid_confirmed {
                 if verbose {
-                    eprintln!(
+                    diagnostic!(
                         "Event match: {:?} container id {} (PID-marker-confirmed)",
-                        window.change, window.container.id
+                        window.change,
+                        window.container.id
                     );
                 }
                 return Ok((window.container.id, LaunchOwnership::Launched));
@@ -919,7 +920,7 @@ impl SwayAction<'_> {
 
             if fallback.is_none() {
                 if verbose {
-                    eprintln!(
+                    diagnostic!(
                         "Event content-matches but PID marker unconfirmed (container id {}) \
                          — keeping as a fallback candidate",
                         window.container.id
@@ -987,7 +988,7 @@ impl SwayAction<'_> {
 
         if let Some(container_id) = self.already_at_target()? {
             if self.verbose() {
-                eprintln!(
+                diagnostic!(
                     "Already at target, nothing to move (container id: {})",
                     container_id
                 );
@@ -997,7 +998,7 @@ impl SwayAction<'_> {
 
         let sway_command = self.sway_command();
         if self.verbose() {
-            eprintln!("Sway command: {}", sway_command);
+            diagnostic!("Sway command: {}", sway_command);
         }
         run_sway_command(&sway_command)?;
 
@@ -1095,20 +1096,24 @@ impl SwayAction<'_> {
                     // See state_satisfied()'s doc comment.
                     if !self.state_satisfied()? {
                         if self.verbose() {
-                            eprintln!(
+                            diagnostic!(
                                 "Event match: {:?} container id {} ({}), but the requested state \
                                  is not in effect — another client may be driving this window; \
                                  waiting for the next event",
-                                window.change, window.container.id, result
+                                window.change,
+                                window.container.id,
+                                result
                             );
                         }
                         continue;
                     }
 
                     if self.verbose() {
-                        eprintln!(
+                        diagnostic!(
                             "Event match: {:?} container id {} ({})",
-                            window.change, window.container.id, result
+                            window.change,
+                            window.container.id,
+                            result
                         );
                     }
 
@@ -1116,9 +1121,11 @@ impl SwayAction<'_> {
                 }
                 Err(error_result) => {
                     if self.verbose() {
-                        eprintln!(
+                        diagnostic!(
                             "Event mismatch: {:?} container id {} ({})",
-                            window.change, window.container.id, error_result
+                            window.change,
+                            window.container.id,
+                            error_result
                         );
                     }
                 }

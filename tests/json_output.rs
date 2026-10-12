@@ -384,6 +384,30 @@ fn con_id_verbose_diagnostics_go_to_stderr_not_stdout() {
 }
 
 #[test]
+fn a_closed_stderr_does_not_abort_a_verbose_run() {
+    // `eprintln!` panics on a failed write, so `-v ... 2>&1 | head -n1` used
+    // to exit 101 on the next diagnostic, stopping between two actions. The
+    // read end is closed before the process starts, so the very first
+    // diagnostic is the one that fails.
+    let (stderr_reader, stderr_writer) = std::io::pipe().expect("failed to create a pipe");
+    drop(stderr_reader);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--con-id", "42", "--verbose"])
+        .stderr(stderr_writer)
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        output.status.success(),
+        "expected exit 0, got {}",
+        output.status
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(stdout.trim(), "42");
+}
+
+#[test]
 fn a_command_sway_would_split_is_rejected_before_anything_runs() {
     // Sway's command parser splits on an unquoted `,`/`;`, so `foot -T a,b`
     // used to launch `foot -T a` and then fail on `b`, and `foot; mark x`

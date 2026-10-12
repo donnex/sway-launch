@@ -748,3 +748,50 @@ fn every_shipped_example_layout_passes_validate() {
         "expected at least 2 example layouts, checked {checked}"
     );
 }
+
+#[test]
+fn layout_keeps_running_its_steps_after_stdout_is_closed() {
+    // A closed stdout used to end the process with exit 0 at the first id it
+    // couldn't print, so `--layout ... | head -n1` skipped every later step
+    // and still reported success. The last step here fails, and that failure
+    // is only reached -- and reported -- if the steps before it kept running
+    // after their own output was lost. The read end is closed before the
+    // process starts, so the very first write is the one that fails.
+    let path = TempToml::write(
+        "closed-stdout",
+        "[[step]]\ncon_id = 42\n\n[[step]]\ncon_id = 91\n\n[[step]]\ntarget_id = \"missing\"\n",
+    );
+    let (stdout_reader, stdout_writer) = std::io::pipe().expect("failed to create a pipe");
+    drop(stdout_reader);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap()])
+        .stdout(stdout_writer)
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        !output.status.success(),
+        "the failing last step should still be reached and fail the run"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("step 3:"), "unexpected stderr: {stderr}");
+}
+
+#[test]
+fn layout_exits_0_after_finishing_every_step_when_stdout_is_closed() {
+    let path = TempToml::write(
+        "closed-stdout-success",
+        "[[step]]\ncon_id = 42\n\n[[step]]\ncon_id = 91\n",
+    );
+    let (stdout_reader, stdout_writer) = std::io::pipe().expect("failed to create a pipe");
+    drop(stdout_reader);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap()])
+        .stdout(stdout_writer)
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(output.status.success(), "got {}", output.status);
+}

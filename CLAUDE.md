@@ -784,7 +784,7 @@ reported, not just logged: `build_actions()` returns `Vec<PlannedAction<'a>>` (`
 a skip in its actual fixed-order position rather than collecting skips into a separate side list —
 `SkippedAction { action, reason }` holds short, stable, machine-readable `&'static str` identifiers
 (`"new_column"`/`"new_row"`, `"trailing_workspace_edge"`), not a human-facing message (that's still
-what the `--verbose` `eprintln!` next to each skip is for). `run()` folds each `PlannedAction` into
+what the `--verbose` `diagnostic!` next to each skip is for). `run()` folds each `PlannedAction` into
 an `ActionRecord { action, status }` (`ActionStatus::Changed`/`AlreadySatisfied`/`Skipped { reason
 }` — see "`--json`'s richer schema" below for the full design of this, added later alongside the
 `already_satisfied` distinction), so a `PlannedAction::Skip` never actually calls `.run()` — it
@@ -871,9 +871,14 @@ Everything else still opens its own.
 
 stdout is reserved for that one result value (bare id or the `--json` object) and nothing else, so
 `container_id="$(sway-launch ...)"`-style capture always gets exactly one clean line. Every
-diagnostic/debug `println!` behind `if self.verbose()` in the `sway_launch` module is `eprintln!`,
-not
-`println!`, for this reason — `--verbose` output goes to stderr. Two exceptions:
+diagnostic/debug line behind `if self.verbose()` goes to stderr for this reason, through the
+crate-wide `diagnostic!` macro (defined at the top of `main.rs`, ahead of the `mod` declarations so
+every module sees it) rather than `eprintln!`. `eprintln!` panics when stderr is a closed pipe, so
+`sway-launch -v ... 2>&1 | head -n1` used to exit 101 on the next diagnostic — between two actions,
+leaving the window half-arranged. `diagnostic!` drops the write error instead: a diagnostic nobody
+can read is no reason to stop the work it describes. Every stderr write in the crate, error
+messages included, goes through it; don't reintroduce `eprintln!`. Two exceptions to stdout's
+one-value rule:
 `SwayLaunch::debug_events()`'s event dump and `--dry-run`'s planned-command listing are each the
 command's actual output in that mode, so both stay on stdout — neither is meant to be captured as a
 single clean value the way a real run's container id is, so the "exactly one line" property simply
@@ -889,6 +894,19 @@ reader got what it asked for and went away) and any other write failure as a rep
 Handled this way rather than by restoring the default `SIGPIPE` disposition, which would mean an
 `unsafe` libc call and a new dependency for something this narrow. `--completions` is the one
 stdout path not routed through these, since `clap_complete::generate()` does its own writing.
+
+That immediate exit is only right where the output *is* the job (`--debug-events`,
+`--list-templates`, `--show-template`, `--dry-run`, `--validate`, and a single invocation's id,
+which is printed after its work is already done). `run_steps()`'s per-step ids are a side channel
+to work still in progress, so they go through `print_line_deferring_failure()` instead: a failed
+write is recorded, nothing more is printed, every remaining step still runs, and only then is the
+recorded error handed to `exit_on_write_failure()` — exit 0 for `BrokenPipe` once every step has
+succeeded, 1 for any other write failure, and a step failure still wins over either. Before this,
+`sway-launch --layout four.toml | head -n1` opened three windows, never ran step 4, and exited 0
+(with `--rollback-on-error` never firing, since nothing counted as a failure). Covered headlessly
+by `tests/layout.rs`'s `layout_keeps_running_its_steps_after_stdout_is_closed` and
+`tests/json_output.rs`'s `a_closed_stderr_does_not_abort_a_verbose_run`, and live by
+`tests/live_sway.rs`'s `a_layout_finishes_every_step_when_its_output_pipes_are_already_closed`.
 
 Errors always go to stderr regardless of `--json` (`main.rs`'s `fail()`/`fail_with_rollback()`), but
 their *shape* on stderr does follow `--json`: a `{"error": "...", "rolled_back": [...]}` object
