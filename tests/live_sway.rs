@@ -530,6 +530,65 @@ fn exec_runs_a_command_that_starts_with_a_shell_builtin() {
 }
 
 #[test]
+fn exec_runs_in_sway_s_directory_and_environment_not_the_caller_s() {
+    // Sway's own `exec` forks the command from the compositor, so it inherits
+    // Sway's working directory and environment rather than sway-launch's.
+    // README.md's "Basic usage" documents this; pinned here so a future
+    // change to how the command is launched can't alter it unnoticed.
+    let caller_directory = test_temp_dir().join("exec-caller-directory");
+    std::fs::create_dir_all(&caller_directory).expect("failed to create the caller directory");
+    let working_directory_file = test_temp_dir().join("exec-working-directory");
+    let environment_file = test_temp_dir().join("exec-environment");
+    let _ = std::fs::remove_file(&working_directory_file);
+    let _ = std::fs::remove_file(&environment_file);
+    let variable = "SWAY_LAUNCH_LIVE_TEST_CALLER_ONLY";
+
+    let output = sway_launch_command()
+        .current_dir(&caller_directory)
+        .env(variable, "set-by-caller")
+        .args([
+            "--app-id",
+            "foot",
+            "--timeout",
+            "10",
+            &format!(
+                "pwd > '{}' && env > '{}' && exec foot",
+                working_directory_file.display(),
+                environment_file.display()
+            ),
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let container_id: i64 = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .expect("stdout should be a container id");
+    let _guard = KillOnDrop(container_id);
+
+    let working_directory = std::fs::read_to_string(&working_directory_file)
+        .expect("the launched command should have recorded its working directory");
+    let environment = std::fs::read_to_string(&environment_file)
+        .expect("the launched command should have recorded its environment");
+    let _ = std::fs::remove_file(&working_directory_file);
+    let _ = std::fs::remove_file(&environment_file);
+
+    assert_ne!(
+        std::path::Path::new(working_directory.trim()),
+        caller_directory.canonicalize().unwrap(),
+        "the command should run in Sway's directory, not the caller's"
+    );
+    assert!(
+        !environment.contains(variable),
+        "a variable set only in the caller's environment should not reach the command"
+    );
+}
+
+#[test]
 fn exec_passes_a_quoted_separator_through_to_the_shell_intact() {
     // Sway splits an exec on an unquoted `,`/`;`, but leaves a quoted one --
     // quotes included -- for the shell, so the title must arrive verbatim.
