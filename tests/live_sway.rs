@@ -17,18 +17,80 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use swayipc::{Connection, Node, NodeType};
 
+/// The throwaway compositor's IPC socket, refusing to return anything unless
+/// this run was demonstrably started by scripts/run-live-sway-tests.
+///
+/// This suite launches, moves and kills windows (`[app_id=foot] kill` closes
+/// every foot terminal), switches workspaces and creates outputs, so pointing
+/// it at a desktop session is destructive. Nothing about the environment
+/// alone tells the two apart — inside a desktop session `SWAYSOCK` and
+/// `I3SOCK` both name the real compositor — and a plain
+/// `cargo test --all-features` compiles this file in. So the guard is
+/// positive rather than inferred: the runner exports
+/// `SWAY_LAUNCH_LIVE_TESTS_SOCKET`, `SWAYSOCK` must name the same socket, and
+/// `I3SOCK` must be unset or name it too (swayipc's `Connection::new()` reads
+/// `I3SOCK` first). As a last check, every output must be a headless one.
+fn live_socket() -> &'static std::path::Path {
+    static SOCKET: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    SOCKET.get_or_init(|| {
+        const RUN_VIA_RUNNER: &str = "run the live suite via scripts/run-live-sway-tests, \
+                                      which starts a throwaway headless Sway for it";
+        let sentinel = std::env::var_os("SWAY_LAUNCH_LIVE_TESTS_SOCKET").unwrap_or_else(|| {
+            panic!(
+                "refusing to run: SWAY_LAUNCH_LIVE_TESTS_SOCKET is not set, so this may be a \
+                 real Sway session; {RUN_VIA_RUNNER}"
+            )
+        });
+        if std::env::var_os("SWAYSOCK").as_ref() != Some(&sentinel) {
+            panic!(
+                "refusing to run: SWAYSOCK does not name SWAY_LAUNCH_LIVE_TESTS_SOCKET's \
+                 socket; {RUN_VIA_RUNNER}"
+            );
+        }
+        if std::env::var_os("I3SOCK").is_some_and(|value| value != sentinel) {
+            panic!(
+                "refusing to run: I3SOCK names a different socket than \
+                 SWAY_LAUNCH_LIVE_TESTS_SOCKET; {RUN_VIA_RUNNER}"
+            );
+        }
+        let socket = std::path::PathBuf::from(sentinel);
+        let outputs = try_connect(&socket)
+            .and_then(|mut connection| connection.get_outputs().map_err(|e| e.to_string()))
+            .unwrap_or_else(|error| {
+                panic!("live-sway-tests could not reach {socket:?}: {error}; {RUN_VIA_RUNNER}")
+            });
+        if let Some(output) = outputs
+            .iter()
+            .find(|output| !output.name.starts_with("HEADLESS-"))
+        {
+            panic!(
+                "refusing to run: output {:?} is not a headless one, so this is not a \
+                 throwaway compositor; {RUN_VIA_RUNNER}",
+                output.name
+            );
+        }
+        socket
+    })
+}
+
+fn try_connect(socket: &std::path::Path) -> Result<Connection, String> {
+    std::os::unix::net::UnixStream::connect(socket)
+        .map(Connection::from)
+        .map_err(|error| error.to_string())
+}
+
+/// The binary under test, aimed explicitly at the throwaway compositor.
 fn sway_launch_command() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let socket = live_socket();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_sway-launch"));
+    command.env("SWAYSOCK", socket).env("I3SOCK", socket);
+    command
 }
 
 fn connect() -> Connection {
-    Connection::new().unwrap_or_else(|error| {
-        panic!(
-            "live-sway-tests requires a reachable Sway IPC socket \
-             (SWAYSOCK/WAYLAND_DISPLAY) — run via scripts/run-live-sway-tests \
-             rather than `cargo test` directly: {error}"
-        )
-    })
+    let socket = live_socket();
+    try_connect(socket)
+        .unwrap_or_else(|error| panic!("failed to connect to the live Sway at {socket:?}: {error}"))
 }
 
 fn find_node(node: &Node, con_id: i64) -> Option<&Node> {
@@ -169,7 +231,7 @@ struct KillOnDrop(i64);
 
 impl Drop for KillOnDrop {
     fn drop(&mut self) {
-        if let Ok(mut connection) = Connection::new() {
+        if let Ok(mut connection) = try_connect(live_socket()) {
             let _ = connection.run_command(format!("[con_id={}] kill", self.0));
         }
     }
@@ -450,6 +512,37 @@ fn floating_with_width_and_height_applies_all_three() {
     // default border style, since it excludes the title bar.
     assert_eq!(node.rect.width, 400);
     assert_eq!(node.rect.height + node.deco_rect.height, 300);
+}
+
+#[test]
+fn swaysock_wins_over_a_stale_i3sock() {
+    // Sway exports both SWAYSOCK and I3SOCK to everything it spawns, so the way
+    // to aim a Sway tool at a different compositor is to override SWAYSOCK
+    // alone — which swaymsg honors. sway-launch used to read I3SOCK first, so
+    // that override was silently ignored (and the live runner, which sets
+    // SWAYSOCK, would have driven the desktop session instead). A stale I3SOCK
+    // here must not matter; --floating also exercises the event connection,
+    // which has to resolve the socket the same way as the request connection.
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&[]);
+
+    let output = sway_launch_command()
+        .env("I3SOCK", "/nonexistent/sway-launch-stale-i3sock")
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--floating",
+            "--timeout",
+            "5",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch with a stale I3SOCK should still use SWAYSOCK: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(node_is_floating(&get_node(&mut connection, container_id)));
 }
 
 #[test]
@@ -2943,6 +3036,8 @@ fn every_basic_example_script_launches_successfully() {
 
         let output = Command::new(&path)
             .env("PATH", &path_with_fake_bin_first)
+            .env("SWAYSOCK", live_socket())
+            .env("I3SOCK", live_socket())
             .output()
             .unwrap_or_else(|error| panic!("failed to run {name}: {error}"));
         assert!(

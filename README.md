@@ -28,7 +28,8 @@ workspace/output, splitting, marking, and more (see [Actions reference](#actions
   `--con-id`/`--existing` (see [Target an existing window](#target-an-existing-window)).
 
 Requires a running Sway session — `sway-launch` talks to Sway over its IPC socket (the same one
-`swaymsg` uses), so it won't do anything useful outside of one.
+`swaymsg` uses, found the same way: `SWAYSOCK`, then `I3SOCK`), so it won't do anything useful
+outside of one.
 
 ## Table of contents
 
@@ -841,7 +842,7 @@ $ sway-launch --template quad-grid --apps foot,foot,code,foot --json
 This also applies to errors — a failure prints a JSON object to stderr instead of a plain-text
 message, so a `--json` caller never needs to interpret a plain-text error message. Read it as the
 **last line** of stderr rather than assuming stderr holds nothing else: with no reachable Sway
-socket, the `sway --get-socketpath` fallback the IPC library shells out to can print its own
+socket, the `i3`/`sway --get-socketpath` fallback the IPC library shells out to can print its own
 `sway socket not detected.` diagnostic to the inherited stderr first, ahead of anything
 `sway-launch` writes.
 

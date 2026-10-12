@@ -19,9 +19,10 @@ use std::process::Command;
 /// reachable, whether the command failed depended on whether container id 42
 /// happened to exist, and if it did, the test floated a real window.
 ///
-/// `I3SOCK` is removed as well as `SWAYSOCK` set, since `socket_path()` reads
-/// it first. Both together mean the connect attempt fails on a missing path
-/// rather than reaching a compositor, no matter what the environment holds.
+/// `I3SOCK` is removed as well as `SWAYSOCK` set. `socket_path()` reads
+/// `SWAYSOCK` first, so the override alone would do today, but both together
+/// mean the connect attempt fails on a missing path rather than reaching a
+/// compositor no matter what the environment holds or which order wins.
 fn sway_launch_without_a_compositor() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_sway-launch"));
     command

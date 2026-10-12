@@ -87,8 +87,18 @@ sway_pid="$!"
 
 sway_socket="$sway_runtime_dir/sway-ipc.$(id -u).$sway_pid.sock"
 
+# Sway exports I3SOCK as well as SWAYSOCK to everything it spawns, so inside a
+# desktop session both name the real compositor. Overriding SWAYSOCK alone
+# would leave anything that reads I3SOCK first (swayipc's Connection::new())
+# driving the desktop, so both are pointed at the headless instance. The
+# sentinel is what tests/live_sway.rs refuses to run without, so a plain
+# `cargo test --all-features` can't reach a real session either.
+export SWAYSOCK="$sway_socket"
+export I3SOCK="$sway_socket"
+export SWAY_LAUNCH_LIVE_TESTS_SOCKET="$sway_socket"
+
 sway_ipc_ready() {
-  SWAYSOCK="$sway_socket" swaymsg -t get_version >/dev/null 2>&1
+  swaymsg -t get_version >/dev/null 2>&1
 }
 
 printf 'Waiting for the Sway IPC socket '
@@ -110,8 +120,7 @@ done
 [ -n "$wayland_display" ] || die "Could not find a Wayland display socket under $sway_runtime_dir."
 
 printf 'Running live-Sway tests\n'
-if SWAYSOCK="$sway_socket" \
-  XDG_RUNTIME_DIR="$sway_runtime_dir" \
+if XDG_RUNTIME_DIR="$sway_runtime_dir" \
   WAYLAND_DISPLAY="$wayland_display" \
   cargo test --features live-sway-tests --test live_sway -- --test-threads=1; then
   printf '✓ Live-Sway tests passed\n'

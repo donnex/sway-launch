@@ -4,8 +4,9 @@
 //! compositor, how long to wait for it, how to phrase a command safely and how
 //! to report a failure — but nothing about what any particular command means.
 //! Everything here needs a live compositor, which is why it is exempt from the
-//! coverage target (see CLAUDE.md's Rust conventions); the exceptions are the
-//! three pure helpers at the bottom, which are unit-tested.
+//! coverage target (see CLAUDE.md's Rust conventions); the exceptions are
+//! `preferred_socket_path()` and the three pure helpers at the bottom, which
+//! are unit-tested.
 
 use std::{fmt, time};
 use swayipc::{Connection, EventStream, EventType};
@@ -40,21 +41,28 @@ pub(super) const IPC_ROUND_TRIP_TIMEOUT: time::Duration = time::Duration::from_s
 ///
 /// `swayipc`'s own `Connection::new()` gives no way to configure the socket,
 /// but it does expose `From<UnixStream>`, so the stream is built here instead.
-/// Socket discovery is `I3SOCK`/`SWAYSOCK`, matching `swayipc`'s own order;
-/// when neither is set it falls back to `Connection::new()`, whose remaining
-/// discovery step shells out to `sway --get-socketpath`. That fallback is
-/// unbounded, which is accepted: it only applies when the environment doesn't
-/// name a socket at all, and the subprocess it runs is not the wedged
-/// compositor's IPC socket.
+/// Socket discovery is `socket_path()` (`SWAYSOCK`, then `I3SOCK`); when
+/// neither is set it falls back to `Connection::new()`, whose remaining
+/// discovery steps shell out to `i3 --get-socketpath` and then
+/// `sway --get-socketpath`. That fallback is unbounded, which is accepted: it
+/// only applies when the environment doesn't name a socket at all, and the
+/// subprocess it runs is not the wedged compositor's IPC socket.
 pub(super) fn new_connection() -> Result<Connection, String> {
+    connect(Some(IPC_ROUND_TRIP_TIMEOUT))
+}
+
+/// Connects to `socket_path()`'s socket — with `round_trip_timeout` applied to
+/// both directions when given — or, when the environment names no socket,
+/// falls back to `swayipc`'s own `Connection::new()` discovery.
+fn connect(round_trip_timeout: Option<time::Duration>) -> Result<Connection, String> {
     if let Some(path) = socket_path() {
         let stream = std::os::unix::net::UnixStream::connect(path)
             .map_err(|error| format!("failed to connect to the Sway IPC socket: {}", error))?;
         // Applied to both directions: a wedged compositor can stall a write
         // (socket buffer full, nothing draining it) as readily as a read.
         stream
-            .set_read_timeout(Some(IPC_ROUND_TRIP_TIMEOUT))
-            .and_then(|()| stream.set_write_timeout(Some(IPC_ROUND_TRIP_TIMEOUT)))
+            .set_read_timeout(round_trip_timeout)
+            .and_then(|()| stream.set_write_timeout(round_trip_timeout))
             .map_err(|error| format!("failed to set a Sway IPC socket timeout: {}", error))?;
         return Ok(Connection::from(stream));
     }
@@ -90,13 +98,27 @@ pub(super) fn ipc_error(error: swayipc::Error) -> String {
     error.to_string()
 }
 
-/// The Sway IPC socket path from the environment, in `swayipc`'s own
-/// precedence order. `None` when neither variable is set, which is what sends
-/// `new_connection()` down its unbounded fallback.
+/// The Sway IPC socket path from the environment. `None` when neither
+/// variable is set, which is what sends `connect()` down its unbounded
+/// fallback.
 fn socket_path() -> Option<std::path::PathBuf> {
-    std::env::var_os("I3SOCK")
-        .or_else(|| std::env::var_os("SWAYSOCK"))
-        .map(std::path::PathBuf::from)
+    preferred_socket_path(std::env::var_os("SWAYSOCK"), std::env::var_os("I3SOCK"))
+}
+
+/// `SWAYSOCK` wins over `I3SOCK`, matching `swaymsg` rather than `swayipc`'s
+/// own `Connection::new()` (which reads `I3SOCK` first).
+///
+/// Sway exports both variables, pointing at the same socket, to everything it
+/// spawns, so the documented way to aim a Sway tool at a different compositor
+/// is to override `SWAYSOCK` alone. With `I3SOCK` first, that override was
+/// silently ignored and this tool kept driving the session the terminal
+/// belonged to — including `scripts/run-live-sway-tests`, which points
+/// `SWAYSOCK` at a throwaway headless compositor.
+fn preferred_socket_path(
+    swaysock: Option<std::ffi::OsString>,
+    i3sock: Option<std::ffi::OsString>,
+) -> Option<std::path::PathBuf> {
+    swaysock.or(i3sock).map(std::path::PathBuf::from)
 }
 
 /// The connection `event_loop()` subscribes on, deliberately *without* a read
@@ -110,11 +132,11 @@ fn socket_path() -> Option<std::path::PathBuf> {
 /// does. Only the reader thread can be left blocked, which is the bounded,
 /// measured behaviour documented at `run_wait_matching_events()`'s
 /// `thread::spawn`.
+///
+/// It goes through the same `socket_path()` as `new_connection()`, so the
+/// subscription and the requests around it always reach the same compositor.
 pub(super) fn new_event_connection() -> Result<Connection, String> {
-    match Connection::new() {
-        Ok(connection) => Ok(connection),
-        Err(error) => Err(error.to_string()),
-    }
+    connect(None)
 }
 
 pub(super) fn event_loop(subscriptions: &[EventType]) -> Result<EventStream, String> {
@@ -179,6 +201,29 @@ pub(super) fn quote_sway_string(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // preferred_socket_path
+
+    #[test]
+    fn preferred_socket_path_prefers_swaysock_over_i3sock() {
+        assert_eq!(
+            preferred_socket_path(Some("/sway.sock".into()), Some("/i3.sock".into())),
+            Some(std::path::PathBuf::from("/sway.sock"))
+        );
+    }
+
+    #[test]
+    fn preferred_socket_path_falls_back_to_i3sock() {
+        assert_eq!(
+            preferred_socket_path(None, Some("/i3.sock".into())),
+            Some(std::path::PathBuf::from("/i3.sock"))
+        );
+    }
+
+    #[test]
+    fn preferred_socket_path_is_none_when_neither_is_set() {
+        assert_eq!(preferred_socket_path(None, None), None);
+    }
 
     // quote_sway_string
 
