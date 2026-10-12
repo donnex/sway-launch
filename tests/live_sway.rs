@@ -4657,7 +4657,9 @@ fn launch_timeout_names_the_window_its_app_id_filter_rejected() {
     // A wrong --app-id used to end in the same bare timeout as a typo'd
     // command, with the window it rejected left open and never mentioned --
     // not even under --verbose. The error now names that window, says it came
-    // from this command, and hands its id to a --json caller.
+    // from this command, and hands its id to a --json caller. It also pins
+    // when the wait gives up: at --timeout, not early and not much later.
+    let started = Instant::now();
     let output = sway_launch_command()
         .args([
             "--timeout",
@@ -4670,10 +4672,16 @@ fn launch_timeout_names_the_window_its_app_id_filter_rejected() {
         ])
         .output()
         .expect("failed to run sway-launch binary");
+    let elapsed = started.elapsed();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    assert!(
-        !output.status.success(),
+    assert_eq!(
+        output.status.code(),
+        Some(1),
         "the filter matches nothing, so this must fail: {stderr}"
+    );
+    assert!(
+        elapsed >= Duration::from_secs(2) && elapsed < Duration::from_secs(4),
+        "the launch should time out at --timeout 2, took {elapsed:?}"
     );
 
     let last_line = stderr.lines().next_back().unwrap_or_default();
@@ -4704,6 +4712,70 @@ fn launch_timeout_names_the_window_its_app_id_filter_rejected() {
         stderr.contains(&format!("Event mismatch: New con_id {container_id}")),
         "--verbose should log the rejected window: {stderr}"
     );
+}
+
+#[test]
+fn layout_launch_timeout_reports_its_step_and_rolls_back_earlier_steps() {
+    // A wrong app_id in a layout step is the timeout a real user hits most,
+    // and the one --rollback-on-error exists for: the error must name the
+    // step, arrive at --timeout, and close what earlier steps launched.
+    let path = TempToml::write(
+        "timeout-rollback",
+        "[[step]]\ncommand = \"foot --app-id=timeout-step-one\"\napp_id = \"timeout-step-one\"\n\n\
+         [[step]]\ncommand = \"foot --app-id=timeout-step-two\"\napp_id = \"timeout-step-two-wrong\"\n",
+    );
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--rollback-on-error",
+            "--json",
+            "--timeout",
+            "2",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let elapsed = started.elapsed();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "step 2's filter matches nothing, so this must fail: {stderr}"
+    );
+
+    let last_line = stderr.lines().next_back().unwrap_or_default();
+    let error: serde_json::Value =
+        serde_json::from_str(last_line).expect("the last stderr line should be a JSON error");
+    let _step_two_guards: Vec<KillOnDrop> = error["unmatched_windows"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|window| window["container_id"].as_i64())
+        .map(KillOnDrop)
+        .collect();
+    assert!(
+        elapsed >= Duration::from_secs(2) && elapsed < Duration::from_secs(5),
+        "step 2 should time out at --timeout 2, took {elapsed:?}"
+    );
+
+    let message = error["error"].as_str().expect("error should be a string");
+    assert!(
+        message.starts_with("step 2: ") && message.contains("appeared within 2 sec"),
+        "the error should name the step that timed out: {message}"
+    );
+    let rolled_back = error["rolled_back"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected rolled_back in {error}"));
+    assert_eq!(rolled_back.len(), 1, "{error}");
+    let step_one_id = rolled_back[0]
+        .as_i64()
+        .expect("rolled_back should hold container ids");
+    let _step_one_guard = KillOnDrop(step_one_id);
+
+    let mut connection = connect();
+    wait_for_container_gone(&mut connection, step_one_id);
 }
 
 #[test]

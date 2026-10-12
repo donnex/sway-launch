@@ -186,6 +186,13 @@ below) plus five integration test files:
   `tests/json_output.rs`/`tests/layout.rs` instead (`rollback_on_error_without_layout_or_template_errors`,
   `con_id_json_error_output_is_a_structured_object`, `layout_json_error_output_is_a_structured_object`,
   `layout_rollback_on_error_reports_empty_rollback_when_nothing_was_launched`).
+  `--timeout`'s failure half is covered for launches: `launch_timeout_names_the_window_its_app_id_filter_rejected`
+  asserts a wrong `--app-id` exits 1 at `--timeout` (not early, not much later), and
+  `layout_launch_timeout_reports_its_step_and_rolls_back_earlier_steps` the same inside a layout —
+  `step 2: ...` in the error and step 1's window in `rolled_back` and closed. An event-confirmed
+  action's timeout (`run_wait_matching_events()`) has no live test yet: the only reliable way found
+  to make Sway withhold a confirming state is the case-insensitive/keyword `--workspace`/`--output`
+  move tracked in #5, and pinning that as a timeout would pin the bug. Revisit once #5 is decided.
   `rollback_on_error_handles_a_launched_window_that_already_closed_itself` covers the scenario
   where a step-1-launched window closes on its own before a later step's failure triggers
   rollback — `rollback()`'s own `kill_container()` call against that already-gone container is
