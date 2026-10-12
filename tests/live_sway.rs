@@ -108,10 +108,10 @@ fn find_node(node: &Node, con_id: i64) -> Option<&Node> {
 /// detect Sway's scratchpad (the fixed internal workspace named
 /// `__i3_scratch`) in a way that's reliable on both Sway 1.9 (still what
 /// `apt` installs on Ubuntu 24.04/CI) and 1.11, unlike the node's own
-/// `scratchpad_state` field — a CI-failure investigation found that field
-/// stays `Some(ScratchpadState::None)` on Sway 1.9 even for a genuinely
-/// scratchpadded window (see `sway_launch.rs`'s `node_is_in_scratchpad()`
-/// doc comment for the fuller story and the app-side fix).
+/// `scratchpad_state` field — that field stays `none` on Sway 1.9 even for a
+/// genuinely scratchpadded window, and stays `fresh`/`changed` on 1.11 for
+/// one merely shown via `scratchpad show` (see `tree.rs`'s
+/// `tree_shows_container_in_scratchpad()` doc comment).
 fn ancestor_workspace_name(node: &Node, con_id: i64, current: Option<&str>) -> Option<String> {
     let current = if node.node_type == NodeType::Workspace {
         node.name.as_deref()
@@ -1303,6 +1303,63 @@ fn scratchpad_is_a_no_op_when_already_in_the_scratchpad() {
         "--scratchpad on an already-scratchpadded window took {:?}, suggesting it hung \
          waiting for an event Sway doesn't fire for a no-op",
         started.elapsed()
+    );
+}
+
+#[test]
+fn scratchpad_hides_a_window_currently_shown_from_the_scratchpad() {
+    // Regression test: a window brought out with `scratchpad show` keeps
+    // scratchpad_state "fresh" on Sway 1.11 while sitting on an ordinary
+    // workspace, which used to make --scratchpad short-circuit as
+    // already_satisfied and leave it visible — the README's dropdown-terminal
+    // example did nothing in exactly the case it exists for.
+    let mut connection = connect();
+    let mark = "live-sway-test-scratchpad-shown";
+    let (container_id, _guard) = launch_foot(&["--mark", mark, "--scratchpad"]);
+
+    for outcome in connection
+        .run_command(format!("[con_id={container_id}] scratchpad show"))
+        .expect("scratchpad show should succeed")
+    {
+        outcome.expect("scratchpad show should apply");
+    }
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_ne!(
+        ancestor_workspace_name(&tree, container_id, None).as_deref(),
+        Some("__i3_scratch"),
+        "scratchpad show should have brought the window onto a normal workspace"
+    );
+
+    let output = sway_launch_command()
+        .args([
+            "--json",
+            "--existing",
+            "--mark-match",
+            mark,
+            "--scratchpad",
+            "--timeout",
+            "5",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --scratchpad on a shown scratchpad window failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(r#"{"action":"move scratchpad","status":"changed"}"#),
+        "expected move scratchpad to report changed, got: {stdout}"
+    );
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let workspace = ancestor_workspace_name(&tree, container_id, None);
+    assert_eq!(
+        workspace.as_deref(),
+        Some("__i3_scratch"),
+        "expected the window back in Sway's scratchpad workspace, got {:?}",
+        workspace
     );
 }
 

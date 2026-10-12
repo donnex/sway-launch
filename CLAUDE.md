@@ -176,7 +176,8 @@ below) plus five integration test files:
   a separate thread and forwarded through a channel — the same shape `confirmation.rs`'s own event
   loop uses internally. `--scratchpad` is covered by
   `scratchpad_moves_a_tiled_window_to_the_scratchpad`/
-  `scratchpad_is_a_no_op_when_already_in_the_scratchpad`; `--existing`'s reach into the scratchpad
+  `scratchpad_is_a_no_op_when_already_in_the_scratchpad`/
+  `scratchpad_hides_a_window_currently_shown_from_the_scratchpad`; `--existing`'s reach into the scratchpad
   (documented in README.md's "Target an existing window" section, previously exercised only
   manually, never regression-tested here) is covered by `existing_matches_a_window_in_the_scratchpad`.
   `--rollback-on-error` is covered by
@@ -396,7 +397,6 @@ stated goal (safer internals, less repeated parsing) to actually land.
   directions (broken on 1.9, fixed on both 1.9 and 1.11) during that investigation. `Scratchpad`
   was found to need this the same way, live: re-running `--scratchpad` on an already-scratchpadded
   window fires no event at all. Its own check is `tree_shows_container_in_scratchpad()`, which
-  primarily
   checks the container's ancestor workspace name — Sway's scratchpad is always the fixed internal
   workspace named `__i3_scratch` — rather than `node_is_floating()`, deliberately, since the
   auto-float event described above would otherwise make `already_at_target()` misreport a window
@@ -410,8 +410,14 @@ stated goal (safer internals, less repeated parsing) to actually land.
   stays `Some(ScratchpadState::None)` on 1.9 even for a genuinely scratchpadded window, so
   `already_at_target()` never short-circuited there, reproducing the exact hang this paragraph
   describes. Fixed the same way `node_is_floating()` was: checking the version-independent signal
-  (ancestor workspace name) first, keeping `node_is_in_scratchpad()`'s `scratchpad_state` read as a
-  secondary, redundant OR condition rather than removing it outright. `Mark` was
+  (ancestor workspace name) first, initially keeping the `scratchpad_state` read as a secondary OR
+  condition — later dropped entirely, because that field means "belongs to the scratchpad", not
+  "hidden in it": Sway 1.11 keeps it `fresh`/`changed` while the window is *shown* on an ordinary
+  workspace via `scratchpad show`, so the OR made a shown dropdown window look already-hidden and
+  `--scratchpad` short-circuited as `already_satisfied` without sending anything. The ancestor
+  workspace name alone decides now, pinned by `tree.rs`'s
+  `tree_shows_container_in_scratchpad_false_for_a_shown_scratchpad_window` and `tests/live_sway.rs`'s
+  `scratchpad_hides_a_window_currently_shown_from_the_scratchpad`. `Mark` was
   checked live too and found *not* to need this — re-applying a mark the container already has
   still fires
   `WindowChange::Mark`. Confirmed by `tests/live_sway.rs`'s

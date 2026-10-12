@@ -203,6 +203,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   logs each rejected window as it appears. Every action's error also leads with what it was —
   `launch "foot": ...`, `move container to output "left": ...` — so an invocation with several
   actions, or a layout's `step 3: ...`, says which one failed. (#33)
+- `--scratchpad` now hides a scratchpad window that is currently shown, instead of reporting it
+  `already_satisfied` and leaving it on screen. A window brought out with `scratchpad show` still
+  counts as a scratchpad window to Sway 1.11, which made the README's dropdown-terminal example
+  (`sway-launch --existing --mark-match dropdown-term --scratchpad`) do nothing in exactly the case
+  it exists for, while exiting 0. Sway 1.9 was unaffected. (#69)
 - A launch command containing an unquoted `,` or `;` is now rejected up front, instead of being
   split by Sway into separate commands. Sway reads the command before the shell does, so
   `'foot -T a,b'` used to open a window and then fail on `b`, leaving that window open and
