@@ -276,6 +276,15 @@ All five integration test files need `CARGO_BIN_EXE_sway-launch` (to invoke the 
 a subprocess), which is only set for files under `tests/`, not for the bin crate's own unit test
 harness — that's why these live here instead of as `#[cfg(test)]` modules in `src/main.rs`.
 
+Helpers more than one of them needs live in `tests/common/mod.rs`, pulled in with `mod common;`:
+`TempToml` (a TOML fixture removed on drop), `test_temp_dir()` (the per-process scratch directory
+it writes into) and `sway_launch_without_a_compositor()` (the binary aimed at a socket that cannot
+exist, for tests that need an IPC call to fail). Add a shared helper there rather than copying it
+into a second test file. `tests/live_sway.rs` still carries its own copies of a few `tree.rs`
+predicates (`find_node`, `node_is_floating`, the workspace/output ancestor walks, `parent_layout`):
+the crate is a binary only, so an integration test can't call them, and sharing them needs a
+library/binary split, which hasn't been done.
+
 ### Core model: `SwayAction`
 
 Two types, not one. **`ExecAction`** launches the window (`command`, `app_id_match`,
@@ -1468,7 +1477,11 @@ should carry it too, accepting that a many-slot grid's line runs long as the tra
 the same order `--apps` zips its own comma-separated list against — via a new shared
 `template::distinct_slot_names()` helper that `bindings_from_apps()` (see below) now also calls
 instead of duplicating the same loop, so the two can never silently disagree on what "slot order"
-means. `slots` is simply `slot_names.len()`. Covered headlessly by `tests/template.rs`'s
+means. `slots` is simply `slot_names.len()`. That makes `--list-templates --json` the place
+anything outside the crate reads slot order from: `tests/live_sway.rs`'s
+`every_shipped_template_resolves_and_launches_successfully` and
+`scripts/generate-layout-screenshots` both take `slot_names` from it rather than working the order
+out from the template text themselves. Covered headlessly by `tests/template.rs`'s
 `list_templates_json_output_reports_slots_and_slot_names`,
 `list_templates_plain_output_includes_slot_count_and_names`, and
 `list_templates_plain_output_uses_singular_slot_for_a_single_slot_template`, and by `template.rs`'s
@@ -1586,8 +1599,9 @@ unpolished.
 `scripts/generate-layout-screenshots` is a maintainer-run Python tool (not invoked by anything
 else, including CI) that generates a labeled screenshot of every shipped `--template` shape, for
 visual reference when writing docs or checking a shape actually looks like its description claims.
-It's Python, not POSIX sh like the rest of `scripts/` — the reasoning being it needs to parse TOML
-(`tomllib`, stdlib) and `swaymsg`'s JSON tree output, and orchestrate several subprocesses (`sway`,
+It's Python, not POSIX sh like the rest of `scripts/` — the reasoning being it needs to parse JSON (`swaymsg`'s
+tree output, and `sway-launch --list-templates --json` for each template's slot order), and
+orchestrate several subprocesses (`sway`,
 `swaymsg`, `sway-launch`, `figlet`, `grim`), which gets painful in POSIX sh without pulling in
 `jq`/similar as another new dependency. Requires `sway`, `swaymsg`, `foot`, `figlet`, `grim`, and
 `cargo` on `PATH` — `figlet`/`grim` are new dependencies introduced solely for this script, not

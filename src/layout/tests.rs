@@ -1,5 +1,24 @@
 use super::*;
 
+/// `step.to_sway_launch()` with the defaults every test here shares
+/// (`--timeout 5s`, `--wait-time 20ms`, not verbose) and no earlier steps.
+fn convert(step: &LayoutStep) -> Result<sway_launch::SwayLaunch<'_>, String> {
+    convert_with(step, &HashMap::new())
+}
+
+/// `convert()`, with `resolved_ids` standing in for earlier named steps.
+fn convert_with<'a>(
+    step: &'a LayoutStep,
+    resolved_ids: &HashMap<String, i64>,
+) -> Result<sway_launch::SwayLaunch<'a>, String> {
+    step.to_sway_launch(
+        time::Duration::from_secs(5),
+        time::Duration::from_millis(20),
+        false,
+        resolved_ids,
+    )
+}
+
 #[test]
 fn parse_reads_a_representative_layout() {
     let layout = parse(
@@ -88,14 +107,7 @@ fn minimal_step() -> LayoutStep {
 #[test]
 fn to_sway_launch_exec_step_uses_command() {
     let step = minimal_step();
-    let sway_launch = step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new(),
-        )
-        .expect("valid step should convert");
+    let sway_launch = convert(&step).expect("valid step should convert");
     assert!(matches!(
         sway_launch.target,
         sway_launch::Target::Exec { command: "foot" }
@@ -107,14 +119,7 @@ fn to_sway_launch_con_id_step_targets_that_container() {
     let mut step = minimal_step();
     step.command = None;
     step.con_id = Some(42);
-    let sway_launch = step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new(),
-        )
-        .expect("valid step should convert");
+    let sway_launch = convert(&step).expect("valid step should convert");
     assert!(matches!(sway_launch.target, sway_launch::Target::ConId(42)));
 }
 
@@ -123,14 +128,7 @@ fn to_sway_launch_existing_step_requires_app_id_or_class() {
     let mut step = minimal_step();
     step.command = None;
     step.existing = true;
-    assert!(step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new()
-        )
-        .is_err());
+    assert!(convert(&step).is_err());
 }
 
 #[test]
@@ -139,14 +137,7 @@ fn to_sway_launch_existing_step_with_app_id_succeeds() {
     step.command = None;
     step.existing = true;
     step.app_id = Some("foot".to_string());
-    let sway_launch = step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new(),
-        )
-        .expect("existing step with app_id should convert");
+    let sway_launch = convert(&step).expect("existing step with app_id should convert");
     assert!(matches!(sway_launch.target, sway_launch::Target::Existing));
 }
 
@@ -154,14 +145,7 @@ fn to_sway_launch_existing_step_with_app_id_succeeds() {
 fn to_sway_launch_step_without_a_target_errors() {
     let mut step = minimal_step();
     step.command = None;
-    assert!(step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new()
-        )
-        .is_err());
+    assert!(convert(&step).is_err());
 }
 
 #[test]
@@ -169,14 +153,7 @@ fn to_sway_launch_rejects_app_id_and_class_together() {
     let mut step = minimal_step();
     step.app_id = Some("foot".to_string());
     step.class = Some("Foot".to_string());
-    assert!(step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new()
-        )
-        .is_err());
+    assert!(convert(&step).is_err());
 }
 
 #[test]
@@ -184,14 +161,7 @@ fn to_sway_launch_rejects_app_id_and_mark_match_together() {
     let mut step = minimal_step();
     step.app_id = Some("foot".to_string());
     step.mark_match = Some("dropdown-term".to_string());
-    assert!(step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new()
-        )
-        .is_err());
+    assert!(convert(&step).is_err());
 }
 
 #[test]
@@ -200,27 +170,14 @@ fn to_sway_launch_rejects_con_id_and_mark_match_together() {
     step.command = None;
     step.con_id = Some(42);
     step.mark_match = Some("dropdown-term".to_string());
-    assert!(step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new()
-        )
-        .is_err());
+    assert!(convert(&step).is_err());
 }
 
 #[test]
 fn to_sway_launch_rejects_mark_match_without_existing() {
     let mut step = minimal_step();
     step.mark_match = Some("dropdown-term".to_string());
-    let error = step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new(),
-        )
+    let error = convert(&step)
         .err()
         .expect("mark_match without existing should be rejected");
     assert!(error.contains("mark_match"));
@@ -231,14 +188,7 @@ fn to_sway_launch_rejects_class_and_mark_match_together() {
     let mut step = minimal_step();
     step.class = Some("Foot".to_string());
     step.mark_match = Some("dropdown-term".to_string());
-    assert!(step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new()
-        )
-        .is_err());
+    assert!(convert(&step).is_err());
 }
 
 #[test]
@@ -247,14 +197,7 @@ fn to_sway_launch_existing_step_with_mark_match_succeeds() {
     step.command = None;
     step.existing = true;
     step.mark_match = Some("dropdown-term".to_string());
-    let sway_launch = step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new(),
-        )
-        .expect("existing step with mark_match should convert");
+    let sway_launch = convert(&step).expect("existing step with mark_match should convert");
     assert!(matches!(sway_launch.target, sway_launch::Target::Existing));
     assert_eq!(sway_launch.mark_match, "dropdown-term");
 }
@@ -263,43 +206,21 @@ fn to_sway_launch_existing_step_with_mark_match_succeeds() {
 fn to_sway_launch_rejects_empty_command() {
     let mut step = minimal_step();
     step.command = Some(String::new());
-    assert!(step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new()
-        )
-        .is_err());
+    assert!(convert(&step).is_err());
 }
 
 #[test]
 fn to_sway_launch_rejects_whitespace_only_command() {
     let mut step = minimal_step();
     step.command = Some("   ".to_string());
-    assert!(step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new()
-        )
-        .is_err());
+    assert!(convert(&step).is_err());
 }
 
 #[test]
 fn to_sway_launch_rejects_blank_id() {
     let mut step = minimal_step();
     step.id = Some("  ".to_string());
-    let error = step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new(),
-        )
-        .err()
-        .expect("blank id should be rejected");
+    let error = convert(&step).err().expect("blank id should be rejected");
     assert!(
         error.contains("id"),
         "error should name the field: {error:?}"
@@ -311,13 +232,7 @@ fn to_sway_launch_rejects_blank_target_id() {
     let mut step = minimal_step();
     step.command = None;
     step.target_id = Some("   ".to_string());
-    let error = step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new(),
-        )
+    let error = convert(&step)
         .err()
         .expect("blank target_id should be rejected");
     assert!(
@@ -332,14 +247,7 @@ fn to_sway_launch_rejects_command_and_con_id_together() {
     // command instead of erroring, unlike the CLI's conflicts_with.
     let mut step = minimal_step();
     step.con_id = Some(42);
-    assert!(step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new()
-        )
-        .is_err());
+    assert!(convert(&step).is_err());
 }
 
 #[test]
@@ -348,14 +256,7 @@ fn to_sway_launch_rejects_con_id_and_app_id_together() {
     step.command = None;
     step.con_id = Some(42);
     step.app_id = Some("foot".to_string());
-    assert!(step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new()
-        )
-        .is_err());
+    assert!(convert(&step).is_err());
 }
 
 #[test]
@@ -364,14 +265,7 @@ fn to_sway_launch_rejects_con_id_and_class_together() {
     step.command = None;
     step.con_id = Some(42);
     step.class = Some("Foot".to_string());
-    assert!(step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new()
-        )
-        .is_err());
+    assert!(convert(&step).is_err());
 }
 
 #[test]
@@ -379,14 +273,7 @@ fn to_sway_launch_rejects_command_and_existing_together() {
     let mut step = minimal_step();
     step.existing = true;
     step.app_id = Some("foot".to_string());
-    assert!(step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new()
-        )
-        .is_err());
+    assert!(convert(&step).is_err());
 }
 
 #[test]
@@ -396,28 +283,14 @@ fn to_sway_launch_rejects_con_id_and_existing_together() {
     step.con_id = Some(42);
     step.existing = true;
     step.app_id = Some("foot".to_string());
-    assert!(step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new()
-        )
-        .is_err());
+    assert!(convert(&step).is_err());
 }
 
 #[test]
 fn to_sway_launch_rejects_command_and_target_id_together() {
     let mut step = minimal_step();
     step.target_id = Some("first".to_string());
-    assert!(step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new()
-        )
-        .is_err());
+    assert!(convert(&step).is_err());
 }
 
 #[test]
@@ -432,13 +305,7 @@ fn to_sway_launch_rejects_target_id_and_app_id_together() {
     step.app_id = Some("foot".to_string());
     let mut resolved_ids = HashMap::new();
     resolved_ids.insert("first".to_string(), 42);
-    let error = step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &resolved_ids,
-        )
+    let error = convert_with(&step, &resolved_ids)
         .err()
         .expect("target_id combined with app_id should be rejected");
     assert!(
@@ -455,14 +322,7 @@ fn to_sway_launch_rejects_target_id_and_class_together() {
     step.class = Some("Foot".to_string());
     let mut resolved_ids = HashMap::new();
     resolved_ids.insert("first".to_string(), 42);
-    assert!(step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &resolved_ids
-        )
-        .is_err());
+    assert!(convert_with(&step, &resolved_ids).is_err());
 }
 
 #[test]
@@ -472,13 +332,7 @@ fn to_sway_launch_target_id_resolves_via_resolved_ids() {
     step.target_id = Some("first".to_string());
     let mut resolved_ids = HashMap::new();
     resolved_ids.insert("first".to_string(), 42);
-    let sway_launch = step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &resolved_ids,
-        )
+    let sway_launch = convert_with(&step, &resolved_ids)
         .expect("target_id present in resolved_ids should convert");
     assert!(matches!(sway_launch.target, sway_launch::Target::ConId(42)));
 }
@@ -488,13 +342,7 @@ fn to_sway_launch_rejects_unresolved_target_id() {
     let mut step = minimal_step();
     step.command = None;
     step.target_id = Some("missing".to_string());
-    let error = step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new(),
-        )
+    let error = convert(&step)
         .err()
         .expect("unresolved target_id should error");
     assert!(error.contains("missing"));
@@ -507,13 +355,7 @@ fn to_sway_launch_rejects_a_mark_containing_a_double_quote() {
     // round-trip it. See validate_sway_string_argument's doc comment.
     let mut step = minimal_step();
     step.mark = Some("dropdown\"term".to_string());
-    let error = step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new(),
-        )
+    let error = convert(&step)
         .err()
         .expect("a mark containing a double quote should be rejected");
     assert!(
@@ -526,14 +368,7 @@ fn to_sway_launch_rejects_a_mark_containing_a_double_quote() {
 fn to_sway_launch_rejects_a_blank_mark() {
     let mut step = minimal_step();
     step.mark = Some("   ".to_string());
-    assert!(step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new()
-        )
-        .is_err());
+    assert!(convert(&step).is_err());
 }
 
 #[test]
@@ -546,13 +381,7 @@ fn to_sway_launch_rejects_a_blank_app_id() {
     step.command = None;
     step.existing = true;
     step.app_id = Some("   ".to_string());
-    let error = step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new(),
-        )
+    let error = convert(&step)
         .err()
         .expect("a blank app_id should be rejected");
     assert!(
@@ -567,13 +396,7 @@ fn to_sway_launch_rejects_a_blank_class() {
     step.command = None;
     step.existing = true;
     step.class = Some("".to_string());
-    let error = step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new(),
-        )
+    let error = convert(&step)
         .err()
         .expect("a blank class should be rejected");
     assert!(
@@ -586,13 +409,7 @@ fn to_sway_launch_rejects_a_blank_class() {
 fn to_sway_launch_rejects_a_blank_workspace() {
     let mut step = minimal_step();
     step.workspace = Some("".to_string());
-    let error = step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new(),
-        )
+    let error = convert(&step)
         .err()
         .expect("a blank workspace should be rejected");
     assert!(
@@ -605,14 +422,7 @@ fn to_sway_launch_rejects_a_blank_workspace() {
 fn to_sway_launch_rejects_an_output_containing_a_backslash() {
     let mut step = minimal_step();
     step.output = Some("HDMI\\A-1".to_string());
-    assert!(step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new()
-        )
-        .is_err());
+    assert!(convert(&step).is_err());
 }
 
 #[test]
@@ -621,83 +431,41 @@ fn to_sway_launch_accepts_a_mark_containing_command_separators() {
     // so the new validation must not over-reject them.
     let mut step = minimal_step();
     step.mark = Some("foo, exec bar; baz".to_string());
-    assert!(step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new()
-        )
-        .is_ok());
+    assert!(convert(&step).is_ok());
 }
 
 #[test]
 fn to_sway_launch_rejects_invalid_height() {
     let mut step = minimal_step();
     step.height = Some("notasize".to_string());
-    assert!(step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new()
-        )
-        .is_err());
+    assert!(convert(&step).is_err());
 }
 
 #[test]
 fn to_sway_launch_rejects_invalid_width() {
     let mut step = minimal_step();
     step.width = Some("notasize".to_string());
-    assert!(step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new()
-        )
-        .is_err());
+    assert!(convert(&step).is_err());
 }
 
 #[test]
 fn to_sway_launch_rejects_invalid_position() {
     let mut step = minimal_step();
     step.position = Some("notaposition".to_string());
-    assert!(step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new()
-        )
-        .is_err());
+    assert!(convert(&step).is_err());
 }
 
 #[test]
 fn to_sway_launch_uses_step_timeout_when_set() {
     let mut step = minimal_step();
     step.timeout = Some(7);
-    let sway_launch = step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new(),
-        )
-        .expect("valid step should convert");
+    let sway_launch = convert(&step).expect("valid step should convert");
     assert_eq!(sway_launch.timeout, time::Duration::from_secs(7));
 }
 
 #[test]
 fn to_sway_launch_falls_back_to_default_timeout() {
     let step = minimal_step();
-    let sway_launch = step
-        .to_sway_launch(
-            time::Duration::from_secs(5),
-            time::Duration::from_millis(20),
-            false,
-            &HashMap::new(),
-        )
-        .expect("valid step should convert");
+    let sway_launch = convert(&step).expect("valid step should convert");
     assert_eq!(sway_launch.timeout, time::Duration::from_secs(5));
 }

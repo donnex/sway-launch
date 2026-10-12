@@ -18,6 +18,9 @@
 // a different one fails instead of passing quietly.
 #![cfg(feature = "live-sway-tests")]
 
+mod common;
+
+use common::{test_temp_dir, TempToml};
 use std::io::BufRead;
 use std::process::Command;
 use std::sync::mpsc;
@@ -108,30 +111,6 @@ fn find_node(node: &Node, con_id: i64) -> Option<&Node> {
         .iter()
         .chain(node.floating_nodes.iter())
         .find_map(|child| find_node(child, con_id))
-}
-
-/// The name of the nearest `NodeType::Workspace` ancestor of `con_id` —
-/// mirrors `tree.rs`'s private `find_containing_name()`. Used to
-/// detect Sway's scratchpad (the fixed internal workspace named
-/// `__i3_scratch`) in a way that's reliable on both Sway 1.9 (still what
-/// `apt` installs on Ubuntu 24.04/CI) and 1.11, unlike the node's own
-/// `scratchpad_state` field — that field stays `none` on Sway 1.9 even for a
-/// genuinely scratchpadded window, and stays `fresh`/`changed` on 1.11 for
-/// one merely shown via `scratchpad show` (see `tree.rs`'s
-/// `tree_shows_container_in_scratchpad()` doc comment).
-fn ancestor_workspace_name(node: &Node, con_id: i64, current: Option<&str>) -> Option<String> {
-    let current = if node.node_type == NodeType::Workspace {
-        node.name.as_deref()
-    } else {
-        current
-    };
-    if node.id == con_id {
-        return current.map(String::from);
-    }
-    node.nodes
-        .iter()
-        .chain(node.floating_nodes.iter())
-        .find_map(|child| ancestor_workspace_name(child, con_id, current))
 }
 
 /// The `layout` of `con_id`'s direct parent node — mirrors
@@ -252,6 +231,15 @@ fn node_is_floating(node: &Node) -> bool {
         )
 }
 
+/// The name of the nearest `NodeType::Workspace` ancestor of `con_id` —
+/// mirrors `tree.rs`'s private `find_containing_name()`. Also used to
+/// detect Sway's scratchpad (the fixed internal workspace named
+/// `__i3_scratch`) in a way that's reliable on both Sway 1.9 (still what
+/// `apt` installs on Ubuntu 24.04/CI) and 1.11, unlike the node's own
+/// `scratchpad_state` field — that field stays `none` on Sway 1.9 even for a
+/// genuinely scratchpadded window, and stays `fresh`/`changed` on 1.11 for
+/// one merely shown via `scratchpad show` (see `tree.rs`'s
+/// `tree_shows_container_in_scratchpad()` doc comment).
 fn workspace_containing<'a>(
     node: &'a Node,
     con_id: i64,
@@ -429,46 +417,6 @@ impl Drop for CreatedOutput {
         if let Ok(mut connection) = try_connect(live_socket()) {
             let _ = connection.run_command(format!("output {} unplug", self.0));
         }
-    }
-}
-
-/// A per-process scratch directory for this suite's fixtures and marker
-/// files, so nothing depends on a fixed path in a shared temp directory —
-/// which another user (or a second concurrent run) could pre-create,
-/// symlink, or collide with. The injection tests below care especially:
-/// they assert a marker file does *not* exist, and a stray file at a
-/// predictable path would fail them for the wrong reason.
-fn test_temp_dir() -> std::path::PathBuf {
-    let directory =
-        std::env::temp_dir().join(format!("sway-launch-live-test-{}", std::process::id()));
-    std::fs::create_dir_all(&directory).expect("failed to create the test temp directory");
-    directory
-}
-
-/// A layout file fixture written to the OS temp directory, removed again
-/// when it goes out of scope (even if an assertion panics mid-test) —
-/// mirrors tests/layout.rs's TempToml.
-struct TempToml(std::path::PathBuf);
-
-impl TempToml {
-    fn write(name: &str, contents: &str) -> Self {
-        let path = test_temp_dir().join(format!("{}.toml", name));
-        std::fs::write(&path, contents).expect("failed to write temp layout file");
-        Self(path)
-    }
-}
-
-impl std::ops::Deref for TempToml {
-    type Target = std::path::Path;
-
-    fn deref(&self) -> &std::path::Path {
-        &self.0
-    }
-}
-
-impl Drop for TempToml {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
     }
 }
 
@@ -1491,9 +1439,9 @@ fn scratchpad_moves_a_tiled_window_to_the_scratchpad() {
     );
 
     let tree = connection.get_tree().expect("get_tree should succeed");
-    let workspace = ancestor_workspace_name(&tree, container_id, None);
+    let workspace = workspace_containing(&tree, container_id, None);
     assert_eq!(
-        workspace.as_deref(),
+        workspace,
         Some("__i3_scratch"),
         "expected the window to be in Sway's scratchpad workspace, got ancestor workspace {:?}",
         workspace
@@ -1553,7 +1501,7 @@ fn scratchpad_hides_a_window_currently_shown_from_the_scratchpad() {
     }
     let tree = connection.get_tree().expect("get_tree should succeed");
     assert_ne!(
-        ancestor_workspace_name(&tree, container_id, None).as_deref(),
+        workspace_containing(&tree, container_id, None),
         Some("__i3_scratch"),
         "scratchpad show should have brought the window onto a normal workspace"
     );
@@ -1582,9 +1530,9 @@ fn scratchpad_hides_a_window_currently_shown_from_the_scratchpad() {
     );
 
     let tree = connection.get_tree().expect("get_tree should succeed");
-    let workspace = ancestor_workspace_name(&tree, container_id, None);
+    let workspace = workspace_containing(&tree, container_id, None);
     assert_eq!(
-        workspace.as_deref(),
+        workspace,
         Some("__i3_scratch"),
         "expected the window back in Sway's scratchpad workspace, got {:?}",
         workspace
@@ -2037,9 +1985,9 @@ fn floating_centered_and_scratchpadded_together_lands_hidden_but_correctly_confi
     ]);
 
     let tree = connection.get_tree().expect("get_tree should succeed");
-    let workspace = ancestor_workspace_name(&tree, container_id, None);
+    let workspace = workspace_containing(&tree, container_id, None);
     assert_eq!(
-        workspace.as_deref(),
+        workspace,
         Some("__i3_scratch"),
         "expected the window to be in Sway's scratchpad workspace, got ancestor workspace {:?}",
         workspace
@@ -3904,6 +3852,56 @@ fn recorded_template_shape(name: &str) -> Option<String> {
     std::fs::read_to_string(template_shapes_dir().join(format!("{name}.txt"))).ok()
 }
 
+/// Every built-in template's slot names, keyed by template name, as
+/// `--list-templates --json` reports them — the same first-appearance order
+/// `--apps` binds against, taken from the binary itself rather than worked
+/// out again here from the template text.
+fn builtin_slot_names() -> std::collections::HashMap<String, Vec<String>> {
+    let output = sway_launch_command()
+        .args(["--list-templates", "--json"])
+        .output()
+        .expect("failed to run sway-launch --list-templates --json");
+    assert!(
+        output.status.success(),
+        "--list-templates --json failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .expect("--list-templates --json should print valid JSON");
+    parsed["templates"]
+        .as_array()
+        .expect("--list-templates --json should carry a templates array")
+        .iter()
+        .map(|template| {
+            let name = template["name"]
+                .as_str()
+                .expect("every listed template should have a name")
+                .to_string();
+            let slots = template["slot_names"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{name} should list its slot_names"))
+                .iter()
+                .map(|slot| slot.as_str().expect("slot names are strings").to_string())
+                .collect();
+            (name, slots)
+        })
+        .collect()
+}
+
+/// How many `[[step]]` entries a template file declares, read by parsing
+/// it as TOML rather than by matching its text.
+fn template_step_count(path: &std::path::Path) -> usize {
+    let contents = std::fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("failed to read {path:?}: {error}"));
+    let document: toml::Table = contents
+        .parse()
+        .unwrap_or_else(|error| panic!("{path:?} should be valid TOML: {error}"));
+    document
+        .get("step")
+        .and_then(toml::Value::as_array)
+        .map_or(0, Vec::len)
+}
+
 fn focused_workspace_name(connection: &mut Connection) -> String {
     connection
         .get_workspaces()
@@ -3945,6 +3943,7 @@ fn every_shipped_template_resolves_and_launches_successfully() {
         paths
     );
 
+    let slot_names = builtin_slot_names();
     let mut checked_names = std::collections::HashSet::new();
     let mut mismatches = Vec::new();
     for path in &paths {
@@ -3953,14 +3952,12 @@ fn every_shipped_template_resolves_and_launches_successfully() {
             .and_then(|stem| stem.to_str())
             .expect("template file names should be UTF-8")
             .to_string();
-        let contents = std::fs::read_to_string(path)
-            .unwrap_or_else(|error| panic!("failed to read {path:?}: {error}"));
-        let slot_count = contents
-            .lines()
-            .filter(|line| line.starts_with("slot = "))
-            .count();
+        let slot_count = slot_names
+            .get(&name)
+            .unwrap_or_else(|| panic!("{name} should be listed by --list-templates"))
+            .len();
         assert!(slot_count > 0, "{path:?} should declare at least one slot");
-        let step_count = contents.matches("[[step]]").count();
+        let step_count = template_step_count(path);
 
         let shape = launch_template_and_render_shape(
             &mut connection,
