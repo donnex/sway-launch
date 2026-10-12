@@ -195,6 +195,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The `examples/scripts/retarget-floating` example no longer fails when another foot terminal is
+  open, which is the usual case when running it from foot: its `--existing` step matched every
+  window with app_id `foot` and stopped with "windows match". The terminal it launches now gets its
+  own app_id, so the step matches only that window. (#11)
 - A window that launched fine and then failed on a later action (say `--position` on a tiled
   window) is no longer lost: the error now names its container id, as `container_id` in the
   `--json` error object and as a `container <id> was the target when this failed` line on stderr in

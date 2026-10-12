@@ -2,9 +2,13 @@
 #
 # Launch a foot terminal, then retarget it two ways without relaunching:
 # first via --con-id using the captured container id, then via --existing
-# matching --app-id against the already-open window.
+# matching --app-id against the already-open window. The terminal gets its
+# own app_id, so --existing matches only it, not other open foot windows
+# (such as the one running this script).
 #
 set -eu
+
+readonly APP_ID='sway-launch-example'
 
 print_usage() {
   printf 'Usage: %s\n' "$(basename "$0")"
@@ -30,6 +34,6 @@ case "${1:-}" in
   ;;
 esac
 
-container_id="$(sway-launch -a foot foot)"
+container_id="$(sway-launch -a "$APP_ID" "foot --app-id $APP_ID")"
 sway-launch --con-id "$container_id" --floating --width 800px --height 600px
-exec sway-launch --existing -a foot --mark retargeted
+exec sway-launch --existing -a "$APP_ID" --mark retargeted

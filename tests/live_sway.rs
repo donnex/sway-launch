@@ -4083,19 +4083,28 @@ fn every_basic_example_script_launches_successfully() {
         std::env::var("PATH").unwrap_or_default()
     );
 
-    let scripts_with_expected_window_counts = [
-        ("dual-terminals", 2),
-        ("triple-row", 3),
-        ("column-split", 2),
-        ("quad-terminals", 4),
-        ("workspace-and-position", 1),
-        ("retarget-floating", 1),
+    // (script, app_id its windows carry, expected window count). Only
+    // retarget-floating gets its own app_id: its --existing step must match
+    // exactly one window, so a decoy foot window is opened before running it,
+    // standing in for the foot terminal a user normally runs the script from.
+    let scripts = [
+        ("dual-terminals", "foot", 2),
+        ("triple-row", "foot", 3),
+        ("column-split", "foot", 2),
+        ("quad-terminals", "foot", 4),
+        ("workspace-and-position", "foot", 1),
+        ("retarget-floating", "sway-launch-example", 1),
     ];
 
-    for (name, expected_window_count) in scripts_with_expected_window_counts {
+    for (name, app_id, expected_window_count) in scripts {
         connection
             .run_command("[app_id=foot] kill")
             .expect("kill should succeed");
+        connection
+            .run_command("[app_id=sway-launch-example] kill")
+            .expect("kill should succeed");
+
+        let _decoy = (app_id != "foot").then(|| launch_foot(&[]).1);
 
         let path = examples_dir("scripts").join(name);
 
@@ -4113,16 +4122,19 @@ fn every_basic_example_script_launches_successfully() {
 
         std::thread::sleep(Duration::from_millis(300));
         let tree = connection.get_tree().expect("get_tree should succeed");
-        let window_count = count_app_id_windows(&tree, "foot");
+        let window_count = count_app_id_windows(&tree, app_id);
         assert_eq!(
             window_count, expected_window_count,
-            "examples/scripts/{name} should have launched {expected_window_count} foot \
-             window(s), found {window_count}"
+            "examples/scripts/{name} should have launched {expected_window_count} \
+             {app_id} window(s), found {window_count}"
         );
     }
 
     connection
         .run_command("[app_id=foot] kill")
+        .expect("kill should succeed");
+    connection
+        .run_command("[app_id=sway-launch-example] kill")
         .expect("kill should succeed");
 }
 

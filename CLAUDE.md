@@ -175,7 +175,11 @@ below) plus five integration test files:
   `sway-launch` by bare name via `PATH` rather than being passed as an argument to it, so the test
   copies the compiled binary into a temp directory named `sway-launch` and prepends that directory
   to `PATH` for the duration of each run, then runs the shipped script file directly — no temporary
-  copy of the script itself is needed, since it already ships ready to run as-is. The five
+  copy of the script itself is needed, since it already ships ready to run as-is.
+  `retarget-floating` launches its terminal with its own app_id (`sway-launch-example`) so its
+  `--existing` step matches only that window, and the test opens a decoy `foot` window before
+  running it — standing in for the foot terminal a user normally runs the script from, which
+  previously made `--existing` match two windows and fail. The five
   "advanced" scripts (`browser-comparison`,
   `dev-workspace`, `editor-with-floating-terminal`, `floating-file-manager`, `quad-mixed-apps`) are
   scoped out — none of Firefox/Chromium/Thunar/VS Code are installed in the `live-sway-tests` CI
