@@ -210,9 +210,14 @@ to hit the same fallback even for an ordinary application. When in doubt, chain 
 
 The marker is read back through `/proc`, so on a system without it (a BSD running Sway, an unusual
 container) every launch resolves through that same bounded fallback rather than the deterministic
-path. Nothing breaks — the fallback is what the single-instance case already uses, and a window it
-can't confirm is never treated as this run's own for `--rollback-on-error` — but correlation is
-best-effort there, so sequential chaining matters more.
+path. The same goes for a launch whose marker is never visible: a launcher that clears the
+environment before starting the real program (`systemd-run`, an app launcher, a wrapper using
+`env -u`), or a program whose environment can't be read even by its own user (a setuid program, or
+one that marks itself non-dumpable, as security-sensitive programs do). Nothing breaks — a window
+it can't confirm is never treated as this run's own for `--rollback-on-error`, and is only used
+after the short grace period — but correlation is best-effort there, so sequential chaining matters
+more. A window is only treated as this run's own without its marker when the launched process was
+actually seen running and has since exited, the single-instance case above.
 
 ## Recreatable layouts
 

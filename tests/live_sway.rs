@@ -2041,13 +2041,16 @@ fn rollback_on_error_still_kills_a_window_matched_after_its_launcher_exited() {
     // this run's own window, and --rollback-on-error must still close it.
     //
     // Simulated the same way exec_falls_back_to_a_content_match_when_its_own_
-    // process_already_exited does: step 1's command is `true` (exits at once,
-    // never creating a window), while an unmarked window appears shortly after,
-    // standing in for the forwarding instance's.
+    // process_already_exited does: step 1's command is `sleep 0.3` (runs long
+    // enough to be seen carrying the marker, then exits without creating a
+    // window), while an unmarked window appears shortly after, standing in for
+    // the forwarding instance's. It has to be *seen* first: a marker that's
+    // never observed is no evidence the process exited (see
+    // rollback_on_error_leaves_a_window_opened_while_an_env_dropping_wrapper_waits).
     let mut connection = connect();
     let path = TempToml::write(
         "rollback-forwarded",
-        "[[step]]\ncommand = \"true\"\napp_id = \"forward-probe\"\ntimeout = 20\n\n\
+        "[[step]]\ncommand = \"sleep 0.3\"\napp_id = \"forward-probe\"\ntimeout = 20\n\n\
          [[step]]\ncon_id = 999999999\nmark = \"x\"\n",
     );
 
@@ -2087,6 +2090,183 @@ fn rollback_on_error_still_kills_a_window_matched_after_its_launcher_exited() {
         survivor, None,
         "the window should have been closed by --rollback-on-error"
     );
+}
+
+#[test]
+fn rollback_on_error_leaves_a_window_opened_while_an_env_dropping_wrapper_waits() {
+    // A launcher that drops the environment (systemd-run, an app launcher, a
+    // wrapper doing `env -u`) means the marker is never observed at all, while
+    // the real program is still seconds away. "No process carries the marker"
+    // used to be read as "the marked process exited", so the first matching
+    // window from anywhere -- here a foreign one opened 0.3s in -- was claimed
+    // as this run's own and killed by --rollback-on-error. A marker that was
+    // never seen now counts for nothing: the fallback ends through the grace
+    // period, as adopted, and the foreign window survives rollback.
+    let mut connection = connect();
+    let path = TempToml::write(
+        "rollback-env-dropping-wrapper",
+        "[[step]]\ncommand = 'env -u SWAY_LAUNCH_PID_MARKER sh -c \"sleep 2 && exec foot \
+         --app-id=wrap-probe -T mine sleep 60\"'\napp_id = \"wrap-probe\"\ntimeout = 20\n\n\
+         [[step]]\ncon_id = 999999999\nmark = \"x\"\n",
+    );
+
+    let child = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--rollback-on-error",
+            "--json",
+            "--verbose",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to run sway-launch binary");
+
+    std::thread::sleep(Duration::from_millis(300));
+    connection
+        // `sleep` rather than a shell: a shell's prompt can retitle the
+        // window (Arch's bash does), and windows are told apart by title.
+        .run_command("exec foot --app-id=wrap-probe -T FOREIGN sleep 60")
+        .expect("exec should succeed")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("exec should succeed");
+
+    let output = child
+        .wait_with_output()
+        .expect("failed to wait for sway-launch");
+
+    // Both windows (the foreign one and the wrapper's own) end up open; wait
+    // for both so neither leaks into a later test.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut tree = connection.get_tree().expect("get_tree should succeed");
+    while count_app_id_windows(&tree, "wrap-probe") < 2 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+        tree = connection.get_tree().expect("get_tree should succeed");
+    }
+    let foreign_id = window_titled(&tree, "FOREIGN");
+    let _foreign_guard = foreign_id.map(KillOnDrop);
+    let _own_guard = window_titled(&tree, "mine").map(KillOnDrop);
+
+    assert!(
+        !output.status.success(),
+        "sway-launch should fail on the bad second step"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let foreign_id = foreign_id.unwrap_or_else(|| {
+        panic!("--rollback-on-error killed a foreign window it never saw launch: {stderr:?}")
+    });
+    assert!(
+        stderr.contains("\"rolled_back\":[]"),
+        "nothing this run can prove it launched should be rolled back: {stderr:?}"
+    );
+    assert!(
+        stderr.contains(&format!("\"container_ids\":[{foreign_id}]")),
+        "the foreign window arrived first, so it is the adopted fallback: {stderr:?}"
+    );
+    assert!(
+        !stderr.contains("Marked process no longer running"),
+        "a marker that was never seen must not be read as exited: {stderr:?}"
+    );
+}
+
+fn window_titled(node: &Node, title: &str) -> Option<i64> {
+    if node.pid.is_some() && node.name.as_deref() == Some(title) {
+        return Some(node.id);
+    }
+    node.nodes
+        .iter()
+        .chain(node.floating_nodes.iter())
+        .find_map(|child| window_titled(child, title))
+}
+
+#[test]
+fn concurrent_template_runs_report_disjoint_container_ids() {
+    // Two multi-step runs started together give each one many chances to see
+    // the other's `New` window in the gap between sending `exec` and its own
+    // marked process starting. With nothing yet carrying its marker, a run used
+    // to read that as "my process already exited" and claim the other run's
+    // window -- measured as a shared container id in 4 of 7 trials, with the
+    // window each run actually launched for that slot reported by neither.
+    // Each run's own marker-confirmed window now wins, so the two id lists
+    // must be disjoint. Timing-dependent, so not a deterministic reproduction:
+    // reinstating the old "absent means gone" rule passed all three trials
+    // here once. It pins the invariant (no window claimed twice, none
+    // unreported); the deterministic regression test for the rule itself is
+    // rollback_on_error_leaves_a_window_opened_while_an_env_dropping_wrapper_waits.
+    let mut connection = connect();
+    connection
+        .run_command("[app_id=foot] kill")
+        .expect("kill should succeed");
+    connection
+        .run_command("workspace live-sway-test-concurrent-templates")
+        .expect("workspace switch should succeed");
+
+    let run = || {
+        sway_launch_command()
+            .args([
+                "--template",
+                "quad-grid",
+                "--apps",
+                "foot,foot,foot,foot",
+                "--timeout",
+                "10",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn sway-launch")
+    };
+    let ids_of = |output: std::process::Output| -> Vec<i64> {
+        assert!(
+            output.status.success(),
+            "sway-launch failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| line.parse().expect("each line should be a container id"))
+            .collect()
+    };
+
+    for trial in 1..=3 {
+        let child_a = run();
+        std::thread::sleep(Duration::from_millis(50));
+        let child_b = run();
+        let ids_a = ids_of(child_a.wait_with_output().expect("run A should exit"));
+        let ids_b = ids_of(child_b.wait_with_output().expect("run B should exit"));
+        let _guards: Vec<_> = ids_a
+            .iter()
+            .chain(&ids_b)
+            .copied()
+            .map(KillOnDrop)
+            .collect();
+
+        assert_eq!(ids_a.len(), 4, "trial {trial}: quad-grid has 4 slots");
+        assert_eq!(ids_b.len(), 4, "trial {trial}: quad-grid has 4 slots");
+        let shared: Vec<_> = ids_a.iter().filter(|id| ids_b.contains(id)).collect();
+        assert!(
+            shared.is_empty(),
+            "trial {trial}: both runs claimed {shared:?} (A {ids_a:?}, B {ids_b:?})"
+        );
+
+        let tree = connection.get_tree().expect("get_tree should succeed");
+        assert_eq!(
+            count_app_id_windows(&tree, "foot"),
+            8,
+            "trial {trial}: every window opened should be reported by exactly one run"
+        );
+        drop(_guards);
+        connection
+            .run_command("[app_id=foot] kill")
+            .expect("kill should succeed");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+
+    connection
+        .run_command("workspace back_and_forth")
+        .expect("workspace switch should succeed");
 }
 
 fn first_app_id_window(node: &Node, app_id: &str) -> Option<i64> {
@@ -2601,9 +2781,9 @@ fn exec_falls_back_to_a_content_match_when_its_own_process_already_exited() {
     // marker. Simulated deterministically here — no need for a real
     // single-instance app — via a delayed, unmarked "foot" launched
     // directly (standing in for the pre-existing instance's new window)
-    // while sway-launch's own command is `true`, which exits immediately
-    // without ever creating a window, exactly like a forwarding process
-    // would.
+    // while sway-launch's own command is `sleep 0.3`, which is seen carrying
+    // the marker and then exits without ever creating a window, exactly like
+    // a forwarding process would.
     let mut connection = connect();
     connection
         .run_command("exec sh -c 'sleep 1; exec foot'")
@@ -2614,7 +2794,7 @@ fn exec_falls_back_to_a_content_match_when_its_own_process_already_exited() {
 
     let started = Instant::now();
     let output = sway_launch_command()
-        .args(["--app-id", "foot", "--timeout", "10", "true"])
+        .args(["--app-id", "foot", "--timeout", "10", "sleep 0.3"])
         .output()
         .expect("failed to run sway-launch binary");
     assert!(
@@ -2631,9 +2811,8 @@ fn exec_falls_back_to_a_content_match_when_its_own_process_already_exited() {
 
     assert!(
         started.elapsed() < Duration::from_secs(5),
-        "took {:?} — should have fallen back once its own process (already \
-         exited, since `true` exits immediately) was found not running, well \
-         before --timeout",
+        "took {:?} — should have fallen back once its own process (seen, \
+         then exited after 0.3s) was found not running, well before --timeout",
         started.elapsed()
     );
 

@@ -190,6 +190,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Launching a window no longer claims someone else's window just because its own process hadn't
+  started yet. When no window carrying the private per-launch marker had appeared, `sway-launch`
+  treated "no process carries the marker" as "the launched process already exited", and took the
+  first matching window from anywhere as its own — including in the moments before its own
+  process existed, behind a launcher that clears the environment (`systemd-run`, `env -u`), and on
+  a system where `/proc` can't be read. Follow-up actions then went to the wrong window, and
+  `--rollback-on-error` could close it. Most visibly, two `--layout`/`--template` runs started
+  together could both report the same container id. A window without the marker is now only
+  treated as this run's own when the launched process was seen running and has since exited;
+  otherwise it's used only after the short grace period, and never closed by
+  `--rollback-on-error`. (#2)
 - `sway-launch` now finds the Sway socket the way `swaymsg` does, preferring `SWAYSOCK` over
   `I3SOCK`. Sway sets both, so pointing a tool at a different compositor (a nested or headless
   Sway, another session) by overriding `SWAYSOCK` alone used to be silently ignored, and
