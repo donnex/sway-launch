@@ -1863,10 +1863,19 @@ only to topic branches.
 - This repo is public (see the note under "Project Overview"), so `README.md` must open with the
   AI-assistance disclaimer directly below the title. If the README is ever rewritten, or the
   disclaimer is accidentally removed, restore it.
-- Commits to `dev` or any other in-progress branch do not need confirmation before committing —
-  proceed directly once the change is ready. After the commit completes, show a summary of what
-  changed and why. If the work produces multiple commits, commit each as its own concern per Git
-  conventions above, then show one summary covering the full set once they are all done.
+- **Commit to `dev`, or to a topic/issue branch, the moment the current piece of work is complete —
+  do not ask first, and do not wait to be told to commit.** This is not a judgment call and not
+  something to soften into a question ("should I commit this?", "want me to commit?"). The instant a
+  change reaches a natural, self-contained stopping point (per the one-commit-per-concern rule under
+  Commits), commit it, then move on. "Confirm before committing" applies only to the specific,
+  separate actions the Git section calls out by name — merging to `main`, force-pushing, and the
+  like — never to an ordinary commit on `dev` or a topic/issue branch. If a task produces several
+  distinct commits back to back, make all of them without pausing in between to ask. A missing
+  commit at the end of a task is a bug in following this rule, not a safe default.
+- After the commit completes, show a summary of what changed and why — a report of what already
+  happened, not a request for permission. If the work produces multiple commits, commit each as its
+  own concern per Git conventions above, then show one summary covering the full set once they are
+  all done.
 - Before committing any `.md` file, run `markdownlint <file>` and fix all findings. The file must
   pass with no errors before it is committed.
 - Disable MD013 (line-length) in `.markdownlint.json` — prose and instruction files can't
@@ -1887,6 +1896,92 @@ only to topic branches.
   `> [!WARNING]` markdown callout so it stands out from surrounding prose. This is a reminder
   only — `/clear` is a built-in CLI command, not something invocable through a tool, so it can
   never be run on the user's behalf.
+
+### Where new instructions go
+
+When asked to add, update, or clarify a convention or instruction, decide where it belongs before
+writing it anywhere:
+
+- **Project-specific** — file paths, tool/service choices, behavior, or anything else true only of
+  this repo — goes directly in this file and nowhere else.
+- **Generic or language-specific** — anything that would read the same in another project (a
+  language's style rules, git workflow, a class of script conventions) — has a canonical copy in
+  the maintainer's separate shared-conventions repository, outside this one. This repo carries
+  those conventions pasted inline into this file rather than `@import`ed (there is no
+  `agent-instructions/` directory here), so the inline sections — Rust/Python/Shell conventions,
+  Scripts, Git, Workflow, CI, Content, Issues — are copies, and must not be edited as if this file
+  were their home:
+  1. Say explicitly that the change is to a shared convention, not a project-specific one.
+  2. Copy the current canonical module into the root of this repo as a scratch working copy (if
+     one isn't already there), apply the change to it, and leave it untracked — never add or commit
+     it. If no canonical module matches the topic yet, confirm before starting a brand-new one the
+     same way.
+  3. Tell the user carrying it across is theirs to do. Once *they* have committed it in the
+     canonical repository, update the inline copy in this file to match (an ordinary commit here)
+     and remove the scratch copy so it can't drift or duplicate.
+- A project-specific adaptation of a shared rule (an exception, a narrower scope, a confirmed
+  decision such as "the six basic example scripts need no `die`") is project-specific, and is
+  written here directly.
+
+**Never commit in the canonical repository from this project — not the edit, not a fix to it, not
+anything.** The scratch copy at this repo's root is the entire deliverable; the user carries it
+across themselves. This holds however convenient it looks and however clearly correct the change
+is: the canonical repository is checked out on the same machine, so reaching into it is always one
+command away, and that is exactly why the rule has to be absolute rather than a judgement call. Do
+not offer it as an option either — offering it is how it gets picked. Two things follow:
+
+- **Don't touch the canonical repository's state at all** — no branch checkout, no `git config`,
+  no stash. Its own automated sync is the only thing that moves it.
+- **Being unable to push is not the signal.** Read access without write access is the normal shape
+  of a sandbox credential, so a failed push is a second line of defence catching a rule already
+  broken — a local commit in the canonical repo is already the mistake.
+
+Don't wait to be asked, either: whenever a task brings in a new tool, library, pattern, or idea
+that would fit as a general convention (not just a one-off for this task), proactively suggest
+documenting it — say what you'd add and where, per the placement rules above, and let the user
+decide.
+
+### Issue drafts: `new-issues.md`
+
+A `new-issues.md` file in the repo root holds issue drafts the user wants filed on GitHub. Like
+`REVIEW.md`, it is a signal file: leave it untracked, and never add it to `.gitignore`.
+
+**When to check.** Look for it at the start of a session, before starting each new task or step,
+and after each commit. Work that runs for a long time without any of those moments still checks
+between its steps.
+
+**When one is found, pause briefly and ask.** Stop what you're doing at the next safe point: never
+in the middle of a file edit or a git operation. Then:
+
+1. Read the file and reword each draft into a proper issue. A draft is raw notes, not text to paste
+   as-is. Give each one a short, specific title and a body that states the problem or request,
+   where it applies, and what done looks like, following the Issues section below. Keep the draft's
+   meaning, and don't invent details it doesn't support.
+2. Present a summary: how many drafts there are, and the reworded title plus a one-line gist of
+   each.
+3. Ask whether to create them as issues: all, some, or none.
+4. Wait **one minute** for an answer, and no longer. Ask in plain text, then wait with a 60-second
+   sleep (e.g. `sleep 60`), so a reply typed during the wait arrives when it ends. Never ask with a
+   prompt that blocks until someone answers, since nothing would then end the wait.
+
+**The pause must never stop the work.** When no answer arrives within the minute, resume the
+interrupted work exactly where it left off, with no further prompt and no change to what it was
+doing. Never abort, roll back, or skip ongoing work because of this check, and never leave the work
+paused indefinitely waiting for an answer. An unanswered question is not a no: create nothing until
+the user says yes.
+
+**Ask again at the very next interaction.** The next time the user interacts, lead with it: put the
+summary and the question at the top of the reply to their next message, before anything else. If
+the work finishes first, put them in the final summary too. Keep asking at every interaction, in
+this session or a later one, until the user answers. While work is running between interactions,
+an unchanged `new-issues.md` doesn't trigger another one-minute pause, but a change to its contents
+does.
+
+**When the user says yes**, create the approved issues from the reworded versions, not the raw
+drafts, per the Issues section: check for an existing open issue covering the same thing first, and
+add the required trailer. Then delete `new-issues.md`, since its content now lives in the tracker.
+Report each new issue's number, and list any drafts that were declined or skipped as duplicates, so
+none disappears without a mention. Then resume the interrupted work.
 
 ## CI
 
@@ -2074,13 +2169,62 @@ confirms it's clean.
 - Run `gh` from inside the project's repo; it auto-detects the repository from the git remote, so
   `--repo <owner>/<name>` isn't needed unless operating on a different repo than the current
   checkout.
-- List issues: `gh issue list`
+- List issues: `gh issue list`. **This stops at 30 issues by default**, with no sign that anything
+  was cut off. To count or sweep the whole backlog, raise the limit well past the backlog's size
+  (`gh issue list --limit 1000`) and check the result count is below it — a listing that comes back
+  exactly at its limit has been truncated.
 - View a single issue: `gh issue view <number>`
-- Create an issue: `gh issue create --title "..." --body "..."`
-- Comment on an issue: `gh issue comment <number> --body "..."`
+- Create an issue: `gh issue create --title "..." --body "..."`. For a body of any real length
+  prefer `--body-file <file>` (or `--body-file -` for stdin), which also keeps a long value out of
+  the process's argument list.
+- Comment on an issue: `gh issue comment <number> --body "..."` (or `--body-file`).
 - Close an issue via `gh issue close <number>`, once it's actually fixed and the fix is committed
-  (and pushed, if that's part of the workflow in play).
+  (and pushed, if that's part of the workflow in play) — never with a bare state change; see below.
 - Label an issue: `gh issue edit <number> --add-label "..."`
 - Unlike some other issue-tracker CLIs, `gh`'s issue subcommands cover the full set of routine
   operations natively (list, view, create, comment, close, label) — there's no need to fall back to
   the API or the web UI for any of these.
+
+### Attribution and closing
+
+- Every issue, comment, or other content posted to the tracker must end with a trailer identifying
+  the active model, in the same `Co-Authored-By: <model name> <noreply@anthropic.com>` format used
+  in git commit messages (see "Commits" above). Append it as the last line of the body or comment
+  text. Never omit it.
+- Never close an issue with a bare state change. First post a comment with a short description of
+  what changed to resolve it, and the commit(s) that fixed it (short SHA plus subject line, e.g.
+  `abc1234 scope: Fix the thing`), then close it — a plain closed state with no comment loses the
+  traceability back to what actually resolved it and how. `gh issue close <number> --comment
+  "..."` does both in one step.
+- Alongside each commit SHA and subject line, also include a link to that commit (e.g.
+  `https://<host>/<owner>/<repo>/commit/<full-sha>`), so the closing comment lets a reviewer jump
+  straight to the actual diff instead of having to look the commit up themselves.
+
+### Remind about the open issue count
+
+Open issues accumulate silently otherwise — nothing surfaces them again once filed, so they're
+easy to forget for months. This project's periodic review timers (kept outside the repository, in
+the maintainer's own Claude Code configuration) include an issue-triage timer for this: when it
+fires, list the whole backlog (with a limit well past its size, per the listing note above — a
+default listing stops at 30 and under-reports the very number this check exists to surface),
+spot-check a sample of open issues against the current code (not necessarily every one, for a
+large backlog), and report the total open count plus anything found stale to the user — offering
+to close the confirmed-stale ones per the closing rule above.
+
+### Filing deep code review findings
+
+When a deep code review (or similar audit prompt) says to file its findings with the project's
+issue tracker, file one issue per finding on GitHub instead of writing a local `REVIEW.md` — per
+that prompt's own instructions on where findings go. `REVIEW.md` (see "Workflow" above) remains
+the fallback for a review prompt that writes a local report.
+
+- Title: `[<severity>] <short description>`, e.g. `[HIGH] Command injection in a quoted value`.
+- Body: the same content the review would otherwise put in a finding's entry in a local report —
+  file and line number(s), why it's a problem, and the suggested fix — plus the required trailer
+  from above.
+- Before creating one, check the open issues (the whole backlog, per the listing note above) for
+  an existing one covering the same finding, so re-running the review doesn't file a duplicate.
+- Create with `gh issue create --title "..." --body-file <file>`, same as any other issue.
+- Filing the issue is the full extent of this step — do not apply the fix or open a pull request as
+  part of it. The review reports findings before anything gets fixed, the same as the local-report
+  fallback would.
