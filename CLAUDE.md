@@ -200,6 +200,11 @@ below) plus five integration test files:
   place. Intentional and already documented, but untested until an external review raised it as
   something a user could read the wrong way — a documented guarantee with no test is one a future
   change can widen or narrow without noticing.
+  `exec_runs_in_sway_s_directory_and_environment_not_the_caller_s` pins another documented
+  semantic the same way: a launched command is forked by Sway's own `exec`, so it inherits Sway's
+  working directory and environment, not `sway-launch`'s — README.md's "Basic usage" tells users
+  so, and a change to how the command is launched (a `--cwd`/`--env` flag, say) has to change that
+  test and that paragraph deliberately rather than by accident.
 
   **This file's coverage must stay complete, not just present.** It's the one place anything
   IPC-touching actually gets exercised against real Sway, and — same as `.github/workflows/`'s

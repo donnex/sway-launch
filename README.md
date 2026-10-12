@@ -179,6 +179,22 @@ Sway's own command parser reads the command before the shell does, which has thr
 The same rules apply to a `command` in a layout or bindings file (see [Layout files](#layout-files)
 and [Templates](#templates)), where a NUL character (`\u0000`) is rejected along with a newline.
 
+**The command runs in Sway's working directory and environment, not yours.** `sway-launch` doesn't
+start the program itself: it hands the command to Sway's `exec`, so the program is started by the
+compositor and inherits *Sway's* working directory (usually your home directory) and environment,
+not those of the shell or script that ran `sway-launch`. In practice:
+
+- A relative path resolves against Sway's directory, not the current one — including in a layout or
+  bindings file's `command`, where it isn't relative to the file either. `cd ~/project &&
+  sway-launch 'code .'` opens Sway's directory; use `'cd ~/project && code .'` or an absolute path
+  instead.
+- A variable you export before running `sway-launch` (an activated virtualenv's `PATH`,
+  `GDK_BACKEND`, anything set only in a shell rc file Sway never read) doesn't reach the program.
+  Set it inside the command instead: `'GDK_BACKEND=x11 app'`, or `'export NAME=value && app'`.
+- The program's own stdout/stderr go wherever Sway's own output goes (its log), not your terminal.
+  A command that works in your shell but can't start this way usually shows up as a timeout waiting
+  for its window, with any error message of its own in Sway's log.
+
 Since the container id of the matching window is returned, it's also possible to combine
 `sway-launch` with custom `swaymsg` commands.
 
@@ -337,7 +353,9 @@ sway-launch --layout layout.toml
 
 A step's `command` is checked against the same Sway-parsing rules as the CLI's positional command
 (see [Basic usage](#basic-usage)), so `--validate` catches an unquoted `,`/`;` or an embedded
-newline before anything launches. A step's other keys mirror the CLI flags of the same name (`app_id`, `class`, `mark_match`, `con_id`,
+newline before anything launches. Like the CLI's, it runs in Sway's working directory and
+environment, not the layout file's directory or the caller's (see [Basic usage](#basic-usage)). A
+step's other keys mirror the CLI flags of the same name (`app_id`, `class`, `mark_match`, `con_id`,
 `existing`, `split`, `floating`, `sticky`, `fullscreen`, `focus`, `mark`, `new_column`, `new_row`,
 `workspace`, `output`, `height`, `width`, `position`, `scratchpad`, `timeout`, `wait_time`) —
 `height`/`width`/`position` are validated the same way their CLI equivalents are, and a step
@@ -472,7 +490,8 @@ sway-launch --template template.toml --bindings bindings.toml
 A `Binding`'s keys are the same target-selection subset a layout step has (`command`, `con_id`,
 `existing`, `app_id`, `class`, `mark_match`) — exactly one of `command`/`con_id`/`existing = true` is
 required, same rule as `--layout`, and `app_id`/`class`/`mark_match` can set only one of the three,
-same rule too. A template step's
+same rule too. A binding's `command` runs in Sway's working directory and environment, the same as
+a layout step's (see [Basic usage](#basic-usage)). A template step's
 action keys (`split`, `floating`, `height`, etc.) are the same
 ones `--layout` has; `slot` and `target_id` are its only two target-selection keys, and exactly one
 is required per step — a `slot` step resolves its window via a binding, a `target_id` step
