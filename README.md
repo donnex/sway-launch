@@ -93,7 +93,7 @@ Options:
       --sticky                        Make new window sticky (shows on all workspaces)
       --fullscreen                    Make new window fullscreen
       --focus                         Focus new window
-  -m, --mark <MARK>                   Add mark to new window
+  -m, --mark <MARK>                   Mark the window, replacing its existing marks (a mark another window holds moves to this one)
   -n, --new-column                    Move window to new column (move right)
       --height <HEIGHT>               Set height on new window
       --width <WIDTH>                 Set width on new window
@@ -706,9 +706,8 @@ sway-launch --focus foot
 
 ### Mark
 
-Add a mark to the new window. This is useful when additional rules are set up in Sway — for
-example, a floating Firefox window pinned to the left side of the screen with a specific page
-open.
+Mark the window. This is useful when additional rules are set up in Sway — for example, a floating
+Firefox window pinned to the left side of the screen with a specific page open.
 
 ```shell
 # sway config
@@ -729,6 +728,18 @@ found again by `--mark-match`:
 - a **newline** — rewritten to `;` when stored (`a⏎b` comes back as `a;b`).
 
 The same rule applies to `--mark-match`, `--workspace`, and `--output`.
+
+`--mark` uses Sway's plain `mark` command, so it **replaces** rather than adds, in two ways:
+
+- the new mark becomes the window's **only** mark — any marks it already carried are removed;
+- a mark is unique across windows, so if **another window** already holds it, that window loses it.
+
+This matters most when retargeting by mark. `sway-launch --existing --mark-match dropdown-term
+--mark pinned` leaves the window marked `pinned` and no longer `dropdown-term`, so a later
+`--mark-match dropdown-term` finds nothing. Likewise, marking a new window with a name your own
+`for_window` rules or keybindings expect on a different window moves the mark away from it. To keep
+a window findable by an existing mark, don't `--mark` it again with a different one; add extra marks
+with `swaymsg '[con_id=<id>] mark --add <name>'` instead.
 
 ### Workspace
 

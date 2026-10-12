@@ -73,7 +73,8 @@ struct Args {
     #[clap(long)]
     focus: bool,
 
-    /// Add mark to new window
+    /// Mark the window, replacing its existing marks (a mark another window
+    /// holds moves to this one)
     #[clap(short, long, value_parser = sway_launch::validate_sway_string_argument)]
     mark: Option<String>,
 

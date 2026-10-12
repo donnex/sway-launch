@@ -87,6 +87,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `--mark`'s help text and the README now say what it actually does: it **replaces** the window's
+  existing marks rather than adding one, and takes the mark away from any other window that held
+  it. The old wording ("Add mark to new window") suggested adding, which could quietly break a later
+  `--mark-match` on a mark the window no longer carries. (#8)
+
 - `--new-column`/`--new-row` now stop looking for confirmation 25ms after sending their command,
   rather than up to 200ms. These two confirm by noticing the window's geometry changed at all —
   the only thing Sway offers for a relative move — so a longer window mostly meant more chances to
