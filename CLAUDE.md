@@ -73,7 +73,16 @@ below) plus five integration test files:
   only ever compared against a window, never interpolated into a command, so it rejects nothing but
   a blank value. `pub fn require_non_blank` is its schema-side counterpart, the generic "this named field must not be empty or whitespace-only" check the layout/template
   schemas apply to free-form identifiers (`id`, `target_id`, `slot`, a binding's `command`, a
-  template's `description`/`category`) that have no dedicated format of their own.
+  template's `description`/`category`) that have no dedicated format of their own. A fifth pair,
+  `validate_timeout_argument` (CLI text) / `validate_timeout_seconds` (a TOML step's `u64`), bounds
+  `--timeout`/`timeout` to `1..=MAX_TIMEOUT_SECONDS` (`u32::MAX`): zero because every
+  timeout-bounded action sends its command *before* waiting, so `0` could only report a timeout
+  over a change already applied (a launched window left open with no id printed), and the ceiling
+  only because `Instant` has no published maximum and a value near `u64::MAX` overflowed the
+  deadline — a representability bound, not a policy cap (see `--wait-time`'s declined cap below).
+  The deadline itself is also computed (`confirmation.rs`'s `deadline_after()`) before the command
+  is sent in both event-confirmed drivers, so even an unvalidated caller fails before any side
+  effect.
 - `src/sway_launch.rs` plus `src/sway_launch/` — all the core logic (see below), plus the shared
   validators above. The file itself is a roughly 100-line façade: module declarations, the public surface
   the three files above use, and the poll-timing constants shared between modules. Everything else
@@ -642,8 +651,9 @@ stated goal (safer internals, less repeated parsing) to actually land.
   `--wait-time` is an unbounded caller-supplied number slept *before* anything is validated — so a
   step with `wait_time = 3600000` against an already-closed window sat for an hour before reporting
   a foregone answer. Declined in the same review: capping `--wait-time`. It's the caller's own
-  knob, `--timeout` isn't capped either, and any specific ceiling would be arbitrary; the real
-  complaint was the pointless wait, which the early check removes. Pinned by `tests/live_sway.rs`'s
+  knob, `--timeout` isn't policy-capped either (its only bound is representability), and any
+  specific ceiling would be arbitrary; the real complaint was the pointless wait, which the early
+  check removes. Pinned by `tests/live_sway.rs`'s
   `wait_time_action_does_not_sleep_out_the_wait_before_noticing_its_container_is_gone`, alongside
   the original `wait_time_action_errors_clearly_when_its_container_already_closed` for the
   post-sleep half. Note that

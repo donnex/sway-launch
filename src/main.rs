@@ -162,7 +162,7 @@ struct Args {
     validate: bool,
 
     /// Timeout in seconds
-    #[clap(short, long, default_value_t = 5)]
+    #[clap(short, long, default_value_t = 5, value_parser = sway_launch::validate_timeout_argument)]
     timeout: u64,
 
     /// Wait time in ms. Used for actions that do not have a corresponding Sway IPC event.

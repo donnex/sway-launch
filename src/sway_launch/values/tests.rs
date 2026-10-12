@@ -430,3 +430,45 @@ fn validate_exec_command_rejects_a_carriage_return_and_a_nul() {
     // like a newline, and ran `mark NULINJ` with a zero exit status.
     assert!(validate_exec_command("foot -T nulcmd\0mark NULINJ").is_err());
 }
+
+// validate_timeout_seconds / validate_timeout_argument
+
+#[test]
+fn validate_timeout_seconds_rejects_zero() {
+    // 0 can never succeed: the command is sent before the wait begins, so a
+    // zero timeout reported failure over a command that had already applied.
+    assert!(validate_timeout_seconds(0).is_err());
+}
+
+#[test]
+fn validate_timeout_seconds_accepts_one_and_the_maximum() {
+    assert_eq!(validate_timeout_seconds(1), Ok(1));
+    assert_eq!(
+        validate_timeout_seconds(MAX_TIMEOUT_SECONDS),
+        Ok(MAX_TIMEOUT_SECONDS)
+    );
+}
+
+#[test]
+fn validate_timeout_seconds_rejects_one_past_the_maximum_and_u64_max() {
+    assert!(validate_timeout_seconds(MAX_TIMEOUT_SECONDS + 1).is_err());
+    assert!(validate_timeout_seconds(u64::MAX).is_err());
+}
+
+#[test]
+fn every_accepted_timeout_is_a_representable_deadline() {
+    // The bound's whole reason to exist: anything that passes must be
+    // something Instant::now() + timeout can actually hold.
+    assert!(std::time::Instant::now()
+        .checked_add(std::time::Duration::from_secs(MAX_TIMEOUT_SECONDS))
+        .is_some());
+}
+
+#[test]
+fn validate_timeout_argument_parses_and_bounds_the_value() {
+    assert_eq!(validate_timeout_argument("5"), Ok(5));
+    assert!(validate_timeout_argument("0").is_err());
+    assert!(validate_timeout_argument("18446744073709551615").is_err());
+    assert!(validate_timeout_argument("-1").is_err());
+    assert!(validate_timeout_argument("five").is_err());
+}

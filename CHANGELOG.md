@@ -332,3 +332,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   completion script and discarding the flag. A completion script is shell source, so there is no
   JSON shape for it to take — unlike `--list-templates`/`--show-template`, which both have one and
   are unaffected.
+- `--timeout 0` (or a step's `timeout = 0`) and absurdly large timeouts are now rejected up front.
+  Both used to send the command first and only then report a timeout, so a launched window stayed
+  open with no container id printed and nothing for `--rollback-on-error` to clean up. (#27)

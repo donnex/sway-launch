@@ -662,3 +662,19 @@ fn window_event_match_error_display() {
         "No matching event"
     );
 }
+
+// deadline_after
+
+#[test]
+fn deadline_after_returns_a_future_instant() {
+    let before = time::Instant::now();
+    let deadline = deadline_after(time::Duration::from_secs(5)).expect("5s is representable");
+    assert!(deadline >= before + time::Duration::from_secs(5));
+}
+
+#[test]
+fn deadline_after_errors_instead_of_panicking_on_an_unrepresentable_timeout() {
+    let error = deadline_after(time::Duration::from_secs(u64::MAX))
+        .expect_err("u64::MAX seconds overflows Instant");
+    assert!(error.contains("too large"), "{error}");
+}
