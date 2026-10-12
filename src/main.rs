@@ -22,6 +22,45 @@ mod layout;
 mod sway_launch;
 mod template;
 
+/// Every flag that selects or acts on a window: the flags a `--layout`/
+/// `--template` step carries per step instead. The standalone modes
+/// (`--debug-events`, `--completions`, `--layout`, `--template`,
+/// `--list-templates`, `--show-template`) each build their
+/// `conflicts_with_all` from this one list via `per_window_and()`, so a new
+/// per-window flag added here is rejected by all six at once, and
+/// `per_window_args_*` in the tests fail if it isn't added here.
+///
+/// A clap `ArgGroup` would say the same thing, but clap then reports a
+/// conflict by listing every member of the group rather than naming the flag
+/// that was actually passed.
+const PER_WINDOW_ARGS: &[&str] = &[
+    "command",
+    "con_id",
+    "existing",
+    "app_id",
+    "class",
+    "mark_match",
+    "split",
+    "floating",
+    "sticky",
+    "fullscreen",
+    "focus",
+    "mark",
+    "new_column",
+    "new_row",
+    "workspace",
+    "output",
+    "height",
+    "width",
+    "position",
+    "scratchpad",
+];
+
+/// `PER_WINDOW_ARGS` plus a standalone mode's own extra conflicts.
+fn per_window_and(extras: &[&'static str]) -> Vec<&'static str> {
+    PER_WINDOW_ARGS.iter().chain(extras).copied().collect()
+}
+
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
@@ -140,11 +179,7 @@ struct Args {
     /// raw event dump has no JSON shape to take, and debug_events() writes
     /// plain `Event: N` lines regardless, so accepting the flag could only
     /// throw it away.
-    #[clap(short, long, conflicts_with_all = [
-        "command", "con_id", "existing", "app_id", "class", "mark_match", "split",
-        "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
-        "workspace", "output", "height", "width", "position", "scratchpad", "json",
-    ])]
+    #[clap(short, long, conflicts_with_all = per_window_and(&["json"]))]
     debug_events: bool,
 
     /// Generate a shell completion script and print it to stdout
@@ -153,13 +188,10 @@ struct Args {
     /// script is shell source, so there is no JSON shape for it to take, and
     /// accepting the flag could only discard it. --list-templates and
     /// --show-template both do have one, which is why they don't conflict.
-    #[clap(long, value_enum, conflicts_with_all = [
-        "command", "con_id", "existing", "app_id", "class", "mark_match", "split",
-        "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
-        "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
-        "layout", "template", "list_templates", "bindings", "apps", "rollback_on_error", "dry_run", "validate",
-        "show_template", "json",
-    ])]
+    #[clap(long, value_enum, conflicts_with_all = per_window_and(&[
+        "debug_events", "layout", "template", "list_templates", "bindings", "apps",
+        "rollback_on_error", "dry_run", "validate", "show_template", "json",
+    ]))]
     completions: Option<clap_complete::Shell>,
 
     /// Verbose output
@@ -175,12 +207,7 @@ struct Args {
     /// sway-launch invocation's flags, so this conflicts with every
     /// per-window flag below, which would otherwise apply to no specific
     /// step
-    #[clap(long, conflicts_with_all = [
-        "command", "con_id", "existing", "app_id", "class", "mark_match", "split",
-        "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
-        "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
-        "bindings", "apps",
-    ])]
+    #[clap(long, conflicts_with_all = per_window_and(&["debug_events", "bindings", "apps"]))]
     layout: Option<PathBuf>,
 
     /// Run a reusable declarative TOML layout template instead of a single
@@ -189,34 +216,24 @@ struct Args {
     /// to a template file ending in .toml, or a built-in template name with
     /// no extension (see --list-templates). Conflicts with --layout and
     /// every per-window flag, same reasoning as --layout
-    #[clap(long, conflicts_with_all = [
-        "command", "con_id", "existing", "app_id", "class", "mark_match", "split",
-        "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
-        "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
-        "layout",
-    ])]
+    #[clap(long, conflicts_with_all = per_window_and(&["debug_events", "layout"]))]
     template: Option<PathBuf>,
 
     /// List built-in --template names and exit
-    #[clap(long, conflicts_with_all = [
-        "command", "con_id", "existing", "app_id", "class", "mark_match", "split",
-        "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
-        "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
-        "layout", "template", "completions", "bindings", "apps", "rollback_on_error", "dry_run", "validate",
-        "show_template",
-    ])]
+    #[clap(long, conflicts_with_all = per_window_and(&[
+        "debug_events", "layout", "template", "completions", "bindings", "apps",
+        "rollback_on_error", "dry_run", "validate", "show_template",
+    ]))]
     list_templates: bool,
 
     /// Print a --template's raw TOML and exit, without running it. Same
     /// NAME_OR_PATH resolution as --template: a built-in name (see
     /// --list-templates), or a path ending in .toml. With --json, prints
     /// {"name": ..., "contents": "..."}
-    #[clap(long, value_name = "NAME_OR_PATH", conflicts_with_all = [
-        "command", "con_id", "existing", "app_id", "class", "mark_match", "split",
-        "floating", "sticky", "fullscreen", "focus", "mark", "new_column", "new_row",
-        "workspace", "output", "height", "width", "position", "scratchpad", "debug_events",
-        "layout", "template", "completions", "bindings", "apps", "rollback_on_error", "dry_run", "validate",
-    ])]
+    #[clap(long, value_name = "NAME_OR_PATH", conflicts_with_all = per_window_and(&[
+        "debug_events", "layout", "template", "completions", "bindings", "apps",
+        "rollback_on_error", "dry_run", "validate",
+    ]))]
     show_template: Option<PathBuf>,
 
     /// Bindings file supplying each --template slot's application identity.
@@ -1040,8 +1057,6 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
         run_steps_validate(steps, args);
     }
 
-    let default_timeout = time::Duration::from_secs(args.timeout);
-    let default_wait_time = time::Duration::from_millis(args.wait_time);
     let mut container_ids = Vec::new();
     let mut resolved_ids = HashMap::new();
     // Only ids this invocation itself launched via `command` (Target::Exec),
@@ -1055,25 +1070,7 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
     let mut stdout_failure = None;
 
     for (index, step) in steps.iter().enumerate() {
-        if let Some(id) = step.id.as_deref() {
-            if resolved_ids.contains_key(id) {
-                fail_step(
-                    args,
-                    &launched_container_ids,
-                    &container_ids,
-                    &resolved_ids,
-                    index,
-                    format!("id {:?} was already used by an earlier step", id).into(),
-                );
-            }
-        }
-
-        let sway_launch = match step.to_sway_launch(
-            default_timeout,
-            default_wait_time,
-            args.verbose,
-            &resolved_ids,
-        ) {
+        let sway_launch = match plan_step(step, args, &resolved_ids) {
             Ok(sway_launch) => sway_launch,
             Err(error) => fail_step(
                 args,
@@ -1165,56 +1162,20 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
     process::exit(0);
 }
 
-/// `run_steps()`'s `--dry-run` handling: converts every step to a
-/// `SwayLaunch` and prints its planned actions (via `print_dry_run_steps()`),
-/// continuing the numbering across steps, without ever calling `.run()` or
-/// touching Sway IPC. A step's own `id`/`target_id` chain still needs *some*
-/// value to resolve `target_id` lookups against — since nothing actually
-/// launches, there's no real container id yet, so each step's own index is
-/// used as a synthetic placeholder; that placeholder is never
-/// printed (`dry_run_step()`'s target/action text never names a container
-/// id at all), it only exists to keep `to_sway_launch()`'s `target_id`
-/// lookups from failing on a step that legitimately references an earlier
-/// one.
+/// `run_steps()`'s `--dry-run` handling: plans every step via
+/// `plan_steps_offline()` (see there for how `target_id` resolves with
+/// nothing launched) and prints its planned actions (via
+/// `print_dry_run_steps()`), continuing the numbering across steps, without
+/// ever calling `.run()` or touching Sway IPC.
 fn run_steps_dry_run(steps: &[layout::LayoutStep], args: &Args) -> ! {
-    let default_timeout = time::Duration::from_secs(args.timeout);
-    let default_wait_time = time::Duration::from_millis(args.wait_time);
-    let mut resolved_ids = HashMap::new();
-    let mut dry_run_steps = Vec::new();
-
-    for (index, step) in steps.iter().enumerate() {
-        if let Some(id) = step.id.as_deref() {
-            if resolved_ids.contains_key(id) {
-                fail(
-                    args.json,
-                    &format!(
-                        "step {}: id {:?} was already used by an earlier step",
-                        index + 1,
-                        id
-                    ),
-                );
-            }
+    match plan_steps_offline(steps, args) {
+        Ok(planned) => {
+            let dry_run_steps: Vec<DryRunStep> = planned.iter().map(dry_run_step).collect();
+            print_dry_run_steps(&dry_run_steps, args.json);
+            process::exit(0);
         }
-
-        let sway_launch = match step.to_sway_launch(
-            default_timeout,
-            default_wait_time,
-            args.verbose,
-            &resolved_ids,
-        ) {
-            Ok(sway_launch) => sway_launch,
-            Err(error) => fail(args.json, &format!("step {}: {}", index + 1, error)),
-        };
-
-        dry_run_steps.push(dry_run_step(&sway_launch));
-
-        if let Some(id) = step.id.as_deref() {
-            resolved_ids.insert(id.to_string(), index as i64);
-        }
+        Err(error) => fail(args.json, &error),
     }
-
-    print_dry_run_steps(&dry_run_steps, args.json);
-    process::exit(0);
 }
 
 /// `--validate`'s handling for `--layout`/`--template`: converts every step
@@ -1226,10 +1187,9 @@ fn run_steps_dry_run(steps: &[layout::LayoutStep], args: &Args) -> ! {
 /// correctness) already happens unconditionally before `run_steps()` is
 /// ever reached (`run_template()`'s own `template::resolve()` call), so
 /// `--validate` doesn't need to repeat that separately — by the time
-/// `steps` reaches here, that part has already succeeded. Uses the same
-/// synthetic-`target_id`-placeholder approach `run_steps_dry_run()` does,
-/// for the same reason (nothing actually launches, so there's no real
-/// container id for a later step's `target_id` to resolve against).
+/// `steps` reaches here, that part has already succeeded. Planned via
+/// `plan_steps_offline()`, the same as `run_steps_dry_run()`, and through
+/// the same `plan_step()` a real run uses.
 ///
 /// Success output names the `--layout`/`--template` argument as given
 /// (`args.layout`/`args.template`, whichever is set — exactly one is
@@ -1240,36 +1200,8 @@ fn run_steps_dry_run(steps: &[layout::LayoutStep], args: &Args) -> ! {
 /// under `--json`.
 fn run_steps_validate(steps: &[layout::LayoutStep], args: &Args) -> ! {
     let source = steps_source(args);
-    let default_timeout = time::Duration::from_secs(args.timeout);
-    let default_wait_time = time::Duration::from_millis(args.wait_time);
-    let mut resolved_ids = HashMap::new();
-
-    for (index, step) in steps.iter().enumerate() {
-        if let Some(id) = step.id.as_deref() {
-            if resolved_ids.contains_key(id) {
-                fail(
-                    args.json,
-                    &format!(
-                        "step {}: id {:?} was already used by an earlier step",
-                        index + 1,
-                        id
-                    ),
-                );
-            }
-        }
-
-        if let Err(error) = step.to_sway_launch(
-            default_timeout,
-            default_wait_time,
-            args.verbose,
-            &resolved_ids,
-        ) {
-            fail(args.json, &format!("step {}: {}", index + 1, error));
-        }
-
-        if let Some(id) = step.id.as_deref() {
-            resolved_ids.insert(id.to_string(), index as i64);
-        }
+    if let Err(error) = plan_steps_offline(steps, args) {
+        fail(args.json, &error);
     }
 
     if args.json {
@@ -1281,6 +1213,61 @@ fn run_steps_validate(steps: &[layout::LayoutStep], args: &Args) -> ! {
         print_line(&format!("valid: {} ({} step(s))", source, steps.len()));
     }
     process::exit(0);
+}
+
+/// One step's checks and conversion to a `SwayLaunch`: the duplicate-`id`
+/// check, then `to_sway_launch()` against the ids resolved so far. Shared by
+/// a real run (`run_steps()`) and the offline modes (`plan_steps_offline()`),
+/// so a rule added here applies to all three — `--validate` can't call a file
+/// valid that a real run would reject, which is the point of `--validate`.
+/// Returns the bare message; the caller adds the `step N:` prefix
+/// (`step_error()`), since a real run reports through `fail_step()` instead.
+fn plan_step<'a>(
+    step: &'a layout::LayoutStep,
+    args: &Args,
+    resolved_ids: &HashMap<String, i64>,
+) -> Result<sway_launch::SwayLaunch<'a>, String> {
+    if let Some(id) = step.id.as_deref() {
+        if resolved_ids.contains_key(id) {
+            return Err(format!("id {:?} was already used by an earlier step", id));
+        }
+    }
+    step.to_sway_launch(
+        time::Duration::from_secs(args.timeout),
+        time::Duration::from_millis(args.wait_time),
+        args.verbose,
+        resolved_ids,
+    )
+}
+
+/// `plan_step()` over every step without running any, for `--dry-run` and
+/// `--validate`. Nothing launches, so there's no real container id for a
+/// later step's `target_id` to resolve against: each named step's own index
+/// stands in as a placeholder. It's never printed — `dry_run_step()` never
+/// names a container id — it only keeps a legitimate `target_id` reference
+/// from failing its lookup. Stops at the first error, already `step N:`
+/// prefixed.
+fn plan_steps_offline<'a>(
+    steps: &'a [layout::LayoutStep],
+    args: &Args,
+) -> Result<Vec<sway_launch::SwayLaunch<'a>>, String> {
+    let mut resolved_ids = HashMap::new();
+    let mut planned = Vec::with_capacity(steps.len());
+    for (index, step) in steps.iter().enumerate() {
+        let sway_launch =
+            plan_step(step, args, &resolved_ids).map_err(|error| step_error(index, &error))?;
+        planned.push(sway_launch);
+        if let Some(id) = step.id.as_deref() {
+            resolved_ids.insert(id.to_string(), index as i64);
+        }
+    }
+    Ok(planned)
+}
+
+/// Prefixes a step's error with its 1-based step number, the one format
+/// every step failure is reported in.
+fn step_error(index: usize, message: &str) -> String {
+    format!("step {}: {}", index + 1, message)
 }
 
 /// The `--layout`/`--template` argument as the user gave it — exactly one is
@@ -1354,7 +1341,7 @@ fn fail_step(
     fail_with_rollback(
         args.json,
         &sway_launch::RunError {
-            message: format!("step {}: {}", index + 1, error.message),
+            message: step_error(index, &error.message),
             container_id,
             ..error
         },
@@ -1523,6 +1510,114 @@ mod tests {
             Vec::<String>::new(),
             "every template::TemplateStep field needs a matching layout::LayoutStep field (or an \
              entry in TEMPLATE_ONLY_FIELDS)"
+        );
+    }
+
+    /// The standalone modes: each never acts on a single window, so each has
+    /// to reject every per-window flag rather than accept and discard it.
+    const STANDALONE_MODES: &[&str] = &[
+        "debug_events",
+        "completions",
+        "layout",
+        "template",
+        "list_templates",
+        "show_template",
+    ];
+
+    /// Flags a `LayoutStep` mirrors that still aren't per-window: they're
+    /// invocation-wide defaults a step can override, and the standalone modes
+    /// accept them unused rather than rejecting them.
+    const MIRRORED_DEFAULTS: &[&str] = &["timeout", "wait_time"];
+
+    #[test]
+    fn per_window_args_lists_every_flag_a_layout_step_mirrors() {
+        // A flag with a LayoutStep equivalent is per-window by definition
+        // (CLI_ONLY_ARGS is the complement), bar MIRRORED_DEFAULTS, so a new
+        // one missing from PER_WINDOW_ARGS would be silently accepted and
+        // discarded by every standalone mode. This is what makes adding it
+        // there unforgettable.
+        let per_window: std::collections::BTreeSet<String> = PER_WINDOW_ARGS
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        let expected: std::collections::BTreeSet<String> = Args::command()
+            .get_arguments()
+            .map(|argument| argument.get_id().to_string())
+            .filter(|name| {
+                !CLI_ONLY_ARGS.contains(&name.as_str())
+                    && !MIRRORED_DEFAULTS.contains(&name.as_str())
+            })
+            .collect();
+        assert_eq!(per_window, expected);
+    }
+
+    #[test]
+    fn per_window_args_conflict_with_every_standalone_mode() {
+        let command = Args::command();
+        for mode in STANDALONE_MODES {
+            let mode_argument = command
+                .get_arguments()
+                .find(|argument| argument.get_id() == *mode)
+                .expect("every standalone mode should be an Args flag");
+            let conflicts: Vec<String> = command
+                .get_arg_conflicts_with(mode_argument)
+                .iter()
+                .map(|argument| argument.get_id().to_string())
+                .collect();
+            for per_window in PER_WINDOW_ARGS {
+                assert!(
+                    conflicts.iter().any(|name| name == per_window),
+                    "--{mode} should conflict with {per_window}"
+                );
+            }
+        }
+    }
+
+    fn layout_steps(toml_text: &str) -> Vec<layout::LayoutStep> {
+        layout::parse(toml_text).expect("layout should parse").step
+    }
+
+    fn offline_args() -> Args {
+        Args::try_parse_from(["sway-launch", "--layout", "unused.toml", "--validate"])
+            .expect("--layout --validate should parse")
+    }
+
+    #[test]
+    fn plan_steps_offline_resolves_a_target_id_against_an_earlier_named_step() {
+        let steps = layout_steps(
+            "[[step]]\nid = \"main\"\ncon_id = 7\n\n[[step]]\ntarget_id = \"main\"\nfloating = true\n",
+        );
+        let planned = plan_steps_offline(&steps, &offline_args()).expect("steps should plan");
+        assert_eq!(planned.len(), 2);
+    }
+
+    #[test]
+    fn plan_steps_offline_reports_a_duplicate_id_with_its_step_number() {
+        let steps = layout_steps(
+            "[[step]]\nid = \"main\"\ncon_id = 7\n\n[[step]]\nid = \"main\"\ncon_id = 8\n",
+        );
+        assert_eq!(
+            plan_steps_offline(&steps, &offline_args()).err(),
+            Some("step 2: id \"main\" was already used by an earlier step".to_string())
+        );
+    }
+
+    #[test]
+    fn plan_steps_offline_reports_an_unknown_target_id_with_its_step_number() {
+        let steps = layout_steps("[[step]]\ncon_id = 7\n\n[[step]]\ntarget_id = \"missing\"\n");
+        let error = plan_steps_offline(&steps, &offline_args())
+            .err()
+            .expect("an unknown target_id should fail");
+        assert!(error.starts_with("step 2: "), "{error}");
+    }
+
+    #[test]
+    fn plan_step_rejects_an_id_already_resolved_by_a_real_run() {
+        let steps = layout_steps("[[step]]\nid = \"main\"\ncon_id = 7\n");
+        let resolved_ids = HashMap::from([("main".to_string(), 42)]);
+        assert_eq!(
+            plan_step(&steps[0], &offline_args(), &resolved_ids).err(),
+            Some("id \"main\" was already used by an earlier step".to_string())
         );
     }
 

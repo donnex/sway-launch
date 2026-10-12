@@ -1068,6 +1068,18 @@ standalone modes it still builds a `SwayLaunch` first, so it isn't checked until
 `--debug-events` legitimately has no target. `--timeout`/`--wait-time` remain accepted but unused
 here, the same as for the other standalone modes.
 
+**Every standalone mode's per-window conflicts come from one list.** `main.rs`'s `PER_WINDOW_ARGS`
+names every flag that selects or acts on a window, and `--debug-events`, `--completions`,
+`--layout`, `--template`, `--list-templates`, and `--show-template` each build their
+`conflicts_with_all` as `per_window_and(&[...their own extras...])`, rather than six hand-copied
+lists where missing one entry silently reintroduces the accept-and-discard bug above. Two tests
+keep it honest: `per_window_args_lists_every_flag_a_layout_step_mirrors` fails if a flag with a
+`LayoutStep` equivalent is missing from the list (`timeout`/`wait_time` are the deliberate
+exceptions, in `MIRRORED_DEFAULTS`), and `per_window_args_conflict_with_every_standalone_mode`
+asks clap itself whether each mode conflicts with every entry. A clap `ArgGroup` was tried first and
+rejected: clap reports a conflict with a group by listing every member of the group instead of the
+flag actually passed, which made `--layout x.toml --floating`'s one-line error a 20-line one.
+
 ### `--dry-run`
 
 Prints the planned sequence of Sway commands instead of running them, never touching Sway IPC or
@@ -1095,8 +1107,9 @@ before any real execution begins) — `describe_target()` renders `SwayLaunch.ta
 never naming a container id even for `Target::ConId` (its id *is* already known, but showing it on
 that one target mode while every action line stays id-free would be an inconsistent preview
 format). `run_steps_dry_run()` still needs `to_sway_launch()`'s `target_id` lookups to resolve, so
-a step's own index is inserted into `resolved_ids` as a synthetic placeholder wherever a
-step has an `id` — never rendered either, same reasoning as `container_id: 0`. Plain output is one
+`plan_steps_offline()` (shared with `--validate`, see below) inserts a step's own index into
+`resolved_ids` as a synthetic placeholder wherever a step has an `id` — never rendered either, same
+reasoning as `container_id: 0`. Plain output is one
 continuously-numbered line per target/action across every step (matching the external review's own
 illustrative example); `--json` is a single `{"steps": [{"target": ..., "actions": [...]}, ...]}`
 object.
@@ -1114,13 +1127,21 @@ it).
 Turned out to need less new machinery than `--dry-run`: `LayoutStep::to_sway_launch()` already
 *is* the validation — height/width/position formats, target-field consistency, `target_id`
 resolution — with no Sway IPC call of its own (only `SwayAction::run()` touches the socket), so
-`run_steps_validate()` is just `run_steps()`'s loop with the `SwayLaunch`/`.run()` call dropped
-entirely: convert every step, propagate the first error, done. A `--template`'s own
+`run_steps_validate()` is just `run_steps()`'s planning with the `.run()` call dropped entirely:
+convert every step, propagate the first error, done.
+
+**All three modes plan a step through the same `plan_step()`** (the duplicate-`id` check, then
+`to_sway_launch()` against the ids resolved so far); `--dry-run` and `--validate` reach it via
+`plan_steps_offline()`, which loops over every step with placeholder ids, and `run_steps()` calls it
+per step between real runs. They used to carry three hand-written copies of that loop, which had
+already started to drift in how they reported errors — and a check added to one copy but not
+another would let `--validate` call a file valid that a real run rejects. `step_error()` is the one
+`step N: <message>` formatter, used by `plan_steps_offline()` and `fail_step()` alike. A new
+per-step rule belongs in `plan_step()` (or `to_sway_launch()`), never in one mode's loop. A `--template`'s own
 `--bindings`/`--apps` resolution (slot count, duplicate slots, binding correctness) already
 happens unconditionally before `run_steps()` is ever reached (`run_template()`'s own
 `template::resolve()` call) — by the time `--validate` sees `steps`, that part already succeeded,
-so there's nothing left for it to repeat. Uses the same synthetic-`target_id`-placeholder approach
-`run_steps_dry_run()` does, for the same reason.
+so there's nothing left for it to repeat.
 
 ### `--completions`
 
