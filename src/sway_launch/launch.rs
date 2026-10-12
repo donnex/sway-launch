@@ -10,7 +10,7 @@
 //! The order actions run in is defined here, and it is deliberate rather than
 //! incidental; see `build_actions()`.
 
-use super::action::SwayAction;
+use super::action::{ActionKind, ExecAction, SwayAction};
 use super::ipc::event_loop;
 use super::outcome::{
     ActionOutcome, ActionRecord, ActionStatus, LaunchOwnership, PlannedAction, RunError,
@@ -103,7 +103,7 @@ impl<'a> SwayLaunch<'a> {
     /// creates a window rather than picking an existing one out.
     fn resolve_container_id(&self) -> Result<(i64, Option<LaunchOwnership>), RunError> {
         match self.target {
-            Target::Exec { command } => SwayAction::Exec {
+            Target::Exec { command } => ExecAction {
                 command,
                 app_id_match: self.app_id_match,
                 class_match: self.class_match,
@@ -111,7 +111,7 @@ impl<'a> SwayLaunch<'a> {
                 timeout: self.timeout,
             }
             .run()
-            .map(|result| (result.container_id, result.launch_ownership)),
+            .map(|(container_id, ownership)| (container_id, Some(ownership))),
             Target::ConId(container_id) => Ok((container_id, None)),
             Target::Existing => {
                 find_existing_container_id(self.app_id_match, self.class_match, self.mark_match)
@@ -151,6 +151,15 @@ impl<'a> SwayLaunch<'a> {
         container_id: i64,
         check_relocation: bool,
     ) -> Result<Vec<PlannedAction<'a>>, String> {
+        let planned = |kind| {
+            PlannedAction::Run(SwayAction::new(
+                container_id,
+                kind,
+                self.verbose,
+                self.timeout,
+                self.wait_time,
+            ))
+        };
         let mut actions = Vec::new();
 
         if self.new_column {
@@ -170,11 +179,7 @@ impl<'a> SwayLaunch<'a> {
                     reason: "trailing_workspace_edge",
                 }));
             } else {
-                actions.push(PlannedAction::Run(SwayAction::NewColumn {
-                    container_id,
-                    verbose: self.verbose,
-                    wait_time: self.wait_time,
-                }));
+                actions.push(planned(ActionKind::NewColumn));
             }
         }
         if self.new_row {
@@ -193,104 +198,25 @@ impl<'a> SwayLaunch<'a> {
                     reason: "trailing_workspace_edge",
                 }));
             } else {
-                actions.push(PlannedAction::Run(SwayAction::NewRow {
-                    container_id,
-                    verbose: self.verbose,
-                    wait_time: self.wait_time,
-                }));
+                actions.push(planned(ActionKind::NewRow));
             }
         }
-        if let Some(workspace) = self.workspace {
-            actions.push(PlannedAction::Run(SwayAction::Workspace {
-                container_id,
-                workspace,
-                verbose: self.verbose,
-                timeout: self.timeout,
-            }));
-        }
-        if let Some(output) = self.output {
-            actions.push(PlannedAction::Run(SwayAction::Output {
-                container_id,
-                output,
-                verbose: self.verbose,
-                timeout: self.timeout,
-            }));
-        }
-        if let Some(split) = self.split {
-            actions.push(PlannedAction::Run(SwayAction::Split {
-                container_id,
-                split,
-                verbose: self.verbose,
-                wait_time: self.wait_time,
-            }));
-        }
-        if self.floating {
-            actions.push(PlannedAction::Run(SwayAction::Floating {
-                container_id,
-                verbose: self.verbose,
-                timeout: self.timeout,
-            }));
-        }
-        if self.sticky {
-            actions.push(PlannedAction::Run(SwayAction::Sticky {
-                container_id,
-                verbose: self.verbose,
-                wait_time: self.wait_time,
-            }));
-        }
-        if self.fullscreen {
-            actions.push(PlannedAction::Run(SwayAction::Fullscreen {
-                container_id,
-                verbose: self.verbose,
-                timeout: self.timeout,
-            }));
-        }
-        if self.focus {
-            actions.push(PlannedAction::Run(SwayAction::Focus {
-                container_id,
-                verbose: self.verbose,
-                timeout: self.timeout,
-            }));
-        }
-        if let Some(height) = self.height {
-            actions.push(PlannedAction::Run(SwayAction::Height {
-                container_id,
-                height,
-                verbose: self.verbose,
-                wait_time: self.wait_time,
-            }));
-        }
-        if let Some(width) = self.width {
-            actions.push(PlannedAction::Run(SwayAction::Width {
-                container_id,
-                width,
-                verbose: self.verbose,
-                wait_time: self.wait_time,
-            }));
-        }
-        if let Some(position) = self.position {
-            actions.push(PlannedAction::Run(SwayAction::Position {
-                container_id,
-                position,
-                verbose: self.verbose,
-                wait_time: self.wait_time,
-            }));
-        }
-        if !self.mark.is_empty() {
-            actions.push(PlannedAction::Run(SwayAction::Mark {
-                container_id,
-                mark: self.mark,
-                verbose: self.verbose,
-                timeout: self.timeout,
-            }));
-        }
-        if self.scratchpad {
-            actions.push(PlannedAction::Run(SwayAction::Scratchpad {
-                container_id,
-                verbose: self.verbose,
-                timeout: self.timeout,
-            }));
-        }
+
+        let requested = [
+            self.workspace.map(ActionKind::Workspace),
+            self.output.map(ActionKind::Output),
+            self.split.map(ActionKind::Split),
+            self.floating.then_some(ActionKind::Floating),
+            self.sticky.then_some(ActionKind::Sticky),
+            self.fullscreen.then_some(ActionKind::Fullscreen),
+            self.focus.then_some(ActionKind::Focus),
+            self.height.map(ActionKind::Height),
+            self.width.map(ActionKind::Width),
+            self.position.map(ActionKind::Position),
+            (!self.mark.is_empty()).then_some(ActionKind::Mark(self.mark)),
+            self.scratchpad.then_some(ActionKind::Scratchpad),
+        ];
+        actions.extend(requested.into_iter().flatten().map(planned));
 
         Ok(actions)
     }
@@ -340,10 +266,10 @@ impl<'a> SwayLaunch<'a> {
             let record = match planned {
                 PlannedAction::Run(action) => {
                     let verb = action.sway_command_verb();
-                    let result = action.run().map_err(resolved)?;
+                    let outcome = action.run().map_err(resolved)?;
                     ActionRecord {
                         action: verb,
-                        status: match result.outcome {
+                        status: match outcome {
                             ActionOutcome::Changed => ActionStatus::Changed,
                             ActionOutcome::AlreadySatisfied => ActionStatus::AlreadySatisfied,
                             ActionOutcome::Unconfirmed => ActionStatus::Unconfirmed,
@@ -442,18 +368,36 @@ mod tests {
         let kinds: Vec<&str> = actions
             .iter()
             .map(|planned| match planned {
-                PlannedAction::Run(SwayAction::Workspace { .. }) => "workspace",
-                PlannedAction::Run(SwayAction::Output { .. }) => "output",
-                PlannedAction::Run(SwayAction::Split { .. }) => "split",
-                PlannedAction::Run(SwayAction::Floating { .. }) => "floating",
-                PlannedAction::Run(SwayAction::Sticky { .. }) => "sticky",
-                PlannedAction::Run(SwayAction::Fullscreen { .. }) => "fullscreen",
-                PlannedAction::Run(SwayAction::Focus { .. }) => "focus",
-                PlannedAction::Run(SwayAction::Height { .. }) => "height",
-                PlannedAction::Run(SwayAction::Width { .. }) => "width",
-                PlannedAction::Run(SwayAction::Position { .. }) => "position",
-                PlannedAction::Run(SwayAction::Mark { .. }) => "mark",
-                PlannedAction::Run(SwayAction::Scratchpad { .. }) => "scratchpad",
+                PlannedAction::Run(action) if matches!(action.kind, ActionKind::Workspace(_)) => {
+                    "workspace"
+                }
+                PlannedAction::Run(action) if matches!(action.kind, ActionKind::Output(_)) => {
+                    "output"
+                }
+                PlannedAction::Run(action) if matches!(action.kind, ActionKind::Split(_)) => {
+                    "split"
+                }
+                PlannedAction::Run(action) if matches!(action.kind, ActionKind::Floating) => {
+                    "floating"
+                }
+                PlannedAction::Run(action) if matches!(action.kind, ActionKind::Sticky) => "sticky",
+                PlannedAction::Run(action) if matches!(action.kind, ActionKind::Fullscreen) => {
+                    "fullscreen"
+                }
+                PlannedAction::Run(action) if matches!(action.kind, ActionKind::Focus) => "focus",
+                PlannedAction::Run(action) if matches!(action.kind, ActionKind::Height(_)) => {
+                    "height"
+                }
+                PlannedAction::Run(action) if matches!(action.kind, ActionKind::Width(_)) => {
+                    "width"
+                }
+                PlannedAction::Run(action) if matches!(action.kind, ActionKind::Position(_)) => {
+                    "position"
+                }
+                PlannedAction::Run(action) if matches!(action.kind, ActionKind::Mark(_)) => "mark",
+                PlannedAction::Run(action) if matches!(action.kind, ActionKind::Scratchpad) => {
+                    "scratchpad"
+                }
                 other => panic!("unexpected planned action: {:?}", other),
             })
             .collect();
@@ -476,10 +420,38 @@ mod tests {
         );
         for planned in &actions {
             match planned {
-                PlannedAction::Run(action) => assert_eq!(action.container_id(), Some(42)),
+                PlannedAction::Run(action) => assert_eq!(action.container_id, 42),
                 PlannedAction::Skip(skipped) => panic!("unexpected skip: {:?}", skipped),
             }
         }
+    }
+
+    #[test]
+    fn build_actions_gives_event_confirmed_actions_the_timeout_and_the_rest_the_wait_time() {
+        let mut sway_launch = minimal_sway_launch();
+        sway_launch.floating = true;
+        sway_launch.mark = "pinned";
+        sway_launch.split = Some(Split::V);
+        sway_launch.height = Some(Size::Pixels(300));
+        sway_launch.new_column = true;
+
+        let actions = sway_launch
+            .build_actions(42, false)
+            .expect("check_relocation: false makes no IPC call, so this can't fail");
+
+        for planned in &actions {
+            let PlannedAction::Run(action) = planned else {
+                panic!("unexpected skip: {:?}", planned);
+            };
+            let expected = if action.kind.is_event_confirmed() {
+                sway_launch.timeout
+            } else {
+                sway_launch.wait_time
+            };
+            assert_eq!(action.timing, expected, "{:?}", action.kind);
+            assert!(!action.verbose);
+        }
+        assert_eq!(actions.len(), 5);
     }
 
     #[test]
@@ -490,7 +462,7 @@ mod tests {
             .expect("no flags set means no IPC call at all, so this can't fail");
         assert!(!actions
             .iter()
-            .any(|planned| matches!(planned, PlannedAction::Run(SwayAction::Mark { .. }))));
+            .any(|planned| matches!(planned, PlannedAction::Run(action) if matches!(action.kind, ActionKind::Mark(_)))));
     }
 
     // build_actions()'s error propagation when relocates_to_another_output()
@@ -520,10 +492,10 @@ mod tests {
             .expect("check_relocation: false makes no IPC call, so this can't fail");
         assert!(actions
             .iter()
-            .any(|planned| matches!(planned, PlannedAction::Run(SwayAction::NewColumn { .. }))));
+            .any(|planned| matches!(planned, PlannedAction::Run(action) if matches!(action.kind, ActionKind::NewColumn))));
         assert!(actions
             .iter()
-            .any(|planned| matches!(planned, PlannedAction::Run(SwayAction::NewRow { .. }))));
+            .any(|planned| matches!(planned, PlannedAction::Run(action) if matches!(action.kind, ActionKind::NewRow))));
         assert!(!actions
             .iter()
             .any(|planned| matches!(planned, PlannedAction::Skip(_))));

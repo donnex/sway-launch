@@ -86,7 +86,7 @@ below) plus five integration test files:
   | `tree.rs` | every pure `&Node` predicate — matching, geometry, `ContainerState::from_tree` |
   | `query.rs` | fetch-a-tree-then-delegate wrappers, and nothing else |
   | `process_marker.rs` | the PID marker and its `/proc` reads |
-  | `action.rs` | `SwayAction` itself: variants, `Display`, `sway_command_verb()` |
+  | `action.rs` | `SwayAction`/`ActionKind`/`ExecAction` themselves: fields, `Display`, `sway_command_verb()` |
   | `confirmation.rs` | how an action's effect is established: event matching, state checks, polling, the `run_*` drivers |
   | `outcome.rs` | `RunOutcome`/`RunError`/`UnmatchedWindow`/`ActionRecord`/`ActionStatus`/`LaunchOwnership` and their internal counterparts |
   | `launch.rs` | `SwayLaunch`, `Target`, `build_actions()`/`run()`, `--debug-events` |
@@ -94,8 +94,8 @@ below) plus five integration test files:
   Split out of a single 5,847-line file on 2026-09-03, on an external review's recommendation, one
   module per commit with `cargo test` green at every step. The review proposed a single `state.rs`;
   it was split into `tree.rs`/`query.rs` instead, because merging fetching with interpretation is
-  the exact arrangement an earlier finding from the same review was about. **`impl SwayAction` is
-  deliberately split across `action.rs` and `confirmation.rs`** — legal in Rust, since an inherent
+  the exact arrangement an earlier finding from the same review was about. **`impl SwayAction` (and
+  `impl ExecAction`) is deliberately split across `action.rs` and `confirmation.rs`** — legal in Rust, since an inherent
   impl needs the same crate rather than the same module — along the line of what an action *is*
   versus how its effect is confirmed; either file would otherwise be ~1,400 lines. Unit tests moved
   with their code; `test_support.rs` (`#[cfg(test)]`) holds the `Node`/`WindowEvent` JSON fixtures
@@ -273,30 +273,48 @@ harness — that's why these live here instead of as `#[cfg(test)]` modules in `
 
 ### Core model: `SwayAction`
 
-Every CLI flag maps to a `SwayAction` enum variant (`Exec`, `Split`, `Floating`, `Sticky`,
-`Fullscreen`, `Focus`, `NewColumn`, `NewRow`, `Workspace`, `Output`, `Mark`, `Height`, `Width`,
-`Position`, `Scratchpad`). Each variant knows how to:
+Two types, not one. **`ExecAction`** launches the window (`command`, `app_id_match`,
+`class_match`, `verbose`, `timeout`) and has no container yet. **`SwayAction`** acts on an
+already-resolved container: a struct holding what every such action shares — `container_id`,
+`verbose`, and `timing` — plus a `kind: ActionKind`, one variant per remaining CLI flag (`Split`,
+`Floating`, `Sticky`, `Fullscreen`, `Focus`, `NewColumn`, `NewRow`, `Workspace`, `Output`, `Mark`,
+`Height`, `Width`, `Position`, `Scratchpad`), each holding only what its own flag specifies.
+`timing` is `--timeout` for an event-confirmed kind and `--wait-time` for a polled one, chosen once
+by `SwayAction::new()` from `ActionKind::is_event_confirmed()`.
 
-- render itself as a `swaymsg` command string (`sway_command()`) — `Mark`'s, `Workspace`'s, and
-  `Output`'s values are wrapped through `quote_sway_string()` before interpolation, since Sway's
-  command parser splits on unquoted `,`/`;` and an unescaped value could otherwise inject
-  additional commands. That quoting is defense in depth rather than the only guard: since
-  `validate_sway_string_argument` (see the `src/main.rs` bullet above) rejects `"` and `\` up
-  front, `quote_sway_string()`'s own `replace()` calls can no longer fire for any value this tool
-  actually accepts — they're kept so the function stays correct for any future caller, not because
-  a validated value can still reach them. `Height`, `Width`, and `Position` don't need this since they hold typed
-  `Size`/`Position` values (see below), not arbitrary strings — `sway_command()` is their
-  serialization point, formatting a `Size`/`Position` back into Sway's `<n>px`/`<n>ppt` or
-  space-separated `move position <x> <y>` syntax, rather than interpolating a pre-validated string,
-  and `Exec`'s command is passed through unquoted by design (the tool's whole job is to run it).
-  `Exec` renders through `exec_sway_command(token)` rather than `sway_command()`, since its command
-  carries the per-invocation PID marker, which doesn't exist until the action runs —
-  `sway_command()`'s own `Exec` arm is `unreachable!()`. It used to render a plain `exec <command>`
-  that nothing ever sent (the real string was built inline at the call site, marker included), so a
-  change made there would have passed its own test and altered nothing; a code review caught it
-- declare which `WindowChange` event(s) would confirm it completed (`matching_window_change_events()`)
-- report its `--timeout`/`--wait-time` value, whichever field the variant actually has
-  (`duration()`)
+This used to be a single 15-variant `SwayAction` enum with `Exec` as one of its variants, every
+variant repeating `verbose` and all but `Exec` repeating `container_id` and a `timeout` or
+`wait_time` — so three 15-arm accessor matches (`verbose()`, `duration()`, `container_id()`)
+existed only to read those fields back, every `build_actions()` branch re-stated them, and "this
+isn't `Exec`" was enforced at runtime by nine `unreachable!`/`expect` calls instead of by the type
+system. A code review (#21) suggested the split; behavior didn't change, and every one of those
+panics is gone because an `ExecAction` and a `SwayAction` are different types. `Display` also now
+says `container id:` for every kind (it used to mix in `container_id:` for some).
+
+A `SwayAction` knows how to:
+
+- render itself as a `swaymsg` command string (`sway_command()`, `[con_id=N] <verb>`) — `Mark`'s,
+  `Workspace`'s, and `Output`'s values are wrapped through `quote_sway_string()` before
+  interpolation, since Sway's command parser splits on unquoted `,`/`;` and an unescaped value
+  could otherwise inject additional commands. That quoting is defense in depth rather than the only
+  guard: since `validate_sway_string_argument` (see the `src/main.rs` bullet above) rejects `"` and
+  `\` up front, `quote_sway_string()`'s own `replace()` calls can no longer fire for any value this
+  tool actually accepts — they're kept so the function stays correct for any future caller, not
+  because a validated value can still reach them. `Height`, `Width`, and `Position` don't need this
+  since they hold typed `Size`/`Position` values (see below), not arbitrary strings —
+  `sway_command()` is their serialization point, formatting a `Size`/`Position` back into Sway's
+  `<n>px`/`<n>ppt` or space-separated `move position <x> <y>` syntax, rather than interpolating a
+  pre-validated string.
+- declare which `WindowChange` event(s) would confirm it completed
+  (`ActionKind::matching_window_change_events()`)
+
+`ExecAction::sway_command(token)` renders the launch command instead, taking the per-invocation PID
+marker as an argument since it doesn't exist until the action runs. The command itself is passed
+through unquoted by design (the tool's whole job is to run it). A separate rendering of
+`exec <command>` that nothing ever sent once lived alongside the real one (built inline at the call
+site, marker included), so a change made there would have passed its own test and altered nothing;
+a code review caught it, which is why the one real rendering lives in `action.rs` with every other
+command's.
 
 **`Height`/`Width` hold a `Size` (`Pixels(i32)`/`Percent(i32)`), `Position` holds a `Position`
 (`Center`/`Coordinates { x: i32, y: i32 }`)** — both real types, not the validated strings this
@@ -338,12 +356,13 @@ schema types where a plain string is the natural representation and keeps per-fi
 (`"height: ..."`) exactly as before; only `SwayLaunch`/`SwayAction` needed to be typed for the
 stated goal (safer internals, less repeated parsing) to actually land.
 
-`SwayAction::run()` dispatches based on whether the action has a corresponding IPC event:
+`SwayAction::run()` dispatches based on whether the action has a corresponding IPC event
+(`ExecAction::run()` always waits on one — see "`Exec`" below):
 
 - **Has an event** (`Exec`, `Floating`, `Fullscreen`, `Focus`, `Workspace`, `Output`, `Mark`,
   `Scratchpad`) →
-  `run_wait_matching_events()` for every variant except `Exec` (which gets its own
-  `run_wait_matching_exec_event()`, below): confirms the container still exists, subscribes to the
+  `run_wait_matching_events()` for every kind except `Exec` (which is an `ExecAction` and gets its
+  own `run_wait_matching_exec_event()`, below): confirms the container still exists, subscribes to the
   event stream, checks `already_at_target()` (see below), sends the command, then reads the event
   stream until a `Window` event matches (checked via `matches_window_event()`, container id for
   every one of these variants) **and** `state_satisfied()` confirms the requested state is actually
@@ -524,12 +543,12 @@ stated goal (safer internals, less repeated parsing) to actually land.
   hint, or, with none, a fresh `scan_marker_presence()` deciding between "the launched command
   exited without opening a window" (check `PATH`) and "still running, may be slow". Before this, a
   typo'd command and a wrong `--app-id` both ended in a bare `N sec timeout reached`. The rejected
-  windows also travel structurally: `SwayAction::run()`/`SwayLaunch::run()` return
+  windows also travel structurally: `ExecAction::run()`/`SwayLaunch::run()` return
   `Err(RunError { message, unmatched_windows })` rather than `Err(String)` (`From<String>` covers
   every other failure), and `main.rs`'s `fail_with_rollback()` renders them as the `--json` error's
   `unmatched_windows` field, omitted when empty — they're real windows left open, and a script
-  needs their ids without parsing prose. `SwayAction::run()` also prefixes every error with what
-  the action was (`launch "<command>":` for `Exec`, `sway_command_verb()` otherwise), so a timeout
+  needs their ids without parsing prose. Both `run()`s also prefix every error with what the
+  action was (`launch "<command>":` for an `ExecAction`, `sway_command_verb()` otherwise), so a timeout
   in a multi-action invocation or a layout's `step N: ...` names the action that failed. Covered
   live by `launch_timeout_names_the_window_its_app_id_filter_rejected` and
   `launch_timeout_says_when_the_command_exited_without_a_window`, and headlessly (the prefix) by
@@ -736,7 +755,7 @@ stated goal (safer internals, less repeated parsing) to actually land.
 (`Target::Exec { command }`, `Target::ConId(i64)`, or `Target::Existing`), and
 `resolve_container_id()` turns whichever one is set into a `container_id`:
 
-- `Exec` — today's original behavior: build and run a `SwayAction::Exec`.
+- `Exec` — today's original behavior: build and run an `ExecAction`.
 - `ConId(id)` — the id directly, no IPC call at all.
 - `Existing` — `get_tree()` + `matching_container_ids()` (a recursive walk over `Node::nodes`/
   `Node::floating_nodes`, reusing `window_app_id_match`/`window_class_match` — refactored to take
@@ -760,8 +779,8 @@ stated goal (safer internals, less repeated parsing) to actually land.
   already used, just extended by one arm. `SwayLaunch` gained a matching `mark_match: &'a str`
   field alongside `app_id_match`/`class_match`, threaded through the same call sites; `--mark-match`
   only ever applies to `Target::Existing` (a freshly launched `Target::Exec` window has no mark yet
-  to match against, since marks are applied *after* launch via `--mark`), so `SwayAction::Exec`'s
-  own content-matching is untouched.
+  to match against, since marks are applied *after* launch via `--mark`), so `ExecAction`'s own
+  content-matching is untouched.
 
 `run()` used to conditionally build *and immediately run* the other actions inline, one `if
 self.foo { SwayAction::Foo { .. }.run()?; }` block per flag. An external review flagged that shape
@@ -773,7 +792,9 @@ way to inspect the planned actions without running them) — split into two meth
 of them, and `run()` itself is now just `resolve_container_id()` + `for action in
 self.build_actions(container_id)? { action.run()?; }`. A mechanical extraction, not a redesign —
 `SwayAction<'a>`'s existing lifetime already matched `SwayLaunch<'a>`'s, so no data ever needed to
-change shape, only *when* each `SwayAction` gets constructed. This is also what makes
+change shape, only *when* each `SwayAction` gets constructed. Each flag now contributes only an
+`ActionKind` to a fixed-order list; one `SwayAction::new()` call adds the shared container id,
+`--verbose` and timing, so no branch restates them. This is also what makes
 `build_actions()` itself unit-testable headlessly for the first time (see its tests in
 `launch.rs`, `build_actions_includes_every_flag_in_the_documented_fixed_order` in particular,
 which pins the exact order above) — before the split, testing the order meant testing `run()`
@@ -1016,8 +1037,8 @@ would have fallen relative to the other actions. Fixed by unifying both into one
 (`ActionRecord { action: String, status: ActionStatus }`, `enum ActionStatus { Changed,
 AlreadySatisfied, Skipped { reason: &'static str } }`), replacing `RunOutcome.actions: Vec<String>`
 and dropping `RunOutcome.skipped` entirely — its contents fold into the same list instead.
-`SwayAction::run()`'s own return type changed from `Result<i64, String>` to
-`Result<(i64, ActionOutcome), String>` specifically so `run()` can read back distinctions the
+`SwayAction::run()`'s own return type changed from `Result<i64, String>` to one carrying an
+`ActionOutcome` (today `Result<ActionOutcome, RunError>`) specifically so `run()` can read back distinctions the
 action layer already computed internally but previously discarded — first `already_at_target()`'s,
 and later the poll/fallback split. `ActionOutcome` (`Changed`/`AlreadySatisfied`/`Unconfirmed`) is
 separate from `ActionStatus` because a skip is decided while *planning* and never reaches `run()`
@@ -1096,8 +1117,8 @@ about to run the action for real, so it needs the real answer); a preview has no
 makes previewing fully IPC-free, not just IPC-light. The placeholder `container_id: 0` passed to
 `build_actions()` is never actually shown: `main.rs`'s dry-run printing calls
 `SwayAction::sway_command_verb()` (new — `sway_command()`'s own building block, `sway_command()`
-itself now just `format!("[con_id={}] {}", container_id, self.sway_command_verb())` for every
-variant except `Exec`, which has no target container yet either way), not `sway_command()`, so the
+itself just `format!("[con_id={}] {}", self.container_id, self.sway_command_verb())`), not
+`sway_command()`, so the
 placeholder id is constructed but never rendered anywhere.
 
 `main.rs`'s `DryRunStep { target, actions }` is the shared preview representation for both the
@@ -1224,9 +1245,9 @@ A third, `rollback_on_error_leaves_a_window_opened_while_an_env_dropping_wrapper
 marker that was never seen at all (adopted → survives), the case that exposed "absent" and "gone"
 as different facts — see "`Exec`" above.
 
-`SwayAction::run()` returns `ActionResult { container_id, outcome, launch_ownership }` rather than a
-tuple to carry this — `launch_ownership` is `None` for every action except `Exec`, which is the only
-one that creates a window rather than acting on one already resolved. On any failure — an id collision, a step failing to convert, or a
+`ExecAction::run()` returns `(container_id, LaunchOwnership)` to carry this — it's the only action
+that creates a window rather than acting on one already resolved, so `SwayAction::run()` has no
+ownership to report and returns just its `ActionOutcome`. On any failure — an id collision, a step failing to convert, or a
 step's own `.run()` failing — `fail_step()` calls `rollback()` first (if the flag is set), which
 best-effort `[con_id] kill`s every tracked id, most-recently-launched first, via the new
 `sway_launch::kill_container()` (a thin `pub` wrapper around the existing private

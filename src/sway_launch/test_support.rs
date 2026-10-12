@@ -1,11 +1,42 @@
-//! Node/event fixtures shared by more than one module's unit tests.
+//! Node/event/action fixtures shared by more than one module's unit tests.
 //!
 //! `swayipc`'s `Node` and `WindowEvent` have far more required fields than any
 //! single test cares about, so they're built by deserializing a minimal JSON
 //! value rather than by hand. Kept here, rather than duplicated per module,
 //! so every module's tests agree on what a "plain tiled window" looks like.
 
+use super::action::{ActionKind, ExecAction, SwayAction};
+use std::time;
 use swayipc::{Node, WindowEvent};
+
+/// A `SwayAction` of `kind` against container 42, with the CLI's default
+/// `--timeout`/`--wait-time` and `--verbose` off — what nearly every action
+/// test wants, so each one only spells out the part it's actually about.
+pub(super) fn targeted(kind: ActionKind<'_>) -> SwayAction<'_> {
+    SwayAction::new(
+        42,
+        kind,
+        false,
+        time::Duration::from_secs(5),
+        time::Duration::from_millis(20),
+    )
+}
+
+/// An `ExecAction` launching `command`, filtered on `app_id_match`/
+/// `class_match` (empty for no filter).
+pub(super) fn exec_action<'a>(
+    command: &'a str,
+    app_id_match: &'a str,
+    class_match: &'a str,
+) -> ExecAction<'a> {
+    ExecAction {
+        command,
+        app_id_match,
+        class_match,
+        verbose: false,
+        timeout: time::Duration::from_secs(5),
+    }
+}
 
 pub(super) fn window_event(
     change: &str,

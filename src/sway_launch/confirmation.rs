@@ -9,10 +9,13 @@
 //!
 //! The split between what's here and what's in `action.rs` is what an action
 //! *is* versus how its effect is established: `action.rs` renders the command,
-//! this module decides whether it worked.
+//! this module decides whether it worked. `ExecAction` and `SwayAction` each
+//! get their own driver here, since launching a window and acting on one that
+//! already exists are confirmed in different ways.
 
+use super::action::{ActionKind, ExecAction, SwayAction};
 use super::ipc::{event_loop, new_connection, run_single_sway_command, run_sway_command};
-use super::outcome::{ActionOutcome, ActionResult, LaunchOwnership, RunError, UnmatchedWindow};
+use super::outcome::{ActionOutcome, LaunchOwnership, RunError, UnmatchedWindow};
 use super::process_marker::{
     generate_pid_marker_token, process_has_env_var, scan_marker_presence, MarkerPresence,
     MarkerTracker, MARKER_SCAN_INTERVAL, PID_MARKER_FALLBACK_GRACE, PID_MARKER_VAR,
@@ -24,7 +27,7 @@ use super::tree::{
     height_matches, width_matches, window_app_id_match, window_class_match, ContainerState,
 };
 use super::values::{Size, Split};
-use super::{SwayAction, MOVE_POLL_GRACE, WAIT_TIME_POLL_GRACE, WAIT_TIME_POLL_INTERVAL};
+use super::{MOVE_POLL_GRACE, WAIT_TIME_POLL_GRACE, WAIT_TIME_POLL_INTERVAL};
 use std::sync::mpsc;
 use std::{fmt, thread, time};
 use swayipc::{Connection, Event, EventType, NodeLayout, WindowChange, WindowEvent};
@@ -81,18 +84,15 @@ impl fmt::Display for WindowEventMatchError {
     }
 }
 
-impl SwayAction<'_> {
+impl ActionKind<'_> {
+    /// The `WindowChange` event(s) that would confirm this kind of action, or
+    /// `None` for one Sway fires no event for, which confirms by polling
+    /// instead.
     fn matching_window_change_events(&self) -> Option<Vec<WindowChange>> {
         match self {
-            // Only `New` identifies a window as the one just launched.
-            // `Move` ("the view has been reparented in the tree") fires for
-            // any window whenever Sway's tree is restructured, including
-            // pre-existing windows unrelated to this exec — accepting it
-            // here let sway-launch return the wrong container id.
-            SwayAction::Exec { .. } => Some(vec![WindowChange::New]),
-            SwayAction::Floating { .. } => Some(vec![WindowChange::Floating]),
-            SwayAction::Fullscreen { .. } => Some(vec![WindowChange::FullscreenMode]),
-            SwayAction::Focus { .. } => Some(vec![WindowChange::Focus]),
+            ActionKind::Floating => Some(vec![WindowChange::Floating]),
+            ActionKind::Fullscreen => Some(vec![WindowChange::FullscreenMode]),
+            ActionKind::Focus => Some(vec![WindowChange::Focus]),
             // Unlike NewColumn/NewRow's "move right"/"move down" below,
             // "move workspace"/"move container to output" reliably fire
             // WindowChange::Move for an actual move (tests/live_sway.rs's
@@ -105,10 +105,8 @@ impl SwayAction<'_> {
             // that case before this event wait ever starts, rather than
             // hanging until --timeout for a move that was never going to
             // happen.
-            SwayAction::Workspace { .. } | SwayAction::Output { .. } => {
-                Some(vec![WindowChange::Move])
-            }
-            SwayAction::Mark { .. } => Some(vec![WindowChange::Mark]),
+            ActionKind::Workspace(_) | ActionKind::Output(_) => Some(vec![WindowChange::Move]),
+            ActionKind::Mark(_) => Some(vec![WindowChange::Mark]),
             // NewColumn/NewRow ("move right"/"move down") were event-based
             // via WindowChange::Move too, until live-Sway testing showed
             // "move right" doesn't fire it when the window is already at
@@ -133,13 +131,13 @@ impl SwayAction<'_> {
             // `sticky enable`/`sticky disable` on a live container: zero
             // events fired either way, unlike Floating/Fullscreen/Focus
             // above, which each have a dedicated WindowChange variant.
-            SwayAction::Sticky { .. } => None,
-            SwayAction::Split { .. }
-            | SwayAction::NewColumn { .. }
-            | SwayAction::NewRow { .. }
-            | SwayAction::Height { .. }
-            | SwayAction::Width { .. }
-            | SwayAction::Position { .. } => None,
+            ActionKind::Sticky => None,
+            ActionKind::Split(_)
+            | ActionKind::NewColumn
+            | ActionKind::NewRow
+            | ActionKind::Height(_)
+            | ActionKind::Width(_)
+            | ActionKind::Position(_) => None,
             // "move scratchpad" reparents the container into the special
             // __i3_scratch workspace, which — like Workspace/Output above —
             // fires WindowChange::Move. Confirmed live: for a previously
@@ -152,84 +150,63 @@ impl SwayAction<'_> {
             // already_at_target() below checks for and short-circuits that
             // case the same way it does for Workspace/Output/Floating/
             // Fullscreen/Focus.
-            SwayAction::Scratchpad { .. } => Some(vec![WindowChange::Move]),
+            ActionKind::Scratchpad => Some(vec![WindowChange::Move]),
         }
     }
 
-    /// Runs this action for real, returning the container id it acted on and
-    /// how confidently it can say what happened — which `SwayLaunch::run()`
-    /// turns into the `ActionStatus` reported in `RunOutcome`/`--json`.
+    /// Whether this kind of action is confirmed by an IPC event (and so waits
+    /// on `--timeout`) rather than by polling (and so waits on `--wait-time`).
+    pub(super) fn is_event_confirmed(&self) -> bool {
+        self.matching_window_change_events().is_some()
+    }
+}
+
+impl SwayAction<'_> {
+    /// Runs this action for real, returning how confidently it can say what
+    /// happened — which `SwayLaunch::run()` turns into the `ActionStatus`
+    /// reported in `RunOutcome`/`--json`.
     ///
     /// The three outcomes are genuinely different claims, and collapsing them
     /// was misleading: an event-confirmed action that observed its state, an
     /// action that short-circuited because the state already held, and a
     /// wait-time action that sent its command and never saw the change appear
-    /// are not equally strong results. `Exec` is always `Changed` — a freshly
-    /// launched window is inherently a change, and `already_at_target()` never
-    /// short-circuits it.
+    /// are not equally strong results.
     ///
     /// `already_at_target()`'s no-op short-circuit is deliberately *not* run
     /// here, ahead of the dispatch below: it belongs inside
     /// `run_wait_matching_events()`, after that function has subscribed. See
-    /// its doc comment for why the ordering is load-bearing. Every variant this
-    /// function routes elsewhere — `Exec`, and the seven that confirm by
-    /// polling — answers `false` from `state_satisfied()` unconditionally, so
-    /// moving the check has no effect on them.
+    /// its doc comment for why the ordering is load-bearing. The seven kinds
+    /// that confirm by polling answer `false` from `state_satisfied()`
+    /// unconditionally, so they're unaffected by where it runs.
     ///
-    /// Every error is prefixed with what the action was — `launch "<command>"`
-    /// for `Exec`, the Sway command verb for everything else — so that a
-    /// timeout in an invocation with several actions, or a layout's
-    /// `step N: ...`, says which one failed rather than only how long it waited.
-    pub(super) fn run(&self) -> Result<ActionResult, RunError> {
-        if self.verbose() {
+    /// Every error is prefixed with the Sway command verb, so that a timeout in
+    /// an invocation with several actions, or a layout's `step N: ...`, says
+    /// which one failed rather than only how long it waited.
+    pub(super) fn run(&self) -> Result<ActionOutcome, RunError> {
+        if self.verbose {
             diagnostic!("Sway action: {}", self);
         }
 
-        match self {
-            SwayAction::Exec { command, .. } => self
-                .run_wait_matching_exec_event()
-                .map(|(container_id, ownership)| ActionResult {
-                    container_id,
-                    outcome: ActionOutcome::Changed,
-                    launch_ownership: Some(ownership),
-                })
-                .map_err(|error| RunError {
-                    message: format!("launch \"{}\": {}", command, error.message),
-                    ..error
-                }),
-            _ => self
-                .run_acting_on_container()
-                .map_err(|error| format!("{}: {}", self.sway_command_verb(), error).into()),
-        }
-    }
-
-    fn run_acting_on_container(&self) -> Result<ActionResult, String> {
-        match self {
-            SwayAction::Exec { .. } => {
-                unreachable!("run_acting_on_container() is never called for SwayAction::Exec")
-            }
-            _ => match self.matching_window_change_events() {
-                Some(_) => self
-                    .run_wait_matching_events()
-                    .map(|(container_id, outcome)| ActionResult::acted(container_id, outcome)),
-                None => self.run_wait_time().map(|(container_id, confirmed)| {
-                    let outcome = if confirmed {
-                        ActionOutcome::Changed
-                    } else {
-                        ActionOutcome::Unconfirmed
-                    };
-                    ActionResult::acted(container_id, outcome)
-                }),
-            },
-        }
+        let outcome = if self.kind.is_event_confirmed() {
+            self.run_wait_matching_events()
+        } else {
+            self.run_wait_time().map(|confirmed| {
+                if confirmed {
+                    ActionOutcome::Changed
+                } else {
+                    ActionOutcome::Unconfirmed
+                }
+            })
+        };
+        outcome.map_err(|error| format!("{}: {}", self.sway_command_verb(), error).into())
     }
 
     /// Checks whether the container is already where/how a given action
     /// would put it — Sway doesn't fire the event each of these actions
     /// waits on when the command turns out to be a no-op, so
     /// `run_wait_matching_events()` would otherwise hang until `--timeout`
-    /// for an event that was never coming. Returns `Some(container_id)` to
-    /// short-circuit `run()` with success, or `None` to proceed normally.
+    /// for an event that was never coming. Returns `true` to
+    /// short-circuit `run()` with success, or `false` to proceed normally.
     ///
     /// `Workspace`/`Output` were the first two found needing this (checked
     /// against the containing workspace/output name). `Floating`/
@@ -247,7 +224,7 @@ impl SwayAction<'_> {
     /// since a scratchpad window also reports as floating for the unrelated
     /// reason `matching_window_change_events()`'s doc comment covers. Every
     /// state above is read in one pass by `ContainerState::from_tree()`; every
-    /// other action falls through to `None` unconditionally, which this never
+    /// other action falls through to `false` unconditionally, which this never
     /// touches.
     ///
     /// `Mark` is the one event-confirmed action deliberately excluded here
@@ -268,24 +245,17 @@ impl SwayAction<'_> {
     /// live compositor while the check still ran ahead of the subscription:
     /// sweeping a competing `floating enable` across a 0-20ms window after
     /// spawn, 5 of 40 trials hung the full timeout, clustered 2.5-4ms in.
-    fn already_at_target(&self) -> Result<Option<i64>, String> {
-        if matches!(self, SwayAction::Mark { .. }) {
-            return Ok(None);
+    fn already_at_target(&self) -> Result<bool, String> {
+        if matches!(self.kind, ActionKind::Mark(_)) {
+            return Ok(false);
         }
-        let Some(container_id) = self.container_id() else {
-            return Ok(None);
-        };
-        if self.state_satisfied()? {
-            Ok(Some(container_id))
-        } else {
-            Ok(None)
-        }
+        self.state_satisfied()
     }
 
     /// Whether this action's requested end state currently holds, read from
     /// Sway's tree. `false` for every action that confirms by polling instead
     /// (`Split`, `Sticky`, `Height`, `Width`, `Position`, `NewColumn`,
-    /// `NewRow`) and for `Exec`, none of which reach this.
+    /// `NewRow`), none of which reach this.
     ///
     /// Used twice, for two different questions. Before the command runs,
     /// `already_at_target()` asks it to detect a no-op Sway would fire no
@@ -320,16 +290,13 @@ impl SwayAction<'_> {
     /// every variant, where the previous per-arm helpers each fetched their
     /// own.
     fn state_satisfied(&self) -> Result<bool, String> {
-        let Some(container_id) = self.container_id() else {
-            return Ok(false);
-        };
-        // Every variant `state_satisfies()` answers `false` for regardless of
+        // Every kind `state_satisfies()` answers `false` for regardless of
         // state is one with no confirming event, so there's nothing to read a
         // tree for.
-        if self.matching_window_change_events().is_none() {
+        if !self.kind.is_event_confirmed() {
             return Ok(false);
         }
-        Ok(self.state_satisfies(container_state(container_id)?.as_ref()))
+        Ok(self.state_satisfies(container_state(self.container_id)?.as_ref()))
     }
 
     /// Whether `state` is the state this action asked for. `None` — the
@@ -342,16 +309,14 @@ impl SwayAction<'_> {
             return false;
         };
 
-        match self {
-            SwayAction::Workspace { workspace, .. } => {
-                state.workspace.as_deref() == Some(*workspace)
-            }
-            SwayAction::Output { output, .. } => state.output.as_deref() == Some(*output),
-            SwayAction::Floating { .. } => state.floating,
-            SwayAction::Fullscreen { .. } => state.fullscreen,
-            SwayAction::Focus { .. } => state.focused,
-            SwayAction::Scratchpad { .. } => state.in_scratchpad,
-            SwayAction::Mark { mark, .. } => state.marks.iter().any(|held| held == mark),
+        match self.kind {
+            ActionKind::Workspace(workspace) => state.workspace.as_deref() == Some(workspace),
+            ActionKind::Output(output) => state.output.as_deref() == Some(output),
+            ActionKind::Floating => state.floating,
+            ActionKind::Fullscreen => state.fullscreen,
+            ActionKind::Focus => state.focused,
+            ActionKind::Scratchpad => state.in_scratchpad,
+            ActionKind::Mark(mark) => state.marks.iter().any(|held| held == mark),
             _ => false,
         }
     }
@@ -365,8 +330,8 @@ impl SwayAction<'_> {
     /// change?" rather than "is it what was asked for?" — and only for as
     /// long as it keeps looking. See `MOVE_POLL_GRACE`.
     fn poll_grace(&self) -> time::Duration {
-        match self {
-            SwayAction::NewColumn { .. } | SwayAction::NewRow { .. } => MOVE_POLL_GRACE,
+        match self.kind {
+            ActionKind::NewColumn | ActionKind::NewRow => MOVE_POLL_GRACE,
             _ => WAIT_TIME_POLL_GRACE,
         }
     }
@@ -383,27 +348,11 @@ impl SwayAction<'_> {
     /// opts out for a different reason — there's no pixel figure to poll for
     /// without also resolving the reference dimension it's a percentage of.
     fn polls(&self, baseline: Option<swayipc::Rect>) -> bool {
-        match self {
-            SwayAction::Split { .. } | SwayAction::Sticky { .. } | SwayAction::Position { .. } => {
-                true
-            }
-            SwayAction::Height {
-                height: Size::Pixels(_),
-                ..
-            }
-            | SwayAction::Width {
-                width: Size::Pixels(_),
-                ..
-            } => true,
-            SwayAction::Height {
-                height: Size::Percent(_),
-                ..
-            }
-            | SwayAction::Width {
-                width: Size::Percent(_),
-                ..
-            } => false,
-            SwayAction::NewColumn { .. } | SwayAction::NewRow { .. } => baseline.is_some(),
+        match self.kind {
+            ActionKind::Split(_) | ActionKind::Sticky | ActionKind::Position(_) => true,
+            ActionKind::Height(Size::Pixels(_)) | ActionKind::Width(Size::Pixels(_)) => true,
+            ActionKind::Height(Size::Percent(_)) | ActionKind::Width(Size::Percent(_)) => false,
+            ActionKind::NewColumn | ActionKind::NewRow => baseline.is_some(),
             _ => false,
         }
     }
@@ -423,39 +372,27 @@ impl SwayAction<'_> {
     /// into "not confirmed yet" rather than propagating: this only ever
     /// exists to return *faster* than the unconditional sleep already does,
     /// never to turn success into failure.
-    fn poll_matches(
-        &self,
-        connection: &mut Connection,
-        container_id: i64,
-        baseline: Option<swayipc::Rect>,
-    ) -> bool {
-        match self {
-            SwayAction::Split { split, .. } => {
+    fn poll_matches(&self, connection: &mut Connection, baseline: Option<swayipc::Rect>) -> bool {
+        let container_id = self.container_id;
+        match self.kind {
+            ActionKind::Split(split) => {
                 let expected = match split {
                     Split::V => NodeLayout::SplitV,
                     Split::H => NodeLayout::SplitH,
                 };
                 parent_node_layout(connection, container_id) == Some(expected)
             }
-            SwayAction::Height {
-                height: Size::Pixels(pixels),
-                ..
-            } => node_by_id(connection, container_id)
-                .is_some_and(|node| height_matches(&node, *pixels)),
-            SwayAction::Width {
-                width: Size::Pixels(pixels),
-                ..
-            } => node_by_id(connection, container_id)
-                .is_some_and(|node| width_matches(&node, *pixels)),
-            SwayAction::Position { position, .. } => {
-                position_matches(connection, container_id, position)
-            }
+            ActionKind::Height(Size::Pixels(pixels)) => node_by_id(connection, container_id)
+                .is_some_and(|node| height_matches(&node, pixels)),
+            ActionKind::Width(Size::Pixels(pixels)) => node_by_id(connection, container_id)
+                .is_some_and(|node| width_matches(&node, pixels)),
+            ActionKind::Position(position) => position_matches(connection, container_id, &position),
             // Unlike Floating's `floating`/node-type split (see
             // node_is_floating()'s doc comment), `sticky` is a plain `bool`
             // on `Node` with no version-dependent quirk found — confirmed
             // live that `sticky enable` sets it directly and immediately,
             // even on a still-tiled container.
-            SwayAction::Sticky { .. } => {
+            ActionKind::Sticky => {
                 node_by_id(connection, container_id).is_some_and(|node| node.sticky)
             }
             // No fixed target exists for "move right"/"move down" — a
@@ -476,11 +413,9 @@ impl SwayAction<'_> {
             // parent/sibling-list comparison here false-positive on
             // exactly the no-op case this whole mechanism exists to fall
             // back gracefully on.
-            SwayAction::NewColumn { .. } | SwayAction::NewRow { .. } => {
-                baseline.is_some_and(|baseline| {
-                    node_by_id(connection, container_id).is_some_and(|node| node.rect != baseline)
-                })
-            }
+            ActionKind::NewColumn | ActionKind::NewRow => baseline.is_some_and(|baseline| {
+                node_by_id(connection, container_id).is_some_and(|node| node.rect != baseline)
+            }),
             _ => false,
         }
     }
@@ -494,14 +429,10 @@ impl SwayAction<'_> {
     /// applies" for these two variants — without a baseline there's nothing
     /// to compare against, so falling back to the original unconditional
     /// sleep is the only sound choice.
-    fn poll_baseline(
-        &self,
-        connection: &mut Connection,
-        container_id: i64,
-    ) -> Option<swayipc::Rect> {
-        match self {
-            SwayAction::NewColumn { .. } | SwayAction::NewRow { .. } => {
-                node_by_id(connection, container_id).map(|node| node.rect)
+    fn poll_baseline(&self, connection: &mut Connection) -> Option<swayipc::Rect> {
+        match self.kind {
+            ActionKind::NewColumn | ActionKind::NewRow => {
+                node_by_id(connection, self.container_id).map(|node| node.rect)
             }
             _ => None,
         }
@@ -517,17 +448,16 @@ impl SwayAction<'_> {
     /// behavior: assume success and sleep out the rest of `wait_time`,
     /// mirroring `run_wait_matching_exec_event()`'s
     /// `PID_MARKER_FALLBACK_GRACE` fallback.
-    /// Returns the container id and whether the change was actually observed —
+    /// Returns whether the change was actually observed —
     /// `false` means the grace period elapsed and this fell back to sleeping,
     /// which the caller reports as `ActionStatus::Unconfirmed` rather than
     /// letting it pass as an ordinary success.
     fn run_poll_then_fallback(
         &self,
         connection: &mut Connection,
-        container_id: i64,
-        wait_time: time::Duration,
         baseline: Option<swayipc::Rect>,
-    ) -> (i64, bool) {
+    ) -> bool {
+        let wait_time = self.timing;
         // Capped at `wait_time`: `WAIT_TIME_POLL_GRACE` (200ms) is only a
         // sound upper bound when `--wait-time` is at least that — at the
         // CLI's own 20ms default, polling for the full 200ms before
@@ -543,11 +473,11 @@ impl SwayAction<'_> {
         let grace = self.poll_grace().min(wait_time);
         let poll_started = time::Instant::now();
         loop {
-            if self.poll_matches(connection, container_id, baseline) {
-                if self.verbose() {
-                    diagnostic!("Confirmed via poll (container id: {})", container_id);
+            if self.poll_matches(connection, baseline) {
+                if self.verbose {
+                    diagnostic!("Confirmed via poll (container id: {})", self.container_id);
                 }
-                return (container_id, true);
+                return true;
             }
             if poll_started.elapsed() >= grace {
                 break;
@@ -555,38 +485,34 @@ impl SwayAction<'_> {
             thread::sleep(WAIT_TIME_POLL_INTERVAL);
         }
 
-        if self.verbose() {
+        if self.verbose {
             diagnostic!(
                 "Poll grace period elapsed without confirmation, falling back to wait-time \
                  (container id: {})",
-                container_id
+                self.container_id
             );
         }
         thread::sleep(wait_time.saturating_sub(poll_started.elapsed()));
-        (container_id, false)
+        false
     }
 
-    /// Returns the container id and whether the requested change was actually
-    /// observed. `false` covers every route to "we sent the command and waited,
+    /// Returns whether the requested change was actually observed. `false` covers every route to "we sent the command and waited,
     /// but never saw it take effect": the poll grace period elapsing, a variant
     /// with no poll matcher at all (a `ppt` size has no pixel figure to check),
     /// and failing to open the poll connection. The caller reports that as
     /// `ActionStatus::Unconfirmed` — it is not the same claim as a confirmed
     /// change, and reporting it as one is what made a wait-time action's
     /// "success" weaker than an event-confirmed action's without saying so.
-    fn run_wait_time(&self) -> Result<(i64, bool), String> {
-        let wait_time = self.duration();
+    fn run_wait_time(&self) -> Result<bool, String> {
+        let wait_time = self.timing;
+        let container_id = self.container_id;
 
-        if self.verbose() {
+        if self.verbose {
             diagnostic!(
                 "No matching event types for action. Will run Sway command and wait {} ms.",
                 wait_time.as_millis()
             );
         }
-
-        let container_id = self
-            .container_id()
-            .expect("run_wait_time() is only ever called for variants other than Exec");
 
         // Checked before the sleep as well as after it, and both are wanted.
         //
@@ -645,10 +571,10 @@ impl SwayAction<'_> {
         // "before" snapshot while every other poll-matched action doesn't.
         let baseline = poll_connection
             .as_mut()
-            .and_then(|connection| self.poll_baseline(connection, container_id));
+            .and_then(|connection| self.poll_baseline(connection));
 
         let sway_command = self.sway_command();
-        if self.verbose() {
+        if self.verbose {
             diagnostic!("Sway command: {}", sway_command);
         }
 
@@ -656,12 +582,7 @@ impl SwayAction<'_> {
 
         if self.polls(baseline) {
             if let Some(connection) = poll_connection.as_mut() {
-                return Ok(self.run_poll_then_fallback(
-                    connection,
-                    container_id,
-                    wait_time,
-                    baseline,
-                ));
+                return Ok(self.run_poll_then_fallback(connection, baseline));
             }
         }
 
@@ -669,10 +590,249 @@ impl SwayAction<'_> {
 
         // Nothing was polled for, so nothing was observed. Honest rather than
         // optimistic: this is the ppt-size case, and the no-connection case.
-        Ok((container_id, false))
+        Ok(false)
     }
 
-    /// `Exec`-only variant of `run_wait_matching_events()`: matching purely
+    /// Subscribes, confirms the requested state isn't already in effect, sends
+    /// the command, and waits for an event that — together with a second state
+    /// read — confirms it applied.
+    ///
+    /// The subscription is opened before the no-op check and before the
+    /// command, and that ordering is the whole point rather than an incidental
+    /// detail: it's what makes the check-then-command sequence safe against
+    /// another client racing it. See `already_at_target()`'s doc comment. The
+    /// cost is one Sway IPC connection opened and immediately dropped on the
+    /// short-circuit path, which is the cheap half of the trade — that path
+    /// already pays for a `get_tree()`.
+    ///
+    /// The container-exists check stays ahead of the subscription. It used to
+    /// be load-bearing there for a second reason: `subscribe()` is itself a
+    /// request/response handshake, and while it ran unbounded, a compositor
+    /// that accepted a connection and then stopped answering hung there
+    /// forever unless a bounded read came first. `event_loop()` now bounds the
+    /// handshake itself (by `IPC_ROUND_TRIP_TIMEOUT`, like every other request),
+    /// so that reason is gone and the order is only about failing fast on a
+    /// closed window before opening a subscription for it.
+    fn run_wait_matching_events(&self) -> Result<ActionOutcome, String> {
+        // Same check, same reason, and the same error text as
+        // run_wait_time()'s: on Sway 1.9 (still what `apt` installs on
+        // Ubuntu 24.04/CI) a [con_id=N] criteria matching zero containers is
+        // "success", so without this an action whose container closed since
+        // it was resolved would send its command successfully and then block
+        // for the full --timeout waiting on a confirmation event that can
+        // never arrive, reporting a timeout — pointing the
+        // user at --timeout rather than at the closed window. Sway 1.11
+        // already errors clearly ("No matching node.") from
+        // run_sway_command() below, confirmed live, making this redundant
+        // there but still required for 1.9.
+        //
+        // Costs one extra get_tree() per event-confirmed action, partly
+        // duplicating the one already_at_target() makes for six of the seven
+        // variants. Accepted deliberately: one check in one place covers
+        // every variant (including Mark, which has no already_at_target()
+        // arm at all), and this runs a handful of times per invocation, not
+        // in a loop.
+        let container_id = self.container_id;
+        if !container_exists(container_id)? {
+            return Err(format!(
+                "container id {} no longer exists — window may have closed",
+                container_id
+            ));
+        }
+
+        let event_loop = event_loop(&[EventType::Window])?;
+
+        if self.already_at_target()? {
+            if self.verbose {
+                diagnostic!(
+                    "Already at target, nothing to move (container id: {})",
+                    container_id
+                );
+            }
+            return Ok(ActionOutcome::AlreadySatisfied);
+        }
+
+        let sway_command = self.sway_command();
+        if self.verbose {
+            diagnostic!("Sway command: {}", sway_command);
+        }
+        run_sway_command(&sway_command)?;
+
+        // Read events on a separate thread and forward them through a
+        // channel, so recv_timeout() below enforces a real deadline even if
+        // the event stream itself never produces another event (a blocking
+        // iterator has no way to time out on its own).
+        //
+        // The thread outlives this function whenever it's still blocked on the
+        // socket as we return: there's no public way to interrupt a blocking
+        // EventStream read from another thread, so it can only notice its
+        // receiver is gone the next time an event actually arrives, at which
+        // point send() fails, the loop breaks, and the thread and its Sway IPC
+        // socket are released.
+        //
+        // That drains itself in practice rather than accumulating, because the
+        // events that wake a stale reader are the very ones the *next*
+        // event-confirmed action produces: Sway broadcasts every window event
+        // to every subscription, so step N's own confirming event is what
+        // retires step N-1's reader. Measured against a live compositor rather
+        // than assumed — a 300-step layout of event-confirmed actions peaked at
+        // 2 threads and 3 sockets, and a 15-step layout launching a real window
+        // per step at 3 and 3. Pinned by tests/live_sway.rs's
+        // `event_reader_threads_stay_bounded_across_a_long_layout`.
+        //
+        // An earlier version of this comment claimed the opposite ("for a large
+        // generated layout ... this accumulates rather than staying bounded")
+        // and was believed for long enough to reach an external reviewer, who
+        // reasonably rated it a high-severity resource leak on the strength of
+        // it. The bound is a real property worth stating, but note it depends
+        // on later events arriving: the *last* event-confirmed action's reader
+        // does stay blocked until the process exits, which is why the bound is
+        // a small constant rather than zero.
+        //
+        // That last reader was raised again (2026-09-02) as a lifetime problem
+        // rather than a leak: an operation returns while resources it opened
+        // are still held, released only by process exit. Accurate, and left as
+        // is. The suggested fix — one owned event reader per SwayLaunch run,
+        // with an explicit shutdown protocol — buys nothing for a CLI that
+        // exits moments later, and would replace a per-action subscription
+        // (which is also what makes each action's wait independent, see
+        // Scratchpad's shared WindowChange::Move in
+        // matching_window_change_events()) with shared mutable state to
+        // coordinate. Revisit if this ever becomes a library, gains a
+        // long-lived mode, or needs cancellation — at which point the reader's
+        // lifetime stops being bounded by the process's.
+        let (event_sender, event_receiver) = mpsc::channel();
+        thread::spawn(move || {
+            for event in event_loop {
+                if event_sender.send(event).is_err() {
+                    break;
+                }
+            }
+        });
+
+        // checked_add rather than a plain `+`: an unrepresentable deadline
+        // (a pathological --timeout) is treated as already expired instead
+        // of panicking.
+        let deadline = match time::Instant::now().checked_add(self.timing) {
+            Some(deadline) => deadline,
+            None => return Err(event_timeout_message(self.timing)),
+        };
+        loop {
+            let remaining = deadline.saturating_duration_since(time::Instant::now());
+            if remaining.is_zero() {
+                return Err(event_timeout_message(self.timing));
+            }
+
+            let event = match event_receiver.recv_timeout(remaining) {
+                Ok(event) => event,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    return Err(event_timeout_message(self.timing));
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err("Event stream closed unexpectedly".to_string());
+                }
+            };
+
+            let event = match event {
+                Ok(event) => event,
+                Err(error) => return Err(error.to_string()),
+            };
+
+            let window = match event {
+                Event::Window(window) => window,
+                _ => continue,
+            };
+
+            match self.matches_window_event(&window) {
+                Ok(result) => {
+                    // The event identifies the right container and the right
+                    // event type, which is not the same as the requested state
+                    // having been what applied — another IPC client driving the
+                    // same window produces events indistinguishable from ours.
+                    // See state_satisfied()'s doc comment.
+                    if !self.state_satisfied()? {
+                        if self.verbose {
+                            diagnostic!(
+                                "Event match: {:?} container id {} ({}), but the requested state \
+                                 is not in effect — another client may be driving this window; \
+                                 waiting for the next event",
+                                window.change,
+                                window.container.id,
+                                result
+                            );
+                        }
+                        continue;
+                    }
+
+                    if self.verbose {
+                        diagnostic!(
+                            "Event match: {:?} container id {} ({})",
+                            window.change,
+                            window.container.id,
+                            result
+                        );
+                    }
+
+                    return Ok(ActionOutcome::Changed);
+                }
+                Err(error_result) => {
+                    if self.verbose {
+                        diagnostic!(
+                            "Event mismatch: {:?} container id {} ({})",
+                            window.change,
+                            window.container.id,
+                            error_result
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whether `window` is this action's confirming event: one of its kind's
+    /// event types, for its own container. Never matches for a kind that has
+    /// no confirming event at all.
+    fn matches_window_event(
+        &self,
+        window: &WindowEvent,
+    ) -> Result<WindowEventMatch, WindowEventMatchError> {
+        let Some(matching_window_change_events) = self.kind.matching_window_change_events() else {
+            return Err(WindowEventMatchError::EventChangeTypeMismatch);
+        };
+
+        if !matching_window_change_events.contains(&window.change) {
+            return Err(WindowEventMatchError::EventChangeTypeMismatch);
+        }
+
+        if self.container_id == window.container.id {
+            return Ok(WindowEventMatch::WindowContainerIdMatch);
+        }
+
+        Err(WindowEventMatchError::NoMatchingEvent)
+    }
+}
+
+impl ExecAction<'_> {
+    /// Launches this action's command and waits for its window, returning the
+    /// window's container id and whether this run can prove it launched it
+    /// (see `LaunchOwnership`). A freshly launched window is inherently a
+    /// change, so unlike `SwayAction::run()` there's no outcome to report.
+    ///
+    /// Every error is prefixed with `launch "<command>"`, for the same reason
+    /// `SwayAction::run()` prefixes its own with the command verb.
+    pub(super) fn run(&self) -> Result<(i64, LaunchOwnership), RunError> {
+        if self.verbose {
+            diagnostic!("Sway action: {}", self);
+        }
+
+        self.run_wait_matching_exec_event()
+            .map_err(|error| RunError {
+                message: format!("launch \"{}\": {}", self.command, error.message),
+                ..error
+            })
+    }
+
+    /// The launch counterpart of `run_wait_matching_events()`: matching purely
     /// on event content (app_id/class, or nothing at all with no filter) is
     /// ambiguous when more than one qualifying `New` window can appear
     /// around the same time — a concurrently-running second `sway-launch`
@@ -730,21 +890,18 @@ impl SwayAction<'_> {
     /// timeout, pointing the user at `--timeout` when raising it only makes the
     /// failure slower.
     fn run_wait_matching_exec_event(&self) -> Result<(i64, LaunchOwnership), RunError> {
-        let SwayAction::Exec {
+        let ExecAction {
             verbose,
             timeout,
             app_id_match,
             class_match,
             ..
-        } = *self
-        else {
-            unreachable!("run_wait_matching_exec_event is only called for SwayAction::Exec");
-        };
+        } = *self;
 
         let event_loop = event_loop(&[EventType::Window])?;
 
         let token = generate_pid_marker_token();
-        let sway_command = self.exec_sway_command(&token);
+        let sway_command = self.sway_command(&token);
         if verbose {
             diagnostic!("Sway command: {}", sway_command);
         }
@@ -937,250 +1094,37 @@ impl SwayAction<'_> {
         }
     }
 
-    /// Subscribes, confirms the requested state isn't already in effect, sends
-    /// the command, and waits for an event that — together with a second state
-    /// read — confirms it applied.
+    /// Whether `window` is the `New` window this launch is waiting for,
+    /// filtered on `--app-id`/`--class` when either is set.
     ///
-    /// The subscription is opened before the no-op check and before the
-    /// command, and that ordering is the whole point rather than an incidental
-    /// detail: it's what makes the check-then-command sequence safe against
-    /// another client racing it. See `already_at_target()`'s doc comment. The
-    /// cost is one Sway IPC connection opened and immediately dropped on the
-    /// short-circuit path, which is the cheap half of the trade — that path
-    /// already pays for a `get_tree()`.
-    ///
-    /// The container-exists check stays ahead of the subscription. It used to
-    /// be load-bearing there for a second reason: `subscribe()` is itself a
-    /// request/response handshake, and while it ran unbounded, a compositor
-    /// that accepted a connection and then stopped answering hung there
-    /// forever unless a bounded read came first. `event_loop()` now bounds the
-    /// handshake itself (by `IPC_ROUND_TRIP_TIMEOUT`, like every other request),
-    /// so that reason is gone and the order is only about failing fast on a
-    /// closed window before opening a subscription for it.
-    fn run_wait_matching_events(&self) -> Result<(i64, ActionOutcome), String> {
-        // Same check, same reason, and the same error text as
-        // run_wait_time()'s: on Sway 1.9 (still what `apt` installs on
-        // Ubuntu 24.04/CI) a [con_id=N] criteria matching zero containers is
-        // "success", so without this an action whose container closed since
-        // it was resolved would send its command successfully and then block
-        // for the full --timeout waiting on a confirmation event that can
-        // never arrive, reporting a timeout — pointing the
-        // user at --timeout rather than at the closed window. Sway 1.11
-        // already errors clearly ("No matching node.") from
-        // run_sway_command() below, confirmed live, making this redundant
-        // there but still required for 1.9.
-        //
-        // Costs one extra get_tree() per event-confirmed action, partly
-        // duplicating the one already_at_target() makes for six of the seven
-        // variants. Accepted deliberately: one check in one place covers
-        // every variant (including Mark, which has no already_at_target()
-        // arm at all), and this runs a handful of times per invocation, not
-        // in a loop.
-        let container_id = self
-            .container_id()
-            .expect("run_wait_matching_events() is only ever called for variants other than Exec");
-        if !container_exists(container_id)? {
-            return Err(format!(
-                "container id {} no longer exists — window may have closed",
-                container_id
-            ));
-        }
-
-        let event_loop = event_loop(&[EventType::Window])?;
-
-        if let Some(container_id) = self.already_at_target()? {
-            if self.verbose() {
-                diagnostic!(
-                    "Already at target, nothing to move (container id: {})",
-                    container_id
-                );
-            }
-            return Ok((container_id, ActionOutcome::AlreadySatisfied));
-        }
-
-        let sway_command = self.sway_command();
-        if self.verbose() {
-            diagnostic!("Sway command: {}", sway_command);
-        }
-        run_sway_command(&sway_command)?;
-
-        // Read events on a separate thread and forward them through a
-        // channel, so recv_timeout() below enforces a real deadline even if
-        // the event stream itself never produces another event (a blocking
-        // iterator has no way to time out on its own).
-        //
-        // The thread outlives this function whenever it's still blocked on the
-        // socket as we return: there's no public way to interrupt a blocking
-        // EventStream read from another thread, so it can only notice its
-        // receiver is gone the next time an event actually arrives, at which
-        // point send() fails, the loop breaks, and the thread and its Sway IPC
-        // socket are released.
-        //
-        // That drains itself in practice rather than accumulating, because the
-        // events that wake a stale reader are the very ones the *next*
-        // event-confirmed action produces: Sway broadcasts every window event
-        // to every subscription, so step N's own confirming event is what
-        // retires step N-1's reader. Measured against a live compositor rather
-        // than assumed — a 300-step layout of event-confirmed actions peaked at
-        // 2 threads and 3 sockets, and a 15-step layout launching a real window
-        // per step at 3 and 3. Pinned by tests/live_sway.rs's
-        // `event_reader_threads_stay_bounded_across_a_long_layout`.
-        //
-        // An earlier version of this comment claimed the opposite ("for a large
-        // generated layout ... this accumulates rather than staying bounded")
-        // and was believed for long enough to reach an external reviewer, who
-        // reasonably rated it a high-severity resource leak on the strength of
-        // it. The bound is a real property worth stating, but note it depends
-        // on later events arriving: the *last* event-confirmed action's reader
-        // does stay blocked until the process exits, which is why the bound is
-        // a small constant rather than zero.
-        //
-        // That last reader was raised again (2026-09-02) as a lifetime problem
-        // rather than a leak: an operation returns while resources it opened
-        // are still held, released only by process exit. Accurate, and left as
-        // is. The suggested fix — one owned event reader per SwayLaunch run,
-        // with an explicit shutdown protocol — buys nothing for a CLI that
-        // exits moments later, and would replace a per-action subscription
-        // (which is also what makes each action's wait independent, see
-        // Scratchpad's shared WindowChange::Move in
-        // matching_window_change_events()) with shared mutable state to
-        // coordinate. Revisit if this ever becomes a library, gains a
-        // long-lived mode, or needs cancellation — at which point the reader's
-        // lifetime stops being bounded by the process's.
-        let (event_sender, event_receiver) = mpsc::channel();
-        thread::spawn(move || {
-            for event in event_loop {
-                if event_sender.send(event).is_err() {
-                    break;
-                }
-            }
-        });
-
-        // checked_add rather than a plain `+`: an unrepresentable deadline
-        // (a pathological --timeout) is treated as already expired instead
-        // of panicking.
-        let deadline = match time::Instant::now().checked_add(self.duration()) {
-            Some(deadline) => deadline,
-            None => return Err(event_timeout_message(self.duration())),
-        };
-        loop {
-            let remaining = deadline.saturating_duration_since(time::Instant::now());
-            if remaining.is_zero() {
-                return Err(event_timeout_message(self.duration()));
-            }
-
-            let event = match event_receiver.recv_timeout(remaining) {
-                Ok(event) => event,
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    return Err(event_timeout_message(self.duration()));
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err("Event stream closed unexpectedly".to_string());
-                }
-            };
-
-            let event = match event {
-                Ok(event) => event,
-                Err(error) => return Err(error.to_string()),
-            };
-
-            let window = match event {
-                Event::Window(window) => window,
-                _ => continue,
-            };
-
-            match self.matches_window_event(&window) {
-                Ok(result) => {
-                    // The event identifies the right container and the right
-                    // event type, which is not the same as the requested state
-                    // having been what applied — another IPC client driving the
-                    // same window produces events indistinguishable from ours.
-                    // See state_satisfied()'s doc comment.
-                    if !self.state_satisfied()? {
-                        if self.verbose() {
-                            diagnostic!(
-                                "Event match: {:?} container id {} ({}), but the requested state \
-                                 is not in effect — another client may be driving this window; \
-                                 waiting for the next event",
-                                window.change,
-                                window.container.id,
-                                result
-                            );
-                        }
-                        continue;
-                    }
-
-                    if self.verbose() {
-                        diagnostic!(
-                            "Event match: {:?} container id {} ({})",
-                            window.change,
-                            window.container.id,
-                            result
-                        );
-                    }
-
-                    return Ok((window.container.id, ActionOutcome::Changed));
-                }
-                Err(error_result) => {
-                    if self.verbose() {
-                        diagnostic!(
-                            "Event mismatch: {:?} container id {} ({})",
-                            window.change,
-                            window.container.id,
-                            error_result
-                        );
-                    }
-                }
-            }
-        }
-    }
-
+    /// Only `New` identifies a window as the one just launched. `Move` ("the
+    /// view has been reparented in the tree") fires for any window whenever
+    /// Sway's tree is restructured, including pre-existing windows unrelated to
+    /// this exec — accepting it here let sway-launch return the wrong container
+    /// id.
     fn matches_window_event(
         &self,
         window: &WindowEvent,
     ) -> Result<WindowEventMatch, WindowEventMatchError> {
-        let matching_window_change_events = self.matching_window_change_events().expect(
-            "matches_window_event() is only ever called for variants with a matching event type",
-        );
-
-        if !matching_window_change_events.contains(&window.change) {
+        if window.change != WindowChange::New {
             return Err(WindowEventMatchError::EventChangeTypeMismatch);
         }
 
-        match self {
-            SwayAction::Exec {
-                app_id_match,
-                class_match,
-                ..
-            } => {
-                if !app_id_match.is_empty() {
-                    match window_app_id_match(&window.container, app_id_match) {
-                        true => return Ok(WindowEventMatch::WindowAppId),
-                        false => return Err(WindowEventMatchError::WindowAppIdMismatch),
-                    }
-                }
-
-                if !class_match.is_empty() {
-                    match window_class_match(&window.container, class_match) {
-                        true => return Ok(WindowEventMatch::WindowClass),
-                        false => return Err(WindowEventMatchError::WindowClassMismatch),
-                    }
-                }
-
-                return Ok(WindowEventMatch::NewWindowMatchWithoutCheck);
-            }
-            _ => {
-                if self
-                    .container_id()
-                    .expect("only Exec lacks a container_id, and it's handled in the arm above")
-                    == window.container.id
-                {
-                    return Ok(WindowEventMatch::WindowContainerIdMatch);
-                }
-            }
+        if !self.app_id_match.is_empty() {
+            return match window_app_id_match(&window.container, self.app_id_match) {
+                true => Ok(WindowEventMatch::WindowAppId),
+                false => Err(WindowEventMatchError::WindowAppIdMismatch),
+            };
         }
 
-        Err(WindowEventMatchError::NoMatchingEvent)
+        if !self.class_match.is_empty() {
+            return match window_class_match(&window.container, self.class_match) {
+                true => Ok(WindowEventMatch::WindowClass),
+                false => Err(WindowEventMatchError::WindowClassMismatch),
+            };
+        }
+
+        Ok(WindowEventMatch::NewWindowMatchWithoutCheck)
     }
 }
 
@@ -1372,116 +1316,81 @@ mod tests {
         );
     }
 
-    // SwayAction::matching_window_change_events
+    // ActionKind::matching_window_change_events
 
     #[test]
     fn exec_only_matches_new_window_change() {
         // Regression test: `Move` used to be accepted here too, which meant
         // any pre-existing window being reparented (not just the one we
-        // just launched) could be mistaken for a match.
-        let action = SwayAction::Exec {
-            command: "foot",
-            app_id_match: "",
-            class_match: "",
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
-        assert_eq!(
-            action.matching_window_change_events(),
-            Some(vec![WindowChange::New])
-        );
+        // just launched) could be mistaken for a match — even one that passes
+        // the app_id filter.
+        let action = exec_action("foot", "foot", "");
+        let event = window_event("move", 99, Some("foot"), None);
+        assert!(matches!(
+            action.matches_window_event(&event),
+            Err(WindowEventMatchError::EventChangeTypeMismatch)
+        ));
     }
 
     #[test]
     fn floating_matches_floating_window_change() {
-        let action = SwayAction::Floating {
-            container_id: 42,
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = targeted(ActionKind::Floating);
         assert_eq!(
-            action.matching_window_change_events(),
+            action.kind.matching_window_change_events(),
             Some(vec![WindowChange::Floating])
         );
     }
 
     #[test]
     fn fullscreen_matches_fullscreen_mode_window_change() {
-        let action = SwayAction::Fullscreen {
-            container_id: 42,
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = targeted(ActionKind::Fullscreen);
         assert_eq!(
-            action.matching_window_change_events(),
+            action.kind.matching_window_change_events(),
             Some(vec![WindowChange::FullscreenMode])
         );
     }
 
     #[test]
     fn focus_matches_focus_window_change() {
-        let action = SwayAction::Focus {
-            container_id: 42,
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = targeted(ActionKind::Focus);
         assert_eq!(
-            action.matching_window_change_events(),
+            action.kind.matching_window_change_events(),
             Some(vec![WindowChange::Focus])
         );
     }
 
     #[test]
     fn workspace_matches_move_window_change() {
-        let action = SwayAction::Workspace {
-            container_id: 42,
-            workspace: "web",
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = targeted(ActionKind::Workspace("web"));
         assert_eq!(
-            action.matching_window_change_events(),
+            action.kind.matching_window_change_events(),
             Some(vec![WindowChange::Move])
         );
     }
 
     #[test]
     fn output_matches_move_window_change() {
-        let action = SwayAction::Output {
-            container_id: 42,
-            output: "HDMI-A-1",
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = targeted(ActionKind::Output("HDMI-A-1"));
         assert_eq!(
-            action.matching_window_change_events(),
+            action.kind.matching_window_change_events(),
             Some(vec![WindowChange::Move])
         );
     }
 
     #[test]
     fn scratchpad_matches_move_window_change() {
-        let action = SwayAction::Scratchpad {
-            container_id: 42,
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = targeted(ActionKind::Scratchpad);
         assert_eq!(
-            action.matching_window_change_events(),
+            action.kind.matching_window_change_events(),
             Some(vec![WindowChange::Move])
         );
     }
 
     #[test]
     fn mark_matches_mark_window_change() {
-        let action = SwayAction::Mark {
-            container_id: 42,
-            mark: "foo",
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = targeted(ActionKind::Mark("foo"));
         assert_eq!(
-            action.matching_window_change_events(),
+            action.kind.matching_window_change_events(),
             Some(vec![WindowChange::Mark])
         );
     }
@@ -1493,56 +1402,24 @@ mod tests {
         // which each have a dedicated variant — Sticky must stay a
         // wait-time action, not accidentally wired up to wait on an event
         // that will never arrive.
-        let action = SwayAction::Sticky {
-            container_id: 42,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        assert_eq!(action.matching_window_change_events(), None);
+        let action = targeted(ActionKind::Sticky);
+        assert_eq!(action.kind.matching_window_change_events(), None);
     }
 
     #[test]
     fn split_height_width_have_no_matching_window_change() {
-        let split = SwayAction::Split {
-            container_id: 42,
-            split: Split::V,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        let new_column = SwayAction::NewColumn {
-            container_id: 42,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        let new_row = SwayAction::NewRow {
-            container_id: 42,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        let height = SwayAction::Height {
-            container_id: 42,
-            height: Size::Pixels(300),
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        let width = SwayAction::Width {
-            container_id: 42,
-            width: Size::Percent(20),
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        let position = SwayAction::Position {
-            container_id: 42,
-            position: Position::Center,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        assert_eq!(split.matching_window_change_events(), None);
-        assert_eq!(new_column.matching_window_change_events(), None);
-        assert_eq!(new_row.matching_window_change_events(), None);
-        assert_eq!(height.matching_window_change_events(), None);
-        assert_eq!(width.matching_window_change_events(), None);
-        assert_eq!(position.matching_window_change_events(), None);
+        let split = targeted(ActionKind::Split(Split::V));
+        let new_column = targeted(ActionKind::NewColumn);
+        let new_row = targeted(ActionKind::NewRow);
+        let height = targeted(ActionKind::Height(Size::Pixels(300)));
+        let width = targeted(ActionKind::Width(Size::Percent(20)));
+        let position = targeted(ActionKind::Position(Position::Center));
+        assert_eq!(split.kind.matching_window_change_events(), None);
+        assert_eq!(new_column.kind.matching_window_change_events(), None);
+        assert_eq!(new_row.kind.matching_window_change_events(), None);
+        assert_eq!(height.kind.matching_window_change_events(), None);
+        assert_eq!(width.kind.matching_window_change_events(), None);
+        assert_eq!(position.kind.matching_window_change_events(), None);
     }
 
     // SwayAction::poll_grace
@@ -1553,22 +1430,9 @@ mod tests {
         // distinguish this action's own move from another client's change to
         // the same window — so the window in which that confusion is possible
         // is deliberately much shorter for them. See MOVE_POLL_GRACE.
-        let new_column = SwayAction::NewColumn {
-            container_id: 42,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        let new_row = SwayAction::NewRow {
-            container_id: 42,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        let split = SwayAction::Split {
-            container_id: 42,
-            split: Split::H,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
+        let new_column = targeted(ActionKind::NewColumn);
+        let new_row = targeted(ActionKind::NewRow);
+        let split = targeted(ActionKind::Split(Split::H));
 
         assert_eq!(new_column.poll_grace(), MOVE_POLL_GRACE);
         assert_eq!(new_row.poll_grace(), MOVE_POLL_GRACE);
@@ -1578,29 +1442,10 @@ mod tests {
 
     #[test]
     fn every_other_polling_variant_keeps_the_full_grace() {
-        let height = SwayAction::Height {
-            container_id: 42,
-            height: Size::Pixels(300),
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        let width = SwayAction::Width {
-            container_id: 42,
-            width: Size::Pixels(300),
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        let position = SwayAction::Position {
-            container_id: 42,
-            position: Position::Center,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        let sticky = SwayAction::Sticky {
-            container_id: 42,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
+        let height = targeted(ActionKind::Height(Size::Pixels(300)));
+        let width = targeted(ActionKind::Width(Size::Pixels(300)));
+        let position = targeted(ActionKind::Position(Position::Center));
+        let sticky = targeted(ActionKind::Sticky);
 
         for action in [height, width, position, sticky] {
             assert_eq!(action.poll_grace(), WAIT_TIME_POLL_GRACE);
@@ -1619,12 +1464,7 @@ mod tests {
     #[test]
     fn split_polls() {
         for split in [Split::H, Split::V] {
-            let action = SwayAction::Split {
-                container_id: 42,
-                split,
-                verbose: false,
-                wait_time: time::Duration::from_millis(20),
-            };
+            let action = targeted(ActionKind::Split(split));
             assert!(action.polls(None));
         }
     }
@@ -1635,32 +1475,16 @@ mod tests {
         // target to check against — without a poll_baseline() snapshot to
         // compare the current rect to there is nothing to poll for, so these
         // opt out entirely.
-        let new_column = SwayAction::NewColumn {
-            container_id: 42,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        let new_row = SwayAction::NewRow {
-            container_id: 42,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
+        let new_column = targeted(ActionKind::NewColumn);
+        let new_row = targeted(ActionKind::NewRow);
         assert!(!new_column.polls(None));
         assert!(!new_row.polls(None));
     }
 
     #[test]
     fn new_column_and_new_row_poll_given_a_baseline() {
-        let new_column = SwayAction::NewColumn {
-            container_id: 42,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        let new_row = SwayAction::NewRow {
-            container_id: 42,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
+        let new_column = targeted(ActionKind::NewColumn);
+        let new_row = targeted(ActionKind::NewRow);
         let baseline = Some(rect(0, 0, 640, 720));
         assert!(new_column.polls(baseline));
         assert!(new_row.polls(baseline));
@@ -1668,18 +1492,8 @@ mod tests {
 
     #[test]
     fn height_and_width_in_pixels_poll() {
-        let height = SwayAction::Height {
-            container_id: 42,
-            height: Size::Pixels(300),
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        let width = SwayAction::Width {
-            container_id: 42,
-            width: Size::Pixels(400),
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
+        let height = targeted(ActionKind::Height(Size::Pixels(300)));
+        let width = targeted(ActionKind::Width(Size::Pixels(400)));
         assert!(height.polls(None));
         assert!(width.polls(None));
     }
@@ -1690,41 +1504,22 @@ mod tests {
         // resolving the reference dimension it's a percentage of (see Size's
         // doc comment), so these opt out rather than polling for something
         // that could never match.
-        let height = SwayAction::Height {
-            container_id: 42,
-            height: Size::Percent(20),
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
-        let width = SwayAction::Width {
-            container_id: 42,
-            width: Size::Percent(20),
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
+        let height = targeted(ActionKind::Height(Size::Percent(20)));
+        let width = targeted(ActionKind::Width(Size::Percent(20)));
         assert!(!height.polls(None));
         assert!(!width.polls(None));
     }
 
     #[test]
     fn sticky_polls() {
-        let action = SwayAction::Sticky {
-            container_id: 42,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
+        let action = targeted(ActionKind::Sticky);
         assert!(action.polls(None));
     }
 
     #[test]
     fn position_polls() {
         for position in [Position::Center, Position::Coordinates { x: 100, y: 200 }] {
-            let action = SwayAction::Position {
-                container_id: 42,
-                position,
-                verbose: false,
-                wait_time: time::Duration::from_millis(20),
-            };
+            let action = targeted(ActionKind::Position(position));
             assert!(action.polls(None));
         }
     }
@@ -1733,17 +1528,8 @@ mod tests {
     fn event_confirmed_actions_do_not_poll() {
         // The `_ => false` arm: everything dispatched through an IPC event
         // confirms that way instead and never enters the poll loop.
-        let floating = SwayAction::Floating {
-            container_id: 42,
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
-        let mark = SwayAction::Mark {
-            container_id: 42,
-            mark: "pinned",
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let floating = targeted(ActionKind::Floating);
+        let mark = targeted(ActionKind::Mark("pinned"));
         assert!(!floating.polls(None));
         assert!(!mark.polls(None));
     }
@@ -1752,13 +1538,7 @@ mod tests {
 
     #[test]
     fn exec_without_filter_matches_any_new_window() {
-        let action = SwayAction::Exec {
-            command: "foot",
-            app_id_match: "",
-            class_match: "",
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = exec_action("foot", "", "");
         let event = window_event("new", 99, Some("foot"), None);
         assert!(matches!(
             action.matches_window_event(&event),
@@ -1772,13 +1552,7 @@ mod tests {
         // app_id/class filter, only a `New` event may identify the window
         // just launched — not a `Move` (or any other) event belonging to
         // some other, pre-existing window.
-        let action = SwayAction::Exec {
-            command: "foot",
-            app_id_match: "",
-            class_match: "",
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = exec_action("foot", "", "");
         let event = window_event("move", 99, Some("foot"), None);
         assert!(matches!(
             action.matches_window_event(&event),
@@ -1788,13 +1562,7 @@ mod tests {
 
     #[test]
     fn exec_with_app_id_match_accepts_matching_app_id() {
-        let action = SwayAction::Exec {
-            command: "foot",
-            app_id_match: "foot",
-            class_match: "",
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = exec_action("foot", "foot", "");
         let event = window_event("new", 99, Some("foot"), None);
         assert!(matches!(
             action.matches_window_event(&event),
@@ -1804,13 +1572,7 @@ mod tests {
 
     #[test]
     fn exec_with_app_id_match_rejects_different_app_id() {
-        let action = SwayAction::Exec {
-            command: "foot",
-            app_id_match: "foot",
-            class_match: "",
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = exec_action("foot", "foot", "");
         let event = window_event("new", 99, Some("alacritty"), None);
         assert!(matches!(
             action.matches_window_event(&event),
@@ -1820,13 +1582,7 @@ mod tests {
 
     #[test]
     fn exec_with_app_id_match_rejects_missing_app_id() {
-        let action = SwayAction::Exec {
-            command: "firefox",
-            app_id_match: "firefox",
-            class_match: "",
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = exec_action("firefox", "firefox", "");
         let event = window_event("new", 99, None, None);
         assert!(matches!(
             action.matches_window_event(&event),
@@ -1836,13 +1592,7 @@ mod tests {
 
     #[test]
     fn exec_with_class_match_accepts_matching_class() {
-        let action = SwayAction::Exec {
-            command: "firefox",
-            app_id_match: "",
-            class_match: "Firefox",
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = exec_action("firefox", "", "Firefox");
         let event = window_event("new", 99, None, Some("Firefox"));
         assert!(matches!(
             action.matches_window_event(&event),
@@ -1852,13 +1602,7 @@ mod tests {
 
     #[test]
     fn exec_with_class_match_rejects_different_class() {
-        let action = SwayAction::Exec {
-            command: "firefox",
-            app_id_match: "",
-            class_match: "Firefox",
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = exec_action("firefox", "", "Firefox");
         let event = window_event("new", 99, None, Some("Chromium"));
         assert!(matches!(
             action.matches_window_event(&event),
@@ -1868,13 +1612,7 @@ mod tests {
 
     #[test]
     fn exec_with_class_match_rejects_missing_window_properties() {
-        let action = SwayAction::Exec {
-            command: "firefox",
-            app_id_match: "",
-            class_match: "Firefox",
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = exec_action("firefox", "", "Firefox");
         let event = window_event("new", 99, None, None);
         assert!(matches!(
             action.matches_window_event(&event),
@@ -1888,13 +1626,7 @@ mod tests {
         // priority and class_match is never consulted (see also
         // Args::app_id's conflicts_with in main.rs, which now prevents a
         // caller from setting both in the first place).
-        let action = SwayAction::Exec {
-            command: "foot",
-            app_id_match: "foot",
-            class_match: "SomethingElseEntirely",
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = exec_action("foot", "foot", "SomethingElseEntirely");
         let event = window_event("new", 99, Some("foot"), Some("SomethingElseEntirely"));
         assert!(matches!(
             action.matches_window_event(&event),
@@ -1904,11 +1636,7 @@ mod tests {
 
     #[test]
     fn non_exec_action_matches_on_container_id() {
-        let action = SwayAction::Floating {
-            container_id: 42,
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = targeted(ActionKind::Floating);
         let event = window_event("floating", 42, None, None);
         assert!(matches!(
             action.matches_window_event(&event),
@@ -1918,12 +1646,7 @@ mod tests {
 
     #[test]
     fn workspace_matches_on_container_id() {
-        let action = SwayAction::Workspace {
-            container_id: 42,
-            workspace: "web",
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = targeted(ActionKind::Workspace("web"));
         let event = window_event("move", 42, None, None);
         assert!(matches!(
             action.matches_window_event(&event),
@@ -1933,11 +1656,7 @@ mod tests {
 
     #[test]
     fn fullscreen_matches_on_container_id() {
-        let action = SwayAction::Fullscreen {
-            container_id: 42,
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = targeted(ActionKind::Fullscreen);
         let event = window_event("fullscreen_mode", 42, None, None);
         assert!(matches!(
             action.matches_window_event(&event),
@@ -1947,11 +1666,7 @@ mod tests {
 
     #[test]
     fn scratchpad_matches_on_container_id() {
-        let action = SwayAction::Scratchpad {
-            container_id: 42,
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = targeted(ActionKind::Scratchpad);
         let event = window_event("move", 42, None, None);
         assert!(matches!(
             action.matches_window_event(&event),
@@ -1961,11 +1676,7 @@ mod tests {
 
     #[test]
     fn non_exec_action_rejects_different_container_id() {
-        let action = SwayAction::Floating {
-            container_id: 42,
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = targeted(ActionKind::Floating);
         let event = window_event("floating", 99, None, None);
         assert!(matches!(
             action.matches_window_event(&event),
@@ -1975,16 +1686,62 @@ mod tests {
 
     #[test]
     fn non_exec_action_rejects_wrong_change_type() {
-        let action = SwayAction::Floating {
-            container_id: 42,
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let action = targeted(ActionKind::Floating);
         let event = window_event("mark", 42, None, None);
         assert!(matches!(
             action.matches_window_event(&event),
             Err(WindowEventMatchError::EventChangeTypeMismatch)
         ));
+    }
+
+    #[test]
+    fn a_polled_action_never_matches_a_window_event() {
+        // Used to be an expect() — a polled kind has no confirming event, so
+        // asking it to match one is answered rather than panicking.
+        let action = targeted(ActionKind::Sticky);
+        let event = window_event("floating", 42, None, None);
+        assert!(matches!(
+            action.matches_window_event(&event),
+            Err(WindowEventMatchError::EventChangeTypeMismatch)
+        ));
+    }
+
+    // ActionKind::is_event_confirmed
+
+    #[test]
+    fn is_event_confirmed_agrees_with_the_matching_events() {
+        let kinds = [
+            ActionKind::Split(Split::H),
+            ActionKind::Floating,
+            ActionKind::Sticky,
+            ActionKind::Fullscreen,
+            ActionKind::Focus,
+            ActionKind::NewColumn,
+            ActionKind::NewRow,
+            ActionKind::Workspace("web"),
+            ActionKind::Output("HDMI-A-1"),
+            ActionKind::Mark("foo"),
+            ActionKind::Height(Size::Pixels(300)),
+            ActionKind::Width(Size::Pixels(300)),
+            ActionKind::Position(Position::Center),
+            ActionKind::Scratchpad,
+        ];
+        let event_confirmed: Vec<ActionKind> = kinds
+            .into_iter()
+            .filter(ActionKind::is_event_confirmed)
+            .collect();
+        assert_eq!(
+            event_confirmed,
+            vec![
+                ActionKind::Floating,
+                ActionKind::Fullscreen,
+                ActionKind::Focus,
+                ActionKind::Workspace("web"),
+                ActionKind::Output("HDMI-A-1"),
+                ActionKind::Mark("foo"),
+                ActionKind::Scratchpad,
+            ]
+        );
     }
 
     // SwayAction::state_satisfies
@@ -1996,38 +1753,19 @@ mod tests {
     }
 
     fn workspace_action(workspace: &str) -> SwayAction<'_> {
-        SwayAction::Workspace {
-            container_id: 42,
-            workspace,
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        }
+        targeted(ActionKind::Workspace(workspace))
     }
 
     fn output_action(output: &str) -> SwayAction<'_> {
-        SwayAction::Output {
-            container_id: 42,
-            output,
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        }
+        targeted(ActionKind::Output(output))
     }
 
     fn mark_action(mark: &str) -> SwayAction<'_> {
-        SwayAction::Mark {
-            container_id: 42,
-            mark,
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        }
+        targeted(ActionKind::Mark(mark))
     }
 
     fn floating_action() -> SwayAction<'static> {
-        SwayAction::Floating {
-            container_id: 42,
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        }
+        targeted(ActionKind::Floating)
     }
 
     #[test]
@@ -2059,21 +1797,9 @@ mod tests {
         let focused = state_with(|state| state.focused = true);
         let scratchpadded = state_with(|state| state.in_scratchpad = true);
 
-        let fullscreen_action = SwayAction::Fullscreen {
-            container_id: 42,
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
-        let focus_action = SwayAction::Focus {
-            container_id: 42,
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
-        let scratchpad_action = SwayAction::Scratchpad {
-            container_id: 42,
-            verbose: false,
-            timeout: time::Duration::from_secs(5),
-        };
+        let fullscreen_action = targeted(ActionKind::Fullscreen);
+        let focus_action = targeted(ActionKind::Focus);
+        let scratchpad_action = targeted(ActionKind::Scratchpad);
 
         assert!(floating_action().state_satisfies(Some(&floating)));
         assert!(!floating_action().state_satisfies(Some(&fullscreen)));
@@ -2098,12 +1824,7 @@ mod tests {
     #[test]
     fn state_satisfies_is_false_for_an_action_with_no_state_to_check() {
         let state = state_with(|state| state.floating = true);
-        let action = SwayAction::Split {
-            container_id: 42,
-            split: Split::H,
-            verbose: false,
-            wait_time: time::Duration::from_millis(20),
-        };
+        let action = targeted(ActionKind::Split(Split::H));
 
         assert!(!action.state_satisfies(Some(&state)));
     }

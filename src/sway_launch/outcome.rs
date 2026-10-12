@@ -3,10 +3,10 @@
 //! Two audiences, kept apart on purpose. `RunOutcome`, `ActionRecord`,
 //! `ActionStatus` and `LaunchOwnership` are public, and `main.rs` renders them
 //! into `--json`, so their shape is a contract with anyone scripting against
-//! this tool. `ActionResult`, `ActionOutcome`, `PlannedAction` and
-//! `SkippedAction` are internal, and exist because the distinctions the
-//! executor draws while working (planned versus skipped, observed versus
-//! merely sent) are finer than the ones worth publishing.
+//! this tool. `ActionOutcome`, `PlannedAction` and `SkippedAction` are
+//! internal, and exist because the distinctions the executor draws while
+//! working (planned versus skipped, observed versus merely sent) are finer
+//! than the ones worth publishing.
 
 use super::SwayAction;
 use std::fmt;
@@ -32,7 +32,7 @@ pub struct RunOutcome {
 
 /// Whether a launched window is one this invocation can prove it created.
 ///
-/// `SwayAction::Exec` tags the process it spawns with a per-invocation marker
+/// `ExecAction` tags the process it spawns with a per-invocation marker
 /// and prefers a window whose pid carries it, but deliberately falls back to a
 /// content match (app_id/class) when no marked window appears — see
 /// `run_wait_matching_exec_event()`. That fallback covers two very different
@@ -148,29 +148,6 @@ pub enum ActionStatus {
     AlreadySatisfied,
     Unconfirmed,
     Skipped { reason: &'static str },
-}
-
-/// What one `SwayAction::run()` call reports back: which container it acted
-/// on, how confidently, and — for `Exec` alone — whether the window it settled
-/// on is one this invocation can prove it launched. Every other action targets
-/// a container that was already resolved before it ran, so it has no launch to
-/// claim and leaves `launch_ownership` unset.
-pub(super) struct ActionResult {
-    pub(super) container_id: i64,
-    pub(super) outcome: ActionOutcome,
-    pub(super) launch_ownership: Option<LaunchOwnership>,
-}
-
-impl ActionResult {
-    /// The result of an action applied to an already-resolved container, which
-    /// is every action except `Exec`.
-    pub(super) fn acted(container_id: i64, outcome: ActionOutcome) -> Self {
-        ActionResult {
-            container_id,
-            outcome,
-            launch_ownership: None,
-        }
-    }
 }
 
 /// What `SwayAction::run()` observed, before `SwayLaunch::run()` folds it
