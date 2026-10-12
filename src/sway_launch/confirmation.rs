@@ -14,8 +14,8 @@
 use super::ipc::{event_loop, new_connection, run_sway_command};
 use super::outcome::{ActionOutcome, ActionResult, LaunchOwnership};
 use super::process_marker::{
-    any_process_has_env_var, generate_pid_marker_token, process_has_env_var,
-    PID_MARKER_FALLBACK_GRACE, PID_MARKER_VAR,
+    generate_pid_marker_token, process_has_env_var, scan_marker_presence, MarkerTracker,
+    MARKER_SCAN_INTERVAL, PID_MARKER_FALLBACK_GRACE, PID_MARKER_VAR,
 };
 use super::query::{
     container_exists, container_state, node_by_id, parent_node_layout, position_matches,
@@ -671,11 +671,23 @@ impl SwayAction<'_> {
     /// already-running process before exiting, so the window that
     /// eventually appears is legitimately the right one, owned by a PID
     /// that was never given our marker. The first such event is kept as a
-    /// fallback candidate, used once either `any_process_has_env_var()`
-    /// shows the marked process (or a marked descendant) is no longer
-    /// running — nothing marker-confirmed is coming — or
-    /// `PID_MARKER_FALLBACK_GRACE` elapses, whichever comes first, bounding
+    /// fallback candidate, used once either the marked process (or a marked
+    /// descendant) is known to be gone — nothing marker-confirmed is coming —
+    /// or `PID_MARKER_FALLBACK_GRACE` elapses, whichever comes first, bounding
     /// how long a genuinely ambiguous case can add to the wait.
+    ///
+    /// "Gone" means *seen, then gone*: `/proc` is scanned for the marker every
+    /// `MARKER_SCAN_INTERVAL` from the moment the command is sent until it's
+    /// been seen, and, while a fallback candidate is held, until it disappears
+    /// (`MarkerTracker`). A marker that was never seen is not evidence of
+    /// anything, because that's also what the moments before the marked
+    /// process exists look like (Sway's `exec` returns once it has forked),
+    /// and what a launcher that drops the environment looks like. Reading
+    /// "absent" as "gone" there used to claim whichever matching window
+    /// arrived first — measured live as two concurrent `--template` runs
+    /// reporting the same container id in 4 of 7 trials, each having taken
+    /// the other's window during its own startup gap. A marker that's never
+    /// seen therefore always ends through the grace period, as `Adopted`.
     ///
     /// Which of those two ends the wait is reported back as the returned
     /// `LaunchOwnership` (see its own doc comment): a marked process that's
@@ -726,11 +738,8 @@ impl SwayAction<'_> {
         // the value returned once it's used.
         let mut fallback: Option<(i64, time::Instant)> = None;
 
-        // Once any_process_has_env_var() observes the marked process (or a
-        // marked descendant) is gone, it can't come back for this token —
-        // cached so a burst of further content-matching events before the
-        // fallback is actually used doesn't re-scan all of /proc on each one.
-        let mut marked_process_confirmed_gone = false;
+        let mut marker = MarkerTracker::default();
+        let mut next_scan = time::Instant::now();
 
         loop {
             let effective_deadline = match fallback {
@@ -739,7 +748,8 @@ impl SwayAction<'_> {
                     .map_or(deadline, |capped| deadline.min(capped)),
                 None => deadline,
             };
-            let remaining = effective_deadline.saturating_duration_since(time::Instant::now());
+            let now = time::Instant::now();
+            let remaining = effective_deadline.saturating_duration_since(now);
             if remaining.is_zero() {
                 if let Some((container_id, _)) = fallback {
                     if verbose {
@@ -755,7 +765,35 @@ impl SwayAction<'_> {
                 return Err(format!("{} sec timeout reached", timeout.as_secs()));
             }
 
-            let event = match event_receiver.recv_timeout(remaining) {
+            if marker.needs_scan(fallback.is_some()) && now >= next_scan {
+                let presence =
+                    scan_marker_presence(PID_MARKER_VAR, &token, marker.previously_seen());
+                if marker.observe(presence) && verbose {
+                    eprintln!(
+                        "Could not read /proc — PID-marker correlation is degraded on this system"
+                    );
+                }
+                next_scan = now + MARKER_SCAN_INTERVAL;
+                if let (true, Some((container_id, _))) = (marker.is_gone(), fallback) {
+                    if verbose {
+                        eprintln!(
+                            "Marked process no longer running; using fallback container id {} \
+                             (nothing marker-confirmed can still arrive, so this window is this \
+                             run's own)",
+                            container_id
+                        );
+                    }
+                    return Ok((container_id, LaunchOwnership::Launched));
+                }
+            }
+
+            let wait = if marker.needs_scan(fallback.is_some()) {
+                remaining.min(next_scan.saturating_duration_since(time::Instant::now()))
+            } else {
+                remaining
+            };
+
+            let event = match event_receiver.recv_timeout(wait) {
                 Ok(event) => event,
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -801,21 +839,10 @@ impl SwayAction<'_> {
                     );
                 }
                 fallback = Some((window.container.id, time::Instant::now()));
-            }
-
-            marked_process_confirmed_gone = marked_process_confirmed_gone
-                || !any_process_has_env_var(PID_MARKER_VAR, &token, verbose);
-            if marked_process_confirmed_gone {
-                let (container_id, _) = fallback.expect("just set above if it wasn't already");
-                if verbose {
-                    eprintln!(
-                        "Marked process no longer running; using fallback container id {} \
-                         (nothing marker-confirmed can still arrive, so this window is this \
-                         run's own)",
-                        container_id
-                    );
-                }
-                return Ok((container_id, LaunchOwnership::Launched));
+                // Re-check straight away rather than at the next interval: if
+                // the marked process was already seen and has since exited
+                // (the single-instance case), this is the moment to say so.
+                next_scan = time::Instant::now();
             }
         }
     }

@@ -432,24 +432,53 @@ stated goal (safer internals, less repeated parsing) to actually land.
   rejected outright, though: some applications (browsers, editors) are single-instance and forward
   a second invocation's request to an already-running process before exiting, so the window that
   eventually appears is legitimately the right one, owned by a pid that was never given the marker.
-  The first such event is kept as a fallback candidate, used once either `any_process_has_env_var()`
-  shows the marked process (or a marked descendant) is no longer running — nothing marker-confirmed
-  is coming — or `PID_MARKER_FALLBACK_GRACE` (2s; live testing under concurrent load showed a
-  shorter 500ms cap occasionally forced a fallback before the real match — still coming, just
-  slightly delayed by system load — arrived) elapses, whichever comes first, so a genuinely
-  ambiguous case adds a bounded delay rather than the full `--timeout`. Confirmed live by
-  `tests/live_sway.rs`'s `concurrent_exec_invocations_do_not_collide_on_the_same_container_id`
-  (0 collisions across 90 manual trials during development, versus every trial colliding before
-  this) and `exec_falls_back_to_a_content_match_when_its_own_process_already_exited`.
+  The first such event is kept as a fallback candidate, used once either the marked process (or a
+  marked descendant) is known to be gone — nothing marker-confirmed is coming — or
+  `PID_MARKER_FALLBACK_GRACE` (2s; live testing under concurrent load showed a shorter 500ms cap
+  occasionally forced a fallback before the real match — still coming, just slightly delayed by
+  system load — arrived) elapses, whichever comes first, so a genuinely ambiguous case adds a
+  bounded delay rather than the full `--timeout`. Confirmed live by `tests/live_sway.rs`'s
+  `concurrent_exec_invocations_do_not_collide_on_the_same_container_id` (0 collisions across 90
+  manual trials during development, versus every trial colliding before this) and
+  `exec_falls_back_to_a_content_match_when_its_own_process_already_exited`.
   Which of the two ends the wait is reported back as a `LaunchOwnership` (`Launched` for the
   marked-process-gone branch, `Adopted` for the grace-elapsed one), the distinction
   `--rollback-on-error` keys its destructive cleanup off — see its own section below.
-  `any_process_has_env_var()` treats a per-process `/proc/<pid>/environ` read failure (the process
-  already exited) as an expected, silent `false` — but a `read_dir("/proc")` failure itself is a
-  different, environment-level condition (restricted `/proc`, unusual containerization), so that
-  case logs a `--verbose` line noting PID-marker correlation is degraded on this system, rather
-  than staying indistinguishable from "marker genuinely absent." Not unit-tested: reliably making
-  `/proc` unreadable from within a test isn't portable/safe to simulate.
+
+  **"Gone" means seen, then gone — never merely absent.** `process_marker.rs`'s
+  `scan_marker_presence()` scans `/proc` for the marker every `MARKER_SCAN_INTERVAL` (25ms) from the
+  moment the command is sent until it's been seen, and, while a fallback candidate is held, until
+  it disappears; `MarkerTracker` accumulates the answers and only reports `is_gone()` once a scan
+  that found the marker is followed by one that doesn't. The first version read a single "no
+  process carries the marker" scan, taken when a fallback candidate arrived, as "the marked process
+  exited", and that's wrong in three ways: before the marked process exists at all (Sway's `exec`
+  returns once it has forked), for a launcher that drops the environment (`systemd-run`, an app
+  launcher, `env -u`), and when `/proc` can't be read. Each claimed whichever matching window
+  arrived first as `Launched` — every follow-up action applied to someone else's window, and
+  `--rollback-on-error` killing it. The first case wasn't exotic: two concurrent `--template quad-grid
+  --apps foot,foot,foot,foot` runs reported a shared container id in 4 of 7 trials, each run having
+  taken the other's `New` window during its own startup gap. A marker that's never seen now always
+  ends through the grace period, as `Adopted`. Pinned deterministically by
+  `rollback_on_error_leaves_a_window_opened_while_an_env_dropping_wrapper_waits`; the concurrent
+  case by `concurrent_template_runs_report_disjoint_container_ids`, which is timing-dependent and
+  didn't reproduce the old bug in its three trials when tried, so it guards the invariant rather
+  than the rule. The residual case is a launcher that is seen carrying the marker, exits, and only
+  then has its real window appear: indistinguishable from a single-instance forwarding client by
+  the marker alone, and treated the same way, as `Launched`.
+
+  The scan is tri-state per process (`read_process_marker()`: `Present`/`Absent`/`Unreadable`),
+  because a failed `environ` read isn't evidence of absence — a non-dumpable process
+  (`prctl(PR_SET_DUMPABLE, 0)`, setuid/setgid, file capabilities) has a root-owned `environ` even
+  for its own user. Only `NotFound`/`ESRCH` count as gone. `classify_marker_reads()` lets an
+  unreadable process block an `Absent` answer (`MarkerPresence::Unknown`) only when it's one already
+  seen carrying the marker; counting *every* unreadable process would make `Absent` unreachable on
+  an ordinary desktop, where root's processes and the user's own ssh-agent/gpg-agent are unreadable
+  on every scan. A `read_dir("/proc")` failure is `MarkerPresence::Unavailable`: logged once under
+  `--verbose`, scanning stops, and the launch ends as `Adopted` — which is what README.md promises
+  for a system without `/proc`. Not unit-tested: reliably making `/proc` unreadable from within a
+  test isn't portable/safe to simulate. A forwarding client that lives less than one scan interval
+  is never seen and so is adopted after the grace period rather than claimed — the safe direction
+  to be wrong in.
 - **No event exists in Sway IPC for it** (`Split`, `Sticky`, `NewColumn`, `NewRow`, `Height`,
   `Width`, `Position`) → `run_wait_time()`: sleeps for `--wait-time` *before* sending the command
   unconditionally (there's no signal yet to poll for), then sends it, since Sway doesn't emit an
@@ -1050,8 +1079,11 @@ a caller that does want it closed still learns its id, and `--verbose` says why 
 Both branches are pinned live, as the same scenario differing only in whether the launched process
 is still running: `tests/live_sway.rs`'s `rollback_on_error_leaves_a_window_it_only_adopted_open`
 (still running → adopted → survives) and
-`rollback_on_error_still_kills_a_window_matched_after_its_launcher_exited` (exited → launched →
-killed). Keep them together — either assertion alone reads as the whole rule and isn't.
+`rollback_on_error_still_kills_a_window_matched_after_its_launcher_exited` (seen, then exited →
+launched → killed). Keep them together — either assertion alone reads as the whole rule and isn't.
+A third, `rollback_on_error_leaves_a_window_opened_while_an_env_dropping_wrapper_waits`, covers a
+marker that was never seen at all (adopted → survives), the case that exposed "absent" and "gone"
+as different facts — see "`Exec`" above.
 
 `SwayAction::run()` returns `ActionResult { container_id, outcome, launch_ownership }` rather than a
 tuple to carry this — `launch_ownership` is `None` for every action except `Exec`, which is the only
