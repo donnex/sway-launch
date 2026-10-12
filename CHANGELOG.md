@@ -190,6 +190,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `sway-launch` now finds the Sway socket the way `swaymsg` does, preferring `SWAYSOCK` over
+  `I3SOCK`. Sway sets both, so pointing a tool at a different compositor (a nested or headless
+  Sway, another session) by overriding `SWAYSOCK` alone used to be silently ignored, and
+  `sway-launch` kept acting on the session the terminal belonged to. (#1)
 - An action that waits out `--wait-time` (`--split`, `--sticky`, `--new-column`, `--new-row`,
   `--height`, `--width`, `--position`) now reports a target window that has already closed straight
   away, instead of sleeping the full wait first and only then saying so. With a large `--wait-time`

@@ -117,7 +117,14 @@ below) plus five integration test files:
   unknown-name error, and its conflicts with a command/`--template`).
 - `tests/live_sway.rs` — the odd one out: gated behind the `live-sway-tests` Cargo feature (so a
   plain `cargo test` skips it entirely) and needs a real, reachable Sway compositor, run via
-  `scripts/run-live-sway-tests` rather than directly. Drives the compiled binary against real
+  `scripts/run-live-sway-tests` rather than directly. **It refuses to run any other way**:
+  `live_socket()`, which every connection and every spawned `sway-launch` goes through, panics
+  unless the runner's `SWAY_LAUNCH_LIVE_TESTS_SOCKET` sentinel is set, `SWAYSOCK` names that same
+  socket, `I3SOCK` is unset or names it too, and every output is `HEADLESS-*`. The suite kills
+  every foot window, switches workspaces and creates outputs, so a plain `cargo test
+  --all-features` from a desktop terminal (where `SWAYSOCK`/`I3SOCK` both name the real session)
+  must fail rather than act on it; the runner exports `SWAYSOCK`/`I3SOCK` pointing at its headless
+  instance for the same reason. Drives the compiled binary against real
   windows (`foot` — software-rendered, no GPU/EGL needed, so it runs headlessly; already pulled in
   as sway's own default-terminal dependency, and this project's example app throughout, so no
   stand-in substitution is needed anywhere in this file) and asserts on real tree state read back
@@ -746,10 +753,15 @@ bounded only the wait for a confirmation *event* and never the IPC round trips a
 compositor that accepted a connection and then stopped answering hung indefinitely: confirmed by
 pointing `SWAYSOCK` at a socket that accepts and never replies, where
 `--con-id 42 --floating --timeout 2` ran until killed externally at 15s (the first thing it does is
-read the tree). Socket discovery is `I3SOCK`/`SWAYSOCK`, matching `swayipc`'s own order, falling
-back to `Connection::new()` — and its `sway --get-socketpath` step — when neither is set; that
-fallback is unbounded, accepted because it only applies when the environment names no socket at
-all. The bound is deliberately *not* `--timeout` and not derived from it: `--timeout` waits on an
+read the tree). Socket discovery is `socket_path()`: `SWAYSOCK`, then `I3SOCK` — deliberately the
+reverse of `swayipc`'s own order and the same as `swaymsg`'s. Sway exports both, pointing at the
+same socket, to everything it spawns, so overriding `SWAYSOCK` alone is how a user (or
+`scripts/run-live-sway-tests`) aims a Sway tool at a different compositor; with `I3SOCK` first that
+override was silently ignored and this tool drove the terminal's own session instead. Pinned by
+`ipc.rs`'s `preferred_socket_path_*` unit tests and `tests/live_sway.rs`'s
+`swaysock_wins_over_a_stale_i3sock`. When neither is set it falls back to `Connection::new()` —
+and its `i3 --get-socketpath`, then `sway --get-socketpath` steps; that fallback is unbounded,
+accepted because it only applies when the environment names no socket at all. The bound is deliberately *not* `--timeout` and not derived from it: `--timeout` waits on an
 application mapping a window (seconds are reasonable), while this bounds one request/response
 exchange (sub-millisecond on a healthy system), so tying them together would make `--timeout 1`
 break ordinary tree reads and `--timeout 60` restore a minute-long hang. `ipc_error()` maps the
@@ -757,7 +769,9 @@ resulting `WouldBlock`/`TimedOut` into a message naming the condition, since the
 `Resource temporarily unavailable (os error 11)`. `event_loop()` deliberately uses
 `new_event_connection()` *without* a timeout: a subscription's job is to block until an event
 arrives, so a read timeout would turn a normal quiet period into an error, and it needs no bound
-because the caller collects from the reader thread with `recv_timeout()`. Covered by
+because the caller collects from the reader thread with `recv_timeout()`. It still resolves the
+socket through the same `socket_path()` (both go through the private `connect()`), so the
+subscription and the requests around it can never reach different compositors. Covered by
 `tests/live_sway.rs`'s `a_stalled_sway_socket_fails_instead_of_hanging_forever` (which needs no
 compositor, but lives there because it costs ~10s) and `ipc.rs`'s `ipc_error` unit tests.
 
