@@ -37,4 +37,4 @@ esac
 command -v code >/dev/null 2>&1 || die "code not found on PATH. Install VS Code first."
 
 sway-launch -a code code
-sway-launch -a foot --floating --width 700px --height 450px foot
+exec sway-launch -a foot --floating --width 700px --height 450px foot

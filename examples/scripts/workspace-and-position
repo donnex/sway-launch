@@ -28,4 +28,4 @@ case "${1:-}" in
   ;;
 esac
 
-sway-launch -a foot --floating --workspace 2 --position center foot
+exec sway-launch -a foot --floating --workspace 2 --position center foot

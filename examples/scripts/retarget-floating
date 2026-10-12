@@ -32,4 +32,4 @@ esac
 
 container_id="$(sway-launch -a foot foot)"
 sway-launch --con-id "$container_id" --floating --width 800px --height 600px
-sway-launch --existing -a foot --mark retargeted
+exec sway-launch --existing -a foot --mark retargeted

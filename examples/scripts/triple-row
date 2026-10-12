@@ -30,4 +30,4 @@ esac
 
 sway-launch -a foot --split h foot
 sway-launch -a foot foot
-sway-launch -a foot foot
+exec sway-launch -a foot foot
