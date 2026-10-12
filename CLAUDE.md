@@ -96,7 +96,7 @@ below) plus five integration test files:
   | `tree.rs` | every pure `&Node` predicate — matching, geometry, `ContainerState::from_tree` |
   | `query.rs` | fetch-a-tree-then-delegate wrappers, and nothing else |
   | `process_marker.rs` | the PID marker and its `/proc` reads |
-  | `action.rs` | `SwayAction`/`ActionKind`/`ExecAction` themselves: fields, `Display`, `sway_command_verb()` |
+  | `action.rs` | `SwayAction`/`ActionKind`/`ExecAction` themselves: fields, `Display`, `sway_command_verb()`, `flag_name()` |
   | `confirmation.rs` | how an action's effect is established: event matching, state checks, polling, the `run_*` drivers |
   | `outcome.rs` | `RunOutcome`/`RunError`/`UnmatchedWindow`/`ActionRecord`/`ActionStatus`/`LaunchOwnership` and their internal counterparts |
   | `launch.rs` | `SwayLaunch`, `Target`, `build_actions()`/`run()`, `--debug-events` |
@@ -890,10 +890,10 @@ with a sibling, run; as a lone child of a `tabbed` or `splitv` wrapper, skipped 
 reported, not just logged: `build_actions()` returns `Vec<PlannedAction<'a>>` (`enum PlannedAction
 { Run(SwayAction<'a>), Skip(SkippedAction) }`) instead of a bare `Vec<SwayAction<'a>>`, interleaving
 a skip in its actual fixed-order position rather than collecting skips into a separate side list —
-`SkippedAction { action, reason }` holds short, stable, machine-readable `&'static str` identifiers
-(`"new_column"`/`"new_row"`, `"trailing_workspace_edge"`), not a human-facing message (that's still
+`SkippedAction { kind, reason }` holds short, stable, machine-readable `&'static str` identifiers
+(`ActionKind::flag_name()`'s `"new_column"`/`"new_row"`, `"trailing_workspace_edge"`), not a human-facing message (that's still
 what the `--verbose` `diagnostic!` next to each skip is for). `run()` folds each `PlannedAction` into
-an `ActionRecord { action, status }` (`ActionStatus::Changed`/`AlreadySatisfied`/`Skipped { reason
+an `ActionRecord { kind, command, status }` (`ActionStatus::Changed`/`AlreadySatisfied`/`Skipped { reason
 }` — see "`--json`'s richer schema" below for the full design of this, added later alongside the
 `already_satisfied` distinction), so a `PlannedAction::Skip` never actually calls `.run()` — it
 short-circuits straight to an `ActionStatus::Skipped` record. Previously a skip was visible only via
@@ -1062,7 +1062,8 @@ later external review pointed out that the first version of this schema (a singl
 something from one `already_at_target()` (see above) silently no-oped — both looked identical in
 the `"actions"` array, and a skip lived in a separate `"skipped"` list with no way to tell where it
 would have fallen relative to the other actions. Fixed by unifying both into one `Vec<ActionRecord>`
-(`ActionRecord { action: String, status: ActionStatus }`, `enum ActionStatus { Changed,
+(then `ActionRecord { action: String, status: ActionStatus }` — `action` later split into
+`kind`/`command`, see below — and `enum ActionStatus { Changed,
 AlreadySatisfied, Unconfirmed, Skipped { reason: &'static str } }` — `Unconfirmed` came later, see
 below), replacing `RunOutcome.actions: Vec<String>`
 and dropping `RunOutcome.skipped` entirely — its contents fold into the same list instead.
@@ -1085,9 +1086,22 @@ which run the same command against a window with and without a sibling. `run()` 
 `ActionRecord` directly from a `PlannedAction` (see above) — `Run` becomes `Changed`/
 `AlreadySatisfied`/`Unconfirmed` from the `ActionOutcome` it returned, `Skip` becomes `Skipped { reason }` directly, with no
 `.run()` call at all. `main.rs`'s `action_record_json()` renders one record as
-`{"action": ..., "status": "changed"|"already_satisfied"|"unconfirmed"|"skipped"[, "reason": ...]}` — `"reason"`
-only present for `"skipped"`. A single invocation's `--json` output is now `{"container_id": N,
-"actions": [...]}` (`actions_json()`).
+`{"kind": ..., "command": ..., "status": "changed"|"already_satisfied"|"unconfirmed"|"skipped"[, "reason": ...]}` —
+`"command"` absent and `"reason"` present only for `"skipped"`. A single invocation's `--json`
+output is now `{"container_id": N, "actions": [...]}` (`actions_json()`).
+
+**`"kind"` is an action's identity; `"command"` is only what it ran.** A single `"action"` field
+used to carry both: `sway_command_verb()` text for an action that ran (`"move right"`,
+`"mark \"pinned\""`, `"resize set width 400px"`), and the flag name for a skip (`"new_column"`). So
+the same flag answered to two names depending on what happened, the run-side name embedded user
+data and Sway quoting, and it changed whenever command rendering did — a consumer had to parse Sway
+syntax to ask "did my `--new-column` apply?". `ActionRecord` now carries `kind: &'static str`
+(`ActionKind::flag_name()`: the CLI flag in `snake_case`, the same value a skip reports, since a
+skip is decided per kind) and `command: Option<String>` (`None` for a skip, which never rendered
+one). `--dry-run --json` emits the same `{"kind", "command"}` pair per action, so a preview and a
+run compare record for record. Pinned headlessly by `action.rs`'s
+`flag_name_is_the_snake_case_cli_flag_and_ignores_the_value` and `tests/json_output.rs`'s
+`dry_run_json_names_every_action_by_its_flag_not_its_command`, which sets every action flag.
 
 This was extended to the multi-step case in the same change: `run_steps()` (`--layout`/
 `--template`) previously had no `"actions"` field in its own `--json` output at all (only
@@ -1161,8 +1175,9 @@ format). `run_steps_dry_run()` still needs `to_sway_launch()`'s `target_id` look
 `resolved_ids` as a synthetic placeholder wherever a step has an `id` — never rendered either, same
 reasoning as `container_id: 0`. Plain output is one
 continuously-numbered line per target/action across every step (matching the external review's own
-illustrative example); `--json` is a single `{"steps": [{"target": ..., "actions": [...]}, ...]}`
-object.
+illustrative example); `--json` is a single `{"steps": [{"target": ..., "actions": [{"kind": ...,
+"command": ...}, ...]}, ...]}` object (`DryRunStep.actions` holds `DryRunAction { kind, command }`,
+the same pair a real run's `ActionRecord` reports).
 
 ### `--validate`
 

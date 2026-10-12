@@ -51,6 +51,33 @@ fn exec_sway_command_keeps_a_command_led_by_a_shell_builtin_intact() {
     );
 }
 
+// ActionKind::flag_name
+
+#[test]
+fn flag_name_is_the_snake_case_cli_flag_and_ignores_the_value() {
+    let cases = [
+        (ActionKind::Split(Split::V), "split"),
+        (ActionKind::Split(Split::H), "split"),
+        (ActionKind::Floating, "floating"),
+        (ActionKind::Sticky, "sticky"),
+        (ActionKind::Fullscreen, "fullscreen"),
+        (ActionKind::Focus, "focus"),
+        (ActionKind::NewColumn, "new_column"),
+        (ActionKind::NewRow, "new_row"),
+        (ActionKind::Workspace("3"), "workspace"),
+        (ActionKind::Output("HDMI-A-1"), "output"),
+        (ActionKind::Mark("pinned"), "mark"),
+        (ActionKind::Height(Size::Pixels(300)), "height"),
+        (ActionKind::Width(Size::Percent(20)), "width"),
+        (ActionKind::Position(Position::Center), "position"),
+        (ActionKind::Scratchpad, "scratchpad"),
+    ];
+    for (kind, expected) in cases {
+        assert_eq!(kind.flag_name(), expected, "{kind:?}");
+        assert_eq!(targeted(kind).kind_name(), expected, "{kind:?}");
+    }
+}
+
 // SwayAction::sway_command
 
 #[test]

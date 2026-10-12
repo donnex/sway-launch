@@ -87,6 +87,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `--json` now identifies each action by a stable `"kind"` — the flag that produced it, such as
+  `"new_column"` or `"mark"` — with the Sway command it sent under a separate `"command"` field.
+  Previously a single `"action"` field held the Sway command text when the action ran but the flag
+  name when it was skipped, so the same flag appeared under two names, and matching on it meant
+  parsing Sway syntax that included your own values. `--dry-run --json` reports the same
+  `kind`/`command` pair per action, so a preview and a run can be compared directly. (#28)
 - `--mark`'s help text and the README now say what it actually does: it **replaces** the window's
   existing marks rather than adding one, and takes the mark away from any other window that held
   it. The old wording ("Add mark to new window") suggested adding, which could quietly break a later

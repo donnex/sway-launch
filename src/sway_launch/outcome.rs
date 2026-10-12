@@ -116,22 +116,29 @@ pub struct UnmatchedWindow {
     pub launched_by_this_run: bool,
 }
 
-/// One entry in `RunOutcome.actions`: either an action that actually ran
-/// (`action` is `SwayAction::sway_command_verb()`, the same
-/// container-id-free text `--dry-run` prints), or one `build_actions()`
-/// chose not to run at all (the multi-output relocation guard — see its own
-/// doc comment; `action` is then the short, stable, machine-readable flag
-/// name `SkippedAction.action` already used, not a Sway command verb, since
-/// a skipped action was never turned into a real `SwayAction` to have one).
-/// Previously a skip was visible only via a `--verbose` log line or a
-/// separate `"skipped"` field; folding both into one `actions` list,
-/// alongside the `Changed`/`AlreadySatisfied`/`Unconfirmed` distinction
-/// `SwayAction::run()` already computed internally (`ActionOutcome`) but
-/// used to discard, is what makes a `--json` caller able to tell every
+/// One entry in `RunOutcome.actions`: either an action that actually ran, or
+/// one `build_actions()` chose not to run at all (the multi-output relocation
+/// guard — see its own doc comment).
+///
+/// `kind` is the action's stable identity, the same for both cases: the
+/// `snake_case` name of the CLI flag that produced it
+/// (`ActionKind::flag_name()`). `command` is the Sway command text it ran
+/// (`SwayAction::sway_command_verb()`, the same container-id-free text
+/// `--dry-run` prints), and `None` for a skip, which was never rendered into
+/// a command at all. They are kept apart because the command is no identity:
+/// it carries user data (a mark, a size) and Sway quoting, and changes
+/// whenever its rendering does, so a caller matching on it would be parsing
+/// Sway syntax — and a skipped `--new-column` would answer to a different
+/// name than a run one.
+///
+/// Folding skips into the same list as the actions that ran, alongside the
+/// `Changed`/`AlreadySatisfied`/`Unconfirmed` distinction `SwayAction::run()`
+/// computes (`ActionOutcome`), is what lets a `--json` caller tell every
 /// outcome apart in its actual run order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActionRecord {
-    pub action: String,
+    pub kind: &'static str,
+    pub command: Option<String>,
     pub status: ActionStatus,
 }
 
@@ -186,6 +193,6 @@ pub(super) enum PlannedAction<'a> {
 /// carries this into `RunOutcome`/`--json`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct SkippedAction {
-    pub(super) action: &'static str,
+    pub(super) kind: &'static str,
     pub(super) reason: &'static str,
 }

@@ -278,7 +278,82 @@ fn dry_run_json_output_is_a_structured_steps_array() {
     let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
     assert_eq!(
         stdout.trim(),
-        "{\"steps\":[{\"actions\":[\"floating enable\"],\"target\":\"target existing container\"}]}"
+        "{\"steps\":[{\"actions\":[{\"command\":\"floating enable\",\"kind\":\"floating\"}],\"target\":\"target existing container\"}]}"
+    );
+}
+
+#[test]
+fn dry_run_json_names_every_action_by_its_flag_not_its_command() {
+    // "kind" is --json's stable identity for an action: the flag that
+    // produced it, never the Sway command text (which carries user data and
+    // quoting). Every action flag is set here, so each one's kind is checked
+    // to be its own long flag name with '-' as '_'.
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--con-id",
+            "42",
+            "--new-column",
+            "--new-row",
+            "--workspace",
+            "3",
+            "--output",
+            "HDMI-A-1",
+            "--split",
+            "h",
+            "--floating",
+            "--sticky",
+            "--fullscreen",
+            "--focus",
+            "--height",
+            "300px",
+            "--width",
+            "40ppt",
+            "--position",
+            "center",
+            "--mark",
+            "pinned",
+            "--scratchpad",
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        output.status.success(),
+        "sway-launch --dry-run --json failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be a JSON object");
+    let kinds: Vec<&str> = json["steps"][0]["actions"]
+        .as_array()
+        .expect("a dry-run step should carry an actions array")
+        .iter()
+        .map(|action| action["kind"].as_str().expect("every action has a kind"))
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "new_column",
+            "new_row",
+            "workspace",
+            "output",
+            "split",
+            "floating",
+            "sticky",
+            "fullscreen",
+            "focus",
+            "height",
+            "width",
+            "position",
+            "mark",
+            "scratchpad",
+        ]
+    );
+    assert_eq!(
+        json["steps"][0]["actions"][12],
+        serde_json::json!({ "kind": "mark", "command": "mark \"pinned\"" })
     );
 }
 

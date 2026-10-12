@@ -175,7 +175,7 @@ impl<'a> SwayLaunch<'a> {
                     );
                 }
                 actions.push(PlannedAction::Skip(SkippedAction {
-                    action: "new_column",
+                    kind: ActionKind::NewColumn.flag_name(),
                     reason: "trailing_workspace_edge",
                 }));
             } else {
@@ -194,7 +194,7 @@ impl<'a> SwayLaunch<'a> {
                     );
                 }
                 actions.push(PlannedAction::Skip(SkippedAction {
-                    action: "new_row",
+                    kind: ActionKind::NewRow.flag_name(),
                     reason: "trailing_workspace_edge",
                 }));
             } else {
@@ -265,10 +265,12 @@ impl<'a> SwayLaunch<'a> {
         {
             let record = match planned {
                 PlannedAction::Run(action) => {
-                    let verb = action.sway_command_verb();
+                    let kind = action.kind_name();
+                    let command = action.sway_command_verb();
                     let outcome = action.run().map_err(resolved)?;
                     ActionRecord {
-                        action: verb,
+                        kind,
+                        command: Some(command),
                         status: match outcome {
                             ActionOutcome::Changed => ActionStatus::Changed,
                             ActionOutcome::AlreadySatisfied => ActionStatus::AlreadySatisfied,
@@ -277,7 +279,8 @@ impl<'a> SwayLaunch<'a> {
                     }
                 }
                 PlannedAction::Skip(skipped) => ActionRecord {
-                    action: skipped.action.to_string(),
+                    kind: skipped.kind,
+                    command: None,
                     status: ActionStatus::Skipped {
                         reason: skipped.reason,
                     },
