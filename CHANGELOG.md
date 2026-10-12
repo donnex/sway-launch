@@ -190,6 +190,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `--layout`/`--template` run whose output pipe closes early now finishes every step, instead of
+  stopping at the next container id it couldn't print and still exiting 0. Taking the first id
+  with `sway-launch --layout four.toml | head -n1` used to open three windows and silently skip
+  the fourth. Likewise, `--verbose` with a closed stderr (`-v ... 2>&1 | head -n1`) no longer
+  crashes with exit 101 between two actions, leaving the window half-arranged. (#52)
 - A timed-out action now says which action it was and, for a launch, why nothing matched, instead
   of a bare `5 sec timeout reached` for every failure. A wrong `--app-id`/`--class` and a typo'd
   command used to look identical: now a window that opened but didn't match the filter is named

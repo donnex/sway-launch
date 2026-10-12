@@ -493,6 +493,68 @@ fn event_reader_threads_stay_bounded_across_a_long_layout() {
     );
 }
 
+#[test]
+fn a_layout_finishes_every_step_when_its_output_pipes_are_already_closed() {
+    // `sway-launch --layout ... | head -n1` is an ordinary way to capture the
+    // first id. Once the reader went away, the next stdout write used to end
+    // the process with exit 0 between steps -- a layout cut short and reported
+    // as a success -- and with --verbose, the next diagnostic on a closed
+    // stderr panicked (exit 101) between two actions. Both pipes here are
+    // closed before the process starts, so the very first write of each kind
+    // fails, which makes this deterministic rather than dependent on how much
+    // the pipe buffer happens to absorb.
+    //
+    // Each step carries its own mark, since stdout can't report the ids.
+    const STEPS: usize = 3;
+    let marks: Vec<String> = (0..STEPS)
+        .map(|step| format!("live-sway-test-closed-pipes-{step}"))
+        .collect();
+    let layout: String = marks
+        .iter()
+        .map(|mark| {
+            format!("[[step]]\ncommand = \"foot\"\napp_id = \"foot\"\nmark = \"{mark}\"\n\n")
+        })
+        .collect();
+    let path = TempToml::write("closed-output-pipes", &layout);
+
+    let (stdout_reader, stdout_writer) = std::io::pipe().expect("failed to create a pipe");
+    let (stderr_reader, stderr_writer) = std::io::pipe().expect("failed to create a pipe");
+    drop(stdout_reader);
+    drop(stderr_reader);
+
+    let status = sway_launch_command()
+        .args(["--layout", path.to_str().unwrap(), "--verbose"])
+        .stdout(stdout_writer)
+        .stderr(stderr_writer)
+        .status()
+        .expect("failed to run sway-launch binary");
+
+    fn container_with_mark(node: &Node, mark: &str) -> Option<i64> {
+        if node.marks.iter().any(|existing| existing == mark) {
+            return Some(node.id);
+        }
+        node.nodes
+            .iter()
+            .chain(node.floating_nodes.iter())
+            .find_map(|child| container_with_mark(child, mark))
+    }
+    let tree = connect().get_tree().expect("failed to read the tree");
+    let found: Vec<Option<i64>> = marks
+        .iter()
+        .map(|mark| container_with_mark(&tree, mark))
+        .collect();
+    let _guards: Vec<KillOnDrop> = found.iter().flatten().map(|&id| KillOnDrop(id)).collect();
+
+    assert!(
+        found.iter().all(Option::is_some),
+        "every step should have run despite the closed pipes, but found {found:?}"
+    );
+    assert!(
+        status.success(),
+        "a run whose every step succeeded should exit 0, got {status}"
+    );
+}
+
 fn launch_foot(extra_args: &[&str]) -> (i64, KillOnDrop) {
     // A higher --wait-time than the 20ms CLI default: the headless/pixman
     // compositor these tests run against is otherwise flaky on multi-action

@@ -3,6 +3,21 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::{io, process, time};
 
+/// `eprintln!`, minus the panic when stderr is a closed pipe.
+///
+/// `eprintln!` panics on a failed write, so `sway-launch -v ... 2>&1 | head
+/// -n1` used to abort with exit 101 on the next diagnostic, stopping between
+/// two actions and leaving the window half-arranged. A diagnostic nobody can
+/// read is no reason to stop the work it describes, so the write error is
+/// dropped. Defined ahead of the `mod` declarations so every module can use
+/// it; every stderr write in the crate goes through it.
+macro_rules! diagnostic {
+    ($($argument:tt)*) => {{
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stderr(), $($argument)*);
+    }};
+}
+
 mod layout;
 mod sway_launch;
 mod template;
@@ -403,9 +418,31 @@ fn main() {
 /// Short outputs usually fit the pipe buffer and never notice; the case that
 /// reliably hits this is `--debug-events`, which writes until killed.
 fn print_line(line: &str) {
-    use std::io::Write;
-    if let Err(error) = writeln!(io::stdout(), "{}", line) {
+    if let Err(error) = write_line(line) {
         exit_on_write_failure(&error);
+    }
+}
+
+fn write_line(line: &str) -> io::Result<()> {
+    use std::io::Write;
+    writeln!(io::stdout(), "{}", line)
+}
+
+/// `print_line()` for output that's a side channel to work still in
+/// progress: a failed write is recorded in `failure` instead of ending the
+/// process, and nothing further is written once one has failed.
+///
+/// `print_line()`'s immediate exit is right where the output *is* the job.
+/// In a multi-step run it isn't — the job is the steps still to come — and
+/// exiting there stopped a layout partway and reported success:
+/// `sway-launch --layout four.toml | head -n1` opened three windows, never
+/// ran step 4, and exited 0. The caller hands `failure` to
+/// `exit_on_write_failure()` once every step has finished instead.
+fn print_line_deferring_failure(line: &str, failure: &mut Option<io::Error>) {
+    if failure.is_none() {
+        if let Err(error) = write_line(line) {
+            *failure = Some(error);
+        }
     }
 }
 
@@ -427,7 +464,7 @@ fn exit_on_write_failure(error: &io::Error) -> ! {
         // report it to. A clean exit is the expected outcome here.
         process::exit(0);
     }
-    eprintln!("failed writing to stdout: {}", error);
+    diagnostic!("failed writing to stdout: {}", error);
     process::exit(1);
 }
 
@@ -609,11 +646,11 @@ fn fail_with_rollback(
             value["container_ids"] = serde_json::json!(progress.container_ids);
             value["containers"] = serde_json::json!(progress.containers);
         }
-        eprintln!("{}", value);
+        diagnostic!("{}", value);
     } else {
-        eprintln!("{}", message);
+        diagnostic!("{}", message);
         if !rollback.rolled_back.is_empty() {
-            eprintln!(
+            diagnostic!(
                 "rolled back {} container(s): {}",
                 rollback.rolled_back.len(),
                 join_ids(&rollback.rolled_back)
@@ -623,7 +660,7 @@ fn fail_with_rollback(
         // it happened; this is the summary line, so the count is visible
         // without re-reading the warnings above it.
         if !rollback.failed.is_empty() {
-            eprintln!(
+            diagnostic!(
                 "failed to roll back {} container(s): {} — check whether they are still open",
                 rollback.failed.len(),
                 join_ids(&rollback.failed)
@@ -990,6 +1027,7 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
     // number (steps.len() can be several, unlike a single direct-CLI
     // invocation) — see step_action_records_json()'s doc comment.
     let mut actions = Vec::new();
+    let mut stdout_failure = None;
 
     for (index, step) in steps.iter().enumerate() {
         if let Some(id) = step.id.as_deref() {
@@ -1025,7 +1063,10 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
         match sway_launch.run() {
             Ok(outcome) => {
                 if !args.json {
-                    print_line(&outcome.container_id.to_string());
+                    print_line_deferring_failure(
+                        &outcome.container_id.to_string(),
+                        &mut stdout_failure,
+                    );
                 }
                 container_ids.push(outcome.container_id);
                 // Only a window this run can prove it launched is eligible for
@@ -1037,7 +1078,7 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
                 if outcome.launch_ownership == Some(sway_launch::LaunchOwnership::Launched) {
                     launched_container_ids.push(outcome.container_id);
                 } else if args.verbose && step.command.is_some() {
-                    eprintln!(
+                    diagnostic!(
                         "step {}: container {} was adopted rather than confirmed as launched by \
                          this run, so --rollback-on-error will leave it open",
                         index + 1,
@@ -1071,6 +1112,9 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
         );
     }
 
+    if let Some(error) = stdout_failure {
+        exit_on_write_failure(&error);
+    }
     process::exit(0);
 }
 
@@ -1294,9 +1338,10 @@ fn rollback(launched_container_ids: &[i64]) -> RollbackOutcome {
         match sway_launch::kill_container(container_id) {
             Ok(()) => outcome.rolled_back.push(container_id),
             Err(error) => {
-                eprintln!(
+                diagnostic!(
                     "warning: --rollback-on-error failed to close container {}: {}",
-                    container_id, error
+                    container_id,
+                    error
                 );
                 outcome.failed.push(container_id);
             }

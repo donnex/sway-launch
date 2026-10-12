@@ -124,7 +124,7 @@ pub struct ActionRecord {
 /// What actually happened to one planned action. `reason` on `Skipped` is a
 /// short, stable, machine-readable identifier (not prose) — the same spirit
 /// as `SwayAction::sway_command_verb()`'s stable text, not a human-facing
-/// message (that's what the existing `--verbose` `eprintln!` next to each
+/// message (that's what the existing `--verbose` `diagnostic!` next to each
 /// skip is for). Only one skip mechanism exists today (the multi-output
 /// relocation guard), so `reason` is a plain `&'static str` rather than a
 /// nested enum — revisit if a second one ever appears.
