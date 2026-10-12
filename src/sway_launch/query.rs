@@ -70,33 +70,13 @@ pub(super) fn container_state(container_id: i64) -> Result<Option<ContainerState
 /// Sway relocating it (and its whole workspace) to a different output
 /// rather than moving it within the workspace or no-oping.
 ///
-/// This originally checked only "is `container_id` the only window in its
-/// workspace" — live testing during this feature's development found that
-/// too narrow: a *non-solo* workspace can escalate too, whenever
-/// `container_id` is already the trailing child of a workspace whose own
-/// layout already matches the move's axis (confirmed live: two windows
-/// side by side, `[con_id=<rightmost>] move right` relocated it to another
-/// output, not a same-workspace no-op, even with a sibling to its left).
-/// Conversely, a solo window whose workspace layout *doesn't* match the
-/// axis (e.g. stacked vertically via `splitv`, then moved right) was
-/// confirmed live to restructure in place rather than escalate — so
-/// checking layout, not just child count, also avoids skipping a move that
-/// would actually have been safe. The current check: `container_id` is a
-/// *direct* child of its workspace (not nested in a sub-container), the
-/// workspace's own `layout` matches the axis (`SplitH` for `NewColumn`,
-/// `SplitV` for `NewRow`), and `container_id` is the last child in that
-/// list — this subsumes the original solo-window case (trivially both
-/// direct- and last-child of its workspace) while also catching the
-/// multi-window case that check alone missed. A window nested inside a
-/// sub-container is conservatively never flagged. Confirmed live in both an
-/// axis-mismatched nesting (a `splitv` sub-container under a `splith`
-/// workspace) and the axis-matched worst case (a `splith` sub-container
-/// under a `splith` workspace, target as its trailing child) that this
-/// conservatism costs nothing: `move right` on the nested target never
-/// escalated to a different output either way, it simply popped the target
-/// out to become a new direct child of the workspace — see
-/// `tests/live_sway.rs`'s
-/// `new_column_does_not_relocate_a_nested_window_to_a_different_output`.
+/// The tree half is `is_at_the_trailing_workspace_edge()`, which replays
+/// Sway's own `move right`/`move down` walk rather than approximating it
+/// with a shape rule — see its doc comment and CLAUDE.md's Orchestration
+/// section for the two shape rules that preceded it and the cases each one
+/// missed (a trailing window with a sibling to its left; a window that is
+/// the only child of a sub-container at the workspace's trailing edge).
+///
 /// A failed `get_outputs()`/`get_tree()` propagates as an error rather than
 /// being treated as "safe to proceed": the caller (`build_actions()`) is about
 /// to run a command whose safety this check exists to establish, so an

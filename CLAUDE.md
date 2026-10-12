@@ -773,24 +773,32 @@ described above. This originally checked only "is `container_id` the only window
 workspace" — live testing found that too narrow: a *non-solo* workspace can escalate too, whenever
 `container_id` is already the trailing child of a workspace whose own `layout` already matches the
 move's axis (confirmed live: two windows side by side, `move right` on the rightmost relocated it
-to a different output, not a same-workspace no-op, even with a sibling to its left). The current
-check — direct child of its workspace (not nested in a sub-container), workspace `layout` matches
-the axis (`SplitH` for `NewColumn`, `SplitV` for `NewRow`), and last child in that list — subsumes
-the original solo-window case (trivially both direct- and last-child of its workspace) while also
-catching the multi-window case that check alone missed; a solo window whose workspace layout
-*doesn't* match the axis (e.g. stacked via `splitv`, then moved right) was confirmed live to
-restructure in place rather than escalate, so checking layout too (not just child count) also
-avoids skipping a move that would actually have been safe. A window nested inside a sub-container
-is conservatively never flagged; unlike the direct-child cases above, this was initially left
-unconfirmed live in either direction, but later confirmed safe rather than just untested — in both
-an axis-mismatched nesting (a `splitv` sub-container under a `splith` workspace) and the
-axis-matched worst case (a `splith` sub-container under a `splith` workspace, target as its
-trailing child), `move right` never escalated the nested target to a different output; it simply
-popped the target out to become a new direct child of the workspace, staying on the same output.
+to a different output, not a same-workspace no-op, even with a sibling to its left). A later
+"nested windows are safe" rule turned out wrong too: a window that is the *only* child of a
+sub-container sitting directly on the workspace escalates as well (found by a review, reproduced
+live with a `layout tabbed` wrapper, a `splitv` wrapper left with one child, and — the widest
+reach — every first window under `workspace_layout tabbed`/`stacking`, where the guard used to
+never fire at all). So the check no longer approximates Sway's behaviour with a shape rule; it
+**replays Sway's own `container_move_in_direction()` walk** (`sway/commands/move.c`) over the tree:
+climb from the container to the first ancestor whose parent is laid out along the move's axis
+(`tabbed` counting as horizontal and `stacked` as vertical, as Sway's `is_parallel()` does —
+reaching the workspace without one means Sway re-orients the workspace, never escalating); the
+container itself being the trailing child of a parallel workspace escalates; a container at the end
+of its own parallel parent climbs once more; and an ancestor with nothing after it means Sway
+promotes the container next to it, *except* for the singleton case above, which Sway (mimicking
+i3) sends to the next output. A deeper lone child — two wrappers down — is promoted, not escalated,
+per the source (not separately probed live); the unit tests in `tree.rs` pin each branch. A trailing child of a
+sub-container *with* a sibling still pops out onto the same output (probed live in both an
+axis-mismatched and the axis-matched worst case), so the replay correctly lets it run. Modelling
+the source rather than adding a third shape rule is deliberate: both earlier rules were reasonable
+generalizations from the cases tried live, and both missed a branch the source spells out.
+Floating windows are never flagged, since Sway won't move them out of their floating parent.
 When flagged, the action is skipped (logged under `--verbose`) rather than run, trading a silent
 cross-monitor relocation for a silent no-op — confirmed by `tests/live_sway.rs`'s
 `new_column_does_not_relocate_a_solo_window_to_a_different_output`,
-`new_column_does_not_relocate_a_non_solo_window_at_the_trailing_edge`, and (the nested case)
+`new_column_does_not_relocate_a_non_solo_window_at_the_trailing_edge`, and (both nested cases —
+with a sibling, run; as a lone child of a `tabbed` or `splitv` wrapper, skipped — sharing that
+test's one `create_output` call)
 `new_column_does_not_relocate_a_nested_window_to_a_different_output`. A skip is also structurally
 reported, not just logged: `build_actions()` returns `Vec<PlannedAction<'a>>` (`enum PlannedAction
 { Run(SwayAction<'a>), Skip(SkippedAction) }`) instead of a bare `Vec<SwayAction<'a>>`, interleaving

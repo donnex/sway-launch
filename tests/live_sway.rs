@@ -147,6 +147,83 @@ fn parent_layout(node: &Node, con_id: i64) -> Option<swayipc::NodeLayout> {
         .find_map(|child| parent_layout(child, con_id))
 }
 
+/// `con_id`'s direct parent node, tiling or floating.
+fn parent_node(node: &Node, con_id: i64) -> Option<&Node> {
+    if node
+        .nodes
+        .iter()
+        .chain(node.floating_nodes.iter())
+        .any(|child| child.id == con_id)
+    {
+        return Some(node);
+    }
+    node.nodes
+        .iter()
+        .chain(node.floating_nodes.iter())
+        .find_map(|child| parent_node(child, con_id))
+}
+
+/// Asserts `con_id` is the only child of a sub-container of `wrapper_layout`
+/// sitting directly on its workspace, then that `--new-column` skips it
+/// rather than letting Sway's singleton rule throw it onto another output.
+fn assert_new_column_skips_a_lone_child(
+    connection: &mut Connection,
+    con_id: i64,
+    wrapper_layout: swayipc::NodeLayout,
+) {
+    let tree_before = connection.get_tree().expect("get_tree should succeed");
+    let wrapper = parent_node(&tree_before, con_id).expect("window should have a parent");
+    assert_eq!(
+        wrapper.node_type,
+        NodeType::Con,
+        "expected a wrapping sub-container"
+    );
+    assert_eq!(wrapper.layout, wrapper_layout);
+    assert_eq!(
+        wrapper.nodes.len(),
+        1,
+        "expected the window to be a lone child"
+    );
+    assert_eq!(
+        parent_node(&tree_before, wrapper.id).map(|node| node.node_type),
+        Some(NodeType::Workspace),
+        "expected the wrapper to sit directly on the workspace"
+    );
+    let output_before = output_containing(&tree_before, con_id, None)
+        .expect("window should be found in the tree")
+        .to_string();
+
+    let output = sway_launch_command()
+        .args(["--con-id", &con_id.to_string(), "--new-column", "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --new-column --json failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let tree_after = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        output_containing(&tree_after, con_id, None),
+        Some(output_before.as_str()),
+        "a lone child of a {wrapper_layout:?} sub-container should not be relocated to a \
+         different output by --new-column"
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    let json: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("--json output should be valid JSON");
+    assert_eq!(
+        json["actions"],
+        serde_json::json!([{
+            "action": "new_column",
+            "status": "skipped",
+            "reason": "trailing_workspace_edge",
+        }]),
+        "expected the lone child's new_column to be skipped: {json:?}"
+    );
+}
+
 fn get_node(connection: &mut Connection, con_id: i64) -> Node {
     let tree = connection.get_tree().expect("get_tree should succeed");
     find_node(&tree, con_id)
@@ -1522,22 +1599,18 @@ fn new_column_does_not_relocate_a_non_solo_window_at_the_trailing_edge() {
 
 #[test]
 fn new_column_does_not_relocate_a_nested_window_to_a_different_output() {
-    // Regression test closing a gap relocates_to_another_output()'s own doc
-    // comment acknowledged but left unconfirmed: is_at_the_trailing_workspace_edge()
-    // only checks direct children of the workspace
-    // (workspace.nodes.last().id == container_id), so a window nested one
-    // level deep inside a sub-container is conservatively never flagged,
-    // even when it's the trailing child of a sub-container whose own layout
-    // also matches the move axis -- the worst-case configuration for this
-    // guard. Manually probed live against a multi-output compositor before
-    // writing this test: in both an axis-mismatched nesting (sub-container
-    // splitv under a splith workspace) and this axis-matched one (a splith
-    // sub-container under a splith workspace, target as its trailing
-    // child), "move right" never escalated the target to a different
-    // output -- it simply popped the target out of the sub-container to
-    // become a new direct child of the workspace, staying on the same
-    // output throughout. So the guard's conservatism is confirmed safe, not
-    // just untested.
+    // Covers both nested shapes, against the one output this test creates
+    // (CLAUDE.md's create_output budget rules out a second test).
+    //
+    // A window that is the trailing child of an axis-matched sub-container
+    // *with* a sibling: probed live, "move right" pops it out of the
+    // sub-container onto the same output, so the guard must let it run.
+    //
+    // A window that is the *only* child of a sub-container sitting directly
+    // on the workspace: Sway treats that singleton like a window at
+    // workspace level (mimicking i3) and escalates to the next output, so
+    // the guard must skip it. Checked for a `layout tabbed` wrapper and for
+    // a `splitv` wrapper left with one child after its sibling closed.
     let mut connection = connect();
     connection
         .run_command("create_output")
@@ -1586,6 +1659,34 @@ fn new_column_does_not_relocate_a_nested_window_to_a_different_output() {
         "a window nested one level deep, even as the trailing child of an axis-matched \
          sub-container, should not be relocated to a different output by --new-column"
     );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(
+        stdout.trim(),
+        third_id.to_string(),
+        "the nested window's --new-column should have run, not been skipped"
+    );
+
+    let (tabbed_id, _tabbed_guard) =
+        launch_foot(&["--workspace", "live-sway-test-new-column-lone-tabbed"]);
+    connection
+        .run_command(format!("[con_id={tabbed_id}] layout tabbed"))
+        .expect("layout tabbed should succeed")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("layout tabbed should succeed");
+    assert_new_column_skips_a_lone_child(&mut connection, tabbed_id, swayipc::NodeLayout::Tabbed);
+
+    let (closing_id, closing_guard) =
+        launch_foot(&["--workspace", "live-sway-test-new-column-lone-splitv"]);
+    let (survivor_id, _survivor_guard) = launch_foot(&[
+        "--workspace",
+        "live-sway-test-new-column-lone-splitv",
+        "--split",
+        "v",
+    ]);
+    drop(closing_guard);
+    wait_for_container_gone(&mut connection, closing_id);
+    assert_new_column_skips_a_lone_child(&mut connection, survivor_id, swayipc::NodeLayout::SplitV);
 }
 
 #[test]

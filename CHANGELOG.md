@@ -190,6 +190,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- On a multi-monitor setup, `--new-column`/`--new-row` no longer throw a window onto another
+  monitor when it's the only window inside a container at the edge of its workspace. Sway moves
+  such a window to the next output, and the guard that skips a move like that only recognized
+  windows sitting directly on the workspace. This hit a lone window you'd run `layout tabbed` on, a
+  window left alone in a split after its neighbour closed, and — with `workspace_layout tabbed` or
+  `stacking` in your Sway config — every first window on a workspace. The move is now skipped and
+  reported as `"skipped"` in `--json`, the same as the other cases. (#70)
 - A `--layout`/`--template` run whose output pipe closes early now finishes every step, instead of
   stopping at the next container id it couldn't print and still exiting 0. Taking the first id
   with `sway-launch --layout four.toml | head -n1` used to open three windows and silently skip

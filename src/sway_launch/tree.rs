@@ -205,14 +205,38 @@ pub(super) fn find_containing_name(
 }
 
 /// The direction `NewColumn` ("move right") / `NewRow` ("move down") moves
-/// in — used only by `relocates_to_another_output()` to know which of the
-/// workspace's own axes/layout to check.
+/// in — used only by `is_at_the_trailing_workspace_edge()` to know which
+/// layouts count as parallel to the move.
 #[derive(Copy, Clone)]
 pub(super) enum MoveDirection {
     Right,
     Down,
 }
 
+/// Whether Sway's own `move right`/`move down` on `container_id` would end in
+/// its "move to the next output" branch rather than moving the window within
+/// its workspace. A step-for-step model of `container_move_in_direction()` in
+/// Sway's `sway/commands/move.c`, run over a tree read rather than performed:
+///
+/// - Walk up from the container until an ancestor's parent is laid out along
+///   the move's axis. `tabbed` counts as horizontal and `stacked` as
+///   vertical, the way Sway's own `is_parallel()` treats them. Reaching the
+///   workspace with no such parent means Sway re-orients the workspace
+///   instead, which never escalates.
+/// - The container itself being the trailing child of a parallel *workspace*
+///   is the original escalating case.
+/// - A container at the trailing edge of its own parallel parent climbs one
+///   level. When it finds an ancestor with nothing after it, Sway promotes the
+///   container next to that ancestor — unless the container is the *only*
+///   child of a sub-container sitting directly on the workspace. Sway treats
+///   that "singleton" like a window at workspace level (mimicking i3) and
+///   escalates. That case covers a lone window wrapped by `layout tabbed`, a
+///   window left alone in a `splitv` container after its sibling closed, and
+///   every first window on a workspace under `workspace_layout tabbed` or
+///   `stacking`.
+///
+/// Floating windows (and anything inside a floating container) are never
+/// flagged: Sway refuses to move them out of their floating parent at all.
 pub(super) fn is_at_the_trailing_workspace_edge(
     tree: &Node,
     container_id: i64,
@@ -221,17 +245,65 @@ pub(super) fn is_at_the_trailing_workspace_edge(
     let Some(workspace) = find_workspace_node(tree, container_id) else {
         return false;
     };
-    let expected_layout = match direction {
-        MoveDirection::Right => NodeLayout::SplitH,
-        MoveDirection::Down => NodeLayout::SplitV,
+    let Some(chain) = tiling_ancestry(workspace, container_id) else {
+        return false;
     };
-    if workspace.layout != expected_layout {
+    let container_depth = chain.len() - 1;
+    if container_depth == 0 {
         return false;
     }
-    workspace
-        .nodes
-        .last()
-        .is_some_and(|last| last.id == container_id)
+
+    let mut depth = container_depth;
+    loop {
+        let current = chain[depth];
+        let parent = chain[depth - 1];
+        if !is_parallel(parent.layout, direction) {
+            if depth == 1 {
+                return false;
+            }
+            depth -= 1;
+            continue;
+        }
+
+        let has_following_sibling = parent
+            .nodes
+            .iter()
+            .position(|sibling| sibling.id == current.id)
+            .is_some_and(|index| index + 1 < parent.nodes.len());
+        if has_following_sibling {
+            return false;
+        }
+        if depth == container_depth {
+            if depth == 1 {
+                return true;
+            }
+            depth -= 1;
+            continue;
+        }
+        return container_depth == 2 && chain[1].nodes.len() == 1;
+    }
+}
+
+fn is_parallel(layout: NodeLayout, direction: MoveDirection) -> bool {
+    match direction {
+        MoveDirection::Right => matches!(layout, NodeLayout::SplitH | NodeLayout::Tabbed),
+        MoveDirection::Down => matches!(layout, NodeLayout::SplitV | NodeLayout::Stacked),
+    }
+}
+
+/// The path from `node` down to `container_id` through tiling children
+/// (`nodes`) only, `node` first and the container last — `None` when the
+/// container isn't reachable that way, which includes every floating window.
+fn tiling_ancestry(node: &Node, container_id: i64) -> Option<Vec<&Node>> {
+    if node.id == container_id {
+        return Some(vec![node]);
+    }
+    node.nodes.iter().find_map(|child| {
+        tiling_ancestry(child, container_id).map(|mut path| {
+            path.insert(0, node);
+            path
+        })
+    })
 }
 
 pub(super) fn find_workspace_node(node: &Node, container_id: i64) -> Option<&Node> {
@@ -1034,6 +1106,160 @@ mod tests {
             &workspace,
             10,
             MoveDirection::Down
+        ));
+    }
+
+    fn sub_container_value(
+        container_id: i64,
+        layout: &str,
+        nodes: Vec<serde_json::Value>,
+    ) -> serde_json::Value {
+        let mut value = container_node_value(container_id, nodes, vec![]);
+        value["layout"] = serde_json::json!(layout);
+        value
+    }
+
+    #[test]
+    fn is_at_the_trailing_workspace_edge_true_for_a_lone_child_of_a_tabbed_wrapper() {
+        // `layout tabbed` on a solo window, and every first window under
+        // `workspace_layout tabbed`: Sway treats the singleton like a window
+        // at workspace level and escalates (confirmed live).
+        let wrapper = sub_container_value(5, "tabbed", vec![leaf_node_value(10, None, None)]);
+        let workspace = workspace_node_tree_with_layout(2, "main", "splith", vec![wrapper]);
+        assert!(is_at_the_trailing_workspace_edge(
+            &workspace,
+            10,
+            MoveDirection::Right
+        ));
+    }
+
+    #[test]
+    fn is_at_the_trailing_workspace_edge_true_for_a_lone_child_of_a_cross_axis_wrapper() {
+        // A window left alone in a `splitv` container after its sibling
+        // closed: the cross-axis wrapper doesn't absorb a `move right`.
+        let wrapper = sub_container_value(5, "splitv", vec![leaf_node_value(11, None, None)]);
+        let workspace = workspace_node_tree_with_layout(
+            2,
+            "main",
+            "splith",
+            vec![leaf_node_value(10, None, None), wrapper],
+        );
+        assert!(is_at_the_trailing_workspace_edge(
+            &workspace,
+            11,
+            MoveDirection::Right
+        ));
+    }
+
+    #[test]
+    fn is_at_the_trailing_workspace_edge_true_for_a_lone_child_of_a_stacked_wrapper_moving_down() {
+        let wrapper = sub_container_value(5, "stacked", vec![leaf_node_value(10, None, None)]);
+        let workspace = workspace_node_tree_with_layout(2, "main", "splitv", vec![wrapper]);
+        assert!(is_at_the_trailing_workspace_edge(
+            &workspace,
+            10,
+            MoveDirection::Down
+        ));
+    }
+
+    #[test]
+    fn is_at_the_trailing_workspace_edge_false_for_a_lone_child_whose_wrapper_has_a_following_sibling(
+    ) {
+        let wrapper = sub_container_value(5, "tabbed", vec![leaf_node_value(10, None, None)]);
+        let workspace = workspace_node_tree_with_layout(
+            2,
+            "main",
+            "splith",
+            vec![wrapper, leaf_node_value(11, None, None)],
+        );
+        assert!(!is_at_the_trailing_workspace_edge(
+            &workspace,
+            10,
+            MoveDirection::Right
+        ));
+    }
+
+    #[test]
+    fn is_at_the_trailing_workspace_edge_false_for_a_trailing_child_of_a_sub_container_with_siblings(
+    ) {
+        // Confirmed live: Sway promotes the window out of the sub-container
+        // onto the same output instead of escalating.
+        let wrapper = sub_container_value(
+            5,
+            "splith",
+            vec![
+                leaf_node_value(10, None, None),
+                leaf_node_value(11, None, None),
+            ],
+        );
+        let workspace = workspace_node_tree_with_layout(2, "main", "splith", vec![wrapper]);
+        assert!(!is_at_the_trailing_workspace_edge(
+            &workspace,
+            11,
+            MoveDirection::Right
+        ));
+    }
+
+    #[test]
+    fn is_at_the_trailing_workspace_edge_false_for_a_lone_child_two_wrappers_deep() {
+        // Sway's singleton rule only applies when the container's parent
+        // sits directly on the workspace; one level deeper it promotes.
+        let inner = sub_container_value(6, "splith", vec![leaf_node_value(10, None, None)]);
+        let outer = sub_container_value(5, "splitv", vec![inner]);
+        let workspace = workspace_node_tree_with_layout(2, "main", "splith", vec![outer]);
+        assert!(!is_at_the_trailing_workspace_edge(
+            &workspace,
+            10,
+            MoveDirection::Right
+        ));
+    }
+
+    #[test]
+    fn is_at_the_trailing_workspace_edge_treats_a_tabbed_workspace_as_horizontal() {
+        let workspace = workspace_node_tree_with_layout(
+            2,
+            "main",
+            "tabbed",
+            vec![leaf_node_value(10, None, None)],
+        );
+        assert!(is_at_the_trailing_workspace_edge(
+            &workspace,
+            10,
+            MoveDirection::Right
+        ));
+        assert!(!is_at_the_trailing_workspace_edge(
+            &workspace,
+            10,
+            MoveDirection::Down
+        ));
+    }
+
+    #[test]
+    fn is_at_the_trailing_workspace_edge_false_for_a_floating_window() {
+        let mut value = container_node_value(2, vec![], vec![leaf_node_value(10, None, None)]);
+        value["type"] = serde_json::json!("workspace");
+        value["name"] = serde_json::json!("main");
+        value["layout"] = serde_json::json!("splith");
+        let workspace: Node = serde_json::from_value(value).expect("valid Node test fixture");
+        assert!(!is_at_the_trailing_workspace_edge(
+            &workspace,
+            10,
+            MoveDirection::Right
+        ));
+    }
+
+    #[test]
+    fn is_at_the_trailing_workspace_edge_false_for_the_workspace_itself() {
+        let workspace = workspace_node_tree_with_layout(
+            2,
+            "main",
+            "splith",
+            vec![leaf_node_value(10, None, None)],
+        );
+        assert!(!is_at_the_trailing_workspace_edge(
+            &workspace,
+            2,
+            MoveDirection::Right
         ));
     }
 

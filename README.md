@@ -806,10 +806,13 @@ sway-launch --new-column foot
 ```
 
 On a multi-monitor setup, this can be silently skipped — not delayed, not erroring, simply not
-run — whenever the window is already the trailing (rightmost) child of a workspace laid out
-horizontally: Sway's own `move right` would otherwise relocate the window to the next output
-instead of restructuring it in place, and `sway-launch` skips the command rather than doing that
-silently on your behalf. Run with `--verbose` to see when this happens, or check `--json`'s
+run — whenever Sway's own `move right` would relocate the window to the next output instead of
+restructuring it in place, and `sway-launch` skips the command rather than doing that silently on
+your behalf. That happens when the window is already the trailing (rightmost) child of a workspace
+laid out horizontally (or tabbed), and also when it's the only window inside a container sitting at
+that trailing edge, which Sway treats the same as the container itself. The second case includes a
+lone window you've run `layout tabbed` on, and every first window on a workspace when your Sway
+config sets `workspace_layout tabbed` or `stacking`. Run with `--verbose` to see when this happens, or check `--json`'s
 `"actions"` array (see [JSON output](#json-output) below) for a machine-readable signal instead of
 parsing a log line.
 
@@ -823,7 +826,7 @@ sway-launch --new-row foot
 ```
 
 Subject to the same multi-monitor skip as [New column](#new-column) above, along the vertical axis
-instead.
+instead (where a stacked layout counts as vertical, the way tabbed counts as horizontal).
 
 ### Scratchpad
 
