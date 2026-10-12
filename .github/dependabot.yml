@@ -1,0 +1,11 @@
+# Keeps the commit-SHA pins on every third-party action in
+# .github/workflows/ current: Dependabot opens a pull request that bumps the
+# SHA and its trailing tag comment together when an action releases.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: .github/workflows

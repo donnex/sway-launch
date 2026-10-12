@@ -2507,15 +2507,30 @@ Both workflows declare `GITHUB_TOKEN` permissions explicitly rather than inherit
 default, which on a repo created before GitHub changed that default (or with it set permissively)
 hands every job a read/write token it has no use for. `check.yml` declares `contents: read` at
 workflow level, with only its `audit` job re-declaring its own (`issues: write`, which the audit
-action needs to file advisories); `release.yml` does the same, scoping `contents: write` to the
-`release` job alone so its `check` job can't write either. Any new job needing more than read
-access should declare it on the job, not widen the workflow-level grant.
+action needs to file advisories); `release.yml` does the same, scoping `contents: write` to its
+`publish` job alone so neither its `check` nor its `build` job can write. Any new job needing more
+than read access should declare it on the job, not widen the workflow-level grant.
+
+Every third-party action in both workflows is pinned to a full commit SHA with its tag in a
+trailing comment (`uses: actions/checkout@<sha> # v7.0.1`), never a movable tag or branch, so a
+retargeted ref can't run new code with a job's token; `.github/dependabot.yml` keeps the pins
+current with weekly pull requests. `dtolnay/rust-toolchain` is pinned the same way, which is why
+its steps pass `toolchain: stable` explicitly — that was previously implied by the `@stable`
+branch name. A new action added to either workflow gets the same SHA-plus-comment form. Checkout
+steps in jobs that hold more than a read token, or that build the release, set
+`persist-credentials: false`, so the token isn't left on disk where a build script could read it.
 
 `.github/workflows/release.yml` re-runs `check.yml`'s `check` and `lint-scripts-and-docs` checks
 combined into one job (not the coverage gate, not `live-sway-tests` or `audit` — a release build
 doesn't need a compositor or a coverage measurement, and the security audit runs independently on
 every push regardless) against the exact tagged commit, then builds and publishes a release archive
-when a `v*` tag is pushed. Release notes come from `CHANGELOG.md` rather than `gh`'s own
+when a `v*` tag is pushed. Its `check` job also fails unless the tag's version (`vX.Y.Z` minus the
+`v`) equals `Cargo.toml`'s `version`, so a tag pushed without the version-bump commit can't ship a
+binary whose `--version` disagrees with its release name. Building and publishing are separate
+jobs: `build` (read-only token) compiles and packages the archive and hands it on via
+`actions/upload-artifact`, and only `publish` (no checkout, no build — just a download and
+`gh release create`) holds `contents: write`, because compiling runs every dependency's build
+script and proc-macro, none of which should ever share a job with the write token. Release notes come from `CHANGELOG.md` rather than `gh`'s own
 auto-generated notes: an `awk` script extracts the section matching the tag's version (see the
 Changelog section above) and fails the release outright if that section is missing or empty — a
 release can't ship without the version-bump-and-changelog commit having actually finalized

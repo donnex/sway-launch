@@ -13,6 +13,11 @@ on:
 # default (or with it set permissively) hands every job a read/write token it
 # has no use for. The audit job below re-declares its own, since it does need
 # issues: write. Mirrors release.yml, where the same scoping already applies.
+#
+# Every third-party action is pinned to a full commit SHA, with the tag it
+# corresponds to in a trailing comment, rather than a movable tag or branch:
+# a retargeted tag would otherwise run new code here, including in the audit
+# job's issues: write token. .github/dependabot.yml keeps the pins current.
 permissions:
   contents: read
 
@@ -21,14 +26,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
         with:
+          toolchain: stable
           components: rustfmt, clippy, llvm-tools-preview
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: cargo fmt --check
         run: cargo fmt -- --check
@@ -48,7 +54,9 @@ jobs:
         run: cargo test --locked
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
+        uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
+        with:
+          tool: cargo-llvm-cov
 
       # Thresholds are calibrated to this project's actual measured baseline
       # (86.54% regions / 87.46% lines / 91.59% functions as of 2026-09-01),
@@ -105,7 +113,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install shellcheck and shfmt
         run: sudo apt-get update && sudo apt-get install -y shellcheck shfmt
@@ -143,7 +151,7 @@ jobs:
         run: markdownlint '**/*.md'
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
 
       - name: black --check
         run: uv run --group dev black --check scripts/generate-layout-screenshots
@@ -155,12 +163,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Install sway and foot
         run: sudo apt-get update && sudo apt-get install -y sway foot
@@ -174,13 +184,19 @@ jobs:
       contents: read
       issues: write
     steps:
+      # Nothing after checkout needs git credentials (the audit action gets
+      # its token through TOKEN), so don't leave this job's token on disk.
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
+        with:
+          toolchain: stable
 
       - name: cargo audit
-        uses: actions-rust-lang/audit@v1.2.7
+        uses: actions-rust-lang/audit@72c09e02f132669d52284a3323acdb503cfc1a24 # v1.2.7
         with:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
