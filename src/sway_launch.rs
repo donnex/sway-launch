@@ -52,7 +52,7 @@ pub use values::{
 /// every variant gets — `NewColumn`/`NewRow` use the much shorter
 /// `MOVE_POLL_GRACE` instead, for the reason documented there. Several of
 /// these actions have legitimate no-op outcomes (e.g. resizing a solo
-/// window, per docs/plan-poll-based-wait-time-actions.md) where the
+/// window, which Sway silently clamps to 100%) where the
 /// expected tree state never arrives at all, so — like
 /// `PID_MARKER_FALLBACK_GRACE` — this must stay well short of `--timeout`
 /// rather than growing into a second hang. The `.min(wait_time)` cap exists
@@ -61,7 +61,7 @@ pub use values::{
 /// unconditionally, so any fallback case at default settings cost ~220ms
 /// instead of the ~40ms (`2 * wait_time`) it cost before this feature
 /// existed — confirmed live before the cap was added. 200ms comfortably
-/// covers every matcher this project has shipped (`Split`, `Height`,
+/// covers every matcher this project has shipped (`Split`, `Sticky`, `Height`,
 /// `Width`, `Position`, `NewColumn`, `NewRow`), all confirmed live to
 /// converge in a handful of milliseconds when they converge at all.
 const WAIT_TIME_POLL_GRACE: time::Duration = time::Duration::from_millis(200);

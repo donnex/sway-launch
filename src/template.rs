@@ -12,9 +12,8 @@ static BUILTIN_TEMPLATES: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/templates"
 
 /// A built-in template's name, description, category (from its file's
 /// `[template]` table), and slot info, as listed by `--list-templates`.
-/// `slots`/`slot_names` are `--json`-only (see `main.rs`'s
-/// `print_builtin_templates()`) — plain output stays the three-column
-/// name/category/description table it always was.
+/// Both plain and `--json` output carry the slot info (see `main.rs`'s
+/// `print_builtin_templates()`).
 pub struct BuiltinTemplate {
     pub name: &'static str,
     pub description: String,
@@ -1116,11 +1115,9 @@ mod tests {
 
     #[test]
     fn builtin_templates_every_description_is_a_complete_sentence() {
-        // Regression test: --list-templates prints each description as one
-        // line, so a header whose first comment line doesn't end its
-        // thought (wraps onto a second line before a period) would print a
-        // truncated, broken-looking sentence. See the header comments this
-        // was fixed for (e.g. quad-grid.toml, sidebar-left-dual-stack.toml).
+        // --list-templates prints each `[template]` table's description as
+        // one line next to the template's name, so it has to stand on its
+        // own as a complete sentence rather than a fragment.
         for template in builtin_templates() {
             assert!(
                 template.description.trim_end().ends_with('.'),

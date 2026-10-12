@@ -60,8 +60,10 @@ jobs:
 
       # Thresholds are calibrated to this project's actual measured baseline
       # (86.54% regions / 87.46% lines / 91.59% functions as of 2026-09-01),
-      # not an arbitrary round number: sway_launch.rs's IPC-touching functions
-      # are deliberately exempted from unit-test coverage (see CLAUDE.md's
+      # not an arbitrary round number: the compositor-bound modules
+      # (sway_launch/ipc.rs and sway_launch/query.rs, plus the IPC-touching
+      # halves of confirmation.rs and launch.rs) are deliberately exempted from
+      # unit-test coverage (see CLAUDE.md's
       # Rust conventions -- they're exercised by tests/live_sway.rs instead,
       # which this job can't run headlessly), so a flat 90%+ target isn't the
       # right bar here the way it might be for a project with no such
@@ -104,6 +106,12 @@ jobs:
       # to restore 90 -- that would be back to under two points of headroom,
       # which is the squeeze this gate was lowered to end. Same conclusion as
       # above, now with a second data point behind it.
+      #
+      # The figures above all predate the 2026-09-03 split of sway_launch.rs
+      # into modules. Re-measured 2026-10-12, after it and later refactors:
+      # 88.36% regions, 87.62% lines, 91.01% functions (545 functions, 49
+      # uncovered; 88 allows 65). Headroom is ~8.4/~5.6/~3.0 points, so the
+      # thresholds stand unchanged.
       - name: cargo llvm-cov (coverage regression gate, excluding main.rs)
         run: |
           cargo llvm-cov --locked --ignore-filename-regex 'main\.rs' \

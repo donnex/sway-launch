@@ -362,8 +362,8 @@ pub(super) fn find_node(node: &Node, container_id: i64) -> Option<&Node> {
 /// while before being floated and resized comes out `2 *
 /// current_border_width` short on `rect.width` alone (see
 /// `retarget_by_id_layout_floats_the_first_step_by_name` in
-/// `tests/live_sway.rs`, and this project's own prior investigation notes
-/// in `docs/plan-poll-based-wait-time-actions.md`) — border accounting
+/// `tests/live_sway.rs`, and the `Height`/`Width` notes under CLAUDE.md's
+/// "Core model" section) — border accounting
 /// this project hasn't found a single deterministic rule for, so both
 /// candidates are accepted rather than picking one and risking a resize
 /// that's actually done never being recognized as such.
@@ -420,9 +420,8 @@ pub(super) fn node_position(node: &Node) -> (i32, i32) {
     }
 }
 
-/// The `(x, y)` `position_matches()` expects `node` to be at, for `"center"`
-/// or a validated `"<x>,<y>"` string (`validate_position_argument`'s regex
-/// guarantees the latter parses cleanly by the time this runs) — matches
+/// The `(x, y)` `position_matches()` expects `node` to be at, for
+/// `Position::Center` or explicit `Position::Coordinates` — matches
 /// `deco_rect.x`/`deco_rect.y`, the decoration-inclusive frame `move
 /// position` actually targets, confirmed live by
 /// `position_moves_a_floating_window_to_given_coordinates`/
@@ -430,9 +429,9 @@ pub(super) fn node_position(node: &Node) -> (i32, i32) {
 /// (`deco_rect.x` and `rect.x` were confirmed equal there too, so using
 /// `deco_rect.x` uniformly for both the coordinate and center cases, rather
 /// than `rect.x` for one and `deco_rect.x` for the other, doesn't change
-/// which value is being compared). `output_name` is only consulted for
-/// `"center"`, so a window not on any output (e.g. the scratchpad) can
-/// still match a plain `"<x>,<y>"` position.
+/// which value is being compared). `output_rect` is only consulted for
+/// `Position::Center`, so a window not on any output (e.g. the scratchpad)
+/// can still match explicit coordinates.
 pub(super) fn expected_position(
     position: &Position,
     node: &Node,

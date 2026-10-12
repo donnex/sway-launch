@@ -102,7 +102,9 @@ impl ActionKind<'_> {
             // all (moving to the workspace/output the window is already
             // on doesn't reparent anything, so no Move event fires either):
             // `already_at_target()` below checks for and short-circuits
-            // that case before this event wait ever starts, rather than
+            // that case inside run_wait_matching_events(), once the
+            // subscription is open but before the command is sent (that
+            // ordering is load-bearing — see its doc comment), rather than
             // hanging until --timeout for a move that was never going to
             // happen.
             ActionKind::Workspace(_) | ActionKind::Output(_) => Some(vec![WindowChange::Move]),
@@ -206,7 +208,8 @@ impl SwayAction<'_> {
     /// waits on when the command turns out to be a no-op, so
     /// `run_wait_matching_events()` would otherwise hang until `--timeout`
     /// for an event that was never coming. Returns `true` to
-    /// short-circuit `run()` with success, or `false` to proceed normally.
+    /// short-circuit `run_wait_matching_events()` with success, or `false`
+    /// to proceed normally.
     ///
     /// `Workspace`/`Output` were the first two found needing this (checked
     /// against the containing workspace/output name). `Floating`/
@@ -358,7 +361,8 @@ impl SwayAction<'_> {
     }
 
     /// Whether the tree currently shows this action's command as having
-    /// taken effect (see docs/plan-poll-based-wait-time-actions.md). Only
+    /// taken effect (see each variant's notes under CLAUDE.md's "Core model"
+    /// section). Only
     /// meaningful for variants `polls()` returns `true` for; every other
     /// variant answers `false` unconditionally.
     ///
@@ -405,7 +409,9 @@ impl SwayAction<'_> {
             // sibling swap and a row-changing move that also rewrites the
             // surrounding split structure. Critically, this does *not*
             // compare parent/sibling structure directly — live testing
-            // (see docs/plan-poll-based-wait-time-actions.md) found that
+            // (see tests/live_sway.rs's
+            // new_column_falls_back_gracefully_at_the_edge_with_a_large_wait_time)
+            // found that
             // the documented "already at the edge" no-op still incidentally
             // restructures the tree around *other* siblings (Sway wraps
             // one in a new split container) even though the target window's
@@ -441,8 +447,9 @@ impl SwayAction<'_> {
     /// Polls for up to `poll_grace()` for `poll_matches()` to confirm
     /// the command `run_wait_time()` just sent took effect, returning as
     /// soon as it does (the fast path). Several wait-time actions have
-    /// legitimate no-op outcomes where confirmation never arrives (see
-    /// docs/plan-poll-based-wait-time-actions.md) — telling that apart from
+    /// legitimate no-op outcomes where confirmation never arrives (a solo
+    /// window's clamped resize, a move already at the workspace edge) —
+    /// telling that apart from
     /// "hasn't happened yet" is impossible from tree state alone, so once
     /// the grace period elapses this falls back to today's original
     /// behavior: assume success and sleep out the rest of `wait_time`,

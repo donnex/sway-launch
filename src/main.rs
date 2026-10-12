@@ -175,10 +175,10 @@ struct Args {
     /// on a window, so a command or per-window flag alongside it could only
     /// be discarded. Rejected rather than ignored, same as those.
     ///
-    /// --json is in that list for the same reason it's in --completions': a
-    /// raw event dump has no JSON shape to take, and debug_events() writes
-    /// plain `Event: N` lines regardless, so accepting the flag could only
-    /// throw it away.
+    /// --json is in that list too: debug_events() writes plain `Event: N`
+    /// lines regardless, so accepting the flag could only throw it away. That
+    /// is a choice rather than a constraint (Sway's events are JSON on the
+    /// wire), but until a JSON event dump exists, rejecting it is honest.
     #[clap(short, long, conflicts_with_all = per_window_and(&["json"]))]
     debug_events: bool,
 
@@ -554,8 +554,9 @@ fn step_action_records_json(
 /// Reports a runtime failure — file I/O, TOML parsing, or the
 /// `SwayLaunch`/step operation itself failing against Sway — to stderr and
 /// exits 1. When `--json` is set, the message is wrapped in a
-/// `{"error": "..."}` object instead of printed as plain text, mirroring the
-/// structured `{"container_id": ...}`/`{"container_ids": [...]}` success
+/// `{"error": "...", "rolled_back": [...]}` object instead of printed as plain
+/// text (plus whichever optional fields `fail_with_rollback()` documents),
+/// mirroring the structured `{"container_id": ...}`/`{"container_ids": [...]}` success
 /// shapes below rather than leaving `--json` callers to also parse plain-text
 /// stderr on failure. Deliberately scoped to these runtime failures only — a
 /// bad CLI invocation (missing/conflicting flags, caught via clap's `.error()`
@@ -866,10 +867,10 @@ fn resolve_template_contents(template_arg: &Path) -> Result<String, String> {
 }
 
 /// The `--list-templates` standalone mode: prints every built-in
-/// `--template` name and its one-line description, or (with `--json`) the
-/// same as a `{"templates": [...]}` array. Doesn't touch Sway IPC, so it's
-/// checked and short-circuits right after `--completions`, same as
-/// `--layout`/`--template`.
+/// `--template` name with its category, one-line description, and slot info,
+/// or (with `--json`) the same as a `{"templates": [...]}` array. Doesn't
+/// touch Sway IPC, so it's checked and short-circuits right after
+/// `--completions`, before the `--layout`/`--template` dispatch.
 fn print_builtin_templates(json: bool) {
     let templates = template::builtin_templates();
 
@@ -916,8 +917,8 @@ fn print_builtin_templates(json: bool) {
 /// The `--show-template` standalone mode: resolves its argument the exact
 /// same way `--template` itself does (via `resolve_template_contents()`),
 /// then prints the raw TOML instead of running it. Doesn't touch Sway IPC,
-/// so it's checked and short-circuits right after `--list-templates`, same
-/// as `--layout`/`--template`.
+/// so it's checked and short-circuits right after `--list-templates`, before
+/// the `--layout`/`--template` dispatch.
 fn print_template_contents(template_arg: &Path, json: bool) {
     let contents = match resolve_template_contents(template_arg) {
         Ok(contents) => contents,
@@ -1462,9 +1463,9 @@ mod tests {
 
     #[test]
     fn schemas_mirror_args_field_for_field() {
-        // CLAUDE.md states that LayoutStep/TemplateStep mirror Args by
-        // design and that "nothing keeps any of them in sync automatically —
-        // no compiler check, no test". This is that test. Adding a flag to
+        // LayoutStep/TemplateStep mirror Args by design (see CLAUDE.md), and
+        // there's no compiler check keeping the three in sync — this test is
+        // what does. Adding a flag to
         // Args without the matching schema field is silent: every existing
         // test still passes, CI stays green, and --layout/--template simply
         // lack the capability until someone notices. The three allowlists

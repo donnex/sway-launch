@@ -338,7 +338,7 @@ mod tests {
     #[test]
     fn build_actions_includes_every_flag_in_the_documented_fixed_order() {
         // Regression test for the SwayLaunch::run() -> build_actions() split
-        // (external-review.md #5/#32): every flag except new_column/new_row
+        // (an external review's suggestion): every flag except new_column/new_row
         // (which need a live get_outputs()/get_tree() call inside
         // relocates_to_another_output() even just to build the plan, so
         // they're covered separately by tests/live_sway.rs, not headlessly
@@ -482,8 +482,8 @@ mod tests {
     fn build_actions_with_check_relocation_false_never_touches_ipc() {
         // The whole point of check_relocation: false — confirms
         // new_column/new_row are always included (never skipped, and
-        // never erroring) with no reachable Sway socket, unlike the two
-        // tests above with check_relocation: true.
+        // never erroring) with no reachable Sway socket, whereas
+        // check_relocation: true would read the tree (see the note above).
         let mut sway_launch = minimal_sway_launch();
         sway_launch.new_column = true;
         sway_launch.new_row = true;

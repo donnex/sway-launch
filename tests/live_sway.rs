@@ -111,7 +111,7 @@ fn find_node(node: &Node, con_id: i64) -> Option<&Node> {
 }
 
 /// The name of the nearest `NodeType::Workspace` ancestor of `con_id` —
-/// mirrors `sway_launch.rs`'s private `find_containing_name()`. Used to
+/// mirrors `tree.rs`'s private `find_containing_name()`. Used to
 /// detect Sway's scratchpad (the fixed internal workspace named
 /// `__i3_scratch`) in a way that's reliable on both Sway 1.9 (still what
 /// `apt` installs on Ubuntu 24.04/CI) and 1.11, unlike the node's own
@@ -135,7 +135,7 @@ fn ancestor_workspace_name(node: &Node, con_id: i64, current: Option<&str>) -> O
 }
 
 /// The `layout` of `con_id`'s direct parent node — mirrors
-/// `sway_launch.rs`'s private `find_parent_layout()`, which
+/// `tree.rs`'s private `find_parent_layout()`, which
 /// `SwayAction::poll_matches()` uses to confirm a `Split` action, since a
 /// window's own `layout` field never carries its split direction (see that
 /// function's doc comment).
@@ -238,7 +238,7 @@ fn get_node(connection: &mut Connection, con_id: i64) -> Node {
         .clone()
 }
 
-/// Mirrors `sway_launch.rs`'s private `node_is_floating()`. Sway 1.9 (still
+/// Mirrors `tree.rs`'s private `node_is_floating()`. Sway 1.9 (still
 /// what `apt` installs on the `ubuntu-latest` CI runner) never populates a
 /// floating container's own `floating` field — confirmed live against a
 /// headless compositor, `floating enable` correctly changes `node_type` to
@@ -1824,7 +1824,7 @@ fn new_column_does_not_relocate_a_nested_window_to_a_different_output() {
 #[test]
 fn new_column_combined_with_workspace_lands_on_the_target_workspace_correctly() {
     fresh_workspace();
-    // Regression test for external-review.md's #14 investigation (see ISSUES.md/CLAUDE.md):
+    // Regression test for an external review's question about action order (see CLAUDE.md):
     // SwayLaunch::run()'s fixed order runs NewColumn before Workspace, so
     // `--new-column --workspace <target>` restructures the window relative
     // to its *origin* workspace's siblings before moving it away. Confirmed
@@ -3209,7 +3209,7 @@ fn new_row_confirms_via_poll_when_swapping_past_a_sibling() {
 fn new_column_falls_back_gracefully_at_the_edge_with_a_large_wait_time() {
     fresh_workspace();
     // The documented "already at the edge" no-op (see
-    // matching_window_change_events()'s comment in src/sway_launch.rs) —
+    // matching_window_change_events()'s comment in confirmation.rs) —
     // confirmed during this feature's development that Sway can still
     // incidentally restructure *other* siblings in this case (wrapping one
     // in a new split container) even though this window's own rect never
@@ -4312,7 +4312,7 @@ fn retarget_by_id_layout_floats_the_first_step_by_name() {
         node.node_type,
         node.floating
     );
-    // Mirrors src/sway_launch.rs's width_matches(): a window that had
+    // Mirrors tree.rs's width_matches(): a window that had
     // already been tiled with a sibling for a while before being floated
     // and resized can come out short by 2*current_border_width on
     // rect.width alone (confirmed live on Sway 1.11) — but confirmed live
@@ -4999,7 +4999,7 @@ fn existing_errors_listing_ids_with_multiple_matches() {
 #[test]
 fn mark_with_special_characters_is_stored_literally_not_executed() {
     fresh_workspace();
-    // Live version of quote_sway_string's unit tests (sway_launch.rs):
+    // Live version of quote_sway_string's unit tests (ipc.rs):
     // proves the injection-style mark actually ends up stored as one
     // literal mark against a real compositor, rather than being split into
     // multiple Sway commands.
@@ -5025,7 +5025,7 @@ fn mark_with_special_characters_is_stored_literally_not_executed() {
 fn mark_containing_command_separators_still_round_trips_through_mark_match() {
     fresh_workspace();
     // The other half of the `"`/`\` rejection added alongside this test (see
-    // sway_launch.rs's validate_sway_string_argument): proving the new
+    // values.rs's validate_sway_string_argument): proving the new
     // validation didn't over-reject. A `,`/`;` in a mark *is* genuinely
     // neutralized by quote_sway_string() and stored byte-for-byte, so
     // --mark followed by --mark-match on the same value must still find the
@@ -5222,7 +5222,7 @@ fn debug_events_prints_a_real_window_event() {
     // --debug-events runs until killed, so it doesn't fit this file's usual
     // spawn-and-wait-for-exit pattern — spawns it as a background child with
     // its stdout read on a separate thread and forwarded through a channel,
-    // the same shape sway_launch.rs's own event loop uses internally.
+    // the same shape confirmation.rs's own event loop uses internally.
     let mut child = sway_launch_command()
         .arg("--debug-events")
         .stdout(std::process::Stdio::piped())
