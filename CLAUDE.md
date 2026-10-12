@@ -2057,6 +2057,11 @@ writing it anywhere:
   decision such as "the six basic example scripts need no `die`") is project-specific, and is
   written here directly.
 
+**Never name the canonical repository in this one** — not its name, not its path on this machine,
+not a commit SHA from it — in any file, commit message, issue, or comment. It's private and this
+repo is public, so the name alone leaks something. Call it "the shared conventions" or "the
+canonical repository", and its files "the canonical module", as this section already does.
+
 **Never commit in the canonical repository from this project — not the edit, not a fix to it, not
 anything.** The scratch copy at this repo's root is the entire deliverable; the user carries it
 across themselves. This holds however convenient it looks and however clearly correct the change
