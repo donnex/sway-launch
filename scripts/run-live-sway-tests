@@ -1,7 +1,6 @@
 #!/bin/sh
 #
-# Starts a headless Sway compositor, runs tests/live_sway.rs against it, then
-# tears the compositor down. Used by CI and by developers testing locally.
+# Run tests/live_sway.rs against a throwaway headless Sway compositor.
 #
 set -eu
 

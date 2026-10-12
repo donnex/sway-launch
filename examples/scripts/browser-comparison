@@ -1,7 +1,6 @@
 #!/bin/sh
 #
-# Launch Firefox and Chromium side by side, both on example.com, for
-# comparing how a page renders in each.
+# Launch Firefox and Chromium side by side, both on example.com.
 #
 set -eu
 
@@ -33,6 +32,8 @@ case "${1:-}" in
   usage 1
   ;;
 esac
+
+command -v sway-launch >/dev/null 2>&1 || die "sway-launch not found on PATH. Install sway-launch first."
 
 for required_command in firefox chromium; do
   command -v "$required_command" >/dev/null 2>&1 ||
