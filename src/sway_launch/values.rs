@@ -240,13 +240,79 @@ pub fn validate_sway_string_argument(value: &str) -> Result<String, String> {
     // newlines asserted the *storage* behaviour (one literal mark, nothing
     // executed — which was and is true) rather than whether the value came
     // back out again.
-    if value.contains('\n') {
-        return Err(
-            "Must not contain a newline — Sway rewrites it to \";\" when storing the value, so \
-             the value would not round-trip"
-                .to_string(),
-        );
+    //
+    // NUL joins it for the same reason: Sway's IPC handler splits the payload
+    // with C string functions, so an embedded NUL (reachable through TOML's
+    // `\^@`-style escapes, though never through argv) is rewritten to `;`
+    // exactly like a newline — `mark = "ab<NUL>cd"` is stored as `ab;cd`.
+    if let Some(character) = value.chars().find(|&c| c == '\n' || c == '\0') {
+        return Err(format!(
+            "Must not contain a newline or NUL (found {:?}) — Sway rewrites it to \";\" when \
+             storing the value, so the value would not round-trip",
+            character
+        ));
     }
+    Ok(value.to_string())
+}
+
+/// Validates the command a launch hands to Sway's `exec` — the positional
+/// CLI command, and a layout step's (or a resolved template binding's)
+/// `command` field.
+///
+/// The command is sent raw, not quoted (see `exec_sway_command()` for why),
+/// so it goes through Sway's own command parser before the shell ever sees
+/// it, and that parser treats a few characters as command separators:
+///
+/// - an unquoted `,` or `;` ends the `exec` and starts a new Sway command, so
+///   `foot -T a,b` launched `foot -T a` and then failed on `b` (leaving the
+///   window open and unreported), and `foot; mark x` ran `mark x` against
+///   whatever was focused. Scanned with the same rules Sway's `argsep()`
+///   uses: `"`/`'` quote, a backslash escapes the next character, and only a
+///   separator outside both counts. Quoting or escaping one is enough, since
+///   Sway passes an `exec`'s text on with its quotes and backslashes intact,
+///   so the shell then reads it exactly as typed.
+/// - a newline or NUL anywhere, quoted or not: Sway's IPC handler rewrites
+///   each to `;` before quote handling runs, so neither can be protected by
+///   quoting. Confirmed live on Sway 1.11 (a quoted newline in a window title
+///   arrived as `;`). A carriage return is rejected alongside the newline, as
+///   a newline in all but name — a CRLF-edited file is where one comes from.
+///
+/// Blank values aren't this function's concern: the CLI's own "Missing
+/// COMMAND" check and `to_sway_launch()`'s target logic already report those
+/// in their own words.
+pub fn validate_exec_command(value: &str) -> Result<String, String> {
+    if let Some(character) = value.chars().find(|&c| matches!(c, '\n' | '\r' | '\0')) {
+        return Err(format!(
+            "Must not contain {:?} — Sway turns it into a command separator, so the rest of the \
+             line would run as a separate Sway command. Move a multi-line command into a script",
+            character
+        ));
+    }
+
+    let mut in_double_quotes = false;
+    let mut in_single_quotes = false;
+    let mut escaped = false;
+    for character in value.chars() {
+        match character {
+            '"' if !in_single_quotes && !escaped => in_double_quotes = !in_double_quotes,
+            '\'' if !in_double_quotes && !escaped => in_single_quotes = !in_single_quotes,
+            '\\' => {
+                escaped = !escaped;
+                continue;
+            }
+            ',' | ';' if !in_double_quotes && !in_single_quotes && !escaped => {
+                return Err(format!(
+                    "Must not contain an unquoted {:?} — Sway splits its commands on it, so the \
+                     rest would run as a separate Sway command. Wrap the part containing it in \
+                     quotes, or move the command into a script",
+                    character
+                ));
+            }
+            _ => {}
+        }
+        escaped = false;
+    }
+
     Ok(value.to_string())
 }
 
@@ -496,6 +562,15 @@ mod tests {
     }
 
     #[test]
+    fn validate_sway_string_argument_rejects_a_nul() {
+        // Regression test: Sway's IPC handler rewrites an embedded NUL to ";"
+        // exactly like a newline, so `mark = "ab\u{0}cd"` (reachable via a
+        // TOML escape) was stored as `ab;cd` and could never be matched again.
+        let error = validate_sway_string_argument("ab\0cd").expect_err("a NUL should be rejected");
+        assert!(error.contains("NUL"), "{error:?}");
+    }
+
+    #[test]
     fn validate_sway_string_argument_rejects_a_double_quote() {
         // Regression test: confirmed live that Sway stores `mark "a\"b"` as
         // the literal `a\"b`, so --mark/--mark-match could never round-trip
@@ -626,5 +701,89 @@ mod tests {
             Position::Coordinates { x: 100, y: 200 }.to_string(),
             "100,200"
         );
+    }
+
+    // validate_exec_command
+
+    #[test]
+    fn validate_exec_command_accepts_an_ordinary_command() {
+        assert_eq!(
+            validate_exec_command("foot -T title"),
+            Ok("foot -T title".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_exec_command_accepts_shell_syntax_without_separators() {
+        assert!(validate_exec_command("cd ~/project && foot | tee log &").is_ok());
+        assert!(validate_exec_command("( exec foot )").is_ok());
+    }
+
+    #[test]
+    fn validate_exec_command_rejects_an_unquoted_comma() {
+        // Regression test: `foot -T a,b` launched `foot -T a`, then failed on
+        // `b` as an unknown Sway command, leaving the window open.
+        let error = validate_exec_command("foot -T a,b").expect_err("an unquoted , must fail");
+        assert!(error.contains("','"), "{error:?}");
+    }
+
+    #[test]
+    fn validate_exec_command_rejects_an_unquoted_semicolon() {
+        // Regression test: `foot -T x; mark INJECTED` ran `mark INJECTED`
+        // against whatever window was focused.
+        let error =
+            validate_exec_command("foot -T x; mark INJECTED").expect_err("an unquoted ; must fail");
+        assert!(error.contains("';'"), "{error:?}");
+    }
+
+    #[test]
+    fn validate_exec_command_accepts_separators_inside_quotes() {
+        assert!(validate_exec_command("foot -T \"a,b; c\"").is_ok());
+        assert!(validate_exec_command("foot -T 'a,b; c'").is_ok());
+        assert!(validate_exec_command("sh -c 'if true; then foot; fi'").is_ok());
+    }
+
+    #[test]
+    fn validate_exec_command_accepts_a_backslash_escaped_separator() {
+        // Sway's argsep() treats an escaped character as literal, and passes
+        // the backslash on to the shell, which reads `\,` as `,`.
+        assert!(validate_exec_command("foot -T a\\,b").is_ok());
+        assert!(validate_exec_command("foot -T a\\;b").is_ok());
+    }
+
+    #[test]
+    fn validate_exec_command_rejects_a_separator_after_an_escaped_backslash() {
+        // `\\` is an escaped backslash, so the comma after it is unescaped.
+        assert!(validate_exec_command("foot -T a\\\\,b").is_err());
+    }
+
+    #[test]
+    fn validate_exec_command_does_not_let_the_other_quote_close_a_quoted_span() {
+        // An apostrophe inside double quotes is literal, so the comma after
+        // it is still inside the double-quoted span.
+        assert!(validate_exec_command("foot -T \"it's,fine\"").is_ok());
+        // ...and an escaped quote doesn't close the span either.
+        assert!(validate_exec_command("foot -T \"a\\\",b\"").is_ok());
+    }
+
+    #[test]
+    fn validate_exec_command_rejects_a_separator_after_a_closed_quote() {
+        assert!(validate_exec_command("foot -T 'a' , mark x").is_err());
+    }
+
+    #[test]
+    fn validate_exec_command_rejects_a_newline_even_inside_quotes() {
+        // Sway rewrites a newline to ";" before its quote handling runs, so
+        // quoting can't protect one: `foot -T "q1<LF>q2"` got the title q1;q2.
+        assert!(validate_exec_command("foot -T nl\nmark NLINJ").is_err());
+        assert!(validate_exec_command("foot -T \"q1\nq2\"").is_err());
+    }
+
+    #[test]
+    fn validate_exec_command_rejects_a_carriage_return_and_a_nul() {
+        assert!(validate_exec_command("foot\r").is_err());
+        // Reachable from TOML, never from argv: a NUL is rewritten to ";"
+        // like a newline, and ran `mark NULINJ` with a zero exit status.
+        assert!(validate_exec_command("foot -T nulcmd\0mark NULINJ").is_err());
     }
 }

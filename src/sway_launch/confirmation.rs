@@ -11,7 +11,7 @@
 //! *is* versus how its effect is established: `action.rs` renders the command,
 //! this module decides whether it worked.
 
-use super::ipc::{event_loop, new_connection, run_sway_command};
+use super::ipc::{event_loop, new_connection, run_single_sway_command, run_sway_command};
 use super::outcome::{ActionOutcome, ActionResult, LaunchOwnership};
 use super::process_marker::{
     generate_pid_marker_token, process_has_env_var, scan_marker_presence, MarkerTracker,
@@ -717,7 +717,7 @@ impl SwayAction<'_> {
         if verbose {
             eprintln!("Sway command: {}", sway_command);
         }
-        run_sway_command(&sway_command)?;
+        run_single_sway_command(&sway_command)?;
 
         let (event_sender, event_receiver) = mpsc::channel();
         thread::spawn(move || {

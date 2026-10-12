@@ -669,3 +669,50 @@ fn layout_rollback_on_error_reports_empty_rollback_when_nothing_was_launched() {
         "expected an empty rollback list since neither step launched a window: {stderr:?}"
     );
 }
+
+#[test]
+fn layout_validate_rejects_a_command_sway_would_split() {
+    // A NUL (TOML's \u0000) is rewritten to `;` by Sway's IPC handler just
+    // like a newline: `foot -T nulcmd<NUL>mark NULINJ` ran `mark NULINJ` and
+    // exited 0, and --validate used to call the file valid.
+    for (name, command) in [
+        ("split-nul", "foot -T nulcmd\\u0000mark NULINJ"),
+        ("split-newline", "foot -T nl\\nmark NLINJ"),
+        ("split-comma", "foot -T a,b"),
+        ("split-semicolon", "foot; mark INJECTED"),
+    ] {
+        let path = TempToml::write(
+            name,
+            &format!("[[step]]\ncon_id = 42\n\n[[step]]\ncommand = \"{command}\"\n"),
+        );
+
+        let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+            .args(["--layout", path.to_str().unwrap(), "--validate"])
+            .output()
+            .expect("failed to run sway-launch binary");
+
+        assert!(!output.status.success(), "{command:?} should be rejected");
+        let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+        assert!(stderr.contains("step 2"), "{command:?}: {stderr}");
+        assert!(stderr.contains("command:"), "{command:?}: {stderr}");
+    }
+}
+
+#[test]
+fn layout_validate_rejects_a_mark_containing_a_nul() {
+    // Stored by Sway as `ab;cd`, so --mark-match could never find it again.
+    let path = TempToml::write(
+        "mark-nul",
+        "[[step]]\ncon_id = 42\nmark = \"ab\\u0000cd\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap(), "--validate"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("mark:"), "{stderr}");
+    assert!(stderr.contains("NUL"), "{stderr}");
+}

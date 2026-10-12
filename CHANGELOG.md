@@ -190,6 +190,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A launch command containing an unquoted `,` or `;` is now rejected up front, instead of being
+  split by Sway into separate commands. Sway reads the command before the shell does, so
+  `'foot -T a,b'` used to open a window and then fail on `b`, leaving that window open and
+  unreported (and out of `--rollback-on-error`'s reach), and `'foot; mark x'` ran `mark x` against
+  whatever window happened to be focused. Quote or backslash-escape the separator, or move the
+  command into a script. A newline, carriage return or NUL in a command is rejected the same way,
+  even inside quotes, since Sway turns each into a `;` before reading quotes; that includes
+  `--layout`/`--bindings` files, where `--validate` now catches it. A NUL in a `mark`, `workspace`,
+  `output` or `mark_match` value is rejected too, since Sway stores it as `;`. (#4)
 - Launching a window no longer claims someone else's window just because its own process hadn't
   started yet. When no window carrying the private per-launch marker had appeared, `sway-launch`
   treated "no process carries the marker" as "the launched process already exited", and took the

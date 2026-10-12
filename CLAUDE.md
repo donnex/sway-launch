@@ -59,7 +59,17 @@ below) plus five integration test files:
   interpolated into a Sway command as a quoted string: it rejects a blank value, and both
   characters `quote_sway_string()` escapes (`"` and `\`), since Sway was confirmed live to store
   the escape character literally rather than unescaping it, silently corrupting the value instead
-  of round-tripping it (see that function's own doc comment). A fourth, `pub fn require_non_blank`,
+  of round-tripping it (see that function's own doc comment); it rejects a newline and a NUL too,
+  both of which Sway rewrites to `;`. `validate_exec_command` covers the launch command (the
+  positional CLI command and a step's/binding's `command`, checked in `to_sway_launch()`), which is
+  sent to Sway raw rather than quoted (see "`Exec`" below), so it goes through Sway's own command
+  parser before the shell: it rejects an unquoted, unescaped `,`/`;` (scanned with the same
+  quote/backslash rules as Sway's `argsep()`, so a quoted or escaped one passes through to the
+  shell intact) and a newline/CR/NUL anywhere, since Sway rewrites those to `;` before it looks at
+  quotes. `run_wait_matching_exec_event()` backs this up by sending the `exec` through
+  `ipc.rs`'s `run_single_sway_command()`, which treats a reply with more than one outcome as an
+  error, so a split that somehow got past the validator can't report success. A fifth,
+  `pub fn require_non_blank`,
   is the generic "this named field must not be empty or whitespace-only" check the layout/template
   schemas apply to free-form identifiers (`id`, `target_id`, `slot`, a binding's `command`, a
   template's `description`/`category`) that have no dedicated format of their own.
