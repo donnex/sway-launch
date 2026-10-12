@@ -290,7 +290,8 @@ Basic (all `foot`):
   together.
 - [`examples/scripts/retarget-floating`](examples/scripts/retarget-floating) — a terminal adjusted
   twice after launch, without relaunching it: once via `--con-id` with a captured container id,
-  once via `--existing` matching `--app-id`.
+  once via `--existing` matching `--app-id`. The terminal gets its own app_id, so `--existing`
+  still finds exactly one window when other foot terminals are open.
 - [`examples/layouts/quad-terminals.toml`](examples/layouts/quad-terminals.toml) — the same layout
   as `examples/scripts/quad-terminals`, as a declarative `--layout` file instead of a shell
   script; run with `sway-launch --layout examples/layouts/quad-terminals.toml`. See
