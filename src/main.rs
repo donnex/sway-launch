@@ -229,10 +229,11 @@ struct Args {
     #[clap(long)]
     apps: Option<String>,
 
-    /// If a later --layout/--template step fails, kill every window this
-    /// invocation itself launched by an earlier, already-completed step
-    /// (not one it merely retargeted via con_id/existing/target_id), rather
-    /// than leaving them open. Requires --layout or --template
+    /// If a --layout/--template step fails, kill every window this
+    /// invocation itself launched, by an earlier step or by the failing step
+    /// before it failed (not one it merely retargeted via
+    /// con_id/existing/target_id), rather than leaving them open. Requires
+    /// --layout or --template
     #[clap(long)]
     rollback_on_error: bool,
 
@@ -596,8 +597,15 @@ impl RollbackOutcome {
 /// reported nothing but the error, leaving a caller with real windows open
 /// on screen and no way to identify them short of walking the tree and
 /// guessing — the exact ambiguity `id`/`containers` exists to remove.
-/// Always empty outside `run_steps()` (a single invocation has no partial
-/// state: it either resolved its one container or it didn't).
+///
+/// The failing step's own window counts too, when it got as far as launching
+/// one: a step can launch its window and then fail on a later action, and
+/// that window is just as real (see `run_steps()`'s `Err` branch). A window
+/// the failing step only retargeted doesn't, since it may never have
+/// existed. Always empty outside `run_steps()`: a single invocation reports
+/// its one resolved container as the error's own `container_id` instead (see
+/// `fail_with_rollback()`), since there is no list of steps for it to be part
+/// of.
 #[derive(Default)]
 struct PartialProgress {
     container_ids: Vec<i64>,
@@ -619,6 +627,14 @@ impl PartialProgress {
 /// are reported as `unmatched_windows`, omitted when empty like the other
 /// optional fields. Plain output needs nothing extra: the message already
 /// names them.
+///
+/// `RunError.container_id` — the container the run had already resolved when
+/// a later action failed — is reported as `container_id` under `--json` and
+/// as its own stderr line in plain output, and omitted when the failure came
+/// before anything was resolved. Plain output can't put it on stdout, which a
+/// failed run leaves empty so `id="$(sway-launch ...)"` never captures half a
+/// result. "Was the target", not "is still open": the failure may itself be
+/// that the container closed.
 fn fail_with_rollback(
     json: bool,
     error: &sway_launch::RunError,
@@ -631,6 +647,9 @@ fn fail_with_rollback(
             serde_json::json!({ "error": message, "rolled_back": rollback.rolled_back });
         if !error.unmatched_windows.is_empty() {
             value["unmatched_windows"] = unmatched_windows_json(&error.unmatched_windows);
+        }
+        if let Some(container_id) = error.container_id {
+            value["container_id"] = serde_json::json!(container_id);
         }
         // Omitted rather than reported as empty, so an ordinary failed
         // rollback-free run's error object keeps exactly the shape it always
@@ -648,6 +667,11 @@ fn fail_with_rollback(
         }
         diagnostic!("{}", value);
     } else {
+        // Ahead of the message rather than after it, so the error itself
+        // stays the last line for a single invocation, as it always was.
+        if let Some(container_id) = error.container_id {
+            diagnostic!("container {} was the target when this failed", container_id);
+        }
         diagnostic!("{}", message);
         if !rollback.rolled_back.is_empty() {
             diagnostic!(
@@ -1090,14 +1114,36 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
                 }
                 actions.extend(step_action_records_json(index, outcome.actions));
             }
-            Err(error) => fail_step(
-                args,
-                &launched_container_ids,
-                &container_ids,
-                &resolved_ids,
-                index,
-                error,
-            ),
+            Err(error) => {
+                // A step can launch its window and then fail on a later
+                // action, so that window joins the earlier ones: reported as
+                // progress, and rolled back when this run can prove it
+                // launched it — see RunError's doc comment. Only a window the
+                // step launched counts as progress: one it merely retargeted
+                // may never have existed (a stale con_id is exactly such a
+                // failure), so listing it among the open windows would assert
+                // something this run never saw. error.container_id still
+                // names it either way.
+                if let (Some(container_id), Some(ownership)) =
+                    (error.container_id, error.launch_ownership)
+                {
+                    container_ids.push(container_id);
+                    if let Some(id) = step.id.as_deref() {
+                        resolved_ids.insert(id.to_string(), container_id);
+                    }
+                    if ownership == sway_launch::LaunchOwnership::Launched {
+                        launched_container_ids.push(container_id);
+                    }
+                }
+                fail_step(
+                    args,
+                    &launched_container_ids,
+                    &container_ids,
+                    &resolved_ids,
+                    index,
+                    error,
+                )
+            }
         }
     }
 
@@ -1262,10 +1308,16 @@ fn steps_source(args: &Args) -> String {
 /// close something this run didn't create.
 ///
 /// `container_ids`/`resolved_ids` are every step that completed before this
-/// failure, reported under `--json` so a caller can identify the windows
-/// left open — see `PartialProgress`. They're the full set, not just the
-/// launched ones: a retargeted window isn't this run's to close, but it *is*
-/// something the caller may still want to know the id of.
+/// failure, plus the failing step's own window if it launched one, reported
+/// under `--json` so a caller can identify the windows left open — see
+/// `PartialProgress`. They're the full set, not just the launched ones: a
+/// retargeted window isn't this run's to close, but it *is* something the
+/// caller may still want to know the id of.
+///
+/// Whatever container the failing step resolved, launched or retargeted, is
+/// also named by `error.container_id`, so a caller can tell which window
+/// belongs to the step that failed; that is cleared when rollback touched it,
+/// for the same reason the lists are filtered.
 fn fail_step(
     args: &Args,
     launched_container_ids: &[i64],
@@ -1297,10 +1349,12 @@ fn fail_step(
             .map(|(name, id)| (name.clone(), *id))
             .collect(),
     };
+    let container_id = error.container_id.filter(|id| !attempted.contains(id));
     fail_with_rollback(
         args.json,
         &sway_launch::RunError {
             message: format!("step {}: {}", index + 1, error.message),
+            container_id,
             ..error
         },
         &rollback_outcome,

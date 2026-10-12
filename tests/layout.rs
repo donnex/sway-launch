@@ -614,6 +614,42 @@ fn layout_json_error_output_reports_the_steps_that_already_completed() {
 }
 
 #[test]
+fn layout_json_error_output_names_the_failing_step_s_container() {
+    // A step can resolve its container and then fail on a later action; the
+    // error names it as container_id. Step 2 resolves via con_id (no IPC) and
+    // then fails on the unreachable socket. A retargeted container isn't
+    // added to container_ids/containers -- it may never have existed -- and
+    // with --rollback-on-error the answer is the same: a con_id window was
+    // never this run's to close. (A launched failing step's window joining
+    // the progress lists needs a real launch; see tests/live_sway.rs's
+    // rollback_on_error_kills_the_failing_step_s_own_launched_window.)
+    let path = TempToml::write(
+        "json-error-failing-step",
+        "[[step]]\ncon_id = 42\n\n[[step]]\nid = \"second\"\ncon_id = 91\nfloating = true\n",
+    );
+
+    for extra in [&[][..], &["--rollback-on-error"][..]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+            .env("SWAYSOCK", "/nonexistent/sway-launch-test-socket")
+            .env_remove("I3SOCK")
+            .args(["--layout", path.to_str().unwrap(), "--json"])
+            .args(extra)
+            .output()
+            .expect("failed to run sway-launch binary");
+
+        assert!(!output.status.success());
+        let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+        let last_line = stderr.lines().next_back().unwrap_or_default();
+        let error: serde_json::Value = serde_json::from_str(last_line)
+            .unwrap_or_else(|_| panic!("the last stderr line should be JSON, got {stderr:?}"));
+        assert_eq!(error["container_ids"], serde_json::json!([42]), "{extra:?}");
+        assert_eq!(error["containers"], serde_json::json!({}), "{extra:?}");
+        assert_eq!(error["container_id"], serde_json::json!(91), "{extra:?}");
+        assert_eq!(error["rolled_back"], serde_json::json!([]), "{extra:?}");
+    }
+}
+
+#[test]
 fn layout_json_error_output_omits_progress_for_a_single_invocation() {
     // The partial-progress fields are a multi-step concept; a single
     // invocation either resolved its one container or didn't, so reporting

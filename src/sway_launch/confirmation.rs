@@ -821,6 +821,8 @@ impl SwayAction<'_> {
                         command_running,
                     ),
                     unmatched_windows,
+                    container_id: None,
+                    launch_ownership: None,
                 });
             }
 

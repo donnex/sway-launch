@@ -190,6 +190,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A window that launched fine and then failed on a later action (say `--position` on a tiled
+  window) is no longer lost: the error now names its container id, as `container_id` in the
+  `--json` error object and as a `container <id> was the target when this failed` line on stderr in
+  plain output. Previously the id was dropped, so a script had no way to find the window it needed
+  to clean up. In a `--layout`/`--template` run, the failing step's own launched window is also
+  listed in `container_ids`, and `--rollback-on-error` now closes it along with the earlier steps'
+  windows instead of leaving it open. (#7)
 - On a multi-monitor setup, `--new-column`/`--new-row` no longer throw a window onto another
   monitor when it's the only window inside a container at the edge of its workspace. Sway moves
   such a window to the next output, and the guard that skips a move like that only recognized

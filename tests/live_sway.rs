@@ -2455,6 +2455,74 @@ fn rollback_on_error_undoes_launches_not_mutations_to_existing_windows() {
 }
 
 #[test]
+fn rollback_on_error_kills_the_failing_step_s_own_launched_window() {
+    fresh_workspace();
+    // A step can launch its window and then fail on a later action of its
+    // own -- here `position` on a still-tiled window, which Sway rejects. That
+    // window used to be neither reported nor rolled back, since the error
+    // path dropped its container id. Run twice: without the flag the window
+    // stays open and is reported (as progress and as container_id), and with
+    // it the window is closed and reported as rolled back instead.
+    let mut connection = connect();
+    let path = TempToml::write(
+        "rollback-failing-step",
+        "[[step]]\ncommand = \"foot --app-id=rollback-failing-step-probe\"\n\
+         app_id = \"rollback-failing-step-probe\"\nposition = \"10,10\"\n",
+    );
+
+    let output = sway_launch_command()
+        .args(["--layout", path.to_str().unwrap(), "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(!output.status.success(), "a tiled position should fail");
+    std::thread::sleep(Duration::from_millis(300));
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let left_open = first_app_id_window(&tree, "rollback-failing-step-probe")
+        .expect("without --rollback-on-error the failing step's window stays open");
+    let left_open_guard = KillOnDrop(left_open);
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    let error: serde_json::Value =
+        serde_json::from_str(stderr.lines().next_back().unwrap_or_default())
+            .unwrap_or_else(|_| panic!("the last stderr line should be JSON, got {stderr:?}"));
+    assert_eq!(error["container_id"], serde_json::json!(left_open));
+    assert_eq!(error["container_ids"], serde_json::json!([left_open]));
+    drop(left_open_guard);
+    std::thread::sleep(Duration::from_millis(300));
+
+    let output = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--rollback-on-error",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(!output.status.success(), "a tiled position should fail");
+    std::thread::sleep(Duration::from_millis(300));
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let launched = first_app_id_window(&tree, "rollback-failing-step-probe");
+    let _launched_guard = launched.map(KillOnDrop);
+    assert_eq!(
+        launched, None,
+        "the failing step's own launched window should have been rolled back"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    let error: serde_json::Value =
+        serde_json::from_str(stderr.lines().next_back().unwrap_or_default())
+            .unwrap_or_else(|_| panic!("the last stderr line should be JSON, got {stderr:?}"));
+    assert_eq!(
+        error["rolled_back"].as_array().map(Vec::len),
+        Some(1),
+        "exactly the failing step's window should be rolled back: {error:?}"
+    );
+    assert!(
+        error.get("container_id").is_none(),
+        "a rolled-back window isn't reported as the open target: {error:?}"
+    );
+}
+
+#[test]
 fn rollback_on_error_leaves_a_window_it_only_adopted_open() {
     fresh_workspace();
     // --rollback-on-error kills windows, and a kill can't be undone, so it

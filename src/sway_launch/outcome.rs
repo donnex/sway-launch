@@ -61,7 +61,8 @@ pub enum LaunchOwnership {
 
 /// Why `SwayLaunch::run()` failed: the message, plus any windows a launch saw
 /// appear while it waited but rejected because they didn't pass its
-/// `--app-id`/`--class` filter.
+/// `--app-id`/`--class` filter, plus the container the run had already
+/// resolved when a later action failed.
 ///
 /// The windows are carried separately from the message, rather than only
 /// mentioned in it, because they are real windows left open on screen —
@@ -69,10 +70,21 @@ pub enum LaunchOwnership {
 /// `--json` caller needs their ids to deal with them without parsing prose.
 /// Every other failure leaves `unmatched_windows` empty, which is what the
 /// `From<String>` conversion produces.
+///
+/// `container_id`/`launch_ownership` exist for the same reason. A run can
+/// launch its window successfully and *then* fail on a follow-up action (a
+/// confirmation timeout, `--position` on a tiled window), leaving that window
+/// on screen; without its id on the error path, neither a script cleaning up
+/// after a failed single invocation nor `--rollback-on-error` for the failing
+/// layout step could find it. Both are `None` when the failure happened before
+/// a container was resolved at all, and `launch_ownership` is also `None` for
+/// a retargeted window, exactly as on `RunOutcome`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunError {
     pub message: String,
     pub unmatched_windows: Vec<UnmatchedWindow>,
+    pub container_id: Option<i64>,
+    pub launch_ownership: Option<LaunchOwnership>,
 }
 
 impl From<String> for RunError {
@@ -80,6 +92,8 @@ impl From<String> for RunError {
         RunError {
             message,
             unmatched_windows: Vec::new(),
+            container_id: None,
+            launch_ownership: None,
         }
     }
 }
