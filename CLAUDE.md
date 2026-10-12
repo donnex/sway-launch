@@ -1212,14 +1212,28 @@ itself fails (e.g. the window already closed on its own) is logged and skipped r
 as fatal — it doesn't stop the rest of the rollback, and the original step failure stays the error
 actually reported. `fail_step()` is shared by all three failure branches specifically so an id
 collision or conversion error on step *N* still rolls back steps *1..N-1*'s real windows, not just
-a failure inside `SwayAction::run()` itself. Not handled: a step whose *own* window launched
-successfully but a later action *within that same step* then failed — `SwayLaunch::run()`'s
-error (`RunError`, which carries only rejected-window ids, never the step's own resolved
-container) doesn't carry a container id on the error path, so there's nothing for
-`run_steps()` to roll back in that specific case; accepted as a known gap rather than reworking
-`SwayLaunch::run()`'s error type for it, since it needs `resolve_container_id()` to have already
-succeeded on the *failing* step itself, a narrower window than the earlier-steps case this feature
-was written for.
+a failure inside `SwayAction::run()` itself. A step whose *own* window resolved and then failed on
+a later action *within that same step* is covered too: `SwayLaunch::run()` stamps every failure
+after `resolve_container_id()` with `RunError.container_id`/`launch_ownership`, and `run_steps()`'s
+`Err` branch folds that id into `container_ids`/`containers` (so it's reported as partial progress)
+when the step *launched* it (any `launch_ownership`), and, when ownership is `Launched`, into the
+kill list (pushed last, so it's killed first). A retargeted failing step's id stays out of the
+progress lists — a stale `con_id` is itself such a failure, and listing a container that may never
+have existed as open would contradict what `container_ids` means — and is reported only via
+`container_id`; `rollback_on_error_leaves_a_window_opened_while_an_env_dropping_wrapper_waits`
+(its failing step is a nonexistent `con_id`) pins that. This
+used to be a documented known gap — `RunError` carried only rejected-window ids, so the failing
+step's window was neither rolled back nor even *reported*, and a single invocation's `--json` error
+had no id either, despite the window staying on screen; an external review pointed out that the
+reporting half needed far less than rollback and the same plumbing closed both. The same
+`container_id` is reported for a single invocation (`"container_id"` in the `--json` error, a
+`container <id> was the target when this failed` stderr line in plain output — never stdout, which
+stays empty on failure), and for the failing layout step alongside `container_ids`, cleared there
+when rollback touched it. Headless coverage drives `--con-id` against an unreachable socket
+(`tests/json_output.rs`'s `con_id_json_error_reports_the_resolved_container_id` and siblings,
+`tests/layout.rs`'s `layout_json_error_output_names_the_failing_step_s_container`); the
+launched-then-rolled-back case is `tests/live_sway.rs`'s
+`rollback_on_error_kills_the_failing_step_s_own_launched_window`.
 
 **Declined (2026-09-03): a `mutations_not_rolled_back` field in the `--json` error.** An external
 review noted that "rollback" can be read as "restore my desktop", while what it does is close

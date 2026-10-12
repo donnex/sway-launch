@@ -85,6 +85,73 @@ fn con_id_json_error_output_is_a_structured_object() {
 }
 
 #[test]
+fn con_id_json_error_reports_the_resolved_container_id() {
+    // A run that resolved its container and then failed on a later action
+    // used to drop the id, leaving a caller no way to find a window that was
+    // really on screen. --con-id resolves without IPC and --floating then
+    // fails on the socket, which is the same shape headlessly.
+    let output = sway_launch_without_a_compositor()
+        .args(["--con-id", "42", "--floating", "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    let last_line = stderr.lines().next_back().unwrap_or_default();
+    let error: serde_json::Value = serde_json::from_str(last_line)
+        .unwrap_or_else(|_| panic!("the last stderr line should be JSON, got {stderr:?}"));
+    assert_eq!(error["container_id"], serde_json::json!(42));
+}
+
+#[test]
+fn con_id_plain_error_names_the_resolved_container_on_stderr_only() {
+    let output = sway_launch_without_a_compositor()
+        .args(["--con-id", "42", "--floating"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "a failed run must leave stdout empty"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(
+        stderr.contains("container 42 was the target when this failed"),
+        "expected the resolved container on stderr, got {stderr:?}"
+    );
+    assert!(
+        stderr
+            .lines()
+            .next_back()
+            .unwrap_or_default()
+            .starts_with("floating enable: "),
+        "the error message should still be the last line: {stderr:?}"
+    );
+}
+
+#[test]
+fn json_error_omits_container_id_when_nothing_was_resolved() {
+    // --existing fails while resolving, before there is any container to
+    // report, so the field must be absent rather than null or a guess.
+    let output = sway_launch_without_a_compositor()
+        .args(["--existing", "--app-id", "no-such-app", "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    let last_line = stderr.lines().next_back().unwrap_or_default();
+    let error: serde_json::Value = serde_json::from_str(last_line)
+        .unwrap_or_else(|_| panic!("the last stderr line should be JSON, got {stderr:?}"));
+    assert!(error.get("error").is_some());
+    assert!(
+        error.get("container_id").is_none(),
+        "no container was resolved, so none should be reported: {error:?}"
+    );
+}
+
+#[test]
 fn a_failing_action_names_itself_in_the_error() {
     // An invocation with several actions used to report a bare failure that
     // couldn't be traced to any one of them; every action's error now leads

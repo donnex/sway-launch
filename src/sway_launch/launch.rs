@@ -324,12 +324,23 @@ impl<'a> SwayLaunch<'a> {
             diagnostic!("Target container id: {}", container_id);
         }
 
+        // From here on a container exists, so every failure carries its id:
+        // see RunError's doc comment.
+        let resolved = |error: RunError| RunError {
+            container_id: Some(container_id),
+            launch_ownership,
+            ..error
+        };
+
         let mut actions = Vec::new();
-        for planned in self.build_actions(container_id, true)? {
+        for planned in self
+            .build_actions(container_id, true)
+            .map_err(|error| resolved(error.into()))?
+        {
             let record = match planned {
                 PlannedAction::Run(action) => {
                     let verb = action.sway_command_verb();
-                    let result = action.run()?;
+                    let result = action.run().map_err(resolved)?;
                     ActionRecord {
                         action: verb,
                         status: match result.outcome {

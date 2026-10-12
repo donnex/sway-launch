@@ -116,7 +116,7 @@ Options:
       --show-template <NAME_OR_PATH>  Print a --template's raw TOML and exit, without running it. Same NAME_OR_PATH resolution as --template: a built-in name (see --list-templates), or a path ending in .toml. With --json, prints {"name": ..., "contents": "..."}
       --bindings <BINDINGS>           Bindings file supplying each --template slot's application identity. Requires --template; conflicts with --apps
       --apps <APPS>                   Comma-separated list of commands to launch into --template's slots, in the order they first appear in the template. Requires --template; conflicts with --bindings
-      --rollback-on-error             If a later --layout/--template step fails, kill every window this invocation itself launched by an earlier, already-completed step (not one it merely retargeted via con_id/existing/target_id), rather than leaving them open. Requires --layout or --template
+      --rollback-on-error             If a --layout/--template step fails, kill every window this invocation itself launched, by an earlier step or by the failing step before it failed (not one it merely retargeted via con_id/existing/target_id), rather than leaving them open. Requires --layout or --template
   -h, --help                          Print help (see more with '--help')
   -V, --version                       Print version
 ```
@@ -383,8 +383,9 @@ would otherwise be unclear which step it applied to — `--timeout`, `--wait-tim
 `--json` still apply, the latter printing one object at the end (see
 [JSON output](#json-output) below) instead of a line per step.
 
-Stopping at the first error leaves whatever earlier steps already launched open by default — add
-`--rollback-on-error` to close them automatically instead:
+Stopping at the first error leaves whatever earlier steps already launched open by default — and
+the failing step's own window too, when it launched one and then failed on a later action (a
+`position` on a tiled window, say). Add `--rollback-on-error` to close them automatically instead:
 
 ```shell
 sway-launch --layout layout.toml --rollback-on-error
@@ -912,8 +913,17 @@ socket, the `i3`/`sway --get-socketpath` fallback the IPC library shells out to 
 
 ```shell
 $ sway-launch --json --con-id 999999 --floating
-{"error":"floating enable: container id 999999 no longer exists — window may have closed","rolled_back":[]}
+{"container_id":999999,"error":"floating enable: container id 999999 no longer exists — window may have closed","rolled_back":[]}
 ```
+
+`container_id` is the container the run had already resolved — launched, or targeted via
+`--con-id`/`--existing` — when a later action failed, so a window that launched fine and then
+failed on, say, `--position` can still be found and closed. It's omitted when the failure came
+before any container was resolved (a launch that timed out, an `--existing` that matched nothing).
+It names the run's target, not a window guaranteed to still be open: the failure may itself be that
+the container closed, as above. Plain output reports the same thing as a
+`container <id> was the target when this failed` line on stderr, just ahead of the error message;
+stdout stays empty on failure.
 
 A launch that timed out after rejecting windows its `--app-id`/`--class` didn't match lists them
 under `unmatched_windows`, present only when there are any. `launched_by_this_run` says whether the
@@ -940,19 +950,23 @@ and worth checking. An id whose kill failed is deliberately kept out of `contain
 reported as though it were still open.
 
 For a `--layout`/`--template` run, the error object also reports whatever earlier steps had already
-completed, so a caller can identify the windows left open on screen without walking Sway's tree and
-guessing which ones were its own:
+completed, plus the failing step's own window if it launched one before failing, so a caller can
+identify the windows left open on screen without walking Sway's tree and guessing which ones were
+its own. Whatever container the failing step targeted — launched or retargeted — is also named by
+`container_id`, the same field a single invocation uses (a retargeted one isn't added to
+`container_ids`, since it may never have existed — a stale `con_id` fails exactly that way):
 
 ```shell
 $ sway-launch --layout layout.toml --json
-{"container_ids":[437,438],"containers":{"editor":437},"error":"step 3: floating enable: no matching window event within 5 sec","rolled_back":[]}
+{"container_id":439,"container_ids":[437,438,439],"containers":{"editor":437},"error":"step 3: floating enable: no matching window event within 5 sec","rolled_back":[]}
 ```
 
 `container_ids`/`containers` carry the same meaning they do on success. Anything `rolled_back`
-closed is excluded — it no longer exists. Both fields are omitted whenever there's no partial
-progress to report at all: for a single invocation, which has no concept of one, and equally for a
-`--layout`/`--template` run that failed on its very first step, having launched nothing yet. Treat
-them as optional rather than always present.
+closed is excluded — it no longer exists — and that includes `container_id`, which is omitted when
+rollback closed the failing step's window. `container_ids`/`containers` are omitted whenever there's
+no partial progress to report at all: for a single invocation, which has no concept of one, and
+equally for a `--layout`/`--template` run that failed on its very first step before launching a
+window. Treat them as optional rather than always present.
 
 ### Dry run
 
