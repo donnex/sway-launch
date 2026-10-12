@@ -1427,7 +1427,7 @@ it immediately, not as a follow-up. A new template file needs a row added to REA
 - Purely internal changes (refactors, test-only additions, CI/tooling, contributor-facing doc
   updates to this file) don't get a changelog entry — `CHANGELOG.md` is for users, not
   contributors.
-- At release time, see "Merging to master" below: `## [Unreleased]` is renamed to the new version
+- At release time, see "Merging to main" below: `## [Unreleased]` is renamed to the new version
   heading and a fresh empty `## [Unreleased]` is added above it, as part of the version-bump
   commit.
 
@@ -1685,9 +1685,9 @@ either way.
 - Default to the `dev` branch for all work, unless a different branch has already been checked out
   or explicitly set for the current task — in that case, keep working on that branch instead of
   switching to `dev`.
-- Never commit, amend, rebase onto, or push directly to `master`, and never push `dev` to trigger
-  anything master-facing on your own initiative. `master` only moves via an explicit
-  user-requested merge (see "Merging to master" below).
+- Never commit, amend, rebase onto, or push directly to `main`, and never push `dev` to trigger
+  anything main-facing on your own initiative. `main` only moves via an explicit
+  user-requested merge (see "Merging to main" below).
 - Before starting work on a tracked issue or a larger/multi-commit piece of work, ask whether to
   create and switch to a new topic branch for it, rather than committing straight to `dev`.
 - When the work is tied to a tracked issue — whether a local file-based checklist (e.g.
@@ -1696,36 +1696,36 @@ either way.
   `issue-123-fix-broken-parser`). This mirrors the `(#N)` suffix used in commit titles, so the
   branch, its commits, and the tracker entry are all traceable to each other, regardless of where
   the issue itself lives.
-- Keep `dev` linear on top of `master`: rebase `dev` onto `master` (never merge `master` into
-  `dev`), so `dev` stays a fast-forwardable descendant of `master`.
+- Keep `dev` linear on top of `main`: rebase `dev` onto `main` (never merge `main` into
+  `dev`), so `dev` stays a fast-forwardable descendant of `main`.
 
 #### History rewriting
 
 - History rewriting — amending, rebasing, force-pushing — is allowed on `dev` (and topic branches
-  based on it), but only for commits not yet merged into `master`, and only as long as `dev` stays
-  linear on top of `master` per the rule above. This overrides the general "always create new
+  based on it), but only for commits not yet merged into `main`, and only as long as `dev` stays
+  linear on top of `main` per the rule above. This overrides the general "always create new
   commits, never amend/force-push" default, but *only* for `dev`/topic branches — never rewrite
-  `master` history.
+  `main` history.
 - Aim to keep `dev`'s commit count low. Whenever a later commit would touch the same change as one
-  already on `dev` and not yet merged to `master` — most often a fix or refinement found via
+  already on `dev` and not yet merged to `main` — most often a fix or refinement found via
   testing or review of something just committed — rewrite the earlier commit(s) instead of
   stacking a new one on top: `git commit --amend` for the tip commit, or a soft-reset-and-recommit
   for an earlier one (Claude Code's tooling disallows interactive git flags, so `git rebase -i`
-  isn't an option). Do not carry multiple commits into a merge to `master` that are really just
+  isn't an option). Do not carry multiple commits into a merge to `main` that are really just
   successive fixes or changes to the same not-yet-merged work — combine them into the commit(s)
   they fix before merging. This is about the same change accruing fixes over time, not about
   splitting distinct work: the one-commit-per-concern rule under Commits still applies to
   genuinely separate concerns. Keep each commit correct and self-contained, since it hasn't
   shipped yet; re-run lint and push with `--force-with-lease` afterward per the rule below. Once a
-  commit is merged to `master`, this no longer applies — fix it forward with a new commit as
+  commit is merged to `main`, this no longer applies — fix it forward with a new commit as
   usual.
-- A topic branch gets the same treatment relative to `dev` that `dev` gets relative to `master`:
+- A topic branch gets the same treatment relative to `dev` that `dev` gets relative to `main`:
   rewrite its commits — amend, or soft-reset and recommit — to fold in fixes and refinements found
   while working on it, rather than stacking new fix-up commits on top. Clean it up before merging
-  into `dev`, the same way `dev` gets cleaned up before merging into `master`, so what lands on
+  into `dev`, the same way `dev` gets cleaned up before merging into `main`, so what lands on
   `dev` is already tidy rather than a commit plus a trail of its own fixes. This is not optional —
   see "Mandatory pre-merge history check" below, which applies to this merge exactly as much as it
-  applies to merging `dev` into `master`.
+  applies to merging `dev` into `main`.
 - Always push `dev` after committing or rewriting its history, so the remote never lags local. The
   same applies to a topic branch: push it after every commit made on it, not only once it's ready
   to merge, so it's never sitting local-only. When history was rewritten (amend/rebase), push with
@@ -1734,15 +1734,15 @@ either way.
 
 #### Mandatory pre-merge history check
 
-**Before merging `dev` into `master`, or a topic branch into `dev`, the commit history being
+**Before merging `dev` into `main`, or a topic branch into `dev`, the commit history being
 merged MUST be checked and rewritten if needed. This is not optional cleanup, not a judgment call,
 and not something to skip because the commits "look fine" — it is a required gate, every single
 time, with no exceptions. This has been missed before, and a missed check means every messy
 in-between commit ships permanently, since the destination branch's history is never rewritten
 after the fact.**
 
-The check: walk every commit being merged (`git log --oneline master..dev`, or
-`master..<topic-branch>` for a topic branch) and compare each one against the History rewriting
+The check: walk every commit being merged (`git log --oneline main..dev`, or
+`main..<topic-branch>` for a topic branch) and compare each one against the History rewriting
 rules above. Ask, for every commit: *is this really just a fix, refinement, typo correction, or
 follow-up to an earlier not-yet-merged commit in the same range?* If so, it must not survive as its
 own commit — squash it into the commit it fixes (`git commit --amend` for the tip, or a
@@ -1756,9 +1756,22 @@ Do this check — and any resulting rewrite plus `--force-with-lease` push — *
 merge summary to the user, not after. A merge summary should already describe the clean, final
 history, not a history that's about to be rewritten out from under it.
 
-#### Merging to master
+#### Merging to main
 
-Merging to `master` happens only on explicit request, as a sequence:
+Merging to `main` happens only on explicit request, following the sequence below.
+
+**`mm` is shorthand for "merge to `main`".** A message consisting of only `mm` (nothing else,
+ignoring surrounding whitespace) is a request to merge `dev` into `main` — the same as typing it
+out in full. It starts the sequence below at step 1, exactly like any other merge request. It never
+approves a merge: it can't stand in for the confirmation in step 4, even when it's sent right after
+a merge summary. A merge summary answered with `mm` is a new merge request, and gets a fresh
+summary of its own. `mm` inside a longer message is ordinary text, not the shortcut.
+
+`main` doesn't exist yet — no release has shipped (see "`--json`'s richer schema" above). The first
+merge creates it by pushing `dev`'s tip to `main` on the remote, per step 5's no-local-checkout
+case; every step before that applies unchanged.
+
+The sequence:
 
 1. Perform the mandatory pre-merge history check above. Do not proceed to the next step until
    `dev`'s history is already clean.
@@ -1768,23 +1781,42 @@ Merging to `master` happens only on explicit request, as a sequence:
    finalizing `CHANGELOG.md` (see "Changelog" above): rename `## [Unreleased]` to
    `## [X.Y.Z] - YYYY-MM-DD` with the new version and today's date, and add a fresh empty
    `## [Unreleased]` above it. This version-bump-and-changelog commit must be the last commit on
-   `dev` before the fast-forward merge to `master` — nothing else lands on `dev` after it.
+   `dev` before the fast-forward merge to `main` — nothing else lands on `dev` after it.
 3. Present a summary of what's about to land — the commit range (`git log --oneline
-   master..dev`) and a nutshell of what changed.
+   main..dev`) and a nutshell of what changed.
 4. Get explicit confirmation on that summary. Asking for the merge and confirming its contents are
    two separate steps; don't collapse them just because the user already said "merge."
-5. Once confirmed, fast-forward `master` to `dev`: `git merge --ff-only dev` — no merge commit, no
-   squash, since `dev`'s history is already linear and clean. If there's no local `master` checkout
-   to merge into, push `dev`'s tip directly to `master` on the remote instead.
-6. If a true fast-forward isn't possible (something moved `master` independently), stop and ask
+5. Once confirmed, fast-forward `main` to `dev`: `git merge --ff-only dev` — no merge commit, no
+   squash, since `dev`'s history is already linear and clean. If there's no local `main` checkout
+   to merge into, push `dev`'s tip directly to `main` on the remote instead.
+6. If a true fast-forward isn't possible (something moved `main` independently), stop and ask
    rather than falling back to a merge commit or force-push.
-7. Once `master` is updated, create and push an annotated tag matching the new version, `vX.Y.Z`,
+7. Once `main` is updated, create and push an annotated tag matching the new version, `vX.Y.Z`,
    so `.github/workflows/release.yml` (which triggers on a pushed `v*` tag; see the CI section
    above) picks it up and builds/publishes the release archive.
 
+**Steps 3 and 4 have no size exception, and no staleness exception either.** A single-commit
+merge, or a merge of work already discussed at length earlier in the same conversation, still gets
+its own summary and its own explicit confirmation — this has been skipped before on exactly that
+reasoning ("it's small," "we already just went over this"), which collapses the two steps the same
+way jumping straight from the user's "merge" to running it does. A summary shown earlier in the
+conversation does not count either, no matter how recently — even one turn earlier, even with
+nothing but an unrelated message in between. Any turn landing between the summary and the user's
+actual merge request breaks the link: treat every occurrence of the user asking to merge as
+requiring a summary shown *after* that specific request, with confirmation anchored to that
+specific summary, every single time it happens in a conversation, not just the first.
+
+**This step must never be skipped, full stop — not "try harder next time," a hard gate to check
+before running the merge command.** Immediately before running `git merge --ff-only` or pushing
+directly to `main` for any reason, stop and verify explicitly: *did the user's most recent merge
+request get answered with a summary shown after that request, and did they confirm that specific
+summary?* If either answer is no, the merge does not happen yet, regardless of confidence,
+urgency, commit count, or how many times the contents were already discussed. Treat the user's
+message asking to merge as the trigger for step 3, never as permission to skip to step 5.
+
 Remind the user to merge when it seems due: when a large feature/fix on `dev` looks finished, or
-`dev` has accumulated a lot of commits ahead of `master`, say so and suggest merging. This is a
-reminder only — never merge to `master` automatically or without explicit confirmation, no matter
+`dev` has accumulated a lot of commits ahead of `main`, say so and suggest merging. This is a
+reminder only — never merge to `main` automatically or without explicit confirmation, no matter
 how done the work looks or how many commits have piled up.
 
 #### Branch cleanup
@@ -1792,14 +1824,14 @@ how done the work looks or how many commits have piled up.
 Once a topic branch has been merged into `dev`, delete it — both the local branch and its `origin`
 remote counterpart (`git branch -d <branch>`, then `git push origin --delete <branch>`) — no need
 to ask first. A merged branch is fully redundant the moment its commits live on `dev`; its only
-purpose was getting them there. `dev` and `master` themselves are never deleted — this applies
+purpose was getting them there. `dev` and `main` themselves are never deleted — this applies
 only to topic branches.
 
 ### Commits
 
 - Every commit Claude Code creates must end with a `Co-Authored-By:` trailer identifying the
   active model, e.g. `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>`. Never omit this —
-  if a commit is later found to be missing it and hasn't been merged to `master` yet, fix it via
+  if a commit is later found to be missing it and hasn't been merged to `main` yet, fix it via
   the history-rewriting rules above rather than leaving it out.
 - One commit = one concern, not necessarily one file. Bundle files that share the same concern
   into a single commit — a source change routinely spans several files, and this applies to
