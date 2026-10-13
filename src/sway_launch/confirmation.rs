@@ -14,14 +14,16 @@
 //! already exists are confirmed in different ways.
 
 use super::action::{ActionKind, ExecAction, SwayAction};
-use super::ipc::{event_loop, new_connection, run_single_sway_command, run_sway_command};
+use super::ipc::{
+    event_loop, new_connection, run_single_sway_command, run_sway_command, spawn_event_forwarder,
+};
 use super::outcome::{ActionOutcome, LaunchOwnership, RunError, UnmatchedWindow};
 use super::process_marker::{
     generate_pid_marker_token, process_has_env_var, scan_marker_presence, MarkerPresence,
     MarkerTracker, MARKER_SCAN_INTERVAL, PID_MARKER_FALLBACK_GRACE, PID_MARKER_VAR,
 };
 use super::query::{
-    container_exists, container_state, node_by_id, parent_node_layout, position_matches,
+    container_state, ensure_container_exists, node_by_id, parent_node_layout, position_matches,
 };
 use super::tree::{
     height_matches, width_matches, window_app_id_match, window_class_match, ContainerState,
@@ -85,7 +87,7 @@ impl fmt::Display for WindowEventMatchError {
 }
 
 impl ActionKind<'_> {
-    /// The `WindowChange` event(s) that would confirm this kind of action, or
+    /// The `WindowChange` event that would confirm this kind of action, or
     /// `None` for one Sway fires no event for, which confirms by polling
     /// instead.
     ///
@@ -97,11 +99,11 @@ impl ActionKind<'_> {
     /// `poll_matches()` arm instead, or to being reported unconfirmed on every
     /// run. Every match on `ActionKind` in this file names each variant rather
     /// than ending in `_`, so a new kind can't skip either decision silently.
-    fn matching_window_change_events(&self) -> Option<Vec<WindowChange>> {
+    fn matching_window_change_event(&self) -> Option<WindowChange> {
         match self {
-            ActionKind::Floating => Some(vec![WindowChange::Floating]),
-            ActionKind::Fullscreen => Some(vec![WindowChange::FullscreenMode]),
-            ActionKind::Focus => Some(vec![WindowChange::Focus]),
+            ActionKind::Floating => Some(WindowChange::Floating),
+            ActionKind::Fullscreen => Some(WindowChange::FullscreenMode),
+            ActionKind::Focus => Some(WindowChange::Focus),
             // Unlike NewColumn/NewRow's "move right"/"move down" below,
             // "move workspace"/"move container to output" reliably fire
             // WindowChange::Move for an actual move (tests/live_sway.rs's
@@ -116,8 +118,8 @@ impl ActionKind<'_> {
             // ordering is load-bearing — see its doc comment), rather than
             // hanging until --timeout for a move that was never going to
             // happen.
-            ActionKind::Workspace(_) | ActionKind::Output(_) => Some(vec![WindowChange::Move]),
-            ActionKind::Mark(_) => Some(vec![WindowChange::Mark]),
+            ActionKind::Workspace(_) | ActionKind::Output(_) => Some(WindowChange::Move),
+            ActionKind::Mark(_) => Some(WindowChange::Mark),
             // NewColumn/NewRow ("move right"/"move down") were event-based
             // via WindowChange::Move too, until live-Sway testing showed
             // "move right" doesn't fire it when the window is already at
@@ -154,21 +156,21 @@ impl ActionKind<'_> {
             // fires WindowChange::Move. Confirmed live: for a previously
             // *tiled* window, Sway also auto-floats it first, firing a
             // WindowChange::Floating event before the Move — matches_window_event()
-            // simply doesn't match that one (its change type isn't in this
-            // list) and the loop keeps waiting for the Move that follows.
+            // simply doesn't match that one (its change type isn't the one
+            // returned here) and the loop keeps waiting for the Move that follows.
             // Re-scratchpadding an already-scratchpadded window is a no-op
             // that fires no event at all (confirmed live), so
             // already_at_target() below checks for and short-circuits that
             // case the same way it does for Workspace/Output/Floating/
             // Fullscreen/Focus.
-            ActionKind::Scratchpad => Some(vec![WindowChange::Move]),
+            ActionKind::Scratchpad => Some(WindowChange::Move),
         }
     }
 
     /// Whether this kind of action is confirmed by an IPC event (and so waits
     /// on `--timeout`) rather than by polling (and so waits on `--wait-time`).
     pub(super) fn is_event_confirmed(&self) -> bool {
-        self.matching_window_change_events().is_some()
+        self.matching_window_change_event().is_some()
     }
 }
 
@@ -237,7 +239,7 @@ impl SwayAction<'_> {
     /// already in the scratchpad fires no event at all, confirmed live —
     /// checked against the ancestor workspace name rather than `floating`,
     /// since a scratchpad window also reports as floating for the unrelated
-    /// reason `matching_window_change_events()`'s doc comment covers. Every
+    /// reason `matching_window_change_event()`'s doc comment covers. Every
     /// state above is read in one pass by `ContainerState::from_tree()`; every
     /// other action falls through to `false` unconditionally, which this never
     /// touches.
@@ -581,12 +583,7 @@ impl SwayAction<'_> {
         // guaranteeing the container still exists at the moment the command is
         // actually sent. The extra get_tree() runs a handful of times per
         // invocation, never in a loop.
-        if !container_exists(container_id)? {
-            return Err(format!(
-                "container id {} no longer exists — window may have closed",
-                container_id
-            ));
-        }
+        ensure_container_exists(container_id)?;
 
         // Wait before and after running the Sway command: before, to let
         // other running IPC clients finish their own commands; after, to
@@ -604,12 +601,7 @@ impl SwayAction<'_> {
         // Sway 1.11 already errors clearly ("No matching node.") on its own,
         // confirmed live, making this check redundant there — it's kept for
         // 1.9 compatibility, not because it's still needed on every version.
-        if !container_exists(container_id)? {
-            return Err(format!(
-                "container id {} no longer exists — window may have closed",
-                container_id
-            ));
-        }
+        ensure_container_exists(container_id)?;
 
         // One connection for the whole poll cycle — the baseline snapshot
         // and every poll iteration below share it, rather than each tree
@@ -665,8 +657,7 @@ impl SwayAction<'_> {
     /// `event_loop()` bounds the subscribe handshake itself (by
     /// `IPC_ROUND_TRIP_TIMEOUT`, like every other request).
     fn run_wait_matching_events(&self) -> Result<ActionOutcome, String> {
-        // Same check, same reason, and the same error text as
-        // run_wait_time()'s: on Sway 1.9 (still what `apt` installs on
+        // Same check and same reason as run_wait_time()'s: on Sway 1.9 (still what `apt` installs on
         // Ubuntu 24.04/CI) a [con_id=N] criteria matching zero containers is
         // "success", so without this an action whose container closed since
         // it was resolved would send its command successfully and then block
@@ -684,12 +675,7 @@ impl SwayAction<'_> {
         // arm at all), and this runs a handful of times per invocation, not
         // in a loop.
         let container_id = self.container_id;
-        if !container_exists(container_id)? {
-            return Err(format!(
-                "container id {} no longer exists — window may have closed",
-                container_id
-            ));
-        }
+        ensure_container_exists(container_id)?;
 
         let event_loop = event_loop(&[EventType::Window])?;
 
@@ -713,8 +699,8 @@ impl SwayAction<'_> {
         }
         run_sway_command(&sway_command)?;
 
-        // Read events on a separate thread and forward them through a
-        // channel, so recv_timeout() below enforces a real deadline even if
+        // spawn_event_forwarder() reads events on a separate thread and
+        // forwards them through a channel, so recv_timeout() below enforces a real deadline even if
         // the event stream itself never produces another event (a blocking
         // iterator has no way to time out on its own).
         //
@@ -742,17 +728,10 @@ impl SwayAction<'_> {
         // protocol, would buy nothing for a CLI that exits moments later, and
         // would replace a per-action subscription (which is also what makes
         // each action's wait independent, see Scratchpad's shared
-        // WindowChange::Move in matching_window_change_events()) with shared
+        // WindowChange::Move in matching_window_change_event()) with shared
         // mutable state to coordinate. Revisit if this ever becomes a
         // library, gains a long-lived mode, or needs cancellation.
-        let (event_sender, event_receiver) = mpsc::channel();
-        thread::spawn(move || {
-            for event in event_loop {
-                if event_sender.send(event).is_err() {
-                    break;
-                }
-            }
-        });
+        let event_receiver = spawn_event_forwarder(event_loop);
 
         loop {
             let remaining = deadline.saturating_duration_since(time::Instant::now());
@@ -826,18 +805,14 @@ impl SwayAction<'_> {
         }
     }
 
-    /// Whether `window` is this action's confirming event: one of its kind's
-    /// event types, for its own container. Never matches for a kind that has
+    /// Whether `window` is this action's confirming event: its kind's event
+    /// type, for its own container. Never matches for a kind that has
     /// no confirming event at all.
     fn matches_window_event(
         &self,
         window: &WindowEvent,
     ) -> Result<WindowEventMatch, WindowEventMatchError> {
-        let Some(matching_window_change_events) = self.kind.matching_window_change_events() else {
-            return Err(WindowEventMatchError::EventChangeTypeMismatch);
-        };
-
-        if !matching_window_change_events.contains(&window.change) {
+        if self.kind.matching_window_change_event() != Some(window.change) {
             return Err(WindowEventMatchError::EventChangeTypeMismatch);
         }
 
@@ -920,7 +895,8 @@ impl ExecAction<'_> {
     /// if still blocked on the socket when we return, but is retired by the
     /// next window event to arrive — which, in a multi-step run, is the next
     /// step's own. Measured bounded, not accumulating; see the comment at that
-    /// function's `thread::spawn` call for the mechanism and the numbers.
+    /// function's `spawn_event_forwarder()` call for the mechanism and the
+    /// numbers.
     ///
     /// A `New` window rejected by the `--app-id`/`--class` filter is recorded
     /// rather than silently dropped, and a timeout is reported through
@@ -951,14 +927,7 @@ impl ExecAction<'_> {
         }
         run_single_sway_command(&sway_command)?;
 
-        let (event_sender, event_receiver) = mpsc::channel();
-        thread::spawn(move || {
-            for event in event_loop {
-                if event_sender.send(event).is_err() {
-                    break;
-                }
-            }
-        });
+        let event_receiver = spawn_event_forwarder(event_loop);
 
         // Every New window the app_id/class filter turned away, reported if
         // the wait ends without a match — see exec_timeout_message().

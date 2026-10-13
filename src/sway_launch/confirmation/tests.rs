@@ -99,7 +99,7 @@ fn event_timeout_message_names_the_wait_not_the_flag() {
     );
 }
 
-// ActionKind::matching_window_change_events
+// ActionKind::matching_window_change_event
 
 #[test]
 fn exec_only_matches_new_window_change() {
@@ -119,8 +119,8 @@ fn exec_only_matches_new_window_change() {
 fn floating_matches_floating_window_change() {
     let action = targeted(ActionKind::Floating);
     assert_eq!(
-        action.kind.matching_window_change_events(),
-        Some(vec![WindowChange::Floating])
+        action.kind.matching_window_change_event(),
+        Some(WindowChange::Floating)
     );
 }
 
@@ -128,8 +128,8 @@ fn floating_matches_floating_window_change() {
 fn fullscreen_matches_fullscreen_mode_window_change() {
     let action = targeted(ActionKind::Fullscreen);
     assert_eq!(
-        action.kind.matching_window_change_events(),
-        Some(vec![WindowChange::FullscreenMode])
+        action.kind.matching_window_change_event(),
+        Some(WindowChange::FullscreenMode)
     );
 }
 
@@ -137,8 +137,8 @@ fn fullscreen_matches_fullscreen_mode_window_change() {
 fn focus_matches_focus_window_change() {
     let action = targeted(ActionKind::Focus);
     assert_eq!(
-        action.kind.matching_window_change_events(),
-        Some(vec![WindowChange::Focus])
+        action.kind.matching_window_change_event(),
+        Some(WindowChange::Focus)
     );
 }
 
@@ -146,8 +146,8 @@ fn focus_matches_focus_window_change() {
 fn workspace_matches_move_window_change() {
     let action = targeted(ActionKind::Workspace("web"));
     assert_eq!(
-        action.kind.matching_window_change_events(),
-        Some(vec![WindowChange::Move])
+        action.kind.matching_window_change_event(),
+        Some(WindowChange::Move)
     );
 }
 
@@ -155,8 +155,8 @@ fn workspace_matches_move_window_change() {
 fn output_matches_move_window_change() {
     let action = targeted(ActionKind::Output("HDMI-A-1"));
     assert_eq!(
-        action.kind.matching_window_change_events(),
-        Some(vec![WindowChange::Move])
+        action.kind.matching_window_change_event(),
+        Some(WindowChange::Move)
     );
 }
 
@@ -164,8 +164,8 @@ fn output_matches_move_window_change() {
 fn scratchpad_matches_move_window_change() {
     let action = targeted(ActionKind::Scratchpad);
     assert_eq!(
-        action.kind.matching_window_change_events(),
-        Some(vec![WindowChange::Move])
+        action.kind.matching_window_change_event(),
+        Some(WindowChange::Move)
     );
 }
 
@@ -173,8 +173,8 @@ fn scratchpad_matches_move_window_change() {
 fn mark_matches_mark_window_change() {
     let action = targeted(ActionKind::Mark("foo"));
     assert_eq!(
-        action.kind.matching_window_change_events(),
-        Some(vec![WindowChange::Mark])
+        action.kind.matching_window_change_event(),
+        Some(WindowChange::Mark)
     );
 }
 
@@ -186,7 +186,7 @@ fn sticky_has_no_matching_window_change() {
     // wait-time action, not accidentally wired up to wait on an event
     // that will never arrive.
     let action = targeted(ActionKind::Sticky);
-    assert_eq!(action.kind.matching_window_change_events(), None);
+    assert_eq!(action.kind.matching_window_change_event(), None);
 }
 
 #[test]
@@ -197,12 +197,12 @@ fn split_height_width_have_no_matching_window_change() {
     let height = targeted(ActionKind::Height(Size::Pixels(300)));
     let width = targeted(ActionKind::Width(Size::Percent(20)));
     let position = targeted(ActionKind::Position(Position::Center));
-    assert_eq!(split.kind.matching_window_change_events(), None);
-    assert_eq!(new_column.kind.matching_window_change_events(), None);
-    assert_eq!(new_row.kind.matching_window_change_events(), None);
-    assert_eq!(height.kind.matching_window_change_events(), None);
-    assert_eq!(width.kind.matching_window_change_events(), None);
-    assert_eq!(position.kind.matching_window_change_events(), None);
+    assert_eq!(split.kind.matching_window_change_event(), None);
+    assert_eq!(new_column.kind.matching_window_change_event(), None);
+    assert_eq!(new_row.kind.matching_window_change_event(), None);
+    assert_eq!(height.kind.matching_window_change_event(), None);
+    assert_eq!(width.kind.matching_window_change_event(), None);
+    assert_eq!(position.kind.matching_window_change_event(), None);
 }
 
 // SwayAction::poll_grace

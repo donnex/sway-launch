@@ -1050,7 +1050,7 @@ fn sticky_confirms_via_poll_well_under_a_large_wait_time() {
     fresh_workspace();
     // Mirrors split_confirms_via_poll_well_under_a_large_wait_time: Sticky
     // has no dedicated WindowChange event (confirmed live — see
-    // matching_window_change_events()'s Sticky arm), so it's a wait-time
+    // matching_window_change_event()'s Sticky arm), so it's a wait-time
     // action confirmed via SwayAction::poll_matches() polling the
     // container's own `sticky` field. A --wait-time well above the poll
     // grace period, with an assertion comfortably under 2 * --wait-time, is
@@ -1484,7 +1484,7 @@ fn scratchpad_moves_a_tiled_window_to_the_scratchpad() {
     fresh_workspace();
     // Also proves the WindowChange::Move confirmation actually fires despite
     // Sway auto-floating a still-tiled window as part of the move (see
-    // SwayAction::matching_window_change_events()'s Scratchpad doc comment)
+    // SwayAction::matching_window_change_event()'s Scratchpad doc comment)
     // — a WindowChange::Floating event fires first, and this only passes if
     // that's correctly skipped rather than mistaken for the confirmation.
     let mut connection = connect();
@@ -1636,7 +1636,7 @@ fn existing_matches_a_window_in_the_scratchpad() {
 fn new_column_does_not_relocate_a_solo_window_to_a_different_output() {
     fresh_workspace();
     // Regression test for the multi-monitor NewColumn/NewRow escalation
-    // documented in SwayAction::matching_window_change_events()'s reasoning
+    // documented in SwayAction::matching_window_change_event()'s reasoning
     // comment: "move right" on a window with no sibling to move past within
     // its workspace can otherwise relocate the whole workspace to the next
     // output in that direction, rather than a same-workspace no-op.
@@ -3219,7 +3219,7 @@ fn new_row_confirms_via_poll_when_swapping_past_a_sibling() {
 fn new_column_falls_back_gracefully_at_the_edge_with_a_large_wait_time() {
     fresh_workspace();
     // The documented "already at the edge" no-op (see
-    // matching_window_change_events()'s comment in confirmation.rs) —
+    // matching_window_change_event()'s comment in confirmation.rs) —
     // confirmed during this feature's development that Sway can still
     // incidentally restructure *other* siblings in this case (wrapping one
     // in a new split container) even though this window's own rect never

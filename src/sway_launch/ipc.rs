@@ -9,8 +9,9 @@
 //! `connect_error_at()`, `undiscovered_socket_error()`,
 //! `first_outcome_error()` and `quote_sway_string()`, which are unit-tested.
 
-use std::{fmt, time};
-use swayipc::{Connection, EventStream, EventType};
+use std::sync::mpsc;
+use std::{fmt, thread, time};
+use swayipc::{Connection, Event, EventStream, EventType, Fallible};
 
 /// How long a single Sway IPC request/response round trip may take before the
 /// socket read or write gives up (see `new_connection()`).
@@ -188,7 +189,7 @@ fn preferred_socket_path(
 /// clone shares the original's open socket, and socket options belong to the
 /// socket rather than to a descriptor. Only the reader thread can be left
 /// blocked, which is the bounded, measured behaviour documented at
-/// `run_wait_matching_events()`'s `thread::spawn`.
+/// `run_wait_matching_events()`'s `spawn_event_forwarder()` call.
 ///
 /// It goes through the same `socket_path()` as `new_connection()`, so the
 /// subscription and the requests around it always reach the same compositor,
@@ -212,6 +213,23 @@ pub(super) fn event_loop(subscriptions: &[EventType]) -> Result<EventStream, Str
         .set_read_timeout(None)
         .map_err(|error| format!("failed to clear a Sway IPC socket timeout: {}", error))?;
     Ok(events)
+}
+
+/// Reads `events` on a background thread and forwards each one through the
+/// returned channel, so a caller can wait on it with `recv_timeout()` — a
+/// blocking `EventStream` has no way to time out on its own. The thread exits
+/// the next time an event arrives after the receiver is dropped; see
+/// `run_wait_matching_events()`'s call for why that stays bounded.
+pub(super) fn spawn_event_forwarder(events: EventStream) -> mpsc::Receiver<Fallible<Event>> {
+    let (event_sender, event_receiver) = mpsc::channel();
+    thread::spawn(move || {
+        for event in events {
+            if event_sender.send(event).is_err() {
+                break;
+            }
+        }
+    });
+    event_receiver
 }
 
 pub(super) fn run_sway_command(command: &str) -> Result<(), String> {

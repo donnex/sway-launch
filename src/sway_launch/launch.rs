@@ -64,7 +64,7 @@ pub struct SwayLaunch<'a> {
     pub sticky: bool,
     pub fullscreen: bool,
     pub focus: bool,
-    pub mark: &'a str,
+    pub mark: Option<&'a str>,
     pub new_column: bool,
     pub new_row: bool,
     pub workspace: Option<&'a str>,
@@ -220,7 +220,7 @@ impl<'a> SwayLaunch<'a> {
             self.height.map(ActionKind::Height),
             self.width.map(ActionKind::Width),
             self.position.map(ActionKind::Position),
-            (!self.mark.is_empty()).then_some(ActionKind::Mark(self.mark)),
+            self.mark.map(ActionKind::Mark),
             self.scratchpad.then_some(ActionKind::Scratchpad),
         ];
         actions.extend(requested.into_iter().flatten().map(planned));

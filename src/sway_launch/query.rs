@@ -130,6 +130,21 @@ pub(super) fn container_exists(container_id: i64) -> Result<bool, String> {
     Ok(find_node(&tree, container_id).is_some())
 }
 
+/// `container_exists()` as a guard: errors with the one message every action
+/// driver reports for a container that closed since it was resolved, so the
+/// three call sites in `confirmation.rs` can't drift into different wording
+/// for the same condition.
+pub(super) fn ensure_container_exists(container_id: i64) -> Result<(), String> {
+    if container_exists(container_id)? {
+        Ok(())
+    } else {
+        Err(format!(
+            "container id {} no longer exists — window may have closed",
+            container_id
+        ))
+    }
+}
+
 /// Which of `container_ids` are still present in the current tree, in the
 /// order given. Used by `main.rs`'s `--rollback-on-error` to tell a window
 /// that actually closed from one whose close request Sway merely accepted:

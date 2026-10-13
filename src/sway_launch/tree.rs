@@ -194,7 +194,7 @@ pub(super) fn node_is_floating(node: &Node) -> bool {
 /// internal workspace Sway names `__i3_scratch`, confirmed live to be
 /// populated reliably on both Sway 1.9 and 1.11. Deliberately not
 /// `node_is_floating()`: a window Sway auto-floats as part of moving it to
-/// the scratchpad (see `SwayAction::matching_window_change_events()`'s doc
+/// the scratchpad (see `SwayAction::matching_window_change_event()`'s doc
 /// comment on `Scratchpad`) would otherwise be misreported as already in the
 /// scratchpad the moment it's floating, before it actually is.
 ///

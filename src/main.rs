@@ -419,7 +419,7 @@ fn main() {
         sticky: args.sticky,
         fullscreen: args.fullscreen,
         focus: args.focus,
-        mark: &args.mark.unwrap_or_default(),
+        mark: args.mark.as_deref(),
         new_column: args.new_column,
         new_row: args.new_row,
         workspace: args.workspace.as_deref(),
