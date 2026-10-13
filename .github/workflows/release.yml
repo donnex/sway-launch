@@ -78,8 +78,13 @@ jobs:
       - name: cargo test
         run: cargo test --locked
 
+      # Versions printed, not pinned -- see check.yml's matching step.
       - name: Install shellcheck and shfmt
-        run: sudo apt-get update && sudo apt-get install -y shellcheck shfmt
+        run: |
+          set -euo pipefail
+          sudo apt-get update && sudo apt-get install -y shellcheck shfmt
+          shellcheck --version
+          echo "shfmt $(shfmt --version)"
 
       # Kept identical to check.yml's own discovery step — see the comment
       # there for why the list isn't hardcoded.
@@ -98,8 +103,9 @@ jobs:
       - name: shfmt
         run: shfmt -i 2 -d ${{ steps.shell-scripts.outputs.files }}
 
+      # Pinned to the same version as check.yml -- see the comment there.
       - name: Install markdownlint
-        run: npm install -g markdownlint-cli
+        run: npm install -g markdownlint-cli@0.49.1
 
       - name: markdownlint
         run: markdownlint '**/*.md'

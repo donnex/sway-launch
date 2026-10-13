@@ -38,6 +38,16 @@ rules both apply in full because of this — there's no "private repo" fallback 
   job, so a live-Sway hiccup doesn't block the fast unit-test feedback loop. Running the scripts in
   `examples/scripts/` against a live Sway session is still useful for eyeballing real layouts, but
   is no longer the only way these code paths get exercised.
+- Tool versions: CI pins `markdownlint-cli@0.49.1` (`npm install -g markdownlint-cli@0.49.1`) and
+  `cargo-llvm-cov@0.9.1` (`cargo install cargo-llvm-cov --version 0.9.1 --locked`); use the same
+  versions locally, since each linter's findings and the coverage gate's counts depend on the
+  version, so a pass under a different one guarantees nothing in CI. Both are bumped deliberately
+  in `.github/workflows/` and here together (a `cargo-llvm-cov` bump re-measures the coverage
+  baseline in the same change), never left to float. `shellcheck`/`shfmt` come from the CI runner
+  image's `apt` instead, unpinned: the `lint-scripts-and-docs` job prints both versions so a new
+  finding on an untouched script can be traced to a tool upgrade from the log. Rust itself floats
+  on purpose (see Rust conventions). `scripts/run-live-sway-tests` runs `cargo test --locked`, the
+  same as the `check` job, so both test against the dependency set `Cargo.lock` records.
 
 See the CI section below for how GitHub Actions runs these same checks.
 
@@ -2722,7 +2732,7 @@ live-Sway case is exactly as much a bug as a missing lint step — see the cover
 GitHub Actions is set up: `.github/workflows/check.yml` runs `cargo fmt --check`,
 `cargo clippy --all-targets --all-features` (see the Rust conventions above for why the feature flag
 is load-bearing),
-`cargo build`, `cargo test`, and a `cargo llvm-cov` coverage-regression gate (`--fail-under-lines
+`cargo build`, `cargo test`, and a `cargo llvm-cov` (pinned — see "Tool versions" under Commands) coverage-regression gate (`--fail-under-lines
 68 --fail-under-regions 68 --fail-under-functions 77`) in its `check` job. The gate excludes
 `main.rs`, the compositor-bound `ipc.rs`/`query.rs`, and the unit-test files themselves by filename
 (see the coverage bullet under Rust conventions above), and its thresholds sit a few points under
@@ -2737,7 +2747,8 @@ as a side effect of an unrelated change; a separate `lint-scripts-and-docs` job 
 shebang at run time, not a fixed list, so a newly added script is covered automatically — and the
 one Python script in `scripts/` is excluded by the same mechanism rather than by name),
 `markdownlint '**/*.md'` (every Markdown file in the repo, same reasoning, so a newly added one
-like `CHANGELOG.md` is covered automatically), and `black --check`/`ruff check` on that Python
+like `CHANGELOG.md` is covered automatically; `markdownlint-cli` pinned, `shellcheck`/`shfmt` taken
+from the image with their versions printed), and `black --check`/`ruff check` on that Python
 script; a separate
 `live-sway-tests` job that installs `sway`+`foot` and runs `scripts/run-live-sway-tests` (kept as
 its own job so a live-Sway hiccup doesn't block the fast unit-test feedback loop); and a `cargo

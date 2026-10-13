@@ -121,7 +121,7 @@ done
 printf 'Running live-Sway tests\n'
 if XDG_RUNTIME_DIR="$sway_runtime_dir" \
   WAYLAND_DISPLAY="$wayland_display" \
-  cargo test --features live-sway-tests --test live_sway -- --test-threads=1; then
+  cargo test --locked --features live-sway-tests --test live_sway -- --test-threads=1; then
   printf '✓ Live-Sway tests passed\n'
 else
   die "Live-Sway tests failed."
