@@ -16,6 +16,13 @@ on:
     tags:
       - "v*"
 
+# Read-only by default, rather than left to the repository default (which may
+# hand every job a read/write token). Only the publish job re-declares
+# contents: write; a job added here later starts read-only unless it asks for
+# more on its own.
+permissions:
+  contents: read
+
 jobs:
   # Mirrors check.yml's checks against the exact tagged commit, so a release
   # can't ship from a commit that never passed CI (e.g. a tag pushed before
