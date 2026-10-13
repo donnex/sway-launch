@@ -393,72 +393,84 @@ pub(super) fn height_matches(node: &Node, expected_px: i32) -> bool {
     node.rect.height + node.deco_rect.height == expected_px
 }
 
-/// The `(x, y)` a `move position` command actually lands `node` at — the
-/// decoration-inclusive frame origin, which is `deco_rect` for an ordinary
-/// window and `rect` for one that has no decoration geometry at all.
+/// Where `node`'s frame sits relative to `workspace_rect` (the workspace
+/// containing it), in the same space `move position <x> <y>` targets: Sway
+/// adds the workspace's own origin to the requested coordinates, so the
+/// workspace — not the output, and not the global layout — is the origin to
+/// compare in. The workspace starts below or beside a bar and inside outer
+/// gaps, so on most real desktops it isn't at `(0, 0)`.
+///
+/// Sway reports the two candidate fields in different spaces, which is why
+/// they're handled differently rather than read interchangeably:
+///
+/// - `deco_rect` is the decoration-inclusive frame origin *relative to the
+///   workspace* for a floating window, so it's already in the right space.
+/// - `rect` is *absolute*, so the workspace origin is subtracted from it.
+///   It's what's left when `deco_rect` is all zero, which Sway reports for any
+///   window drawing no title bar: a fullscreen window, and every window whose
+///   border isn't `normal` (`border pixel <N>`, `border none`, or the same set
+///   through `default_border`). Such a window has no decoration above its `rect`,
+///   so `rect`'s origin *is* the frame origin.
+/// - A freshly mapped window also reads all-zero `deco_rect` until Sway has
+///   applied its first layout transaction, since Sway tests the *applied*
+///   border while serving geometry from pending state. Its `rect` then
+///   includes the title bar, so the fallback still yields the frame origin
+///   and the position confirms against the pending state later commands act
+///   on — but a client reading `deco_rect` straight afterwards can see zeros.
 ///
 /// Split out from `position_matches()` so this comparison is ordinary pure
-/// logic with its own tests, rather than something only reachable through a
-/// live `get_tree()`: burying decision logic behind a `&mut Connection` would
-/// push correctness-critical code below the coverage gate. `expected_position()` was separated from its own
-/// output lookup for the same reason.
-///
-/// The `deco_rect`-unset case is a fullscreen window: confirmed live that its
-/// `deco_rect` stays `{0, 0, 0, 0}` permanently — stable across a multi-second
-/// sweep, not a transient — since Sway never computes decoration geometry for
-/// a window with no border or titlebar to draw. `move position` still lands
-/// `rect.x`/`rect.y` on the requested target immediately, so without this
-/// fallback such a position could never be confirmed by polling and every
-/// invocation burned the full grace period before falling back.
-pub(super) fn node_position(node: &Node) -> (i32, i32) {
+/// logic with its own tests rather than something only reachable through a
+/// live `get_tree()`; `expected_position()` is split out for the same reason.
+pub(super) fn node_position(node: &Node, workspace_rect: swayipc::Rect) -> (i32, i32) {
     if node.deco_rect.width == 0 && node.deco_rect.height == 0 {
-        (node.rect.x, node.rect.y)
+        (
+            node.rect.x - workspace_rect.x,
+            node.rect.y - workspace_rect.y,
+        )
     } else {
         (node.deco_rect.x, node.deco_rect.y)
     }
 }
 
-/// The `(x, y)` `position_matches()` expects `node` to be at, for
-/// `Position::Center` or explicit `Position::Coordinates` — matches
-/// `deco_rect.x`/`deco_rect.y`, the decoration-inclusive frame `move
-/// position` actually targets, confirmed live by
-/// `position_moves_a_floating_window_to_given_coordinates`/
-/// `position_center_centers_a_floating_window` in `tests/live_sway.rs`
-/// (`deco_rect.x` and `rect.x` were confirmed equal there too, so using
-/// `deco_rect.x` uniformly for both the coordinate and center cases, rather
-/// than `rect.x` for one and `deco_rect.x` for the other, doesn't change
-/// which value is being compared). `output_rect` is only consulted for
-/// `Position::Center`, so a window not on any output (e.g. the scratchpad)
-/// can still match explicit coordinates.
+/// The workspace-relative `(x, y)` `position_matches()` expects `node`'s frame
+/// to be at (see `node_position()` for why the workspace is the origin): the
+/// requested coordinates as given, or for `Position::Center`, the frame
+/// centered within `workspace_rect` — Sway's own `move position center`
+/// centers on the workspace, not on the output.
 pub(super) fn expected_position(
     position: &Position,
     node: &Node,
-    output_rect: Option<swayipc::Rect>,
-) -> Option<(i32, i32)> {
+    workspace_rect: swayipc::Rect,
+) -> (i32, i32) {
     match position {
-        Position::Center => Some(compute_center_position(
-            output_rect?,
+        Position::Center => compute_center_position(
+            workspace_rect,
             node.rect.width,
             node.rect.height + node.deco_rect.height,
-        )),
-        Position::Coordinates { x, y } => Some((*x, *y)),
+        ),
+        Position::Coordinates { x, y } => (*x, *y),
     }
 }
 
-/// The top-left `(x, y)` that centers a `window_width` x `window_height`
-/// window (its decoration-inclusive outer footprint) within `output_rect`.
-/// `output_rect`'s own `x`/`y` are added in since tree/output coordinates
-/// are global, not output-relative — only visibly matters once a second
-/// output exists to the left of or above this one, but correct
-/// unconditionally rather than assuming this is the primary output.
+/// The workspace-relative top-left `(x, y)` that centers a `window_width` x
+/// `window_height` frame (the decoration-inclusive outer footprint) within
+/// `workspace_rect`. Only the workspace's size matters here, not its origin,
+/// since the result is relative to that origin.
+///
+/// Sway computes the same figure in floating point, and an odd difference
+/// leaves a half pixel. Integer division here truncates it the way Sway's own
+/// conversion to `deco_rect` does, so the two agree. The one known mismatch is
+/// the absolute-`rect` path on a workspace with a *negative* origin, where
+/// Sway's truncation toward zero rounds the other way: that case reports
+/// `unconfirmed` after the poll grace rather than a false `changed`.
 pub(super) fn compute_center_position(
-    output_rect: swayipc::Rect,
+    workspace_rect: swayipc::Rect,
     window_width: i32,
     window_height: i32,
 ) -> (i32, i32) {
     (
-        output_rect.x + (output_rect.width - window_width) / 2,
-        output_rect.y + (output_rect.height - window_height) / 2,
+        (workspace_rect.width - window_width) / 2,
+        (workspace_rect.height - window_height) / 2,
     )
 }
 

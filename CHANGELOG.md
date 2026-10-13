@@ -218,6 +218,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--position` now reports `"changed"` for a correctly placed window on a desktop with a bar, outer
+  gaps or a second output, instead of `"unconfirmed"`. It checked where the window landed against
+  the output rather than the workspace, so it only confirmed when the workspace started at the
+  output's top-left corner: `--position center` reported `"unconfirmed"` on most real setups, and so
+  did explicit coordinates on a window without a title bar (`border pixel` or `border none`, a common
+  setting) or a fullscreen one. Each such action also waited out the 200 ms confirmation window
+  first. Where windows end up is unchanged. (#65)
 - `--dry-run` now shows control characters in a command, mark or name as visible escapes (`\r`,
   `\u{1b}`, ...) instead of printing them raw. A layout file could otherwise use a terminal escape
   sequence to make the preview show a different command from the one it would run — the opposite

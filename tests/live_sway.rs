@@ -217,6 +217,35 @@ fn get_node(connection: &mut Connection, con_id: i64) -> Node {
         .clone()
 }
 
+/// `get_node()`, but first waits until Sway has applied `con_id`'s first
+/// layout transaction, for a test asserting on `deco_rect`.
+///
+/// Sway serves a container's geometry (`rect`, `deco_rect`'s origin) from its
+/// pending state but its `border` from the state it last applied, and zeroes
+/// `deco_rect` unless that applied border is `normal`. A freshly mapped
+/// window has applied nothing until the client acks the configure Sway sends
+/// it on map (or Sway's transaction timeout passes), so until then it reads
+/// as `border: none` with an all-zero `deco_rect` and a `rect` that includes
+/// the title bar. sway-launch
+/// can finish inside that window, since it confirms against the pending
+/// state later commands act on — so asserting on `deco_rect` straight away
+/// intermittently reads `0`. Every window this is used on has Sway's default
+/// `normal` border, so `NodeBorder::None` means only "not applied yet".
+fn get_settled_node(connection: &mut Connection, con_id: i64) -> Node {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let node = get_node(connection, con_id);
+        if node.border != swayipc::NodeBorder::None {
+            return node;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "container id {con_id} never had a layout transaction applied"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 /// Mirrors `tree.rs`'s private `node_is_floating()`. Sway 1.9 (still
 /// what `apt` installs on the `ubuntu-latest` CI runner) never populates a
 /// floating container's own `floating` field — confirmed live against a
@@ -2028,7 +2057,7 @@ fn position_moves_a_floating_window_to_given_coordinates() {
     // not the content rect below the title bar (rect.y sits 25px lower than
     // the requested y with the default border style) — confirmed against
     // live Sway.
-    let node = get_node(&mut connection, container_id);
+    let node = get_settled_node(&mut connection, container_id);
     assert_eq!(node.deco_rect.x, 100);
     assert_eq!(node.deco_rect.y, 200);
 }
@@ -2064,7 +2093,7 @@ fn position_accepts_negative_coordinates_on_a_negatively_offset_output() {
         "-1000,100",
     ]);
 
-    let node = get_node(&mut connection, container_id);
+    let node = get_settled_node(&mut connection, container_id);
     assert_eq!(node.deco_rect.x, -1000);
     assert_eq!(node.deco_rect.y, 100);
 }
@@ -2074,8 +2103,8 @@ fn position_confirms_via_poll_for_a_floating_window() {
     fresh_workspace();
     // Regression test for docs/plan-poll-based-wait-time-actions.md's
     // poll-then-fallback mechanism reaching Position: confirms via
-    // SwayAction::poll_matches()'s position_matches() (a get_tree() +
-    // get_outputs() poll for deco_rect.x/deco_rect.y) rather than always
+    // SwayAction::poll_matches()'s position_matches() (a get_tree() poll
+    // for deco_rect.x/deco_rect.y) rather than always
     // sleeping the full --wait-time after the command too.
     let mut connection = connect();
     let (container_id, _guard) = launch_foot(&["--floating"]);
@@ -2104,7 +2133,7 @@ fn position_confirms_via_poll_for_a_floating_window() {
         started.elapsed()
     );
 
-    let node = get_node(&mut connection, container_id);
+    let node = get_settled_node(&mut connection, container_id);
     assert_eq!(node.deco_rect.x, 300);
     assert_eq!(node.deco_rect.y, 400);
 }
@@ -4735,11 +4764,11 @@ fn fallback_path_stays_bounded_at_the_default_wait_time() {
 
 #[test]
 fn position_center_centers_a_floating_window() {
-    fresh_workspace();
-    // Determines which output the window actually landed on (rather than
-    // assuming get_outputs()'s first entry, which needn't be where the
-    // current workspace lives once a test adds an output) and centers
-    // against that output's own dimensions.
+    let workspace = fresh_workspace();
+    // Sway centers on the window's workspace, not its output: the two only
+    // coincide when nothing (a bar, outer gaps) takes space at the output's
+    // edge. position_confirms_center_and_coordinates_on_an_offset_workspace
+    // covers the case where they differ.
     let mut connection = connect();
 
     let (container_id, _guard) = launch_foot(&[
@@ -4753,31 +4782,118 @@ fn position_center_centers_a_floating_window() {
     ]);
     std::thread::sleep(Duration::from_millis(300));
 
-    let tree = connection.get_tree().expect("get_tree should succeed");
-    let output_name = output_containing(&tree, container_id, None)
-        .expect("window should be found in the tree")
-        .to_string();
-    let outputs = connection
-        .get_outputs()
-        .expect("get_outputs should succeed");
-    let output = outputs
-        .iter()
-        .find(|output| output.name == output_name)
-        .expect("the window's own output should be in get_outputs()");
-    // rect/deco_rect coordinates are global, not output-relative, so the
-    // expected center must account for the output's own position too — only
-    // matters once a second output exists to its left/above, but do it
-    // unconditionally rather than assuming this is the primary output.
-    let expected_x = output.rect.x + (output.rect.width - 400) / 2;
-    let expected_y = output.rect.y + (output.rect.height - 300) / 2;
-
+    let workspace_rect = workspace_rect(&mut connection, &workspace);
     let node = get_node(&mut connection, container_id);
     assert_eq!(node.rect.width, 400);
-    assert_eq!(node.rect.x, expected_x);
-    // deco_rect.y (not rect.y) is the decoration-inclusive top edge "move
-    // position"/centering actually targets — see
-    // position_moves_a_floating_window_to_given_coordinates.
-    assert_eq!(node.deco_rect.y, expected_y);
+    // deco_rect (not rect) is the decoration-inclusive top edge "move
+    // position"/centering actually targets, and it's relative to the
+    // workspace — see position_moves_a_floating_window_to_given_coordinates.
+    assert_eq!(node.deco_rect.x, (workspace_rect.width - 400) / 2);
+    assert_eq!(node.deco_rect.y, (workspace_rect.height - 300) / 2);
+}
+
+/// Sets every workspace's outer gaps to `gaps` and resets them to zero when
+/// dropped, even on assertion panic — the setting applies compositor-wide, so
+/// every later test in this shared session would otherwise inherit it.
+struct OuterGaps;
+
+impl OuterGaps {
+    fn set(connection: &mut Connection, gaps: i32) -> Self {
+        run_command_ok(connection, &format!("gaps outer all set {gaps}"));
+        OuterGaps
+    }
+}
+
+impl Drop for OuterGaps {
+    fn drop(&mut self) {
+        let _ = connect().run_command("gaps outer all set 0");
+    }
+}
+
+/// The geometry of the workspace named `workspace`.
+fn workspace_rect(connection: &mut Connection, workspace: &str) -> swayipc::Rect {
+    connection
+        .get_workspaces()
+        .expect("get_workspaces should succeed")
+        .into_iter()
+        .find(|candidate| candidate.name == workspace)
+        .unwrap_or_else(|| panic!("workspace {workspace:?} should exist"))
+        .rect
+}
+
+/// Runs sway-launch against `container_id` with `args` plus `--json` and a
+/// `--wait-time` far longer than the poll grace, returning stdout.
+fn run_position_json(container_id: i64, args: &[&str]) -> String {
+    let output = sway_launch_command()
+        .args(["--con-id", &container_id.to_string()])
+        .args(args)
+        .args(["--wait-time", "2000", "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).expect("stdout should be valid utf8")
+}
+
+#[test]
+fn position_confirms_center_and_coordinates_on_an_offset_workspace() {
+    let workspace = fresh_workspace();
+    // Regression test: position_matches() used to center against the
+    // *output* and compare an absolute rect with a workspace-relative target,
+    // so it only confirmed when the workspace started at (0, 0) -- true of
+    // this suite's `-c /dev/null` compositor, but not of a desktop with a bar
+    // or outer gaps. There, a correctly placed window reported "unconfirmed"
+    // after waiting out the poll grace. Outer gaps move the workspace origin
+    // the same way a bar does, without needing a bar client.
+    let mut connection = connect();
+    let _gaps = OuterGaps::set(&mut connection, 40);
+    let workspace_rect = workspace_rect(&mut connection, &workspace);
+    assert_eq!(
+        (workspace_rect.x, workspace_rect.y),
+        (40, 40),
+        "outer gaps should have moved the workspace origin off (0, 0)"
+    );
+    let (container_id, _guard) =
+        launch_foot(&["--floating", "--width", "400px", "--height", "300px"]);
+
+    // deco_rect is workspace-relative while the old expected center was
+    // output-relative, so the two differ by exactly the 40px origin.
+    let stdout = run_position_json(container_id, &["--position", "center"]);
+    assert!(
+        stdout.contains(r#""command":"move position center","kind":"position","status":"changed""#),
+        "a centered window on an offset workspace should report changed, got {stdout:?}"
+    );
+    let node = get_settled_node(&mut connection, container_id);
+    assert_eq!(
+        node.deco_rect.x,
+        (workspace_rect.width - node.rect.width) / 2
+    );
+
+    // A pixel border makes Sway report an all-zero deco_rect, so the check
+    // falls back to rect, which is absolute rather than workspace-relative.
+    run_command_ok(
+        &mut connection,
+        &format!("[con_id={container_id}] border pixel 2"),
+    );
+    let stdout = run_position_json(container_id, &["--position", "100,200"]);
+    assert!(
+        stdout
+            .contains(r#""command":"move position 100 200","kind":"position","status":"changed""#),
+        "explicit coordinates on a pixel-border window should report changed, got {stdout:?}"
+    );
+    let node = get_node(&mut connection, container_id);
+    assert_eq!(
+        (node.deco_rect.width, node.deco_rect.height),
+        (0, 0),
+        "a pixel-border window should report no decoration geometry"
+    );
+    assert_eq!(
+        (node.rect.x, node.rect.y),
+        (workspace_rect.x + 100, workspace_rect.y + 200)
+    );
 }
 
 #[test]

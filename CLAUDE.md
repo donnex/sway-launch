@@ -732,27 +732,46 @@ stated goal (safer internals, less repeated parsing) to actually land.
     existed. Confirmed live by `tests/live_sway.rs`'s `height_confirms_via_poll_when_resized_with_a_sibling`/
     `width_confirms_via_poll_when_resized_with_a_sibling` (fast path) and
     `height_and_width_fall_back_gracefully_when_solo_window_clamps_the_resize` (fallback path).
-  - **`Position`** — `position_matches()` compares `deco_rect.x`/`deco_rect.y` (the
-    decoration-inclusive frame `move position` actually targets — confirmed live, and that
-    `deco_rect.x`/`rect.x` are always equal in this project's testing, so there's no width-style
-    formula ambiguity here) against either the parsed `<x>,<y>` or, for `center`, a computed target
-    (`compute_center_position()`: the output's own rect, read via a second `get_outputs()` call
-    since `get_tree()` alone doesn't carry output geometry, centered against the window's current
-    outer footprint). Unlike Height/Width, a tiled window's `move position` isn't a silent no-op
-    that falls back gracefully — Sway rejects it outright ("Only floating containers can be moved
-    to an absolute position"), which `run_sway_command()`'s `?` propagates as an error *before*
-    `poll_matches()` is ever reached, confirmed live by `tests/live_sway.rs`'s
-    `position_errors_clearly_for_a_tiled_window`. `position_confirms_via_poll_for_a_floating_window`
-    covers the fast path. A *fullscreen* window is a second exception to the `deco_rect.x`/`rect.x`
-    equality above: confirmed live that a fullscreen window's `deco_rect` stays `{0, 0, 0, 0}`
-    permanently (stable across a multi-second sweep, not a transient settle race), since Sway never
-    computes decoration geometry for a window with no border/titlebar to draw — `move position`
-    still succeeds immediately against a fullscreen container (`rect.x`/`rect.y` land on the
-    requested target right away), but comparing only `deco_rect` meant this could never be confirmed
-    via poll, always burning the full grace period before falling back. `position_matches()` falls
-    back to `rect.x`/`rect.y` whenever `deco_rect` is unset (both `width`/`height` zero), the same
-    dual-formula-tolerance shape as `width_matches()` above for a different geometry quirk. Confirmed
-    live by `tests/live_sway.rs`'s `position_confirms_via_poll_for_a_fullscreen_window`.
+  - **`Position`** — `position_matches()` compares the window's frame origin with the requested
+    `<x>,<y>` or, for `center`, a computed target, **both relative to the window's workspace** and
+    both read from one `get_tree()` (the containing workspace node's own `rect` supplies the
+    origin and size). That's the space `move position <x> <y>` itself works in: Sway adds the
+    workspace origin to the requested coordinates, and `move position center` centers on the
+    workspace (`compute_center_position()`, against the window's current outer footprint), not on
+    the output. The workspace starts below or beside a bar and inside outer gaps, so on most real
+    desktops it isn't at `(0, 0)` — the live suite's `-c /dev/null` compositor is the exception.
+    The window's own fields come in two spaces (`node_position()`): `deco_rect` is the
+    decoration-inclusive frame origin already relative to the workspace for a floating window,
+    while `rect` is absolute, so it has the workspace origin subtracted. `rect` is the fallback
+    whenever `deco_rect` is all zero, which Sway reports for any window drawing no title bar: a
+    fullscreen window (confirmed live, stable across a multi-second sweep rather than a settle
+    race) and every window whose border isn't `normal` (`border pixel <N>`/`border none`, or the
+    same through `default_border`). Such a window has no decoration above `rect`, so `rect`'s origin is
+    the frame origin. A freshly mapped window reads the same way, transiently: Sway serves
+    geometry from pending state but tests the *applied* border, so until the window's first
+    layout transaction is applied (the client acking the configure sent on map, or Sway's
+    transaction timeout) it reports `border: none`, an all-zero `deco_rect`, and a `rect` that
+    includes the title bar. The fallback still yields the frame origin then, so `--position`
+    confirms against the pending state later commands act on, and a launch-and-place invocation
+    can finish inside the transient. The live tests asserting on `deco_rect` therefore read it
+    through `get_settled_node()`, which waits for `border` to stop reading `none` (every window
+    they check has the default `normal` border); reading it straight after sway-launch exited
+    failed intermittently once the fallback became workspace-relative, most visibly in
+    `position_accepts_negative_coordinates_on_a_negatively_offset_output` — the old absolute
+    comparison never matched on a non-zero-origin workspace, so it kept polling until the
+    transaction applied and hid the transient. An earlier version centered on the output (via a second `get_outputs()`
+    call) and compared the absolute `rect` without converting it, so it only confirmed when the
+    workspace started at `(0, 0)`: with a bar or outer gaps, a correctly placed window reported
+    `unconfirmed` after waiting out the poll grace — `center` always, and explicit coordinates on
+    any title-bar-less window. Pinned by `tests/live_sway.rs`'s
+    `position_confirms_center_and_coordinates_on_an_offset_workspace`, which sets `gaps outer` to
+    move the workspace origin (the same effect as a bar, without needing a bar client). Unlike
+    Height/Width, a tiled window's `move position` isn't a silent no-op that falls back
+    gracefully — Sway rejects it outright ("Only floating containers can be moved to an absolute
+    position"), which `run_sway_command()`'s `?` propagates as an error *before* `poll_matches()`
+    is ever reached, confirmed live by `position_errors_clearly_for_a_tiled_window`.
+    `position_confirms_via_poll_for_a_floating_window` and
+    `position_confirms_via_poll_for_a_fullscreen_window` cover the fast path.
   - **`Sticky`** — a direct read of the container's own `sticky` field on `Node` (via
     `node_by_id()`), unlike `Floating`'s `node_type`/`floating`-field split (see
     `node_is_floating()`'s doc comment) — confirmed live that `sticky` is a plain `bool` with no
@@ -991,8 +1010,8 @@ read answers a single question:
 - A wait-time action's poll cycle: `run_wait_time()` opens a single `Connection` and passes it to
   `poll_baseline()` and every `poll_matches()` iteration (see the "No event exists in Sway IPC for
   it" bullet above), because that's the only place the same read repeats up to 20 times inside
-  200ms. `poll_matches()` and the tree/output helpers it calls (`parent_node_layout`, `node_by_id`,
-  `position_matches`, `node_and_output_name`, `output_rect`) therefore take `&mut Connection`
+  200ms. `poll_matches()` and the tree helpers it calls (`parent_node_layout`, `node_by_id`,
+  `position_matches`) therefore take `&mut Connection`
   rather than opening their own.
 - `relocates_to_another_output()`: its `get_outputs()` and `get_tree()` calls are two halves of one
   check, so they share a connection too. Cheaper than the poll cycle's case (there's no loop to
