@@ -184,6 +184,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   window's own `app_id`/`class` rather than sent to Sway, so there's no quoting round trip for
   them to break.
 - `--mark`, `--mark-match`, `--workspace`, `--output` (and the matching `--layout`/`--template`
+  step/binding fields) now also reject a value containing `$`. Sway replaces `$name` with a
+  variable from its own config even inside a quoted value, so `--workspace '$ws1'` moved the window
+  to whatever the config set `$ws1` to and then failed with a timeout, waiting for a workspace
+  literally named `$ws1` (and stopped a `--layout` there). `--validate` reported such a value as
+  valid. (#53)
+- `--mark`, `--mark-match`, `--workspace`, `--output` (and the matching `--layout`/`--template`
   step/binding fields) now also reject a value containing a newline. Sway rewrites it to `;` when
   storing the value, so a mark set as `a⏎b` came back as `a;b` and could never be found again by
   `--mark-match` — the same round-trip failure as the double quote and backslash below, reached by

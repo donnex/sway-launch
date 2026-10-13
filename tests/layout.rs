@@ -717,6 +717,26 @@ fn layout_validate_rejects_a_mark_containing_a_nul() {
 }
 
 #[test]
+fn layout_validate_rejects_a_workspace_containing_a_dollar_sign() {
+    // Sway would substitute a `set $ws1` config variable here, so the window
+    // would land elsewhere and the run would time out waiting for `$ws1`.
+    let path = TempToml::write(
+        "workspace-dollar",
+        "[[step]]\ncon_id = 42\nworkspace = \"$ws1\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap(), "--validate"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("workspace:"), "{stderr}");
+    assert!(stderr.contains("config variables"), "{stderr}");
+}
+
+#[test]
 fn layout_validate_rejects_a_zero_timeout() {
     let path = TempToml::write("zero-timeout", "[[step]]\ncon_id = 42\ntimeout = 0\n");
 

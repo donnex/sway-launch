@@ -207,8 +207,9 @@ pub fn validate_position_argument(value: &str) -> Result<String, String> {
 /// Validates a value that gets interpolated into a Sway IPC command as a
 /// quoted string — `--mark`/`--workspace`/`--output`, and the matching
 /// `LayoutStep`/`TemplateStep` fields. Rejects a blank value (silently a
-/// no-op or a nonsense target otherwise), and both characters
-/// `quote_sway_string()` escapes.
+/// no-op or a nonsense target otherwise), both characters
+/// `quote_sway_string()` escapes, a newline/NUL, and `$` (see the comments
+/// in the body).
 ///
 /// The escaping exists to stop a `,`/`;` in a value from being read back as
 /// an additional Sway command, and it does that correctly — but confirmed
@@ -266,6 +267,20 @@ pub fn validate_sway_string_argument(value: &str) -> Result<String, String> {
              storing the value, so the value would not round-trip",
             character
         ));
+    }
+    // Sway replaces `$name` with a `set $name ...` config variable in every
+    // argument of an IPC command, quoted or not, so `--workspace '$ws1'` lands
+    // on whatever `$ws1` is set to in the user's config and the confirmation
+    // then waits for the literal text, which never appears. Which names are
+    // defined depends on each user's config, and templates are meant to be
+    // shared, so `$` is rejected outright rather than only when it happens to
+    // name a variable.
+    if value.contains('$') {
+        return Err(
+            "Must not contain \"$\" — Sway substitutes its config variables ($name) in the value, \
+             so the value would not round-trip"
+                .to_string(),
+        );
     }
     Ok(value.to_string())
 }

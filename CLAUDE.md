@@ -60,7 +60,8 @@ below) plus five integration test files:
   characters `quote_sway_string()` escapes (`"` and `\`), since Sway was confirmed live to store
   the escape character literally rather than unescaping it, silently corrupting the value instead
   of round-tripping it (see that function's own doc comment); it rejects a newline and a NUL too,
-  both of which Sway rewrites to `;`. `validate_exec_command` covers the launch command (the
+  both of which Sway rewrites to `;`, and `$`, since Sway substitutes its `set $name` config
+  variables even inside a quoted argument. `validate_exec_command` covers the launch command (the
   positional CLI command and a step's/binding's `command`, checked in `to_sway_launch()`), which is
   sent to Sway raw rather than quoted (see "`Exec`" below), so it goes through Sway's own command
   parser before the shell: it rejects an unquoted, unescaped `,`/`;` (scanned with the same
