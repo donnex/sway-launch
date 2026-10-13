@@ -218,6 +218,20 @@ fn contains_id_false_when_absent() {
 }
 
 #[test]
+fn present_ids_keeps_only_ids_still_in_the_tree_in_the_given_order() {
+    let tiled = leaf_node_value(10, Some("foot"), None);
+    let floating = leaf_node_value(11, Some("foot"), None);
+    let tree = node_tree(1, vec![tiled], vec![floating]);
+    assert_eq!(present_ids(&tree, &[11, 42, 10]), vec![11, 10]);
+}
+
+#[test]
+fn present_ids_is_empty_when_every_id_is_gone() {
+    let tree = node_tree(1, vec![], vec![]);
+    assert!(present_ids(&tree, &[10, 11]).is_empty());
+}
+
+#[test]
 fn find_parent_layout_returns_the_direct_parents_layout() {
     let leaf = leaf_node_value(10, Some("foot"), None);
     let mut parent_value = container_node_value(2, vec![leaf], vec![]);

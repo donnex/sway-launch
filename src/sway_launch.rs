@@ -38,6 +38,7 @@ pub use action::SwayAction;
 pub use ipc::kill_container;
 pub use launch::{SwayLaunch, Target};
 pub use outcome::{ActionRecord, ActionStatus, LaunchOwnership, RunError, UnmatchedWindow};
+pub use query::containers_still_present;
 pub use values::{
     escape_control_characters, parse_position, parse_size, require_non_blank,
     validate_exec_command, validate_non_blank_argument, validate_sway_string_argument,

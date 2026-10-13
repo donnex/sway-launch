@@ -13,8 +13,8 @@
 use super::ipc::{ipc_error, new_connection};
 use super::tree::{
     contains_id, expected_position, find_node, find_parent_layout, find_workspace_node,
-    is_at_the_trailing_workspace_edge, matching_container_ids, node_position, resolve_matches,
-    ContainerState, MoveDirection,
+    is_at_the_trailing_workspace_edge, matching_container_ids, node_position, present_ids,
+    resolve_matches, ContainerState, MoveDirection,
 };
 use super::values::Position;
 use swayipc::{Connection, Node, NodeLayout};
@@ -128,6 +128,19 @@ pub(super) fn container_exists(container_id: i64) -> Result<bool, String> {
         Err(error) => return Err(ipc_error(error)),
     };
     Ok(contains_id(&tree, container_id))
+}
+
+/// Which of `container_ids` are still present in the current tree, in the
+/// order given. Used by `main.rs`'s `--rollback-on-error` to tell a window
+/// that actually closed from one whose close request Sway merely accepted:
+/// `kill` asks the client to close and replies before it has, and a client
+/// is free to keep its window open (an unsaved-changes prompt, say).
+pub fn containers_still_present(container_ids: &[i64]) -> Result<Vec<i64>, String> {
+    let tree = match new_connection()?.get_tree() {
+        Ok(tree) => tree,
+        Err(error) => return Err(ipc_error(error)),
+    };
+    Ok(present_ids(&tree, container_ids))
 }
 
 /// The `layout` field of `container_id`'s *parent* node, or `None` if the

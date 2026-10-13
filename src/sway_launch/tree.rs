@@ -319,6 +319,16 @@ pub(super) fn find_workspace_node(node: &Node, container_id: i64) -> Option<&Nod
         .find_map(|child| find_workspace_node(child, container_id))
 }
 
+/// Which of `container_ids` are still anywhere in `tree`, in the order given —
+/// the pure half of `containers_still_present()`.
+pub(super) fn present_ids(tree: &Node, container_ids: &[i64]) -> Vec<i64> {
+    container_ids
+        .iter()
+        .copied()
+        .filter(|&container_id| contains_id(tree, container_id))
+        .collect()
+}
+
 pub(super) fn contains_id(node: &Node, container_id: i64) -> bool {
     node.id == container_id
         || node

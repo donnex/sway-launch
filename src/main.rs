@@ -617,20 +617,31 @@ fn fail_run(json: bool, error: &sway_launch::RunError) -> ! {
     );
 }
 
-/// What `--rollback-on-error`'s cleanup actually managed to do: the ids whose
-/// `[con_id] kill` succeeded, and the ids whose kill failed.
+/// What `--rollback-on-error`'s cleanup actually managed to do: the ids that
+/// were asked to close and then left the tree, and the ids it couldn't
+/// confirm closed.
+///
+/// A successful `[con_id] kill` is not a close. Sway sends the client a close
+/// request and replies as soon as it has, and the client decides whether and
+/// when to act on it — an editor with unsaved changes, or a browser asking
+/// before closing several tabs, keeps its window open. So `rolled_back` only
+/// holds ids that were seen gone from the tree within
+/// `ROLLBACK_CLOSE_GRACE` of the kill (see `rollback()`); everything else
+/// lands in `failed`.
 ///
 /// The split exists because the two mean genuinely different things to a
-/// caller, and collapsing them loses information either way. A killed window
-/// is definitely gone. A window whose kill *failed* is in an unknown state —
-/// overwhelmingly likely already closed on its own (the case
+/// caller, and collapsing them loses information either way. A rolled-back
+/// window is gone. A `failed` one is in an unknown state: its kill failed —
+/// overwhelmingly likely because it had already closed on its own (the case
 /// `rollback_on_error_handles_a_launched_window_that_already_closed_itself`
-/// covers), but a kill can fail for other reasons too, and this run can't
-/// tell which. Reporting it as still-open progress would assert something
-/// untrue; silently dropping it would hide a window the caller may still need
-/// to deal with. So it gets its own field and is excluded from
-/// `PartialProgress`, leaving the three sets unambiguous: `container_ids` is
-/// open, `rolled_back` is closed, `rollback_failed` needs checking.
+/// covers), though a kill can fail for other reasons too — or its close
+/// request was accepted and the window was still open when the wait ran out.
+/// Reporting it as still-open progress could assert something untrue;
+/// reporting it as closed could too; silently dropping it would hide a
+/// window the caller may still need to deal with. So it gets its own field
+/// and is excluded from `PartialProgress`, leaving the three sets
+/// unambiguous: `container_ids` is open, `rolled_back` is closed,
+/// `rollback_failed` needs checking.
 #[derive(Default)]
 struct RollbackOutcome {
     rolled_back: Vec<i64>,
@@ -1403,9 +1414,9 @@ fn fail_step(
     } else {
         RollbackOutcome::default()
     };
-    // Anything rollback touched is filtered out, whether the kill succeeded or
-    // not: a killed window is gone, and one whose kill failed is in a state
-    // this run can't vouch for. Reporting either as still-open partial
+    // Anything rollback touched is filtered out, whether it closed or not: a
+    // rolled-back window is gone, and one whose kill failed or that ignored
+    // its close request is in a state this run can't vouch for. Reporting either as still-open partial
     // progress would assert something it doesn't know. The failed ones are
     // still reported, under their own field — see RollbackOutcome.
     let attempted: Vec<i64> = rollback_outcome.attempted().copied().collect();
@@ -1434,9 +1445,27 @@ fn fail_step(
     );
 }
 
-/// Best-effort `--rollback-on-error` cleanup: kills every id in
-/// `launched_container_ids`, most-recently-launched first, via a fresh
-/// `[con_id] kill` command each.
+/// How long `rollback()` waits, in total, for the windows whose close request
+/// Sway accepted to actually leave the tree before reporting the remainder
+/// under `rollback_failed`. A client that honours the request closes in
+/// milliseconds (`foot` is gone on the first poll); one that doesn't — an
+/// unsaved-changes prompt — won't close within any wait worth imposing on a
+/// run that has already failed, so this only needs to cover the honest case
+/// with margin.
+const ROLLBACK_CLOSE_GRACE: time::Duration = time::Duration::from_secs(1);
+
+/// How often `rollback()` re-reads the tree inside `ROLLBACK_CLOSE_GRACE`.
+const ROLLBACK_CLOSE_POLL_INTERVAL: time::Duration = time::Duration::from_millis(20);
+
+/// Best-effort `--rollback-on-error` cleanup: sends every id in
+/// `launched_container_ids` a `[con_id] kill`, most-recently-launched first,
+/// then waits up to `ROLLBACK_CLOSE_GRACE` for the ones Sway accepted to
+/// leave the tree.
+///
+/// The wait is what makes `rolled_back` true: `kill` is a close *request*,
+/// and Sway's success reply only says the request was sent (see
+/// `RollbackOutcome`). A window still present when the wait runs out is
+/// warned about and reported under `rollback_failed`, not as closed.
 ///
 /// Killing by an id recorded earlier is not a time-of-check problem: the id
 /// can't by then refer to some other window, because Sway allocates container ids monotonically and does not
@@ -1457,13 +1486,15 @@ fn fail_step(
 /// rollback, and the original step failure being reported by `fail_step()`
 /// stays the primary error either way. Returns both outcomes separately (see
 /// `RollbackOutcome`), for `fail_with_rollback()` to report alongside that
-/// error: "closed" and "tried to close and couldn't" are different facts, and
-/// a caller cleaning up after a failed run needs to tell them apart.
+/// error: "closed" and "tried to close and couldn't confirm it" are different
+/// facts, and a caller cleaning up after a failed run needs to tell them
+/// apart.
 fn rollback(launched_container_ids: &[i64]) -> RollbackOutcome {
-    let mut outcome = RollbackOutcome::default();
+    let mut accepted = Vec::new();
+    let mut failed = Vec::new();
     for &container_id in launched_container_ids.iter().rev() {
         match sway_launch::kill_container(container_id) {
-            Ok(()) => outcome.rolled_back.push(container_id),
+            Ok(()) => accepted.push(container_id),
             Err(error) => {
                 diagnostic!(
                     "{}--rollback-on-error failed to close container {}: {}",
@@ -1471,16 +1502,92 @@ fn rollback(launched_container_ids: &[i64]) -> RollbackOutcome {
                     container_id,
                     error
                 );
-                outcome.failed.push(container_id);
+                failed.push(container_id);
             }
         }
     }
-    outcome
+    let still_open = wait_for_containers_to_close(&accepted);
+    for container_id in &still_open {
+        diagnostic!(
+            "{}--rollback-on-error asked container {} to close, but it was still open after {} ms",
+            stderr_label(Severity::Warning),
+            container_id,
+            ROLLBACK_CLOSE_GRACE.as_millis()
+        );
+    }
+    classify_rollback(accepted, failed, &still_open)
+}
+
+/// Polls the tree until none of `container_ids` is left in it, or
+/// `ROLLBACK_CLOSE_GRACE` runs out, and returns whichever are still there.
+/// A tree read that fails leaves the outcome unknowable, so every id is
+/// returned as still present: claiming a close this run never saw would be
+/// the very error the wait exists to prevent.
+fn wait_for_containers_to_close(container_ids: &[i64]) -> Vec<i64> {
+    if container_ids.is_empty() {
+        return Vec::new();
+    }
+    let deadline = time::Instant::now() + ROLLBACK_CLOSE_GRACE;
+    loop {
+        match sway_launch::containers_still_present(container_ids) {
+            Ok(present) if present.is_empty() || time::Instant::now() >= deadline => {
+                return present;
+            }
+            Ok(_) => std::thread::sleep(ROLLBACK_CLOSE_POLL_INTERVAL),
+            Err(error) => {
+                diagnostic!(
+                    "{}--rollback-on-error couldn't confirm which windows closed: {}",
+                    stderr_label(Severity::Warning),
+                    error
+                );
+                return container_ids.to_vec();
+            }
+        }
+    }
+}
+
+/// The pure half of `rollback()`: an id whose close request was accepted
+/// counts as rolled back only if it isn't in `still_open`; the rest join the
+/// ids whose kill failed outright.
+fn classify_rollback(
+    accepted: Vec<i64>,
+    mut failed: Vec<i64>,
+    still_open: &[i64],
+) -> RollbackOutcome {
+    let (still_open_ids, rolled_back): (Vec<i64>, Vec<i64>) = accepted
+        .into_iter()
+        .partition(|container_id| still_open.contains(container_id));
+    failed.extend(still_open_ids);
+    RollbackOutcome {
+        rolled_back,
+        failed,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classify_rollback_counts_only_closed_windows_as_rolled_back() {
+        let outcome = classify_rollback(vec![30, 20, 10], vec![5], &[20]);
+        assert_eq!(outcome.rolled_back, vec![30, 10]);
+        assert_eq!(outcome.failed, vec![5, 20]);
+    }
+
+    #[test]
+    fn classify_rollback_with_nothing_still_open_rolls_back_every_accepted_kill() {
+        let outcome = classify_rollback(vec![20, 10], vec![], &[]);
+        assert_eq!(outcome.rolled_back, vec![20, 10]);
+        assert!(outcome.failed.is_empty());
+    }
+
+    #[test]
+    fn classify_rollback_with_every_window_still_open_rolls_back_nothing() {
+        let outcome = classify_rollback(vec![20, 10], vec![], &[10, 20]);
+        assert!(outcome.rolled_back.is_empty());
+        assert_eq!(outcome.failed, vec![20, 10]);
+    }
 
     #[test]
     fn dry_run_plain_lines_number_continuously_and_escape_control_characters() {

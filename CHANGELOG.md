@@ -223,6 +223,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--rollback-on-error` no longer reports a window as closed just because it was asked to close.
+  Closing a window only sends its application a request, which an editor with unsaved changes or a
+  browser confirming before closing several tabs can turn down, yet such a window was listed under
+  `rolled_back` and dropped from `container_ids` while still open on screen. Rollback now waits up
+  to a second for each window to actually go, and one still open after that is reported with a
+  warning and under `rollback_failed` instead. (#71)
 - `--position` now reports `"changed"` for a correctly placed window on a desktop with a bar, outer
   gaps or a second output, instead of `"unconfirmed"`. It checked where the window landed against
   the output rather than the workspace, so it only confirmed when the workspace started at the
