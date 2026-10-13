@@ -198,6 +198,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   containing spaces or Sway's own `,`/`;` command separators are unaffected — those are quoted and
   stored literally, as before. One consequence: a mark containing a backslash that was set by some
   other tool (`swaymsg mark 'a\b'`) can no longer be targeted by `--mark-match`.
+- A failed run's error message on stderr now starts with `error:`, and a window that
+  `--rollback-on-error` couldn't close is reported with `warning:`, matching the labels the
+  argument parser already used. The message used to be printed bare, so in a script's output or
+  next to `--verbose` diagnostics the line explaining why the run stopped looked like any other.
+  The label is colored when stderr is a terminal, unless `NO_COLOR` is set; `--json` error objects
+  are unchanged. (#38)
 
 ### Fixed
 

@@ -1022,7 +1022,13 @@ by `tests/layout.rs`'s `layout_keeps_running_its_steps_after_stdout_is_closed` a
 Errors always go to stderr regardless of `--json` (`main.rs`'s `fail()`/`fail_with_rollback()`), but
 their *shape* on stderr does follow `--json`: a `{"error": "...", "rolled_back": [...]}` object
 instead of a plain-text line, mirroring the structured success shapes below rather than leaving a
-`--json` caller to also parse plain-text stderr on failure. `rolled_back` is only ever non-empty
+`--json` caller to also parse plain-text stderr on failure. In plain output the message is prefixed
+`error:` (and `rollback()`'s per-kill failure `warning:`) via `severity_label()`, matching clap's
+own usage-error labels so the line that stopped a script stands out next to `--verbose` noise; the
+label is bold red/yellow only when `stderr_wants_color()` holds (stderr is a terminal and
+`NO_COLOR` is unset or empty), written as raw ANSI escapes with `std::io::IsTerminal` rather than
+by taking `anstream`/`anstyle` on as direct dependencies for two fixed strings. The JSON object is
+never labelled or colored. `rolled_back` is only ever non-empty
 when `run_steps()`'s `--rollback-on-error` (see "`--layout`" below) actually killed something
 first — every other error path passes an empty `RollbackOutcome`. That type carries the kills that
 *failed* separately (`rollback_failed` in `--json`, present only when non-empty; a summary line in

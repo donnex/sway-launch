@@ -1,5 +1,6 @@
 use clap::{error::ErrorKind, CommandFactory, Parser};
 use std::collections::HashMap;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::{io, process, time};
 
@@ -21,6 +22,42 @@ macro_rules! diagnostic {
 mod layout;
 mod sway_launch;
 mod template;
+
+/// The two severities a plain-text stderr line can be labelled with, matching
+/// the `error:`/`warning:` prefixes clap gives its own usage errors.
+#[derive(Clone, Copy)]
+enum Severity {
+    Error,
+    Warning,
+}
+
+/// `error: `/`warning: `, bold red/yellow when `color` is set, plain
+/// otherwise. Pure so the rendering is testable without a terminal; see
+/// `stderr_wants_color()` for when `color` is set.
+fn severity_label(severity: Severity, color: bool) -> String {
+    let (word, ansi_color) = match severity {
+        Severity::Error => ("error:", "31"),
+        Severity::Warning => ("warning:", "33"),
+    };
+    if color {
+        format!("\x1b[1;{}m{}\x1b[0m ", ansi_color, word)
+    } else {
+        format!("{} ", word)
+    }
+}
+
+/// Whether a severity label should be colored: only when stderr is a terminal
+/// and `NO_COLOR` is unset or empty (the `NO_COLOR` convention), so a
+/// redirected log or a `2>&1` capture never gets escape codes in it.
+fn stderr_wants_color() -> bool {
+    let no_color = std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty());
+    !no_color && io::stderr().is_terminal()
+}
+
+/// `severity_label()` for the real stderr.
+fn stderr_label(severity: Severity) -> String {
+    severity_label(severity, stderr_wants_color())
+}
 
 /// Every flag that selects or acts on a window: the flags a `--layout`/
 /// `--template` step carries per step instead. The standalone modes
@@ -484,7 +521,11 @@ fn exit_on_write_failure(error: &io::Error) -> ! {
         // report it to. A clean exit is the expected outcome here.
         process::exit(0);
     }
-    diagnostic!("failed writing to stdout: {}", error);
+    diagnostic!(
+        "{}failed writing to stdout: {}",
+        stderr_label(Severity::Error),
+        error
+    );
     process::exit(1);
 }
 
@@ -690,7 +731,7 @@ fn fail_with_rollback(
         if let Some(container_id) = error.container_id {
             diagnostic!("container {} was the target when this failed", container_id);
         }
-        diagnostic!("{}", message);
+        diagnostic!("{}{}", stderr_label(Severity::Error), message);
         if !rollback.rolled_back.is_empty() {
             diagnostic!(
                 "rolled back {} container(s): {}",
@@ -1401,7 +1442,8 @@ fn rollback(launched_container_ids: &[i64]) -> RollbackOutcome {
             Ok(()) => outcome.rolled_back.push(container_id),
             Err(error) => {
                 diagnostic!(
-                    "warning: --rollback-on-error failed to close container {}: {}",
+                    "{}--rollback-on-error failed to close container {}: {}",
+                    stderr_label(Severity::Warning),
                     container_id,
                     error
                 );
@@ -1415,6 +1457,24 @@ fn rollback(launched_container_ids: &[i64]) -> RollbackOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn severity_label_is_plain_text_without_color() {
+        assert_eq!(severity_label(Severity::Error, false), "error: ");
+        assert_eq!(severity_label(Severity::Warning, false), "warning: ");
+    }
+
+    #[test]
+    fn severity_label_colors_only_the_label_with_color() {
+        assert_eq!(
+            severity_label(Severity::Error, true),
+            "\x1b[1;31merror:\x1b[0m "
+        );
+        assert_eq!(
+            severity_label(Severity::Warning, true),
+            "\x1b[1;33mwarning:\x1b[0m "
+        );
+    }
 
     /// Args flags with deliberately no `LayoutStep` equivalent: they select
     /// or configure the invocation as a whole, so there's no per-step
