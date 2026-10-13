@@ -731,7 +731,14 @@ fn fail_with_rollback(
         if let Some(container_id) = error.container_id {
             diagnostic!("container {} was the target when this failed", container_id);
         }
-        diagnostic!("{}{}", stderr_label(Severity::Error), message);
+        // A message can quote file content — a TOML parse error echoes the
+        // line it failed on — so it's escaped before reaching the terminal.
+        // `--json` needs nothing: JSON already escapes control characters.
+        diagnostic!(
+            "{}{}",
+            stderr_label(Severity::Error),
+            sway_launch::escape_control_characters(message, true)
+        );
         if !rollback.rolled_back.is_empty() {
             diagnostic!(
                 "rolled back {} container(s): {}",
@@ -861,15 +868,31 @@ fn print_dry_run_steps(steps: &[DryRunStep], json: bool) {
         return;
     }
 
-    let mut n = 1;
-    for step in steps {
-        print_line(&format!("{}. {}", n, step.target));
-        n += 1;
-        for action in &step.actions {
-            print_line(&format!("{}. {}", n, action.command));
-            n += 1;
-        }
+    for line in dry_run_plain_lines(steps) {
+        print_line(&line);
     }
+}
+
+/// `print_dry_run_steps()`'s plain-text lines. Control characters in a
+/// command, mark or name are escaped (see
+/// `sway_launch::escape_control_characters()`), so a layout file can't use a
+/// carriage return or a terminal escape to make the preview show something
+/// other than what it will run.
+fn dry_run_plain_lines(steps: &[DryRunStep]) -> Vec<String> {
+    let texts = steps.iter().flat_map(|step| {
+        std::iter::once(step.target.as_str())
+            .chain(step.actions.iter().map(|action| action.command.as_str()))
+    });
+    texts
+        .enumerate()
+        .map(|(index, text)| {
+            format!(
+                "{}. {}",
+                index + 1,
+                sway_launch::escape_control_characters(text, false)
+            )
+        })
+        .collect()
 }
 
 /// Reads and parses a `--layout` file, then hands its steps to `run_steps()`.
@@ -1458,6 +1481,31 @@ fn rollback(launched_container_ids: &[i64]) -> RollbackOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dry_run_plain_lines_number_continuously_and_escape_control_characters() {
+        let steps = [
+            DryRunStep {
+                target: "launch foot\r\u{1b}[2K1. launch bar".to_string(),
+                actions: vec![DryRunAction {
+                    kind: "split",
+                    command: "splith".to_string(),
+                }],
+            },
+            DryRunStep {
+                target: "target existing container".to_string(),
+                actions: vec![],
+            },
+        ];
+        assert_eq!(
+            dry_run_plain_lines(&steps),
+            [
+                "1. launch foot\\r\\u{1b}[2K1. launch bar",
+                "2. splith",
+                "3. target existing container",
+            ]
+        );
+    }
 
     #[test]
     fn severity_label_is_plain_text_without_color() {

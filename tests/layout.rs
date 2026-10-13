@@ -52,6 +52,37 @@ fn layout_dry_run_prints_a_continuously_numbered_plan() {
 }
 
 #[test]
+fn layout_dry_run_escapes_control_characters_in_a_command() {
+    // A TOML escape can put a terminal escape sequence in a command; printed
+    // raw, `\u001b[2K` plus a carriage-return-style cursor move would let a
+    // layout file make the preview show something other than what it runs.
+    let path = TempToml::write(
+        "dry-run-escape",
+        "[[step]]\ncommand = \"evil\\u001b[1G\\u001b[2Kfoot\"\nmark = \"tab\\tbed\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap(), "--dry-run"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        output.status.success(),
+        "sway-launch --layout --dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert!(
+        !stdout.contains('\u{1b}'),
+        "raw escape in output: {stdout:?}"
+    );
+    assert_eq!(
+        stdout,
+        "1. launch evil\\u{1b}[1G\\u{1b}[2Kfoot\n2. mark \"tab\\tbed\"\n"
+    );
+}
+
+#[test]
 fn layout_dry_run_describes_an_existing_step_matched_by_mark() {
     let path = TempToml::write(
         "dry-run-mark-match",

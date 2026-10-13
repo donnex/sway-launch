@@ -192,18 +192,50 @@ fn validate_sway_string_argument_accepts_an_ordinary_value() {
 fn validate_sway_string_argument_accepts_command_separators() {
     // These are exactly what quote_sway_string() exists to neutralize,
     // and Sway does store them literally inside the quotes (confirmed
-    // live) -- so they must stay accepted, unlike `"`/`\`/newline below.
+    // live) -- so they must stay accepted, unlike `"`/`\`/control characters below.
     assert!(validate_sway_string_argument("foo, exec bar").is_ok());
     assert!(validate_sway_string_argument("foo; exec bar").is_ok());
 }
 
 #[test]
-fn validate_sway_string_argument_accepts_tab_and_carriage_return() {
-    // Probed live against a real compositor: both round-trip
-    // byte-for-byte through `mark`, unlike the newline below -- so
-    // rejecting control characters as a class would over-reject.
+fn validate_sway_string_argument_accepts_a_tab() {
     assert!(validate_sway_string_argument("foo\tbar").is_ok());
-    assert!(validate_sway_string_argument("foo\rbar").is_ok());
+}
+
+#[test]
+fn validate_sway_string_argument_rejects_other_control_characters() {
+    // A template carries no commands and is meant to be shared, but its
+    // names reach status bars and `swaymsg` output, so an escape sequence
+    // there would be printed raw to whatever terminal displays them.
+    for value in ["foo\rbar", "\u{1b}[31mred", "a\u{7f}b", "a\u{9b}b"] {
+        let error = validate_sway_string_argument(value)
+            .expect_err("a control character other than tab should be rejected");
+        assert!(error.contains("control character"), "{value:?}: {error:?}");
+    }
+}
+
+// escape_control_characters
+
+#[test]
+fn escape_control_characters_renders_each_control_character_visibly() {
+    assert_eq!(
+        escape_control_characters("foo\r\u{1b}[2Kbar\n\t\0", false),
+        "foo\\r\\u{1b}[2Kbar\\n\\t\\0"
+    );
+}
+
+#[test]
+fn escape_control_characters_leaves_ordinary_text_untouched() {
+    let text = "foot -T \"a,b\" 'x' \\ ünïcode";
+    assert_eq!(escape_control_characters(text, false), text);
+}
+
+#[test]
+fn escape_control_characters_can_keep_newlines_as_line_breaks() {
+    assert_eq!(
+        escape_control_characters("line one\n# \u{1b}]0;x\u{7}\nline three", true),
+        "line one\n# \\u{1b}]0;x\\u{7}\nline three"
+    );
 }
 
 #[test]

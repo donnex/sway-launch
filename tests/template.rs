@@ -279,6 +279,64 @@ fn template_validate_reports_a_step_error() {
 }
 
 #[test]
+fn template_validate_rejects_a_control_character_in_a_workspace() {
+    let template = TempToml::write(
+        "validate-control-character-template",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\nworkspace = \"\\u001b[31mred\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            template.to_str().unwrap(),
+            "--apps",
+            "code",
+            "--validate",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("step 1"), "{stderr:?}");
+    assert!(stderr.contains("control character"), "{stderr:?}");
+    assert!(
+        !stderr.contains('\u{1b}'),
+        "raw escape in output: {stderr:?}"
+    );
+}
+
+#[test]
+fn template_parse_error_does_not_echo_a_raw_terminal_escape() {
+    // TOML forbids a raw control character in a comment, so the parse fails
+    // and the error quotes the offending line — which must not reach the
+    // terminal as a live escape sequence (here: set title, clear screen).
+    let template = TempToml::write(
+        "parse-error-escape-template",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n# hi \u{1b}]0;PWNED\u{7} \u{1b}[2J\n\n[[step]]\nslot = \"editor\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            template.to_str().unwrap(),
+            "--apps",
+            "code",
+            "--validate",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(
+        !stderr.chars().any(|c| c.is_control() && c != '\n'),
+        "raw control character in output: {stderr:?}"
+    );
+    assert!(stderr.contains("\\u{1b}"), "{stderr:?}");
+}
+
+#[test]
 fn template_target_id_references_an_earlier_slot() {
     let template = TempToml::write(
         "target-id-template",

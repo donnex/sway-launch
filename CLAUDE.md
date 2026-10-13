@@ -59,8 +59,10 @@ below) plus five integration test files:
   interpolated into a Sway command as a quoted string: it rejects a blank value, and both
   characters `quote_sway_string()` escapes (`"` and `\`), since Sway was confirmed live to store
   the escape character literally rather than unescaping it, silently corrupting the value instead
-  of round-tripping it (see that function's own doc comment); it rejects a newline and a NUL too,
-  both of which Sway rewrites to `;`, and `$`, since Sway substitutes its `set $name` config
+  of round-tripping it (see that function's own doc comment); it rejects every control character
+  but tab too (a newline/NUL because Sway rewrites them to `;`, the rest because a name is later
+  printed raw by status bars and `swaymsg`, so a shared template could otherwise plant a terminal
+  escape there), and `$`, since Sway substitutes its `set $name` config
   variables even inside a quoted argument. `validate_exec_command` covers the launch command (the
   positional CLI command and a step's/binding's `command`, checked in `to_sway_launch()`), which is
   sent to Sway raw rather than quoted (see "`Exec`" below), so it goes through Sway's own command
@@ -1031,7 +1033,11 @@ by `tests/layout.rs`'s `layout_keeps_running_its_steps_after_stdout_is_closed` a
 Errors always go to stderr regardless of `--json` (`main.rs`'s `fail()`/`fail_with_rollback()`), but
 their *shape* on stderr does follow `--json`: a `{"error": "...", "rolled_back": [...]}` object
 instead of a plain-text line, mirroring the structured success shapes below rather than leaving a
-`--json` caller to also parse plain-text stderr on failure. In plain output the message is prefixed
+`--json` caller to also parse plain-text stderr on failure. A plain-text message is passed through
+`escape_control_characters(message, true)` (newlines kept, every other control character shown as a
+visible escape), because a message can quote file content — a TOML parse error echoes the line it
+failed on, and a file can put a terminal escape in a comment precisely so it fails to parse; the
+`--verbose` `Sway action:`/`Sway command:` lines are escaped the same way. In plain output the message is prefixed
 `error:` (and `rollback()`'s per-kill failure `warning:`) via `severity_label()`, matching clap's
 own usage-error labels so the line that stopped a script stands out next to `--verbose` noise; the
 label is bold red/yellow only when `stderr_wants_color()` holds (stderr is a terminal and
@@ -1208,7 +1214,11 @@ reasoning as `container_id: 0`. Plain output is one
 continuously-numbered line per target/action across every step (matching the external review's own
 illustrative example); `--json` is a single `{"steps": [{"target": ..., "actions": [{"kind": ...,
 "command": ...}, ...]}, ...]}` object (`DryRunStep.actions` holds `DryRunAction { kind, command }`,
-the same pair a real run's `ActionRecord` reports).
+the same pair a real run's `ActionRecord` reports). Plain lines go through
+`sway_launch::escape_control_characters()` (in `values.rs`) via `dry_run_plain_lines()`: a TOML
+escape can put a carriage return or terminal escape in a `command`, and printed raw it could make
+the preview show a different command from the one that runs. `--json` needs nothing, since JSON
+already escapes control characters.
 
 ### `--validate`
 

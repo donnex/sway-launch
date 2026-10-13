@@ -26,7 +26,7 @@ use super::query::{
 use super::tree::{
     height_matches, width_matches, window_app_id_match, window_class_match, ContainerState,
 };
-use super::values::{Size, Split};
+use super::values::{escape_control_characters, Size, Split};
 use super::{MOVE_POLL_GRACE, WAIT_TIME_POLL_GRACE, WAIT_TIME_POLL_INTERVAL};
 use std::sync::mpsc;
 use std::{fmt, thread, time};
@@ -186,7 +186,10 @@ impl SwayAction<'_> {
     /// which one failed rather than only how long it waited.
     pub(super) fn run(&self) -> Result<ActionOutcome, RunError> {
         if self.verbose {
-            diagnostic!("Sway action: {}", self);
+            diagnostic!(
+                "Sway action: {}",
+                escape_control_characters(&self.to_string(), false)
+            );
         }
 
         let outcome = if self.kind.is_event_confirmed() {
@@ -575,7 +578,10 @@ impl SwayAction<'_> {
 
         let sway_command = self.sway_command();
         if self.verbose {
-            diagnostic!("Sway command: {}", sway_command);
+            diagnostic!(
+                "Sway command: {}",
+                escape_control_characters(&sway_command, false)
+            );
         }
 
         run_sway_command(&sway_command)?;
@@ -651,7 +657,10 @@ impl SwayAction<'_> {
         let deadline = deadline_after(self.timing)?;
         let sway_command = self.sway_command();
         if self.verbose {
-            diagnostic!("Sway command: {}", sway_command);
+            diagnostic!(
+                "Sway command: {}",
+                escape_control_characters(&sway_command, false)
+            );
         }
         run_sway_command(&sway_command)?;
 
@@ -801,7 +810,10 @@ impl ExecAction<'_> {
     /// `SwayAction::run()` prefixes its own with the command verb.
     pub(super) fn run(&self) -> Result<(i64, LaunchOwnership), RunError> {
         if self.verbose {
-            diagnostic!("Sway action: {}", self);
+            diagnostic!(
+                "Sway action: {}",
+                escape_control_characters(&self.to_string(), false)
+            );
         }
 
         self.run_wait_matching_exec_event()
@@ -883,7 +895,10 @@ impl ExecAction<'_> {
         let token = generate_pid_marker_token();
         let sway_command = self.sway_command(&token);
         if verbose {
-            diagnostic!("Sway command: {}", sway_command);
+            diagnostic!(
+                "Sway command: {}",
+                escape_control_characters(&sway_command, false)
+            );
         }
         run_single_sway_command(&sway_command)?;
 
