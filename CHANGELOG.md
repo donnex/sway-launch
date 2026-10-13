@@ -190,6 +190,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   literally named `$ws1` (and stopped a `--layout` there). `--validate` reported such a value as
   valid. (#53)
 - `--mark`, `--mark-match`, `--workspace`, `--output` (and the matching `--layout`/`--template`
+  step/binding fields) now reject every control character except tab, not only a newline. A
+  template contains no commands and is meant to be shared, but a TOML escape in one could put a
+  terminal escape sequence into a workspace or mark name, which status bars and `swaymsg` then
+  print raw. A carriage return, previously stored as given, is rejected too. (#54)
+- `--mark`, `--mark-match`, `--workspace`, `--output` (and the matching `--layout`/`--template`
   step/binding fields) now also reject a value containing a newline. Sway rewrites it to `;` when
   storing the value, so a mark set as `a⏎b` came back as `a;b` and could never be found again by
   `--mark-match` — the same round-trip failure as the double quote and backslash below, reached by
@@ -213,6 +218,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--dry-run` now shows control characters in a command, mark or name as visible escapes (`\r`,
+  `\u{1b}`, ...) instead of printing them raw. A layout file could otherwise use a terminal escape
+  sequence to make the preview show a different command from the one it would run — the opposite
+  of what `--dry-run` is for. Error messages are escaped the same way, so a TOML parse error
+  quoting a line from a template or layout file can no longer send a live escape sequence (to
+  retitle the window or clear the screen) to the terminal; `--verbose`'s `Sway command:` lines
+  likewise. `--json` output was already escaped. (#54)
 - The VS Code example scripts (`dev-workspace`, `editor-with-floating-terminal`,
   `quad-mixed-apps`) now match VS Code by class `Code`, the way the README does, instead of app_id
   `code`. VS Code runs under XWayland by default, where it has no app_id, so they used to open the

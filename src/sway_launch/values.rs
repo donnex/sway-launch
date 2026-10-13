@@ -208,7 +208,8 @@ pub fn validate_position_argument(value: &str) -> Result<String, String> {
 /// quoted string — `--mark`/`--workspace`/`--output`, and the matching
 /// `LayoutStep`/`TemplateStep` fields. Rejects a blank value (silently a
 /// no-op or a nonsense target otherwise), both characters
-/// `quote_sway_string()` escapes, a newline/NUL, and `$` (see the comments
+/// `quote_sway_string()` escapes, a control character other than tab, and `$`
+/// (see the comments
 /// in the body).
 ///
 /// The escaping exists to stop a `,`/`;` in a value from being read back as
@@ -245,27 +246,28 @@ pub fn validate_sway_string_argument(value: &str) -> Result<String, String> {
     // that `mark "a<LF>b"` is stored as `a;b`, so --mark-match could never
     // find it again — the same round-trip failure as `"`/`\` above, reached by
     // a different mechanism (Sway's parser normalizing the separator rather
-    // than keeping an escape character).
+    // than keeping an escape character). NUL is rewritten the same way: Sway's
+    // IPC handler splits the payload with C string functions, so an embedded
+    // NUL (reachable through TOML's `\u0000`-style escapes, though never
+    // through argv) is stored as `;` exactly like a newline.
     //
-    // Only the newline. Probed the neighbouring control characters against a
-    // live compositor rather than assuming a category: tab and carriage return
-    // both round-trip byte-for-byte, as do `,`/`;` and ordinary text, so
-    // rejecting control characters as a class would be over-rejection.
-    //
-    // This was missed when `"`/`\` were fixed because the tests covering
-    // newlines asserted the *storage* behaviour (one literal mark, nothing
-    // executed — which was and is true) rather than whether the value came
-    // back out again.
-    //
-    // NUL joins it for the same reason: Sway's IPC handler splits the payload
-    // with C string functions, so an embedded NUL (reachable through TOML's
-    // `\^@`-style escapes, though never through argv) is rewritten to `;`
-    // exactly like a newline — `mark = "ab<NUL>cd"` is stored as `ab;cd`.
-    if let Some(character) = value.chars().find(|&c| c == '\n' || c == '\0') {
+    // Every other control character except tab is rejected too, for a
+    // different reason: tab and carriage return were probed live and do
+    // round-trip, but a name is something status bars and `swaymsg -t
+    // get_workspaces` later print, and a template — which carries no commands
+    // and is meant to be shared — could otherwise plant an escape sequence
+    // there for a terminal to act on. Tab is kept because it's printable
+    // whitespace a name can plausibly contain.
+    if let Some(character) = value.chars().find(|&c| c.is_control() && c != '\t') {
+        let reason = if matches!(character, '\n' | '\0') {
+            "Sway rewrites a newline or NUL to \";\" when storing the value, so the value would not \
+             round-trip"
+        } else {
+            "a name is printed by status bars and swaymsg, where it would reach the terminal raw"
+        };
         return Err(format!(
-            "Must not contain a newline or NUL (found {:?}) — Sway rewrites it to \";\" when \
-             storing the value, so the value would not round-trip",
-            character
+            "Must not contain a control character other than tab (found {:?}) — {}",
+            character, reason
         ));
     }
     // Sway replaces `$name` with a `set $name ...` config variable in every
@@ -283,6 +285,29 @@ pub fn validate_sway_string_argument(value: &str) -> Result<String, String> {
         );
     }
     Ok(value.to_string())
+}
+
+/// `text` with every control character rendered as a visible Rust escape
+/// (`\r`, `\u{1b}`, ...), for printing user-supplied text — a layout's
+/// `command`, a TOML error quoting a file's line — to a terminal.
+///
+/// A TOML string can carry any control character through an escape, so a
+/// layout file printed verbatim could use a carriage return and an
+/// erase-line sequence to make `--dry-run` show a different command from the
+/// one it runs, or put a terminal escape in a comment so that the parse
+/// error quoting it acts on the terminal. `keep_newlines` leaves `\n` as a
+/// real line break, for a multi-line message whose newlines are its own
+/// formatting rather than file content.
+pub fn escape_control_characters(text: &str, keep_newlines: bool) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for character in text.chars() {
+        if character.is_control() && !(keep_newlines && character == '\n') {
+            escaped.extend(character.escape_debug());
+        } else {
+            escaped.push(character);
+        }
+    }
+    escaped
 }
 
 /// Validates the command a launch hands to Sway's `exec` — the positional

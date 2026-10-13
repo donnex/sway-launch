@@ -756,10 +756,9 @@ for_window [con_mark="firefox-floating-left"] resize set 1100 px 90 ppt, move po
 sway-launch --mark firefox-floating-left 'firefox --new-window https://example.com'
 ```
 
-A mark may contain spaces and Sway's own command separators (`,`, `;`) — those are quoted and
-stored literally, as are tabs and carriage returns. A few characters are rejected up front rather
-than silently mangled, because Sway doesn't store any of them as given, so the value could never be
-found again by `--mark-match`:
+A mark may contain spaces, tabs and Sway's own command separators (`,`, `;`) — those are quoted and
+stored literally. A few characters are rejected up front rather than silently mangled, because Sway
+doesn't store any of them as given, so the value could never be found again by `--mark-match`:
 
 - a **double quote** or a **backslash** — stored with the escape character still attached
   (`dropdown"term` comes back as `dropdown\"term`);
@@ -767,6 +766,10 @@ found again by `--mark-match`:
 - a **dollar sign** — Sway replaces `$name` with the matching `set $name ...` variable from its
   config, even inside quotes (`$ws1` lands on whatever your config sets `$ws1` to). Which names
   are defined differs from one config to the next, so `$` is rejected everywhere.
+
+Every other control character (a carriage return, a terminal escape, ...) is rejected too, even
+though Sway would store it: a name is printed later by status bars and `swaymsg`, and a shared
+template shouldn't be able to plant a terminal escape sequence there.
 
 The same rule applies to `--mark-match`, `--workspace`, and `--output`.
 
@@ -1051,6 +1054,11 @@ one for; for `--con-id`/`--existing`, showing the id on some lines and not other
 inconsistent preview. `--json` prints a structured `{"steps": [{"target": "...", "actions":
 [{"kind": "...", "command": "..."}, ...]}, ...]}` object instead, each action carrying the same
 `kind`/`command` pair a real run's [JSON output](#json-output) reports.
+
+Control characters in a command (or anything else the preview prints) are shown as visible escapes
+— `\u{1b}` for an escape character, `\t` for a tab — rather than printed raw, so a layout or
+bindings file can't use a terminal escape sequence to make the preview show something other than
+what it would run.
 
 The preview is statically planned, not a guaranteed prediction of what a real run will do: `move
 right`/`move down` (`--new-column`/`--new-row`) always show as planned here, even on a multi-monitor
