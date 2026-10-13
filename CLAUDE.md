@@ -1496,7 +1496,13 @@ optional `[layout]` table (`Template.layout: TemplateLayoutContext`, `workspace`
 step that doesn't set its own `workspace`/`output` — closes the "works if the workspace/output
 happens to already be in the right state" gap README.md's "Recreatable layouts" section
 acknowledges, letting a template pin itself to a specific workspace/output instead of always
-operating on whatever's currently focused when it runs. `resolve()` applies this as a per-field
+operating on whatever's currently focused when it runs. `template::parse()` validates the table's
+own values (`validate_sway_string_argument()`, errors prefixed `[layout] workspace:`/
+`[layout] output:`) where they're declared: left to `to_sway_launch()`'s per-step check, a bad
+value was blamed on the first step that inherited it — a step that never set the field — and one
+every step overrides was never checked at all, so `--validate` passed a file holding a value the
+rest of the tool rejects. Covered by `parse_rejects_*_layout_context_*` in `template/tests.rs` and
+two `tests/template.rs` `--validate` cases. `resolve()` applies this as a per-field
 fallback (`step.workspace.clone().or_else(|| template.layout.workspace.clone())`, same for
 `output`), not a step-level override switch — a step can mix the template's workspace with its own
 output, or vice versa. Unlike `[template]`'s table, this one is optional: a template with no

@@ -419,3 +419,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--json` output. Those steps asked for a new column on a window that was already the rightmost
   one, so they never moved anything, yet read as though part of the template had failed. The
   layouts they build are unchanged. (#78)
+- A template's `[layout]` table is now checked on its own, so an invalid `workspace` or `output`
+  there is reported as `[layout] workspace: ...` instead of as an error in the first step that
+  inherited it, a step that never set the field. A blank or otherwise invalid value that every step
+  overrides was never checked at all, so `--validate` called such a file valid; it's now rejected
+  too. (#80)

@@ -215,10 +215,26 @@ pub struct Bindings {
 /// Parses a template file's contents. Kept separate from reading the file
 /// itself so the file-not-found and parse-error cases stay distinguishable
 /// to the caller.
+///
+/// The `[layout]` table's values are validated here, where they're
+/// declared, rather than left to `to_sway_launch()`'s per-step check of the
+/// steps that inherit them: that check would blame a step that never set
+/// the field, and would never see a value every step overrides, so
+/// `--validate` would call a file valid while it held a value the rest of
+/// the tool rejects. Same reasoning as `resolve()`'s own binding checks.
 pub fn parse(contents: &str) -> Result<Template, String> {
     let template: Template = toml::from_str(contents).map_err(|error| error.to_string())?;
     sway_launch::require_non_blank("template.description", &template.template.description)?;
     sway_launch::require_non_blank("template.category", &template.template.category)?;
+    for (field, value) in [
+        ("workspace", template.layout.workspace.as_deref()),
+        ("output", template.layout.output.as_deref()),
+    ] {
+        if let Some(value) = value {
+            sway_launch::validate_sway_string_argument(value)
+                .map_err(|error| format!("[layout] {}: {}", field, error))?;
+        }
+    }
     Ok(template)
 }
 
