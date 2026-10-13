@@ -307,6 +307,58 @@ fn template_validate_rejects_a_control_character_in_a_workspace() {
 }
 
 #[test]
+fn template_validate_blames_the_layout_table_not_a_step_for_its_invalid_workspace() {
+    let template = TempToml::write(
+        "validate-layout-context-blame-template",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n\
+         [layout]\nworkspace = \"a\\\"b\"\n\n\
+         [[step]]\nslot = \"editor\"\n\n[[step]]\nslot = \"terminal\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            template.to_str().unwrap(),
+            "--apps",
+            "code,foot",
+            "--validate",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("[layout] workspace: "), "{stderr:?}");
+    assert!(!stderr.contains("step 1"), "{stderr:?}");
+}
+
+#[test]
+fn template_validate_rejects_a_blank_layout_output_that_every_step_overrides() {
+    let template = TempToml::write(
+        "validate-layout-context-overridden-template",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n\
+         [layout]\noutput = \"  \"\n\n\
+         [[step]]\nslot = \"editor\"\noutput = \"HDMI-A-1\"\n\n\
+         [[step]]\nslot = \"terminal\"\noutput = \"HDMI-A-1\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            template.to_str().unwrap(),
+            "--apps",
+            "code,foot",
+            "--validate",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("[layout] output: "), "{stderr:?}");
+}
+
+#[test]
 fn template_parse_error_does_not_echo_a_raw_terminal_escape() {
     // TOML forbids a raw control character in a comment, so the parse fails
     // and the error quotes the offending line — which must not reach the

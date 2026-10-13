@@ -553,7 +553,8 @@ This pins the whole template to a specific workspace/output instead of always op
 whatever's currently focused when it runs — closes the "works if the workspace/output happens to
 already be in the right state" gap noted above. A step's own `workspace`/`output` still wins when
 set, applied per field, so a step can mix the template's workspace with its own output (or vice
-versa).
+versa). Both values are validated where they're declared, even when every step overrides them, so a
+bad one is reported as `[layout] workspace: ...` rather than against a step that inherited it.
 
 Every file under [`templates/`](templates/) is also built into the `sway-launch`
 binary itself as a *built-in template* — `--template <name>` (no `.toml` extension, e.g.

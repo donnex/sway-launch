@@ -527,6 +527,55 @@ fn parse_rejects_misspelled_layout_context_field() {
 }
 
 #[test]
+fn parse_rejects_an_invalid_layout_context_workspace_naming_the_table() {
+    let result = parse(
+        r#"
+            [template]
+            description = "A test template."
+            category = "Test"
+
+            [layout]
+            workspace = "a\"b"
+
+            [[step]]
+            slot = "editor"
+            "#,
+    );
+    let error = result
+        .err()
+        .expect("quote in [layout] workspace should be rejected");
+    assert!(
+        error.starts_with("[layout] workspace: "),
+        "error should name the [layout] table: {error:?}"
+    );
+}
+
+#[test]
+fn parse_rejects_a_blank_layout_context_output_even_when_every_step_overrides_it() {
+    let result = parse(
+        r#"
+            [template]
+            description = "A test template."
+            category = "Test"
+
+            [layout]
+            output = "  "
+
+            [[step]]
+            slot = "editor"
+            output = "HDMI-A-1"
+            "#,
+    );
+    let error = result
+        .err()
+        .expect("blank [layout] output should be rejected");
+    assert!(
+        error.starts_with("[layout] output: "),
+        "error should name the [layout] table: {error:?}"
+    );
+}
+
+#[test]
 fn parse_rejects_misspelled_step_field() {
     // Regression test: mirrors layout::parse()'s same-named test —
     // deny_unknown_fields must catch typos here too.
