@@ -12,12 +12,12 @@
 
 use super::ipc::{ipc_error, new_connection};
 use super::tree::{
-    contains_id, expected_position, find_containing_name, find_node, find_parent_layout,
+    contains_id, expected_position, find_node, find_parent_layout, find_workspace_node,
     is_at_the_trailing_workspace_edge, matching_container_ids, node_position, resolve_matches,
     ContainerState, MoveDirection,
 };
 use super::values::Position;
-use swayipc::{Connection, Node, NodeLayout, NodeType};
+use swayipc::{Connection, Node, NodeLayout};
 
 /// Finds exactly one already-open window matching `app_id_match`/
 /// `class_match`/`mark_match` via `get_tree()`, for `Target::Existing`.
@@ -161,68 +161,28 @@ pub(super) fn node_by_id(connection: &mut Connection, container_id: i64) -> Opti
 
 /// Whether `container_id`'s window is currently positioned where `position`
 /// (`Position::Center` or `Position::Coordinates`) requests. Never propagates
-/// a `None`/error —
-/// any failure to read the tree/outputs, or to resolve an expected
-/// position at all (e.g. `container_id` not found, or not on a known
-/// output), folds into `false` ("not confirmed yet"), consistent with
+/// a `None`/error — any failure to read the tree, or to find the container or
+/// its workspace, folds into `false` ("not confirmed yet"), consistent with
 /// `SwayAction::poll_matches()`'s other arms.
 ///
-/// Confirmed live that a fullscreen window's `deco_rect` stays `{0, 0, 0,
-/// 0}` permanently (not a transient race — held stable across a multi-second
-/// sweep), since Sway never computes decoration geometry for a window with
-/// no border/titlebar to draw. Comparing only `deco_rect` would therefore
-/// mean `--position` against a fullscreen container (directly, or via
-/// `--floating --fullscreen --position` in one invocation) can never be
-/// confirmed by polling — `move position` actually succeeds immediately
-/// (confirmed live via `rect.x`/`rect.y` landing on the requested target),
-/// but every invocation would still burn the full poll grace period before
-/// falling back to sleeping `--wait-time`. Falling back to `rect.x`/`rect.y`
-/// when `deco_rect` is unset closes that gap, mirroring `width_matches()`'s
-/// existing dual-formula tolerance for a different Sway geometry quirk.
+/// Both sides of the comparison are workspace-relative, and both come from
+/// the one `get_tree()`: the workspace node's `rect` is its origin and size.
+/// `node_position()` explains why the window's own fields need converting
+/// into that space and `expected_position()` why `center` is computed from
+/// the workspace rather than the output.
 pub(super) fn position_matches(
     connection: &mut Connection,
     container_id: i64,
     position: &Position,
 ) -> bool {
-    let Some((node, output_name)) = node_and_output_name(connection, container_id) else {
+    let Ok(tree) = connection.get_tree() else {
         return false;
     };
-    // Only `center` needs the output's own geometry, so an explicit
-    // `<x>,<y>` costs one tree read per poll iteration rather than a tree
-    // read plus a get_outputs().
-    let output_rect = match position {
-        Position::Center => output_name
-            .as_deref()
-            .and_then(|name| output_rect(connection, name)),
-        Position::Coordinates { .. } => None,
-    };
-    let Some(expected) = expected_position(position, &node, output_rect) else {
+    let Some(node) = find_node(&tree, container_id) else {
         return false;
     };
-    node_position(&node) == expected
-}
-
-/// `container_id`'s tree node together with the name of the output
-/// containing it (`None` if it isn't on any output, e.g. the scratchpad),
-/// read via a single `get_tree()` call — used by `position_matches()` rather
-/// than combining `node_by_id()` with a separate output lookup, which would
-/// cost a second, redundant tree fetch per poll iteration.
-pub(super) fn node_and_output_name(
-    connection: &mut Connection,
-    container_id: i64,
-) -> Option<(Node, Option<String>)> {
-    let tree = connection.get_tree().ok()?;
-    let node = find_node(&tree, container_id)?.clone();
-    let output_name = find_containing_name(&tree, container_id, NodeType::Output, None);
-    Some((node, output_name))
-}
-
-/// The geometry of the output named `output_name`, or `None` if it can't be
-/// read or no output has that name.
-pub(super) fn output_rect(connection: &mut Connection, output_name: &str) -> Option<swayipc::Rect> {
-    let outputs = connection.get_outputs().ok()?;
-    outputs
-        .into_iter()
-        .find(|output| output.name == output_name)
-        .map(|output| output.rect)
+    let Some(workspace) = find_workspace_node(&tree, container_id) else {
+        return false;
+    };
+    node_position(node, workspace.rect) == expected_position(position, node, workspace.rect)
 }

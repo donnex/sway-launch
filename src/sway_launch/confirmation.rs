@@ -403,9 +403,8 @@ impl SwayAction<'_> {
     ///
     /// Reads through the caller's `connection` rather than opening its own:
     /// `run_poll_then_fallback()` calls this up to 20 times inside a 200ms
-    /// grace period, so opening one or two fresh Sway IPC connections per
-    /// iteration (`Position` needs `get_tree()` plus `get_outputs()`) would
-    /// cost ~40 connects and handshakes for a single action.
+    /// grace period, so opening a fresh Sway IPC connection per iteration
+    /// would cost ~20 connects and handshakes for a single action.
     ///
     /// Errors reading the tree (transient IPC hiccup, container gone) fold
     /// into "not confirmed yet" rather than propagating: this only ever

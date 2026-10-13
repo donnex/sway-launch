@@ -467,18 +467,32 @@ fn container_state_from_tree_reports_fullscreen_mode_zero_as_not_fullscreen() {
 // compute_center_position
 
 #[test]
-fn compute_center_position_centers_within_a_primary_output() {
-    let output_rect = rect(0, 0, 1280, 720);
-    assert_eq!(compute_center_position(output_rect, 400, 300), (440, 210));
+fn compute_center_position_centers_within_a_workspace_at_the_origin() {
+    let workspace_rect = rect(0, 0, 1280, 720);
+    assert_eq!(
+        compute_center_position(workspace_rect, 400, 300),
+        (440, 210)
+    );
 }
 
 #[test]
-fn compute_center_position_accounts_for_a_non_origin_output() {
-    let output_rect = rect(1920, 100, 1280, 720);
-    assert_eq!(compute_center_position(output_rect, 400, 300), (2360, 310));
+fn compute_center_position_is_relative_to_the_workspace_origin() {
+    // The result is workspace-relative, the space `move position` and
+    // deco_rect both use, so the workspace's own origin isn't added in.
+    let workspace_rect = rect(1920, 100, 1280, 720);
+    assert_eq!(
+        compute_center_position(workspace_rect, 400, 300),
+        (440, 210)
+    );
 }
 
 // node_position
+
+/// A 1200x640 workspace at (40, 40): what `gaps outer 40` on a 1280x720
+/// output gives, and the same shape a bar produces on one edge.
+fn offset_workspace_rect() -> swayipc::Rect {
+    rect(40, 40, 1200, 640)
+}
 
 fn node_with_rects(rect_x: i32, rect_y: i32, deco_x: i32, deco_y: i32, deco_set: bool) -> Node {
     let mut value = leaf_node_value(10, Some("foot"), None);
@@ -494,26 +508,50 @@ fn node_with_rects(rect_x: i32, rect_y: i32, deco_x: i32, deco_y: i32, deco_set:
 #[test]
 fn node_position_uses_the_decoration_frame_for_an_ordinary_window() {
     let node = node_with_rects(100, 225, 100, 200, true);
-    assert_eq!(node_position(&node), (100, 200));
+    assert_eq!(node_position(&node, rect(0, 0, 1280, 720)), (100, 200));
+}
+
+#[test]
+fn node_position_reads_the_decoration_frame_as_already_workspace_relative() {
+    // deco_rect is relative to the workspace for a floating window, so an
+    // offset workspace changes rect (absolute) but not deco_rect.
+    let node = node_with_rects(140, 265, 100, 200, true);
+    assert_eq!(node_position(&node, offset_workspace_rect()), (100, 200));
 }
 
 #[test]
 fn node_position_falls_back_to_rect_when_decoration_geometry_is_unset() {
-    // A fullscreen window: Sway never computes deco_rect for a window
-    // with no border/titlebar, so it stays {0,0,0,0} permanently while
-    // `move position` still lands rect.x/rect.y on the target. Comparing
-    // deco_rect alone would make such a position unconfirmable.
+    // A fullscreen window, or one with a pixel/no border: Sway reports an
+    // all-zero deco_rect for every window drawing no title bar, while `move
+    // position` still lands rect.x/rect.y on the target. Comparing deco_rect
+    // alone would make such a position unconfirmable.
     let node = node_with_rects(100, 200, 0, 0, false);
-    assert_eq!(node_position(&node), (100, 200));
+    assert_eq!(node_position(&node, rect(0, 0, 1280, 720)), (100, 200));
+}
+
+#[test]
+fn node_position_makes_the_rect_fallback_workspace_relative() {
+    // Reproduced against Sway 1.11 with `gaps outer 40` and `border pixel 2`:
+    // `move position 100 200` left rect at (140, 240) and deco_rect all zero.
+    // rect is absolute, so the workspace origin has to come off it.
+    let node = node_with_rects(140, 240, 0, 0, false);
+    assert_eq!(node_position(&node, offset_workspace_rect()), (100, 200));
+}
+
+#[test]
+fn node_position_makes_the_rect_fallback_relative_to_a_negative_origin() {
+    // A workspace on an output placed left of the primary one.
+    let node = node_with_rects(-1180, 200, 0, 0, false);
+    assert_eq!(node_position(&node, rect(-1280, 0, 1280, 720)), (100, 200));
 }
 
 #[test]
 fn node_position_does_not_treat_a_zero_origin_decoration_as_unset() {
     // Only zero *width and height* means "no decoration geometry". A
     // window legitimately positioned at the origin still has a real
-    // deco_rect, and must not be misread as the fullscreen case.
-    let node = node_with_rects(0, 25, 0, 0, true);
-    assert_eq!(node_position(&node), (0, 0));
+    // deco_rect, and must not be misread as the fallback case.
+    let node = node_with_rects(40, 65, 0, 0, true);
+    assert_eq!(node_position(&node, offset_workspace_rect()), (0, 0));
 }
 
 // expected_position
@@ -522,34 +560,42 @@ fn node_position_does_not_treat_a_zero_origin_decoration_as_unset() {
 fn expected_position_parses_explicit_coordinates() {
     let node = node_with_geometry(400, 300, 0, 0);
     assert_eq!(
-        expected_position(&Position::Coordinates { x: 100, y: 200 }, &node, None),
-        Some((100, 200))
+        expected_position(
+            &Position::Coordinates { x: 100, y: 200 },
+            &node,
+            offset_workspace_rect()
+        ),
+        (100, 200)
     );
 }
 
 #[test]
-fn expected_position_center_without_an_output_rect_is_none() {
-    // A window on no known output (the scratchpad, say) has nothing to
-    // centre against.
-    let node = node_with_geometry(400, 300, 0, 0);
-    assert_eq!(expected_position(&Position::Center, &node, None), None);
-}
-
-#[test]
-fn expected_position_centers_against_the_given_output_rect() {
+fn expected_position_centers_against_the_given_workspace_rect() {
     let node = node_with_geometry(400, 300, 0, 25);
     assert_eq!(
-        expected_position(&Position::Center, &node, Some(rect(0, 0, 1920, 1080))),
-        Some(((1920 - 400) / 2, (1080 - 325) / 2))
+        expected_position(&Position::Center, &node, rect(0, 0, 1920, 1080)),
+        ((1920 - 400) / 2, (1080 - 325) / 2)
     );
 }
 
 #[test]
-fn expected_position_center_accounts_for_a_non_origin_output() {
+fn expected_position_centers_on_the_workspace_not_the_output() {
+    // A bar or outer gaps shrink the workspace, and Sway centers on what's
+    // left: centering on the 1280x720 output instead was what reported
+    // "unconfirmed" for a correctly centered window.
     let node = node_with_geometry(400, 300, 0, 0);
     assert_eq!(
-        expected_position(&Position::Center, &node, Some(rect(1920, 0, 1920, 1080))),
-        Some((1920 + (1920 - 400) / 2, (1080 - 300) / 2))
+        expected_position(&Position::Center, &node, offset_workspace_rect()),
+        ((1200 - 400) / 2, (640 - 300) / 2)
+    );
+}
+
+#[test]
+fn expected_position_center_ignores_a_non_origin_workspace_s_offset() {
+    let node = node_with_geometry(400, 300, 0, 0);
+    assert_eq!(
+        expected_position(&Position::Center, &node, rect(-1280, 23, 1280, 697)),
+        ((1280 - 400) / 2, (697 - 300) / 2)
     );
 }
 

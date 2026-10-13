@@ -141,12 +141,9 @@ pub fn parse_size(value: &str) -> Result<Size, String> {
 /// take the same `center`/`<x>,<y>` format. `<x>`/`<y>` each allow a leading
 /// `-`: Sway's coordinate space is global across every output, and an output
 /// positioned left of or above the primary one legitimately has a negative
-/// origin (confirmed live: `compute_center_position()`, used for
-/// `--position center`, already accounts for output origin and can itself
-/// land on a negative coordinate on such a layout) — rejecting a
-/// user-supplied negative coordinate here would make the tool unable to
-/// target a position its own `center` computation can already produce. Each
-/// must fit in an `i32`, the same bound as `parse_size()`.
+/// origin, so rejecting a user-supplied negative coordinate here would make
+/// the tool unable to target a real position. Each must fit in an `i32`, the
+/// same bound as `parse_size()`.
 pub fn parse_position(value: &str) -> Result<Position, String> {
     if value == "center" {
         return Ok(Position::Center);
