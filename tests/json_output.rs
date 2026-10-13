@@ -106,8 +106,31 @@ fn con_id_plain_error_names_the_resolved_container_on_stderr_only() {
             .lines()
             .next_back()
             .unwrap_or_default()
-            .starts_with("floating enable: "),
+            .starts_with("error: floating enable: "),
         "the error message should still be the last line: {stderr:?}"
+    );
+}
+
+#[test]
+fn plain_error_is_labelled_and_uncolored_when_stderr_is_not_a_terminal() {
+    // Labelled like clap's own usage errors, so the line that explains why a
+    // layout script stopped stands out from --verbose diagnostics. stderr is
+    // a pipe here, so the label must carry no escape codes.
+    let output = sway_launch_without_a_compositor()
+        .args(["--con-id", "42", "--floating"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    let last_line = stderr.lines().next_back().unwrap_or_default();
+    assert!(
+        last_line.starts_with("error: "),
+        "expected an error: label, got {stderr:?}"
+    );
+    assert!(
+        !stderr.contains('\x1b'),
+        "a piped stderr must not be colored: {stderr:?}"
     );
 }
 
@@ -139,9 +162,15 @@ fn a_failing_action_names_itself_in_the_error() {
     // with its own Sway command verb. Made to fail on the socket, so it runs
     // with or without a compositor.
     for (flags, prefix) in [
-        (&["--floating"][..], "floating enable: "),
-        (&["--workspace", "web"][..], "move workspace \"web\": "),
-        (&["--mark", "m", "--floating"][..], "floating enable: "),
+        (&["--floating"][..], "error: floating enable: "),
+        (
+            &["--workspace", "web"][..],
+            "error: move workspace \"web\": ",
+        ),
+        (
+            &["--mark", "m", "--floating"][..],
+            "error: floating enable: ",
+        ),
     ] {
         let output = sway_launch_without_a_compositor()
             .args(["--con-id", "42"])

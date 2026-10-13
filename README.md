@@ -864,7 +864,10 @@ Re-running `--scratchpad` on a window already in the scratchpad is a no-op, the 
 Show verbose debug information. This goes to stderr, not stdout — stdout is always reserved for
 the final result (the bare container id, or the `--json` object below), so
 `container_id="$(sway-launch -v ...)"`-style capture still gets exactly one clean line even with
-`-v` on.
+`-v` on. A runtime failure's message is prefixed `error:` (and a rollback problem `warning:`), the
+same labels the argument parser uses, so the line that explains why a script stopped stands out
+from the diagnostics around it. The label is colored only when stderr is a terminal and `NO_COLOR`
+is unset; `--json` error objects are never labelled or colored.
 
 ```shell
 $ sway-launch --split h -v foot
@@ -1035,7 +1038,7 @@ valid: layout.toml (3 step(s))
 
 ```shell
 $ sway-launch --layout layout.toml --validate
-step 2: height: Must be <N>px or <N>ppt, e.g. 300px or 20ppt (ppt = percent)
+error: step 2: height: Must be <N>px or <N>ppt, e.g. 300px or 20ppt (ppt = percent)
 ```
 
 `--json` prints `{"source": "...", "steps": N, "valid": true}` on success — `source` echoes back the
