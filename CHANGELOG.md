@@ -86,7 +86,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declare a `[layout]` table (`workspace`/`output`) applied to every step that doesn't set its own,
   so the whole template lands on a specific workspace or output. Mistakes in a template or
   bindings file — a slot used twice, a binding with both `app_id` and `class`, a blank `id`,
-  `slot` or `command` — are reported against the field that's wrong. (#80)
+  `slot` or `command` — are reported against the field that's wrong. Each slot belongs to one step
+  (a later step acts on the same window with `target_id`), and a template that repeats one is
+  rejected as soon as it's read, so `--apps` never reports a misleading application count for
+  it. (#80, #100)
 - A built-in template library compiled into the binary — grid, sidebar, master/stack, floating,
   multi-workspace/output and retargeting shapes, applied with `--template <name> --apps ...` and no
   files to write. `--list-templates` prints every name with its category, description and slots,

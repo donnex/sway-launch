@@ -43,22 +43,20 @@ pub fn builtin(name: &str) -> Option<&'static str> {
         .and_then(|file| file.contents_utf8())
 }
 
-/// The distinct slot names a template's steps declare, in first-appearance
-/// order — the same order `--apps` zips its own comma-separated list
-/// against. Shared by `main.rs`'s `bindings_from_apps()` (which needs this
-/// exact order to zip `--apps` correctly) and `builtin_templates()` below
-/// (which reports it via `--list-templates --json`), so the two never
-/// silently disagree on what "slot order" means.
-pub fn distinct_slot_names(template: &Template) -> Vec<&str> {
-    let mut slots = Vec::new();
-    for step in &template.step {
-        if let Some(slot) = step.slot.as_deref() {
-            if !slots.contains(&slot) {
-                slots.push(slot);
-            }
-        }
-    }
-    slots
+/// The slot name of every `slot` step, in step order — the order `--apps`
+/// zips its own comma-separated list against. No de-duplication is needed:
+/// `parse()` rejects a template that uses a slot in more than one step, so
+/// each name here is already distinct. Shared by `main.rs`'s
+/// `bindings_from_apps()` (which needs this exact order to zip `--apps`
+/// correctly) and `builtin_templates()` below (which reports it via
+/// `--list-templates --json`), so the two never silently disagree on what
+/// "slot order" means.
+pub fn slot_names(template: &Template) -> Vec<&str> {
+    template
+        .step
+        .iter()
+        .filter_map(|step| step.slot.as_deref())
+        .collect()
 }
 
 /// Every built-in template's name, description, category, and slot info,
@@ -79,7 +77,7 @@ pub fn builtin_templates() -> Vec<BuiltinTemplate> {
             let template = parse(contents).unwrap_or_else(|error| {
                 panic!("built-in template {name:?} failed to parse: {error}")
             });
-            let slot_names: Vec<String> = distinct_slot_names(&template)
+            let slot_names: Vec<String> = slot_names(&template)
                 .into_iter()
                 .map(str::to_string)
                 .collect();
@@ -222,6 +220,11 @@ pub struct Bindings {
 /// the field, and would never see a value every step overrides, so
 /// `--validate` would call a file valid while it held a value the rest of
 /// the tool rejects. Same reasoning as `resolve()`'s own binding checks.
+///
+/// A slot used by more than one step is rejected here too, so everything
+/// that counts or lists slots — `--apps`' count check, `--list-templates`,
+/// `--validate`, `resolve()` — only ever sees a template whose slots are
+/// already distinct. A later step acts on the same window via `target_id`.
 pub fn parse(contents: &str) -> Result<Template, String> {
     let template: Template = toml::from_str(contents).map_err(|error| error.to_string())?;
     sway_launch::require_non_blank("template.description", &template.template.description)?;
@@ -233,6 +236,12 @@ pub fn parse(contents: &str) -> Result<Template, String> {
         if let Some(value) = value {
             sway_launch::validate_sway_string_argument(value)
                 .map_err(|error| format!("[layout] {}: {}", field, error))?;
+        }
+    }
+    let mut seen_slots = HashSet::new();
+    for slot in slot_names(&template) {
+        if !seen_slots.insert(slot) {
+            return Err(format!("template: slot {:?} is used more than once", slot));
         }
     }
     Ok(template)
@@ -255,16 +264,8 @@ pub fn parse_bindings(contents: &str) -> Result<Bindings, String> {
 /// its own — applied per-field via `Option::or_else()`, so a step can mix a
 /// template-level workspace with its own output, or vice versa.
 ///
-/// A repeated `slot` name is rejected here directly, with a template-shaped
-/// error naming the slot, rather than left for `run_steps()`'s generic
-/// "id already used by an earlier step" check to catch, which would be
-/// technically correct but describes an implementation detail (a
-/// resolved-layout-step id collision) rather than the actual template
-/// authoring mistake a user made. `used_slots` already exists to track which
-/// bindings get consumed (see the "unused binding" check below); its own
-/// `insert()` return value already distinguishes "first time seeing this
-/// slot" from "already used," so no separate check/data structure is
-/// needed.
+/// Expects a template from `parse()`, which has already rejected a slot
+/// used by more than one step.
 pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutStep>, String> {
     let mut bindings_by_slot = HashMap::new();
     for binding in &bindings.binding {
@@ -366,9 +367,7 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
                     ));
                 }
 
-                if !used_slots.insert(slot) {
-                    return Err(format!("template: slot {:?} is used more than once", slot));
-                }
+                used_slots.insert(slot);
                 (
                     Some(slot.to_string()),
                     None,

@@ -1482,8 +1482,8 @@ across different applications, or shared/bundled independently of any specific o
 `run_template()` reads and parses the template via `template::parse()`
 (`toml::from_str::<template::Template>`), builds a `template::Bindings` from either `--bindings`
 (reads + `template::parse_bindings()`) or `--apps` (`bindings_from_apps()`: splits the
-comma-separated list, zips it 1:1 onto the template's distinct `slot` names in first-appearance
-order, erroring on a count mismatch), then calls `template::resolve()` and hands the result to the
+comma-separated list, zips it 1:1 onto the template's `slot` steps in the order they appear,
+erroring on a count mismatch), then calls `template::resolve()` and hands the result to the
 same `run_steps()` `--layout` uses — a resolved template is just a `Vec<layout::LayoutStep>`, so
 nothing downstream needs to know a template was involved. `--template` requires exactly one of
 `--bindings`/`--apps`, and the reverse also holds: `--bindings`/`--apps` require `--template`. Both
@@ -1515,9 +1515,14 @@ and only `target_id` set — deliberately producing an ordinary `layout::LayoutS
 a `target_id` step can reference an earlier `slot` step via the **existing**
 `id`/`target_id`/`resolved_ids` mechanism above (since the slot name *is* the id), with no
 template-specific code. Two `TemplateStep`s sharing a `slot` name would also trip `run_steps()`'s
-"id already used by an earlier step" check, but `resolve()` rejects that first with its own
+"id already used by an earlier step" check, but `template::parse()` rejects that first with its own
 `template: slot "..." is used more than once` error, which names the authoring mistake rather than
-a resolved-step id collision (see `resolve()`'s doc comment).
+a resolved-step id collision. It lives in `parse()` rather than `resolve()` so that everything
+counting or listing slots — `bindings_from_apps()`'s count check, `builtin_templates()`,
+`--validate`, `resolve()` — only ever sees a template whose slots are already distinct: while the
+check sat in `resolve()`, `--apps`' count check ran first against a de-duplicated slot list and
+reported a misleading count for a template that was actually invalid, and the slot helper and its
+test still treated a repeated slot as supported.
 
 **Declined (2026-09-03): giving `TemplateStep` its own optional `id`, defaulting to the slot name.**
 An external review read the identity coupling above as a schema-evolution risk — a slot is an
@@ -1665,10 +1670,10 @@ entry shape is `{"name": ..., "category": ..., "description": ..., "slots": ...,
 description on each line (singular `"slot"` for exactly one, per user decision 2026-08-22 — tried
 `--json`-only first, matching where `category` itself was added, but decided the full listing
 should carry it too, accepting that a many-slot grid's line runs long as the tradeoff).
-`slot_names` is every distinct `slot` name a template's steps declare, in first-appearance order —
-the same order `--apps` zips its own comma-separated list against — via a new shared
-`template::distinct_slot_names()` helper that `bindings_from_apps()` (see below) now also calls
-instead of duplicating the same loop, so the two can never silently disagree on what "slot order"
+`slot_names` is every `slot` step's name, in step order (already distinct, since `parse()` rejects
+a repeated slot — see "`--template`" above) — the same order `--apps` zips its own comma-separated
+list against — via a shared `template::slot_names()` helper that `bindings_from_apps()` (see
+below) also calls instead of duplicating the same loop, so the two can never silently disagree on what "slot order"
 means. `slots` is simply `slot_names.len()`. That makes `--list-templates --json` the place
 anything outside the crate reads slot order from: `tests/live_sway.rs`'s
 `every_shipped_template_resolves_and_launches_successfully` and
@@ -1678,7 +1683,7 @@ out from the template text themselves. Covered headlessly by `tests/template.rs`
 `list_templates_plain_output_includes_slot_count_and_names`, and
 `list_templates_plain_output_uses_singular_slot_for_a_single_slot_template`, and by `template.rs`'s
 `builtin_templates_reports_slots_and_slot_names_matching_the_apps_ordering` and
-`distinct_slot_names_deduplicates_and_ignores_target_id_steps` unit tests.
+`slot_names_lists_slot_steps_in_order_and_ignores_target_id_steps` unit tests.
 
 **Every template file's `[template]` table** (`Template.template: TemplateMetadata`, `description`
 and `category`, both plain `String`s, both required — `#[serde(deny_unknown_fields)]` on
