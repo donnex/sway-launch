@@ -14,7 +14,7 @@ use super::ipc::{ipc_error, new_connection};
 use super::tree::{
     expected_position, find_node, find_parent_layout, find_workspace_node,
     is_at_the_trailing_workspace_edge, matching_container_ids, node_position, present_ids,
-    resolve_matches, ContainerState, MoveDirection,
+    recheck_launched_windows, resolve_matches, ContainerState, MoveDirection, RecheckedWindow,
 };
 use super::values::Position;
 use swayipc::{Connection, Node, NodeLayout};
@@ -175,6 +175,24 @@ pub(super) fn parent_node_layout(
 ) -> Option<NodeLayout> {
     let tree = connection.get_tree().ok()?;
     find_parent_layout(&tree, container_id)
+}
+
+/// `recheck_launched_windows()` against a fresh tree, or `None` if the tree
+/// can't be read — used by `ExecAction::run_wait_matching_exec_event()` to
+/// notice a launched window setting its app_id/class after mapping.
+pub(super) fn recheck_launched_windows_now(
+    connection: &mut Connection,
+    container_ids: &[i64],
+    app_id_match: &str,
+    class_match: &str,
+) -> Option<Vec<RecheckedWindow>> {
+    let tree = connection.get_tree().ok()?;
+    Some(recheck_launched_windows(
+        &tree,
+        container_ids,
+        app_id_match,
+        class_match,
+    ))
 }
 
 /// The tree node with id `container_id`, or `None` if it can't be read

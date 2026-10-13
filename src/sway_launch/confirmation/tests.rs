@@ -28,7 +28,9 @@ fn exec_timeout_message_names_a_window_the_filter_rejected() {
     assert_eq!(
         message,
         "no window with app_id \"notfoot\" appeared within 2 sec; 1 other new window did \
-             (con_id 12, app_id \"foot\", opened by this command) — check --app-id/--class"
+             (con_id 12, app_id \"foot\", opened by this command) — check --app-id/--class \
+             (a window opened by this command was rechecked until the timeout, in case the \
+             app sets its app_id/class after mapping)"
     );
 }
 
@@ -50,6 +52,28 @@ fn exec_timeout_message_lists_several_rejected_windows() {
         "no window with class \"Firefox\" appeared within 5 sec; 3 other new windows did \
              (con_id 12, app_id \"foot\"), (con_id 13, class \"XTerm\"), \
              (con_id 14, no app_id or class) — check --app-id/--class"
+    );
+    assert!(!message.contains("rechecked"), "{message}");
+}
+
+#[test]
+fn exec_timeout_message_names_a_launched_window_that_never_set_its_class() {
+    let message = exec_timeout_message(
+        time::Duration::from_secs(5),
+        "",
+        "Spotify",
+        &[UnmatchedWindow {
+            launched_by_this_run: true,
+            ..unmatched(12, None, None)
+        }],
+        None,
+    );
+    assert_eq!(
+        message,
+        "no window with class \"Spotify\" appeared within 5 sec; 1 other new window did \
+             (con_id 12, no app_id or class, opened by this command) — check --app-id/--class \
+             (a window opened by this command was rechecked until the timeout, in case the \
+             app sets its app_id/class after mapping)"
     );
 }
 

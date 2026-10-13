@@ -284,6 +284,13 @@ application can report different values depending on how it was built, packaged 
 With the wrong value the window still opens, but `sway-launch` never sees a match and stops with a
 timeout once `--timeout` runs out.
 
+Some applications set their app_id or class only after their window has appeared (a known pattern
+for some XWayland apps), so the window briefly has none, or a different one, and Sway sends no event
+when it changes. A window the launched command itself opened is therefore not given up on when it
+first fails to match: `sway-launch` keeps rechecking it until it matches or `--timeout` runs out.
+`--debug-events` shows only the value the window appeared with, so for such an app read the value
+from `swaymsg -t get_tree` instead.
+
 ## Recreatable layouts
 
 Since `sway-launch` blocks on every command, its arguments can be combined into scripts that
@@ -673,7 +680,7 @@ that isn't on `PATH` in Sway's environment, is called out as such:
 
 ```text
 $ sway-launch --timeout 2 -a notfoot foot
-launch "foot": no window with app_id "notfoot" appeared within 2 sec; 1 other new window did (con_id 12, app_id "foot", opened by this command) — check --app-id/--class
+launch "foot": no window with app_id "notfoot" appeared within 2 sec; 1 other new window did (con_id 12, app_id "foot", opened by this command) — check --app-id/--class (a window opened by this command was rechecked until the timeout, in case the app sets its app_id/class after mapping)
 $ sway-launch --timeout 2 footx
 launch "footx": no window appeared within 2 sec: the launched command exited without opening a window — check that it is on PATH in Sway's environment
 $ sway-launch --con-id 31 --floating --output left --mark m

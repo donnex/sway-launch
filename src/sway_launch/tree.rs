@@ -78,6 +78,55 @@ pub(super) fn window_mark_match(node: &Node, mark_match: &str) -> bool {
     node.marks.iter().any(|mark| mark == mark_match)
 }
 
+/// Whether `node` passes a launch's `--app-id`/`--class` filter: app_id when
+/// set, otherwise class, otherwise anything — the precedence
+/// `ExecAction::matches_window_event()` applies to a `New` event.
+pub(super) fn launch_filter_match(node: &Node, app_id_match: &str, class_match: &str) -> bool {
+    if !app_id_match.is_empty() {
+        window_app_id_match(node, app_id_match)
+    } else if !class_match.is_empty() {
+        window_class_match(node, class_match)
+    } else {
+        true
+    }
+}
+
+/// One window a launch is rechecking because it carried the launch's marker
+/// but failed its filter when it mapped: its app_id/class as the tree shows
+/// them now, and whether they pass the filter yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct RecheckedWindow {
+    pub(super) container_id: i64,
+    pub(super) app_id: Option<String>,
+    pub(super) class: Option<String>,
+    pub(super) matches: bool,
+}
+
+/// Re-reads each of `container_ids` from `tree` against the launch filter, in
+/// the order given. A window that's no longer in the tree is left out, so the
+/// caller can stop rechecking it. Exists because a client can set its
+/// app_id/class after mapping, and Sway sends no window event when it does.
+pub(super) fn recheck_launched_windows(
+    tree: &Node,
+    container_ids: &[i64],
+    app_id_match: &str,
+    class_match: &str,
+) -> Vec<RecheckedWindow> {
+    container_ids
+        .iter()
+        .filter_map(|&container_id| find_node(tree, container_id))
+        .map(|node| RecheckedWindow {
+            container_id: node.id,
+            app_id: node.app_id.clone(),
+            class: node
+                .window_properties
+                .as_ref()
+                .and_then(|properties| properties.class.clone()),
+            matches: launch_filter_match(node, app_id_match, class_match),
+        })
+        .collect()
+}
+
 /// Collects the container ids of every node in `tree` (tiling
 /// and floating children at every level) whose app_id/class/mark matches,
 /// used to target an already-open window instead of launching a new one.

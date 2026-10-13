@@ -24,6 +24,7 @@ use super::process_marker::{
 };
 use super::query::{
     container_state, ensure_container_exists, node_by_id, parent_node_layout, position_matches,
+    recheck_launched_windows_now,
 };
 use super::tree::{
     height_matches, width_matches, window_app_id_match, window_class_match, ContainerState,
@@ -905,6 +906,16 @@ impl ExecAction<'_> {
     /// command and a wrong `--app-id` otherwise both end in the same bare
     /// timeout, pointing the user at `--timeout` when raising it only makes the
     /// failure slower.
+    ///
+    /// A rejected window whose process carries this run's marker is ours, so
+    /// it isn't given up on: its app_id/class are re-read from the tree every
+    /// `LATE_PROPERTY_RECHECK_INTERVAL` until they match (returned as
+    /// `Launched`), it closes, or the deadline passes. Some clients set
+    /// these only after mapping — XWayland apps that set `WM_CLASS` late, or a
+    /// Wayland client calling `set_app_id` after its first commit — and Sway
+    /// sends no window event when they change, confirmed live with foot's
+    /// runtime app-id escape sequence. Without the recheck such an app waited
+    /// out the whole `--timeout` beside the very window it was waiting for.
     fn run_wait_matching_exec_event(&self) -> Result<(i64, LaunchOwnership), RunError> {
         let ExecAction {
             verbose,
@@ -940,6 +951,13 @@ impl ExecAction<'_> {
 
         let mut marker = MarkerTracker::default();
         let mut next_scan = time::Instant::now();
+
+        // Windows the filter turned away that carried this run's marker:
+        // rechecked through the tree until one matches, since an app can set
+        // its app_id/class after mapping and Sway sends no event when it does.
+        let mut rechecks: Vec<i64> = Vec::new();
+        let mut next_recheck = time::Instant::now();
+        let mut recheck_connection: Option<Connection> = None;
 
         loop {
             let effective_deadline = match fallback {
@@ -1009,11 +1027,31 @@ impl ExecAction<'_> {
                 }
             }
 
-            let wait = if marker.needs_scan(fallback.is_some()) {
-                remaining.min(next_scan.saturating_duration_since(time::Instant::now()))
-            } else {
-                remaining
-            };
+            if !rechecks.is_empty() && now >= next_recheck {
+                next_recheck = now + LATE_PROPERTY_RECHECK_INTERVAL;
+                if let Some(container_id) = self.recheck_launched_windows(
+                    &mut recheck_connection,
+                    &mut rechecks,
+                    &mut unmatched_windows,
+                ) {
+                    if verbose {
+                        diagnostic!(
+                            "Recheck match: container id {} set a matching app_id/class after \
+                             mapping (PID-marker-confirmed)",
+                            container_id
+                        );
+                    }
+                    return Ok((container_id, LaunchOwnership::Launched));
+                }
+            }
+
+            let mut wait = remaining;
+            if marker.needs_scan(fallback.is_some()) {
+                wait = wait.min(next_scan.saturating_duration_since(time::Instant::now()));
+            }
+            if !rechecks.is_empty() {
+                wait = wait.min(next_recheck.saturating_duration_since(time::Instant::now()));
+            }
 
             let event = match event_receiver.recv_timeout(wait) {
                 Ok(event) => event,
@@ -1054,11 +1092,20 @@ impl ExecAction<'_> {
                     };
                     if verbose {
                         diagnostic!(
-                            "Event mismatch: {:?} {} ({})",
+                            "Event mismatch: {:?} {} ({}){}",
                             window.change,
                             describe_unmatched_window(&unmatched),
-                            mismatch
+                            mismatch,
+                            if unmatched.launched_by_this_run {
+                                " — rechecking it in case it sets its app_id/class after mapping"
+                            } else {
+                                ""
+                            }
                         );
+                    }
+                    if unmatched.launched_by_this_run {
+                        rechecks.push(unmatched.container_id);
+                        next_recheck = time::Instant::now() + LATE_PROPERTY_RECHECK_INTERVAL;
                     }
                     unmatched_windows.push(unmatched);
                 }
@@ -1096,6 +1143,45 @@ impl ExecAction<'_> {
                 next_scan = time::Instant::now();
             }
         }
+    }
+
+    /// One recheck of the windows in `rechecks` (see the loop above): the
+    /// first one whose app_id/class now passes the filter, if any. Refreshes
+    /// each window's recorded app_id/class in `unmatched_windows`, so a
+    /// timeout reports what the window ended up with rather than what it
+    /// mapped with, and drops windows that have closed from `rechecks`. A
+    /// tree that can't be read is skipped until the next interval, with the
+    /// connection reopened then.
+    fn recheck_launched_windows(
+        &self,
+        connection: &mut Option<Connection>,
+        rechecks: &mut Vec<i64>,
+        unmatched_windows: &mut [UnmatchedWindow],
+    ) -> Option<i64> {
+        if connection.is_none() {
+            *connection = new_connection().ok();
+        }
+        let Some(rechecked) = connection.as_mut().and_then(|connection| {
+            recheck_launched_windows_now(connection, rechecks, self.app_id_match, self.class_match)
+        }) else {
+            *connection = None;
+            return None;
+        };
+
+        for window in &rechecked {
+            if let Some(unmatched) = unmatched_windows
+                .iter_mut()
+                .find(|unmatched| unmatched.container_id == window.container_id)
+            {
+                unmatched.app_id = window.app_id.clone();
+                unmatched.class = window.class.clone();
+            }
+        }
+        *rechecks = rechecked.iter().map(|window| window.container_id).collect();
+        rechecked
+            .iter()
+            .find(|window| window.matches)
+            .map(|window| window.container_id)
     }
 
     /// Whether `window` is the `New` window this launch is waiting for,
@@ -1197,12 +1283,22 @@ fn exec_timeout_message(
         } else {
             "windows"
         };
+        let recheck_note = if unmatched_windows
+            .iter()
+            .any(|window| window.launched_by_this_run)
+        {
+            " (a window opened by this command was rechecked until the timeout, in case the \
+             app sets its app_id/class after mapping)"
+        } else {
+            ""
+        };
         return format!(
-            "{}; {} other new {} did {} — check --app-id/--class",
+            "{}; {} other new {} did {} — check --app-id/--class{}",
             base,
             unmatched_windows.len(),
             noun,
-            described.join(", ")
+            described.join(", "),
+            recheck_note
         );
     }
 
@@ -1220,6 +1316,13 @@ fn exec_timeout_message(
         None => base,
     }
 }
+
+/// How often `run_wait_matching_exec_event()` re-reads the tree for a window
+/// that carried this run's marker but failed the `--app-id`/`--class` filter
+/// when it mapped. Slower than `WAIT_TIME_POLL_INTERVAL`, since this can run
+/// for the whole `--timeout` rather than a 200ms grace period, and a client
+/// setting its app_id/class late is waiting on its own startup, not on Sway.
+const LATE_PROPERTY_RECHECK_INTERVAL: time::Duration = time::Duration::from_millis(50);
 
 fn describe_unmatched_window(window: &UnmatchedWindow) -> String {
     let identity = match (&window.app_id, &window.class) {

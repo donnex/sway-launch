@@ -143,6 +143,73 @@ fn matching_container_ids_prefers_class_over_mark_when_both_set() {
     );
 }
 
+// launch_filter_match / recheck_launched_windows
+
+#[test]
+fn launch_filter_match_prefers_app_id_then_class_then_accepts_anything() {
+    let tree = node_tree(
+        1,
+        vec![leaf_node_value(10, Some("foot"), Some("Foot"))],
+        vec![],
+    );
+    let node = find_node(&tree, 10).unwrap();
+    assert!(launch_filter_match(node, "foot", "Other"));
+    assert!(!launch_filter_match(node, "other", "Foot"));
+    assert!(launch_filter_match(node, "", "Foot"));
+    assert!(!launch_filter_match(node, "", "Other"));
+    assert!(launch_filter_match(node, "", ""));
+}
+
+#[test]
+fn recheck_launched_windows_matches_a_class_set_after_mapping() {
+    // The window mapped with no class (what its New event carried); the tree
+    // now shows the class it set afterwards, with no event to say so.
+    let tree = node_tree(1, vec![leaf_node_value(12, None, Some("Spotify"))], vec![]);
+    assert_eq!(
+        recheck_launched_windows(&tree, &[12], "", "Spotify"),
+        vec![RecheckedWindow {
+            container_id: 12,
+            app_id: None,
+            class: Some("Spotify".to_string()),
+            matches: true,
+        }]
+    );
+}
+
+#[test]
+fn recheck_launched_windows_reports_a_still_unset_class_as_not_matching() {
+    let tree = node_tree(1, vec![leaf_node_value(12, None, None)], vec![]);
+    assert_eq!(
+        recheck_launched_windows(&tree, &[12], "", "Spotify"),
+        vec![RecheckedWindow {
+            container_id: 12,
+            app_id: None,
+            class: None,
+            matches: false,
+        }]
+    );
+}
+
+#[test]
+fn recheck_launched_windows_drops_a_window_that_closed_and_keeps_the_order() {
+    let tree = node_tree(
+        1,
+        vec![
+            leaf_node_value(12, Some("early"), None),
+            leaf_node_value(14, Some("late"), None),
+        ],
+        vec![],
+    );
+    let rechecked = recheck_launched_windows(&tree, &[14, 13, 12], "late", "");
+    assert_eq!(
+        rechecked
+            .iter()
+            .map(|window| (window.container_id, window.matches))
+            .collect::<Vec<_>>(),
+        vec![(14, true), (12, false)]
+    );
+}
+
 // resolve_matches
 
 #[test]
