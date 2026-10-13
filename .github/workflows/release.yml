@@ -143,7 +143,9 @@ jobs:
       # renaming. Assigned as an ordinary shell variable rather than read back
       # from $GITHUB_ENV with `source`: sourcing that file executes it as
       # shell, which would have made an interpolated tag name executable at
-      # exactly the point this is trying to be careful about.
+      # exactly the point this is trying to be careful about. LICENSE ships
+      # alongside the binary because BSD-3-Clause requires binary
+      # redistributions to reproduce the copyright notice and conditions.
       - name: Package release archive
         run: |
           set -euo pipefail
@@ -152,6 +154,7 @@ jobs:
           mkdir -p "dist/$ARCHIVE_NAME"
           cp target/release/sway-launch "dist/$ARCHIVE_NAME/sway-launch"
           cp README.md "dist/$ARCHIVE_NAME/"
+          cp LICENSE "dist/$ARCHIVE_NAME/"
           chmod +x "dist/$ARCHIVE_NAME/sway-launch"
           tar -C dist -czf "dist/$ARCHIVE_NAME.tar.gz" "$ARCHIVE_NAME"
           (cd dist && sha256sum "$ARCHIVE_NAME.tar.gz" > "$ARCHIVE_NAME.tar.gz.sha256")

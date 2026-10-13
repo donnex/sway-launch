@@ -2658,7 +2658,9 @@ every push regardless) against the exact tagged commit, then builds and publishe
 when a `v*` tag is pushed. Its `check` job also fails unless the tag's version (`vX.Y.Z` minus the
 `v`) equals `Cargo.toml`'s `version`, so a tag pushed without the version-bump commit can't ship a
 binary whose `--version` disagrees with its release name. Building and publishing are separate
-jobs: `build` (read-only token) compiles and packages the archive and hands it on via
+jobs: `build` (read-only token) compiles and packages the archive (the binary, `README.md`, and
+`LICENSE` — BSD-3-Clause requires a binary redistribution to carry the copyright notice and
+conditions, so the project's own release artifact has to include it) and hands it on via
 `actions/upload-artifact`, and only `publish` (no checkout, no build — just a download and
 `gh release create`) holds `contents: write`, because compiling runs every dependency's build
 script and proc-macro, none of which should ever share a job with the write token. Release notes come from `CHANGELOG.md` rather than `gh`'s own
