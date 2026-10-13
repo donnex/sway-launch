@@ -1952,7 +1952,11 @@ its template's current shape — regenerating after a shape change is still on w
 `scripts/generate-layout-screenshots` is currently the only Python file in the project, so these
 conventions are scoped to it rather than a general `bin/`/`lib/` project layout. Managed with `uv`
 via the repo-root `pyproject.toml`/`uv.lock` (`uv run scripts/generate-layout-screenshots ...`
-works the same as running it directly, using the same pinned tool versions). `black` (formatter)
+works the same as running it directly, using the same pinned tool versions). That Python project
+is named `sway-launch-maintainer-tools` at version `0`, deliberately not `sway-launch` at the
+crate's version: it exists only to pin these tools, is never built or released, and isn't bumped
+at release time — `Cargo.toml`'s `version` is the only one a release tracks, so a reader never
+has to guess which of two identical `sway-launch 0.1.0`s is real. `black` (formatter)
 and `ruff` (linter) are dev-only dependencies (`[dependency-groups].dev`, never imported at
 runtime) — both must pass with no findings before committing. The `dev` group is never installed
 by default (`[tool.uv] default-groups = []` in `pyproject.toml`), so every command that needs

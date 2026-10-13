@@ -1,6 +1,10 @@
+# Not the product: this project exists only so uv can pin the dev tools
+# (black, ruff) for scripts/generate-layout-screenshots. It is never built
+# or released, and its version is deliberately not kept in step with the
+# crate's Cargo.toml version, which is the one releases are tagged from.
 [project]
-name = "sway-launch"
-version = "0.1.0"
+name = "sway-launch-maintainer-tools"
+version = "0"
 requires-python = ">=3.11"
 dependencies = []
 
