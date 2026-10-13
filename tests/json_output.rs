@@ -535,7 +535,7 @@ fn debug_events_conflicts_with_a_command() {
     // only be discarded -- it used to parse cleanly and dump events while
     // silently never launching `foot`.
     //
-    // The three --debug-events conflict tests run without a compositor: if
+    // The --debug-events conflict tests run without a compositor: if
     // the conflict were ever dropped, --debug-events would subscribe and
     // print events forever inside a Sway session, hanging the test instead
     // of failing it.
@@ -569,6 +569,26 @@ fn debug_events_conflicts_with_a_per_window_flag() {
         .expect("failed to run sway-launch binary");
 
     assert_conflict_error(&output, "--debug-events", "--floating");
+}
+
+#[test]
+fn debug_events_rejects_the_template_and_layout_only_flags() {
+    // main() dispatches --debug-events before its manual "requires
+    // --template"/"requires --layout or --template" checks, so these three
+    // have to be clap conflicts or they'd be silently discarded (#99).
+    for flag in [
+        ["--bindings", "bindings.toml"].as_slice(),
+        ["--apps", "foot"].as_slice(),
+        ["--rollback-on-error"].as_slice(),
+    ] {
+        let output = sway_launch_without_a_compositor()
+            .arg("--debug-events")
+            .args(flag)
+            .output()
+            .expect("failed to run sway-launch binary");
+
+        assert_conflict_error(&output, "--debug-events", flag[0]);
+    }
 }
 
 #[test]

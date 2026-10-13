@@ -36,7 +36,7 @@ mod values;
 
 pub use action::SwayAction;
 pub use ipc::{kill_container, KillError};
-pub use launch::{SwayLaunch, Target};
+pub use launch::{debug_events, SwayLaunch, Target};
 pub use outcome::{ActionRecord, ActionStatus, LaunchOwnership, RunError, UnmatchedWindow};
 pub use query::containers_still_present;
 pub use values::{

@@ -1072,13 +1072,13 @@ leaving the window half-arranged. `diagnostic!` drops the write error instead: a
 can read is no reason to stop the work it describes. Every stderr write in the crate, error
 messages included, goes through it; don't reintroduce `eprintln!`. Two exceptions to stdout's
 one-value rule:
-`SwayLaunch::debug_events()`'s event dump and `--dry-run`'s planned-command listing are each the
+`debug_events()`'s event dump and `--dry-run`'s planned-command listing are each the
 command's actual output in that mode, so both stay on stdout — neither is meant to be captured as a
 single clean value the way a real run's container id is, so the "exactly one line" property simply
 doesn't apply to them.
 
 Every stdout write goes through `main.rs`'s `print_line()`/`print_str()` (and, for
-`SwayLaunch::debug_events()`'s own dump, the same `writeln!`-plus-`BrokenPipe` handling inline)
+`debug_events()`'s own dump, the same `writeln!`-plus-`BrokenPipe` handling inline)
 rather than `println!`. Rust ignores `SIGPIPE`, so a `println!` into a closed pipe panics
 ("failed printing to stdout: Broken pipe") and exits 101 — a poor answer to
 `sway-launch --debug-events | head -5`, which is an ordinary way to use the one mode that writes
@@ -1228,8 +1228,8 @@ for this specifically because `resolved_ids` already existed for an unrelated re
 
 ### `--debug-events`
 
-`SwayLaunch::debug_events()` subscribes to all Sway IPC event types and prints every event until
-killed. Useful for discovering event shapes when adding a new action.
+`sway_launch::debug_events()` (a free function in `launch.rs`, re-exported from `sway_launch.rs`)
+subscribes to all Sway IPC event types and prints every event until killed. Useful for discovering event shapes when adding a new action.
 
 "All" is a hand-maintained list, `launch.rs`'s `DEBUG_EVENT_SUBSCRIPTIONS`, not something derived
 from `swayipc`: its `EventType` is `#[non_exhaustive]`, so no match outside the crate can be
@@ -1241,11 +1241,17 @@ bumped.
 It's a standalone mode like `--completions`/`--list-templates`: it never acts on a window, so it
 `conflicts_with_all`-conflicts with the positional command, `--con-id`/`--existing`, and every
 per-window flag, rather than accepting and silently discarding them (`sway-launch --debug-events
-foot --floating` used to parse clean, dump events, and never launch `foot`). Unlike those other
-standalone modes it still builds a `SwayLaunch` first, so it isn't checked until after that; the
-`!args.debug_events` exemption from `main()`'s "Missing COMMAND" check stays too, since a bare
-`--debug-events` legitimately has no target. `--timeout`/`--wait-time` remain accepted but unused
-here, the same as for the other standalone modes.
+foot --floating` used to parse clean, dump events, and never launch `foot`). It's dispatched the
+same way they are too: `main()` handles it right after `--show-template`, before any target is
+resolved or `SwayLaunch` built, so the per-window path ("Missing COMMAND" and the checks after it)
+needs no exemption for it. It used to be a `SwayLaunch` method reached only after building one with
+a dummy `Target::Exec { command: "" }`, which left the empty command one reordered `if` away from a
+real `run()`, and made every new per-window check remember to skip it; the method read none of
+`self`'s fields, so it became a free function (#99). Dispatching it that early means it never
+reaches `main()`'s manual `--bindings`/`--apps`/`--rollback-on-error` checks, so those three are in
+its `conflicts_with_all`, the same as `--completions`'/`--list-templates`'. `--timeout`/
+`--wait-time`/`--verbose` remain accepted but unused here, the same as for the other standalone
+modes.
 
 **Every standalone mode's per-window conflicts come from one list.** `main.rs`'s `PER_WINDOW_ARGS`
 names every flag that selects or acts on a window, and `--debug-events`, `--completions`,
@@ -1332,8 +1338,8 @@ so there's nothing left for it to repeat.
 
 Standalone mode handled entirely in `main.rs`, before any of the `SwayLaunch`/`Target` logic:
 `clap_complete::generate()` writes the completion script for the given `clap_complete::Shell` to
-stdout and exits 0. Doesn't touch Sway IPC at all, so — unlike `--debug-events`, which still builds
-a `SwayLaunch` first — it's checked and short-circuits right after `Args::parse()`.
+stdout and exits 0. Doesn't touch Sway IPC at all, so it's checked and short-circuits right after
+`Args::parse()`, first of the standalone modes.
 
 ### `--layout`
 
