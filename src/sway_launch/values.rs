@@ -3,16 +3,14 @@
 //!
 //! This is the outward-facing contract: `main.rs`'s `#[clap(value_parser)]`
 //! attributes and `layout.rs`/`template.rs`'s own field checks all call the
-//! `validate_*` functions here, so a `--height 300px` flag and a
+//! `validate_*`/`parse_*` functions here, so a `--height 300px` flag and a
 //! `height = "300px"` TOML field are accepted or rejected identically. The
-//! `parse_*` functions are the second half of that arrangement: infallible by
-//! construction, because a value that reaches them has already passed the
-//! matching validator.
+//! `parse_*` functions validate and convert in one step, returning the typed
+//! value rather than the string they were given.
 //!
 //! All pure, all unit-tested — nothing here has any idea a compositor exists.
 
 use clap::ValueEnum;
-use regex::Regex;
 use std::fmt;
 
 // Serialize is test-only, so main.rs's schema-parity test can serialize a
@@ -35,7 +33,7 @@ impl fmt::Display for Split {
     }
 }
 
-/// A validated `--height`/`--width` value, parsed once via `parse_size()`
+/// A `--height`/`--width` value, parsed once via `parse_size()`
 /// rather than carried as a string and re-parsed on every use (such as on
 /// every iteration of `SwayAction::poll_matches()`'s `Height`/`Width` arms).
 /// `Display` renders the same `<n>px`/`<n>ppt` text `sway_command()` needs
@@ -49,7 +47,7 @@ impl fmt::Display for Split {
 /// `u32` would mean casting in `poll_matches()`, where a value above
 /// `i32::MAX` wraps negative and can never match anything the compositor
 /// reports. Negative values never reach here regardless
-/// (`validate_size_argument()`'s `\d+` rejects the sign outright), so the
+/// (`parse_size()` rejects the sign outright), so the
 /// signed type costs nothing and removes the cast rather than moving the
 /// mismatch somewhere else.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -67,31 +65,7 @@ impl fmt::Display for Size {
     }
 }
 
-/// Parses a value already validated by `validate_size_argument()` — never
-/// called on unvalidated input. `validate_size_argument()` itself confirms
-/// the digits fit in an `i32`, not just that they're digits, specifically so
-/// the `.expect()`s here are trusting an already-checked invariant rather
-/// than gambling on one.
-pub fn parse_size(value: &str) -> Size {
-    if let Some(pixels) = value.strip_suffix("px") {
-        Size::Pixels(
-            pixels
-                .parse()
-                .expect("validate_size_argument guarantees this parses as i32"),
-        )
-    } else {
-        let percent = value
-            .strip_suffix("ppt")
-            .expect("validate_size_argument guarantees a px or ppt suffix");
-        Size::Percent(
-            percent
-                .parse()
-                .expect("validate_size_argument guarantees this parses as i32"),
-        )
-    }
-}
-
-/// A validated `--position` value, parsed once via `parse_position()`
+/// A `--position` value, parsed once via `parse_position()`
 /// rather than carried as a string — same reasoning as `Size` above.
 /// `Display` renders `center` or `<x>,<y>`, the same text a `--position`
 /// CLI argument or TOML field would itself use.
@@ -110,98 +84,86 @@ impl fmt::Display for Position {
     }
 }
 
-/// Parses a value already validated by `validate_position_argument()` —
-/// never called on unvalidated input. `validate_position_argument()` itself
-/// confirms `<x>`/`<y>` each fit in an `i32`, so the `.expect()`s here are
-/// trusting an already-checked invariant rather than gambling on one.
-pub fn parse_position(value: &str) -> Position {
-    if value == "center" {
-        return Position::Center;
+/// Parses `text` as an `i32` written as plain ASCII digits, with a leading
+/// `-` only when `allow_negative` is set. `str::parse::<i32>()` alone would
+/// also accept a leading `+`, which neither format allows; the overflow check
+/// comes free with it, so the bound lives in exactly one place: `i32`, the
+/// type the parsed value is held in.
+fn parse_decimal_i32(text: &str, allow_negative: bool) -> Option<i32> {
+    let digits = match text.strip_prefix('-') {
+        Some(digits) if allow_negative => digits,
+        _ => text,
+    };
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
     }
-    let (x, y) = value
-        .split_once(',')
-        .expect("validate_position_argument guarantees a comma-separated pair");
-    Position::Coordinates {
-        x: x.parse()
-            .expect("validate_position_argument guarantees this parses as i32"),
-        y: y.parse()
-            .expect("validate_position_argument guarantees this parses as i32"),
-    }
+    text.parse().ok()
 }
 
-/// Validates a `--height`/`--width` value, or a `LayoutStep`'s `height`/
-/// `width` field — both take the same `\d+(px|ppt)` format. Also confirms
-/// the digits actually fit in an `i32`, not just that the regex's unbounded
-/// `\d+` matched — `parse_size()` trusts a value that passed this check to
-/// parse infallibly, so a value that matches the shape but overflows (e.g.
-/// 11+ digits) must be rejected here, not discovered as a panic later.
+/// Parses a `--height`/`--width` value, or a `LayoutStep`'s `height`/
+/// `width` field — both take the same `<N>px`/`<N>ppt` format, so a CLI flag
+/// and a TOML field are accepted or rejected identically. Validation and
+/// conversion are one step: there is no separately validated string for a
+/// caller to forget to check before converting it.
 ///
-/// The bound is `i32`, matching `Size`'s own representation and therefore the
-/// `swayipc::Rect` geometry a pixel size is eventually compared against. A
-/// wider bound such as `u32` would let a value in `i32::MAX+1..=u32::MAX`
-/// pass validation, reach Sway as a real command, and then wrap negative on
-/// its way into `width_matches()`/`height_matches()`, so it could never be
-/// confirmed — an accepted domain larger than the one the rest of the
-/// program can represent.
-/// Rejecting it here is what keeps validation's promise ("anything that
-/// passes is something the whole pipeline can handle") true, rather than only
-/// true of the parser.
+/// `<N>` must fit in an `i32`, matching `Size`'s own representation and
+/// therefore the `swayipc::Rect` geometry a pixel size is eventually compared
+/// against. A wider bound such as `u32` would let a value in
+/// `i32::MAX+1..=u32::MAX` through, reach Sway as a real command, and then
+/// wrap negative on its way into `width_matches()`/`height_matches()`, so it
+/// could never be confirmed — an accepted domain larger than the one the
+/// rest of the program can represent.
 ///
 /// Zero is rejected for both units, and `ppt` is capped at 100: confirmed
 /// live that Sway leaves a `0px` height unchanged, doesn't produce a zero
 /// width from `0ppt`, and clamps a percentage over 100 — each exiting 0 with
 /// an `unconfirmed` status, so a typo like `600ppt` for `60ppt` was a silent
 /// no-op or a surprising size instead of an error.
-pub fn validate_size_argument(value: &str) -> Result<String, String> {
-    let re = Regex::new(r"^(\d+)(px|ppt)$").unwrap();
-    let valid = re.captures(value).is_some_and(|captures| {
-        match (captures[1].parse::<i32>(), &captures[2]) {
-            (Ok(number), "px") => number >= 1,
-            (Ok(number), _) => (1..=100).contains(&number),
-            (Err(_), _) => false,
-        }
-    });
-    if valid {
-        Ok(value.to_string())
+pub fn parse_size(value: &str) -> Result<Size, String> {
+    let size = if let Some(pixels) = value.strip_suffix("px") {
+        parse_decimal_i32(pixels, false)
+            .filter(|&pixels| pixels >= 1)
+            .map(Size::Pixels)
+    } else if let Some(percent) = value.strip_suffix("ppt") {
+        parse_decimal_i32(percent, false)
+            .filter(|percent| (1..=100).contains(percent))
+            .map(Size::Percent)
     } else {
-        Err(
-            "Must be <N>px (N >= 1) or <N>ppt (N 1-100), e.g. 300px or 20ppt (ppt = percent)"
-                .to_string(),
-        )
-    }
+        None
+    };
+    size.ok_or_else(|| {
+        "Must be <N>px (N >= 1) or <N>ppt (N 1-100), e.g. 300px or 20ppt (ppt = percent)"
+            .to_string()
+    })
 }
 
-/// Validates a `--position` value, or a `LayoutStep`'s `position` field —
-/// both take the same `center`/`<x>,<y>` format. `<x>`/`<y>` each allow a
-/// leading `-`: Sway's coordinate space is global across every output, and
-/// an output positioned left of or above the primary one legitimately has a
-/// negative origin (confirmed live: `compute_center_position()`, used for
+/// Parses a `--position` value, or a `LayoutStep`'s `position` field — both
+/// take the same `center`/`<x>,<y>` format. `<x>`/`<y>` each allow a leading
+/// `-`: Sway's coordinate space is global across every output, and an output
+/// positioned left of or above the primary one legitimately has a negative
+/// origin (confirmed live: `compute_center_position()`, used for
 /// `--position center`, already accounts for output origin and can itself
 /// land on a negative coordinate on such a layout) — rejecting a
 /// user-supplied negative coordinate here would make the tool unable to
-/// target a position its own `center` computation can already produce.
-/// Also confirms `<x>`/`<y>` each actually fit in an `i32`, not just that
-/// the regex's unbounded `\d+` matched — `parse_position()` trusts a value
-/// that passed this check to parse infallibly, so a value that matches the
-/// shape but overflows must be rejected here, not discovered as a panic
-/// later (same reasoning as `validate_size_argument`'s own `i32` check).
-pub fn validate_position_argument(value: &str) -> Result<String, String> {
+/// target a position its own `center` computation can already produce. Each
+/// must fit in an `i32`, the same bound as `parse_size()`.
+pub fn parse_position(value: &str) -> Result<Position, String> {
     if value == "center" {
-        return Ok(value.to_string());
+        return Ok(Position::Center);
     }
-    let re = Regex::new(r"^(-?\d+),(-?\d+)$").unwrap();
-    match re.captures(value) {
-        Some(captures)
-            if captures[1].parse::<i32>().is_ok() && captures[2].parse::<i32>().is_ok() =>
-        {
-            Ok(value.to_string())
-        }
-        _ => Err(
+    value
+        .split_once(',')
+        .and_then(|(x, y)| {
+            Some(Position::Coordinates {
+                x: parse_decimal_i32(x, true)?,
+                y: parse_decimal_i32(y, true)?,
+            })
+        })
+        .ok_or_else(|| {
             "Must be \"center\" or \"<X>,<Y>\" in pixels (X/Y may be negative). E.g. \
              center/100,200/-100,200"
-                .to_string(),
-        ),
-    }
+                .to_string()
+        })
 }
 
 /// Validates a value that gets interpolated into a Sway IPC command as a
@@ -436,8 +398,8 @@ pub fn validate_timeout_argument(value: &str) -> Result<u64, String> {
 /// every layout/template schema field that's a free-form identifier or
 /// required string (`id`, `target_id`, `slot`, a binding's `command`, a
 /// template's `description`/`category`) rather than something with its own
-/// dedicated format, the way `validate_size_argument`/
-/// `validate_position_argument` above validate a specific value shape.
+/// dedicated format, the way `parse_size()`/`parse_position()` above
+/// validate a specific value shape.
 pub fn require_non_blank(field: &str, value: &str) -> Result<(), String> {
     if value.trim().is_empty() {
         Err(format!("{field} must not be empty or whitespace-only"))

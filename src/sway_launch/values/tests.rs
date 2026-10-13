@@ -1,181 +1,182 @@
 use super::*;
 
-// validate_size_argument / validate_position_argument
+// parse_size / parse_position
 
 #[test]
-fn validate_size_argument_accepts_px() {
-    assert_eq!(validate_size_argument("300px"), Ok("300px".to_string()));
+fn parse_size_accepts_px() {
+    assert_eq!(parse_size("300px"), Ok(Size::Pixels(300)));
 }
 
 #[test]
-fn validate_size_argument_accepts_ppt() {
-    assert_eq!(validate_size_argument("20ppt"), Ok("20ppt".to_string()));
+fn parse_size_accepts_ppt() {
+    assert_eq!(parse_size("20ppt"), Ok(Size::Percent(20)));
 }
 
 #[test]
-fn validate_size_argument_rejects_zero_for_both_units() {
+fn parse_size_rejects_zero_for_both_units() {
     // Sway leaves a 0px size unchanged and doesn't produce a zero size from
     // 0ppt either, so both used to exit 0 as a silent no-op.
-    assert!(validate_size_argument("0px").is_err());
-    assert!(validate_size_argument("0ppt").is_err());
-    assert!(validate_size_argument("000px").is_err());
+    assert!(parse_size("0px").is_err());
+    assert!(parse_size("0ppt").is_err());
+    assert!(parse_size("000px").is_err());
 }
 
 #[test]
-fn validate_size_argument_accepts_one_for_both_units() {
-    assert_eq!(validate_size_argument("1px"), Ok("1px".to_string()));
-    assert_eq!(validate_size_argument("1ppt"), Ok("1ppt".to_string()));
+fn parse_size_accepts_one_for_both_units() {
+    assert_eq!(parse_size("1px"), Ok(Size::Pixels(1)));
+    assert_eq!(parse_size("1ppt"), Ok(Size::Percent(1)));
 }
 
 #[test]
-fn validate_size_argument_rejects_missing_unit() {
-    assert!(validate_size_argument("300").is_err());
+fn parse_size_rejects_missing_unit() {
+    assert!(parse_size("300").is_err());
 }
 
 #[test]
-fn validate_size_argument_rejects_unknown_unit() {
-    assert!(validate_size_argument("300pixels").is_err());
+fn parse_size_rejects_unknown_unit() {
+    assert!(parse_size("300pixels").is_err());
 }
 
 #[test]
-fn validate_size_argument_rejects_negative() {
-    assert!(validate_size_argument("-5px").is_err());
+fn parse_size_rejects_negative() {
+    assert!(parse_size("-5px").is_err());
 }
 
 #[test]
-fn validate_size_argument_rejects_decimal() {
-    assert!(validate_size_argument("3.5px").is_err());
+fn parse_size_rejects_decimal() {
+    assert!(parse_size("3.5px").is_err());
 }
 
 #[test]
-fn validate_size_argument_rejects_empty() {
-    assert!(validate_size_argument("").is_err());
+fn parse_size_rejects_empty() {
+    assert!(parse_size("").is_err());
 }
 
 #[test]
-fn validate_size_argument_rejects_trailing_garbage() {
-    assert!(validate_size_argument("300px ").is_err());
+fn parse_size_rejects_trailing_garbage() {
+    assert!(parse_size("300px ").is_err());
 }
 
 #[test]
-fn validate_size_argument_rejects_a_value_that_overflows_i32() {
-    // Regression test: the regex's \d+ has no digit-count bound, but
-    // parse_size() trusts a validated value to parse infallibly --
-    // matches the shape (all digits) while overflowing i32 must still be
-    // rejected here.
-    assert!(validate_size_argument("99999999999px").is_err());
+fn parse_size_rejects_a_value_that_overflows_i32() {
+    // Regression test: a value that matches the shape (all digits) while
+    // overflowing i32 must be rejected, not wrapped or panicked on.
+    assert!(parse_size("99999999999px").is_err());
 }
 
 #[test]
-fn validate_size_argument_accepts_the_largest_representable_pixel_value() {
-    assert_eq!(
-        validate_size_argument("2147483647px"),
-        Ok("2147483647px".to_string())
-    );
+fn parse_size_accepts_the_largest_representable_pixel_value() {
+    assert_eq!(parse_size("2147483647px"), Ok(Size::Pixels(2147483647)));
 }
 
 #[test]
-fn validate_size_argument_rejects_one_past_the_largest_representable_value() {
+fn parse_size_rejects_one_past_the_largest_representable_value() {
     // The old bound was u32, which accepted everything up to 4294967295
     // -- but Size holds an i32 (matching swayipc::Rect's geometry), so
     // anything above i32::MAX used to validate, reach Sway as a real
     // command, and then wrap negative before width_matches()/
     // height_matches() ever saw it, making it unconfirmable by
     // construction. Both of these were accepted before that was fixed.
-    assert!(validate_size_argument("2147483648px").is_err());
-    assert!(validate_size_argument("4294967295px").is_err());
+    assert!(parse_size("2147483648px").is_err());
+    assert!(parse_size("4294967295px").is_err());
 }
 
 #[test]
-fn validate_size_argument_accepts_100_ppt() {
-    assert_eq!(validate_size_argument("100ppt"), Ok("100ppt".to_string()));
+fn parse_size_accepts_100_ppt() {
+    assert_eq!(parse_size("100ppt"), Ok(Size::Percent(100)));
 }
 
 #[test]
-fn validate_size_argument_rejects_ppt_above_100() {
+fn parse_size_rejects_ppt_above_100() {
     // Sway clamps a percentage over 100, so a typo like 600ppt for 60ppt
     // used to exit 0 with a surprising size instead of an error.
-    assert!(validate_size_argument("101ppt").is_err());
-    assert!(validate_size_argument("600ppt").is_err());
-    assert!(validate_size_argument("2147483647ppt").is_err());
-    assert!(validate_size_argument("4294967295ppt").is_err());
+    assert!(parse_size("101ppt").is_err());
+    assert!(parse_size("600ppt").is_err());
+    assert!(parse_size("2147483647ppt").is_err());
+    assert!(parse_size("4294967295ppt").is_err());
 }
 
 #[test]
-fn parse_size_round_trips_the_largest_representable_pixel_value() {
-    // parse_size()'s expect() is only sound because validation rejects
-    // anything it couldn't parse -- pin the boundary the two agree on.
-    assert_eq!(parse_size("2147483647px"), Size::Pixels(i32::MAX));
-    assert_eq!(parse_size("2147483647px").to_string(), "2147483647px");
+fn parse_size_rejects_a_leading_plus_sign() {
+    // str::parse::<i32>() accepts "+5", but the format is digits only.
+    assert!(parse_size("+5px").is_err());
+    assert!(parse_size("+5ppt").is_err());
 }
 
 #[test]
-fn validate_position_argument_accepts_center() {
+fn parse_size_rejects_non_ascii_digits() {
+    assert!(parse_size("\u{0663}px").is_err());
+}
+
+#[test]
+fn size_display_round_trips_through_parse_size() {
+    for size in [Size::Pixels(300), Size::Pixels(i32::MAX), Size::Percent(20)] {
+        assert_eq!(parse_size(&size.to_string()), Ok(size));
+    }
+}
+
+#[test]
+fn parse_position_accepts_center() {
+    assert_eq!(parse_position("center"), Ok(Position::Center));
+}
+
+#[test]
+fn parse_position_accepts_coordinates() {
     assert_eq!(
-        validate_position_argument("center"),
-        Ok("center".to_string())
+        parse_position("100,200"),
+        Ok(Position::Coordinates { x: 100, y: 200 })
     );
 }
 
 #[test]
-fn validate_position_argument_accepts_coordinates() {
+fn parse_position_rejects_missing_y() {
+    assert!(parse_position("100").is_err());
+}
+
+#[test]
+fn parse_position_accepts_negative_x() {
     assert_eq!(
-        validate_position_argument("100,200"),
-        Ok("100,200".to_string())
+        parse_position("-1,200"),
+        Ok(Position::Coordinates { x: -1, y: 200 })
     );
 }
 
 #[test]
-fn validate_position_argument_rejects_missing_y() {
-    assert!(validate_position_argument("100").is_err());
-}
-
-#[test]
-fn validate_position_argument_accepts_negative_x() {
+fn parse_position_accepts_negative_y() {
     assert_eq!(
-        validate_position_argument("-1,200"),
-        Ok("-1,200".to_string())
+        parse_position("100,-200"),
+        Ok(Position::Coordinates { x: 100, y: -200 })
     );
 }
 
 #[test]
-fn validate_position_argument_accepts_negative_y() {
+fn parse_position_accepts_negative_x_and_y() {
     assert_eq!(
-        validate_position_argument("100,-200"),
-        Ok("100,-200".to_string())
+        parse_position("-1920,-200"),
+        Ok(Position::Coordinates { x: -1920, y: -200 })
     );
 }
 
 #[test]
-fn validate_position_argument_accepts_negative_x_and_y() {
-    assert_eq!(
-        validate_position_argument("-1920,-200"),
-        Ok("-1920,-200".to_string())
-    );
+fn parse_position_rejects_bare_dash() {
+    assert!(parse_position("-,200").is_err());
 }
 
 #[test]
-fn validate_position_argument_rejects_bare_dash() {
-    assert!(validate_position_argument("-,200").is_err());
+fn parse_position_rejects_a_coordinate_that_overflows_i32() {
+    // Same reasoning as parse_size's overflow test: a coordinate that
+    // overflows i32 (max 2147483647, 10 digits) must be rejected.
+    assert!(parse_position("99999999999,200").is_err());
 }
 
 #[test]
-fn validate_position_argument_rejects_a_coordinate_that_overflows_i32() {
-    // Same reasoning as validate_size_argument's overflow test:
-    // parse_position() trusts a validated value to parse infallibly, so
-    // a coordinate that overflows i32 (max 2147483647, 10 digits) must
-    // be rejected here, not discovered as a panic later.
-    assert!(validate_position_argument("99999999999,200").is_err());
+fn parse_position_rejects_unknown_word() {
+    assert!(parse_position("middle").is_err());
 }
 
 #[test]
-fn validate_position_argument_rejects_unknown_word() {
-    assert!(validate_position_argument("middle").is_err());
-}
-
-#[test]
-fn validate_position_argument_rejects_empty() {
-    assert!(validate_position_argument("").is_err());
+fn parse_position_rejects_empty() {
+    assert!(parse_position("").is_err());
 }
 
 // validate_sway_string_argument
@@ -353,56 +354,33 @@ fn split_display_v_is_vertical() {
 }
 
 #[test]
+fn parse_position_rejects_a_leading_plus_sign() {
+    assert!(parse_position("+1,200").is_err());
+    assert!(parse_position("1,+200").is_err());
+}
+
+#[test]
+fn parse_position_rejects_a_double_minus_or_extra_coordinate() {
+    assert!(parse_position("--1,200").is_err());
+    assert!(parse_position("1,2,3").is_err());
+    assert!(parse_position("1,").is_err());
+    assert!(parse_position(",2").is_err());
+}
+
+#[test]
+fn position_display_round_trips_through_parse_position() {
+    for position in [
+        Position::Center,
+        Position::Coordinates { x: 100, y: 200 },
+        Position::Coordinates { x: -1920, y: -200 },
+    ] {
+        assert_eq!(parse_position(&position.to_string()), Ok(position));
+    }
+}
+
+#[test]
 fn split_display_h_is_horizontal() {
     assert_eq!(Split::H.to_string(), "Horizontal");
-}
-
-// parse_size
-
-#[test]
-fn parse_size_parses_pixels() {
-    assert_eq!(parse_size("300px"), Size::Pixels(300));
-}
-
-#[test]
-fn parse_size_parses_percent() {
-    assert_eq!(parse_size("20ppt"), Size::Percent(20));
-}
-
-#[test]
-fn size_display_matches_the_format_parse_size_accepts() {
-    assert_eq!(Size::Pixels(300).to_string(), "300px");
-    assert_eq!(Size::Percent(20).to_string(), "20ppt");
-}
-
-#[test]
-fn parse_position_parses_center() {
-    assert_eq!(parse_position("center"), Position::Center);
-}
-
-#[test]
-fn parse_position_parses_coordinates() {
-    assert_eq!(
-        parse_position("100,200"),
-        Position::Coordinates { x: 100, y: 200 }
-    );
-}
-
-#[test]
-fn parse_position_parses_negative_coordinates() {
-    assert_eq!(
-        parse_position("-1920,-200"),
-        Position::Coordinates { x: -1920, y: -200 }
-    );
-}
-
-#[test]
-fn position_display_matches_the_format_parse_position_accepts() {
-    assert_eq!(Position::Center.to_string(), "center");
-    assert_eq!(
-        Position::Coordinates { x: 100, y: 200 }.to_string(),
-        "100,200"
-    );
 }
 
 // validate_exec_command

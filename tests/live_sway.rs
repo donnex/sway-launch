@@ -2037,9 +2037,9 @@ fn position_moves_a_floating_window_to_given_coordinates() {
 fn position_accepts_negative_coordinates_on_a_negatively_offset_output() {
     fresh_workspace();
     // Regression test for the negative-coordinates fix
-    // (validate_position_argument's regex, plus --position's clap
+    // (parse_position's leading-minus handling, plus --position's clap
     // `allow_hyphen_values` -- clap otherwise rejects a value starting with
-    // `-` as an unrecognized option before validate_position_argument ever
+    // `-` as an unrecognized option before parse_position ever
     // runs, confirmed live while writing this fix). Sway's coordinate space
     // is global across every output, so an output positioned left of the
     // primary one legitimately has a negative origin -- this places a
