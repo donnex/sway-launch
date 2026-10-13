@@ -936,7 +936,11 @@ enum BindingsSource<'a> {
 /// `template::builtin()` — matching every shipped template file's own
 /// `.toml` extension means there's no ambiguity between the two, and
 /// nothing on disk to stat to decide which one a given value means.
-fn resolve_template_contents(template_arg: &Path) -> Result<String, String> {
+///
+/// `flag` names the option the argument came from (`--template` or
+/// `--show-template`), used only to word the hint a missing `<name>.toml`
+/// gets when `<name>` is a built-in — see `builtin_name_hint()`.
+fn resolve_template_contents(template_arg: &Path, flag: &str) -> Result<String, String> {
     // template_arg.extension() is checked via a direct suffix match on the
     // full string, not Path::extension() — extension() returns None for a
     // filename that's only an extension with nothing before it (e.g. a file
@@ -947,8 +951,14 @@ fn resolve_template_contents(template_arg: &Path) -> Result<String, String> {
         .is_some_and(|value| value.ends_with(".toml"));
 
     if is_file {
-        std::fs::read_to_string(template_arg)
-            .map_err(|error| format!("{}: {}", template_arg.display(), error))
+        std::fs::read_to_string(template_arg).map_err(|error| {
+            let hint = if error.kind() == std::io::ErrorKind::NotFound {
+                builtin_name_hint(template_arg, flag)
+            } else {
+                String::new()
+            };
+            format!("{}: {}{}", template_arg.display(), error, hint)
+        })
     } else {
         let name = template_arg.to_string_lossy();
         template::builtin(&name).map(str::to_string).ok_or_else(|| {
@@ -958,6 +968,30 @@ fn resolve_template_contents(template_arg: &Path) -> Result<String, String> {
                 name
             )
         })
+    }
+}
+
+/// The hint appended to a missing `.toml` file's error when the value is a
+/// bare filename whose stem names a built-in template — writing a built-in's
+/// name with the extension its repo file carries is an easy mistake, and the
+/// bare OS error alone doesn't say the name itself was right. Only wording:
+/// nothing resolves differently, so a `.toml` value still never falls back to
+/// a built-in. Empty when the value has a directory component or no built-in
+/// matches.
+fn builtin_name_hint(template_arg: &Path, flag: &str) -> String {
+    let has_directory = template_arg
+        .parent()
+        .is_some_and(|parent| !parent.as_os_str().is_empty());
+    let name = template_arg
+        .to_str()
+        .and_then(|value| value.strip_suffix(".toml"))
+        .filter(|name| !name.is_empty());
+    match name {
+        Some(name) if !has_directory && template::builtin(name).is_some() => format!(
+            "; there is a built-in template {:?}, use {} {}",
+            name, flag, name
+        ),
+        _ => String::new(),
     }
 }
 
@@ -1015,7 +1049,7 @@ fn print_builtin_templates(json: bool) {
 /// so it's checked and short-circuits right after `--list-templates`, before
 /// the `--layout`/`--template` dispatch.
 fn print_template_contents(template_arg: &Path, json: bool) {
-    let contents = match resolve_template_contents(template_arg) {
+    let contents = match resolve_template_contents(template_arg, "--show-template") {
         Ok(contents) => contents,
         Err(error) => fail(json, &error),
     };
@@ -1036,7 +1070,7 @@ fn print_template_contents(template_arg: &Path, json: bool) {
 /// them to `run_steps()` — the same execution path `--layout` uses, since a
 /// resolved template is just a `Vec<layout::LayoutStep>`.
 fn run_template(path: &Path, bindings_source: BindingsSource, args: &Args) -> ! {
-    let contents = match resolve_template_contents(path) {
+    let contents = match resolve_template_contents(path, "--template") {
         Ok(contents) => contents,
         Err(error) => fail(args.json, &error),
     };
@@ -1568,6 +1602,35 @@ fn classify_rollback(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn builtin_name_hint_names_the_builtin_and_the_flag_for_a_bare_builtin_filename() {
+        assert_eq!(
+            builtin_name_hint(Path::new("quad-grid.toml"), "--show-template"),
+            "; there is a built-in template \"quad-grid\", use --show-template quad-grid"
+        );
+    }
+
+    #[test]
+    fn builtin_name_hint_is_empty_for_a_path_with_a_directory_component() {
+        assert_eq!(
+            builtin_name_hint(Path::new("./quad-grid.toml"), "--template"),
+            ""
+        );
+        assert_eq!(
+            builtin_name_hint(Path::new("templates/quad-grid.toml"), "--template"),
+            ""
+        );
+    }
+
+    #[test]
+    fn builtin_name_hint_is_empty_when_no_builtin_matches_the_stem() {
+        assert_eq!(
+            builtin_name_hint(Path::new("not-a-real-template.toml"), "--template"),
+            ""
+        );
+        assert_eq!(builtin_name_hint(Path::new(".toml"), "--template"), "");
+    }
 
     #[test]
     fn classify_rollback_counts_only_closed_windows_as_rolled_back() {

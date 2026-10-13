@@ -91,7 +91,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-workspace/output and retargeting shapes, applied with `--template <name> --apps ...` and no
   files to write. `--list-templates` prints every name with its category, description and slots,
   in the order `--apps` fills them, and `--show-template <NAME_OR_PATH>` prints one template's
-  TOML without running it.
+  TOML without running it. A value ending in `.toml` is always read as a file, so writing a
+  built-in's name with that extension fails — but the error names the built-in and the bare name
+  to use instead. (#88)
 - `--rollback-on-error`: if a `--layout`/`--template` step fails, close every window this run
   launched — by an earlier step, or by the failing step before it failed — instead of leaving them
   open. A window this run only adopted by matching, without proof it launched it, is left open.

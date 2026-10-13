@@ -774,6 +774,28 @@ fn template_toml_suffixed_name_is_never_treated_as_a_builtin() {
 }
 
 #[test]
+fn template_missing_builtin_name_with_toml_suffix_hints_at_the_bare_name() {
+    // Still a file read (see the test above), but the error says the name
+    // without its extension is a real built-in rather than leaving only a
+    // bare "No such file or directory".
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            "quad-grid.toml",
+            "--apps",
+            "foot,foot,foot,foot",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("quad-grid.toml: "));
+    assert!(stderr.contains("there is a built-in template \"quad-grid\", use --template quad-grid"));
+}
+
+#[test]
 fn template_file_named_dot_toml_is_read_as_a_file_not_a_builtin_lookup() {
     // Regression test: Path::extension() returns None for a filename that's
     // only an extension with nothing before it (e.g. a file literally named
@@ -955,6 +977,21 @@ fn show_template_unknown_builtin_name_errors_clearly() {
     let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
     assert!(stderr.contains("not-a-real-template"));
     assert!(stderr.contains("--list-templates"));
+}
+
+#[test]
+fn show_template_missing_builtin_name_with_toml_suffix_hints_at_the_bare_name() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--show-template", "quad-grid.toml"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("quad-grid.toml: "));
+    assert!(stderr
+        .contains("there is a built-in template \"quad-grid\", use --show-template quad-grid"));
 }
 
 #[test]

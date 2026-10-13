@@ -572,7 +572,9 @@ Every file under [`templates/`](templates/) is also built into the `sway-launch`
 binary itself as a *built-in template* — `--template <name>` (no `.toml` extension, e.g.
 `--template quad-grid`) resolves that name against the embedded copy, so using one doesn't require
 cloning this repo or downloading anything. A value ending in `.toml` is always read from disk
-instead, so a built-in name and a same-named local template file never collide. Run
+instead, so a built-in name and a same-named local template file never collide (if no such file
+exists but the name is a built-in, e.g. `--template quad-grid.toml`, the error says to drop the
+extension). Run
 `sway-launch --list-templates` to print every built-in name with its category, one-line
 description, and slot names (in the order `--apps` zips its own comma-separated list against):
 
