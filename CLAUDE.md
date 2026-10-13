@@ -1778,7 +1778,10 @@ largest font size that still fits that measured rect is computed from empiricall
 `foot` monospace-cell metrics (`PX_PER_COLUMN_PER_PT`/`PX_PER_ROW_PER_PT` in the script, with a
 comment there on how to recalibrate them — there are no separate derivation notes elsewhere) and
 clamped to a sane range — and only then is the template relaunched for
-real and captured. `figlet`'s own `-c` (center) flag is deliberately not used: it pads to figlet's
+real and captured. Between the two passes the script waits (bounded, 5s) until Sway has actually
+removed every first-pass window, not just until `kill` returns: Sway replies to `kill` before the
+windows are gone, and a leftover still mapped on the same workspace when the second pass starts
+would have the new windows placed relative to it, capturing a shape the template doesn't produce. `figlet`'s own `-c` (center) flag is deliberately not used: it pads to figlet's
 own default 80-column canvas rather than the pane's real width, which reintroduced the same
 wrapping bug this two-pass measurement exists to avoid; labels are left-aligned instead.
 
