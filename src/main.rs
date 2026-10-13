@@ -216,11 +216,18 @@ struct Args {
     // is a choice rather than a constraint (Sway's events are JSON on the
     // wire), but until a JSON event dump exists, rejecting it is honest.
     //
+    // --bindings/--apps/--rollback-on-error are listed for the same reason
+    // --completions and --list-templates list them: main() dispatches this
+    // mode before its manual "requires --template/--layout" checks run, so
+    // without these the flags would be silently discarded.
+    //
     // Kept as `//` rather than `///`: clap renders every doc-comment
     // paragraph into `--help`, where these notes mean nothing to a user.
     /// Print every Sway IPC event until interrupted. Can't be combined with a
     /// command, per-window flags or --json
-    #[clap(short, long, conflicts_with_all = per_window_and(&["json"]))]
+    #[clap(short, long, conflicts_with_all = per_window_and(&[
+        "json", "bindings", "apps", "rollback_on_error",
+    ]))]
     debug_events: bool,
 
     // Conflicts with --json, unlike the other standalone modes: a completion
@@ -322,6 +329,13 @@ fn main() {
         process::exit(0);
     }
 
+    if args.debug_events {
+        match sway_launch::debug_events() {
+            Ok(_) => process::exit(0),
+            Err(error) => fail(args.json, &error),
+        }
+    }
+
     if let Some(layout_path) = &args.layout {
         run_layout(layout_path, &args);
     }
@@ -372,10 +386,7 @@ fn main() {
     let class_match = args.class.unwrap_or_default();
     let mark_match = args.mark_match.unwrap_or_default();
 
-    // --debug-events conflicts with a command/--con-id/--existing rather than
-    // ignoring them, but still needs exempting here: it's a standalone mode,
-    // so a bare `sway-launch --debug-events` has no target and needs none.
-    if !args.debug_events && command.is_empty() && args.con_id.is_none() && !args.existing {
+    if command.is_empty() && args.con_id.is_none() && !args.existing {
         Args::command()
             .error(
                 ErrorKind::MissingRequiredArgument,
@@ -437,13 +448,6 @@ fn main() {
     if args.dry_run {
         print_dry_run_steps(&[dry_run_step(&sway_launch)], args.json);
         process::exit(0);
-    }
-
-    if args.debug_events {
-        match sway_launch.debug_events() {
-            Ok(_) => process::exit(0),
-            Err(error) => fail(args.json, &error),
-        }
     }
 
     match sway_launch.run() {

@@ -79,32 +79,37 @@ pub struct SwayLaunch<'a> {
     pub wait_time: time::Duration,
 }
 
-impl<'a> SwayLaunch<'a> {
-    pub fn debug_events(&self) -> Result<(), String> {
-        for (i, event) in event_loop(&DEBUG_EVENT_SUBSCRIPTIONS)?.enumerate() {
-            let event = match event {
-                Ok(event) => event,
-                Err(error) => return Err(error.to_string()),
-            };
+/// `--debug-events`: subscribes to every event type and prints each event
+/// until interrupted. A free function rather than a `SwayLaunch` method
+/// because it acts on no window and reads none of an invocation's settings,
+/// so `main()` dispatches it with the other standalone modes, before any
+/// target is resolved.
+pub fn debug_events() -> Result<(), String> {
+    for (i, event) in event_loop(&DEBUG_EVENT_SUBSCRIPTIONS)?.enumerate() {
+        let event = match event {
+            Ok(event) => event,
+            Err(error) => return Err(error.to_string()),
+        };
 
-            // Written through `writeln!` rather than `println!` so a closed
-            // stdout is an ordinary end-of-output rather than a panic: this
-            // is the one mode that writes until killed, so
-            // `--debug-events | head` is a normal way to use it, and Rust
-            // ignores SIGPIPE. Reported as success — the reader got what it
-            // asked for and went away.
-            let written = writeln!(std::io::stdout(), "Event: {}\n{:?}\n", i, event);
-            if let Err(error) = written {
-                if error.kind() == std::io::ErrorKind::BrokenPipe {
-                    return Ok(());
-                }
-                return Err(format!("failed writing to stdout: {}", error));
+        // Written through `writeln!` rather than `println!` so a closed
+        // stdout is an ordinary end-of-output rather than a panic: this
+        // is the one mode that writes until killed, so
+        // `--debug-events | head` is a normal way to use it, and Rust
+        // ignores SIGPIPE. Reported as success — the reader got what it
+        // asked for and went away.
+        let written = writeln!(std::io::stdout(), "Event: {}\n{:?}\n", i, event);
+        if let Err(error) = written {
+            if error.kind() == std::io::ErrorKind::BrokenPipe {
+                return Ok(());
             }
+            return Err(format!("failed writing to stdout: {}", error));
         }
-
-        Ok(())
     }
 
+    Ok(())
+}
+
+impl<'a> SwayLaunch<'a> {
     /// The container every action in this run will target, plus how it was
     /// arrived at — `Some(..)` only for `Target::Exec`, the one mode that
     /// creates a window rather than picking an existing one out.
