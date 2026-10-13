@@ -1483,6 +1483,15 @@ but not the others. The intentional differences live in three commented allowlis
 target identity from a binding). Adding a flag therefore fails the test until it's either mirrored
 or deliberately allowlisted.
 
+`BINDING_SUPPLIED_FIELDS` is itself checked against `template::Binding` (which gets the same
+test-only `Serialize` derive): every entry but `id` must be a real `Binding` field, and every
+`Binding` field but `slot` must be an entry (`RESOLVE_SUPPLIED_FIELDS`/`BINDING_ONLY_FIELDS` name
+those two exceptions — `resolve()` fills `id` from the slot name, and `slot` is the lookup key, not
+a supplied value). Without this, a new matcher added to `Args`/`LayoutStep` passed the test the
+moment it was listed in `BINDING_SUPPLIED_FIELDS` — the obvious fix for the failure — while
+`--template` still couldn't use it: a bindings file naming it was rejected by
+`deny_unknown_fields`, and `resolve()` never copied it.
+
 That test does *not* check the wiring or the docs, only the field lists — so when adding a new flag
 to `Args`, still add the matching field to `layout.rs`'s `LayoutStep` *and* `template.rs`'s
 `TemplateStep` in the same change, wire it into `to_sway_launch()`/`resolve()`, and add it to

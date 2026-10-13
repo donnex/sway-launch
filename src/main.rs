@@ -1554,7 +1554,9 @@ mod tests {
 
     /// `LayoutStep` fields a `TemplateStep` deliberately lacks: a template
     /// step names a `slot` and gets its target identity from a binding
-    /// instead of naming an application itself.
+    /// instead of naming an application itself. Every entry but `id` must
+    /// be a real `template::Binding` field — `id` is the one `resolve()`
+    /// fills from the slot name rather than from the binding.
     const BINDING_SUPPLIED_FIELDS: &[&str] = &[
         "command",
         "con_id",
@@ -1567,6 +1569,14 @@ mod tests {
 
     /// `TemplateStep` fields with no `LayoutStep` equivalent.
     const TEMPLATE_ONLY_FIELDS: &[&str] = &["slot"];
+
+    /// `BINDING_SUPPLIED_FIELDS` entries a `template::Binding` deliberately
+    /// doesn't carry: `resolve()` sets a slot step's `id` to the slot name.
+    const RESOLVE_SUPPLIED_FIELDS: &[&str] = &["id"];
+
+    /// `template::Binding` fields with no `BINDING_SUPPLIED_FIELDS` entry:
+    /// `slot` is the key a binding is looked up by, not a value it supplies.
+    const BINDING_ONLY_FIELDS: &[&str] = &["slot"];
 
     fn field_names<T: serde::Serialize>(value: &T) -> std::collections::BTreeSet<String> {
         serde_json::to_value(value)
@@ -1639,6 +1649,42 @@ mod tests {
             Vec::<String>::new(),
             "every template::TemplateStep field needs a matching layout::LayoutStep field (or an \
              entry in TEMPLATE_ONLY_FIELDS)"
+        );
+
+        // BINDING_SUPPLIED_FIELDS says where a template step's missing
+        // target fields come from, but nothing above checks that Binding
+        // actually has them. Without this, a new matcher added to Args and
+        // LayoutStep passes the assertions above once it's listed there,
+        // while --template still can't use it: a bindings file naming it is
+        // rejected by deny_unknown_fields and resolve() never copies it.
+        // `slot` is Binding's one required field.
+        let binding: template::Binding = toml::from_str("slot = \"example\"")
+            .expect("Binding should deserialize from just a slot");
+        let binding_fields = field_names(&binding);
+        let binding_supplied_fields: std::collections::BTreeSet<String> = BINDING_SUPPLIED_FIELDS
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        assert_eq!(
+            difference(
+                &binding_supplied_fields,
+                &binding_fields,
+                RESOLVE_SUPPLIED_FIELDS
+            ),
+            Vec::<String>::new(),
+            "every BINDING_SUPPLIED_FIELDS entry needs a matching template::Binding field, \
+             copied into the LayoutStep by template::resolve() (or an entry in \
+             RESOLVE_SUPPLIED_FIELDS)"
+        );
+        assert_eq!(
+            difference(
+                &binding_fields,
+                &binding_supplied_fields,
+                BINDING_ONLY_FIELDS
+            ),
+            Vec::<String>::new(),
+            "every template::Binding field needs an entry in BINDING_SUPPLIED_FIELDS (or in \
+             BINDING_ONLY_FIELDS)"
         );
     }
 
