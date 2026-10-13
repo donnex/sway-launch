@@ -272,12 +272,46 @@ pub(super) fn single_outcome_error<E: fmt::Display>(
     first_outcome_error(outcomes, command)
 }
 
+/// Why `kill_container()` failed, split by whether the compositor answered.
+///
+/// The two call for different responses from `main.rs`'s
+/// `--rollback-on-error`. `Refused` is Sway replying that the kill failed —
+/// usually because the window already closed — which says nothing about the
+/// next window, so rollback moves on to it. `Unreachable` is a connection
+/// that couldn't be opened, or a request that got no reply within
+/// `IPC_ROUND_TRIP_TIMEOUT`: the compositor itself isn't answering, every
+/// further kill would fail the same way, and against a stalled compositor
+/// each one would cost another full timeout first (#94).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KillError {
+    /// The compositor couldn't be reached, or didn't answer.
+    Unreachable(String),
+    /// The compositor answered, and the kill failed.
+    Refused(String),
+}
+
+impl fmt::Display for KillError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            KillError::Unreachable(message) | KillError::Refused(message) => {
+                formatter.write_str(message)
+            }
+        }
+    }
+}
+
 /// Kills `container_id` via `[con_id] kill`. Used by `main.rs`'s
 /// `--rollback-on-error`: best-effort cleanup of a window this invocation
 /// itself launched earlier in the same `--layout`/`--template` run, once a
-/// later step fails.
-pub fn kill_container(container_id: i64) -> Result<(), String> {
-    run_sway_command(&format!("[con_id={}] kill", container_id))
+/// later step fails. `run_sway_command()` with its failure classified — see
+/// `KillError`.
+pub fn kill_container(container_id: i64) -> Result<(), KillError> {
+    let command = format!("[con_id={}] kill", container_id);
+    let outcomes = new_connection()
+        .map_err(KillError::Unreachable)?
+        .run_command(&command)
+        .map_err(|error| KillError::Unreachable(ipc_error(error)))?;
+    first_outcome_error(outcomes, &command).map_err(KillError::Refused)
 }
 
 /// Sway splits a command string into multiple sub-commands on unquoted

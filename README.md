@@ -463,8 +463,10 @@ So rollback waits up to a second for each window it asked to close to actually g
 the ones that did as closed. A window still open after that, or whose close request failed outright
 (usually: it had already closed on its own), is reported with a warning and skipped rather than
 stopping the rest of the rollback, and the original step failure stays the error that's actually
-reported. With `--json`, the error object includes which container ids were closed, and which ones
-couldn't be confirmed closed: `{"error": "...", "rolled_back": [123, 456], "rollback_failed": [789]}`
+reported. The exception is a compositor that has stopped answering: once one close request gets no
+reply, rollback doesn't wait out the same timeout again for every other window, and reports them all
+as unconfirmed straight away. With `--json`, the error object includes which container ids were
+closed, and which ones couldn't be confirmed closed: `{"error": "...", "rolled_back": [123, 456], "rollback_failed": [789]}`
 (see [JSON output](#json-output) below).
 
 This is **window-launch rollback**, not transactional rollback: it undoes *launches*, not

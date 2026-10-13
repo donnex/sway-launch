@@ -573,6 +573,192 @@ fn a_stalled_sway_socket_fails_instead_of_hanging_forever() {
     let _ = std::fs::remove_file(&socket_path);
 }
 
+/// The id of the container carrying `mark`, anywhere in the tree.
+fn container_with_mark(node: &Node, mark: &str) -> Option<i64> {
+    if node.marks.iter().any(|existing| existing == mark) {
+        return Some(node.id);
+    }
+    node.nodes
+        .iter()
+        .chain(node.floating_nodes.iter())
+        .find_map(|child| container_with_mark(child, mark))
+}
+
+/// Copies `from` into `to` until `from` closes, then closes `to`'s write half
+/// so the far side sees the same end of stream.
+fn forward_unix_stream(
+    mut from: std::os::unix::net::UnixStream,
+    mut to: std::os::unix::net::UnixStream,
+) {
+    std::thread::spawn(move || {
+        let _ = std::io::copy(&mut from, &mut to);
+        let _ = to.shutdown(std::net::Shutdown::Write);
+    });
+}
+
+#[test]
+fn rollback_on_error_stops_trying_once_the_compositor_stops_answering() {
+    fresh_workspace();
+    // Regression test for #94: when a step failed because the compositor
+    // stopped answering, --rollback-on-error went on to send every launched
+    // window its own kill, each on a fresh connection to the same silent
+    // compositor and each waiting out the full IPC_ROUND_TRIP_TIMEOUT (10s)
+    // before giving up -- 10s x (launched windows + 1) before the failure was
+    // reported at all. Now the first unanswered kill ends the rollback and the
+    // rest go straight into rollback_failed.
+    //
+    // The real compositor can't be stalled without stalling the whole suite,
+    // so the binary is pointed at a proxy socket instead: it forwards every
+    // connection to the live compositor until `stalled` is set, then accepts
+    // and holds new ones without ever answering -- the same silence
+    // a_stalled_sway_socket_fails_instead_of_hanging_forever reproduces, but
+    // only after three real windows have launched through it.
+    let temp_dir = TestTempDir::new();
+    let socket_path = temp_dir.join("stalling-proxy.sock");
+    let listener =
+        std::os::unix::net::UnixListener::bind(&socket_path).expect("failed to bind proxy socket");
+    let stalled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let proxy_stalled = std::sync::Arc::clone(&stalled);
+    let upstream_socket = live_socket().to_path_buf();
+    let _proxy = std::thread::spawn(move || {
+        let mut held = Vec::new();
+        for client in listener.incoming() {
+            let Ok(client) = client else { break };
+            if proxy_stalled.load(std::sync::atomic::Ordering::SeqCst) {
+                held.push(client);
+                continue;
+            }
+            let Ok(upstream) = std::os::unix::net::UnixStream::connect(&upstream_socket) else {
+                continue;
+            };
+            let (Ok(client_reader), Ok(upstream_reader)) =
+                (client.try_clone(), upstream.try_clone())
+            else {
+                continue;
+            };
+            forward_unix_stream(client_reader, upstream);
+            forward_unix_stream(upstream_reader, client);
+        }
+    });
+
+    // Three launched windows, then a fourth step whose wait_time leaves time
+    // to stall the proxy before its next IPC request: from then on every
+    // request gets no reply, so the step fails on the IPC timeout and the
+    // rollback that follows meets the same silence.
+    const LAUNCHED: usize = 3;
+    let marks: Vec<String> = (0..LAUNCHED)
+        .map(|step| format!("live-sway-test-stalled-rollback-{step}"))
+        .collect();
+    let mut layout: String = marks
+        .iter()
+        .enumerate()
+        .map(|(step, mark)| {
+            format!(
+                "[[step]]\nid = \"app{step}\"\ncommand = \"foot\"\napp_id = \"foot\"\n\
+                 mark = \"{mark}\"\n\n"
+            )
+        })
+        .collect();
+    layout.push_str("[[step]]\ntarget_id = \"app0\"\nsplit = \"v\"\nwait_time = 2000\n");
+    let path = TempToml::write("stalled-rollback", &layout);
+
+    let started = Instant::now();
+    let mut child = KillChildOnDrop(
+        Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+            .env("SWAYSOCK", &socket_path)
+            .env_remove("I3SOCK")
+            .args([
+                "--layout",
+                path.to_str().unwrap(),
+                "--rollback-on-error",
+                "--json",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to run sway-launch binary"),
+    );
+
+    // Stall as soon as every launched window carries its mark: the last
+    // step's 2s wait_time has only just begun then.
+    let mut connection = connect();
+    let launch_deadline = Instant::now() + Duration::from_secs(20);
+    let ids: Vec<i64> = loop {
+        let tree = connection.get_tree().expect("get_tree should succeed");
+        let found: Vec<Option<i64>> = marks
+            .iter()
+            .map(|mark| container_with_mark(&tree, mark))
+            .collect();
+        if found.iter().all(Option::is_some) {
+            stalled.store(true, std::sync::atomic::Ordering::SeqCst);
+            break found.into_iter().flatten().collect();
+        }
+        assert!(
+            Instant::now() < launch_deadline,
+            "the three launch steps should have finished, found {found:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let _guards: Vec<KillOnDrop> = ids.iter().map(|&id| KillOnDrop(id)).collect();
+
+    // One timeout for the failing step and one for the first kill, plus the
+    // wait_time and the launches, is about 23s. Unfixed, each of the other two
+    // kills adds another 10s on top.
+    let deadline = started + Duration::from_secs(45);
+    let status = loop {
+        if let Some(status) = child.0.try_wait().expect("failed to poll sway-launch") {
+            break status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "sway-launch should give up on its own; still running after {:?}",
+            started.elapsed()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let elapsed = started.elapsed();
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(
+        child.0.stderr.as_mut().expect("stderr was piped"),
+        &mut stderr,
+    )
+    .expect("failed to read sway-launch stderr");
+
+    assert!(
+        !status.success(),
+        "a step that got no reply must fail: {stderr:?}"
+    );
+    assert!(
+        stderr.contains("skipped closing 2 more window(s)"),
+        "rollback should stop after the first unanswered kill: {stderr:?}"
+    );
+    let error_line = stderr.lines().last().expect("stderr should not be empty");
+    let error: serde_json::Value =
+        serde_json::from_str(error_line).expect("the last stderr line should be the JSON error");
+    assert!(
+        error["error"]
+            .as_str()
+            .is_some_and(|message| message.contains("did not respond")),
+        "the step should fail on the IPC timeout: {error}"
+    );
+    let mut rollback_failed: Vec<i64> = serde_json::from_value(error["rollback_failed"].clone())
+        .expect("rollback_failed should list every launched window");
+    rollback_failed.sort_unstable();
+    let mut expected = ids.clone();
+    expected.sort_unstable();
+    assert_eq!(
+        rollback_failed, expected,
+        "every launched window should be reported as unconfirmed: {error}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(33),
+        "a stalled compositor should cost one kill's timeout, not one per window; took \
+         {elapsed:?}"
+    );
+
+    let _ = std::fs::remove_file(&socket_path);
+}
+
 #[test]
 fn event_reader_threads_stay_bounded_across_a_long_layout() {
     fresh_workspace();
@@ -689,15 +875,6 @@ fn a_layout_finishes_every_step_when_its_output_pipes_are_already_closed() {
         .status()
         .expect("failed to run sway-launch binary");
 
-    fn container_with_mark(node: &Node, mark: &str) -> Option<i64> {
-        if node.marks.iter().any(|existing| existing == mark) {
-            return Some(node.id);
-        }
-        node.nodes
-            .iter()
-            .chain(node.floating_nodes.iter())
-            .find_map(|child| container_with_mark(child, mark))
-    }
     let tree = connect().get_tree().expect("failed to read the tree");
     let found: Vec<Option<i64>> = marks
         .iter()

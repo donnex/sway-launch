@@ -98,7 +98,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   launched — by an earlier step, or by the failing step before it failed — instead of leaving them
   open. A window this run only adopted by matching, without proof it launched it, is left open.
   Rollback waits up to a second for each window to actually go, since an application can decline
-  to close, and reports one still open with a warning. (#7, #71)
+  to close, and reports one still open with a warning. If the compositor has stopped answering,
+  rollback gives up after the first close request goes unanswered rather than waiting out another
+  ten-second timeout for every window. (#7, #71, #94)
 - `--json` for structured output instead of a bare container id: the container id plus every
   planned action, each with a stable `kind` (the flag that produced it), the Sway `command` it
   sent, and a `status` of `changed`, `already_satisfied`, `unconfirmed` or `skipped` (with a
