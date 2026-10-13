@@ -185,8 +185,9 @@ impl LayoutStep {
 
         // Every value below is interpolated into a Sway command as a quoted
         // string (or, for mark_match, compared against one that was) — see
-        // validate_sway_string_argument()'s doc comment for why `"`/`\` and
-        // a blank value are rejected rather than silently mangled.
+        // validate_sway_string_argument()'s doc comment for why `"`/`\`/`$`,
+        // a newline/NUL and a blank value are rejected rather than silently
+        // mangled.
         for (field, value) in [
             ("mark", self.mark.as_deref()),
             ("mark_match", self.mark_match.as_deref()),

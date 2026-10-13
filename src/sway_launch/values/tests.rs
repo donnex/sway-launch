@@ -244,6 +244,17 @@ fn validate_sway_string_argument_rejects_a_double_quote() {
 }
 
 #[test]
+fn validate_sway_string_argument_rejects_a_dollar_sign() {
+    // Regression test: confirmed live that Sway substitutes a `set $name`
+    // config variable even inside a quoted argument, so `--mark '$mymark'`
+    // stored the variable's value and then timed out waiting for the literal.
+    for value in ["$ws1", "my$mark", "$"] {
+        let error = validate_sway_string_argument(value).expect_err("a $ should be rejected");
+        assert!(error.contains('$'), "unexpected error: {}", error);
+    }
+}
+
+#[test]
 fn validate_sway_string_argument_rejects_a_backslash() {
     assert!(validate_sway_string_argument("back\\slash").is_err());
 }

@@ -757,13 +757,16 @@ sway-launch --mark firefox-floating-left 'firefox --new-window https://example.c
 ```
 
 A mark may contain spaces and Sway's own command separators (`,`, `;`) — those are quoted and
-stored literally, as are tabs and carriage returns. Three characters are rejected up front rather
+stored literally, as are tabs and carriage returns. A few characters are rejected up front rather
 than silently mangled, because Sway doesn't store any of them as given, so the value could never be
 found again by `--mark-match`:
 
 - a **double quote** or a **backslash** — stored with the escape character still attached
   (`dropdown"term` comes back as `dropdown\"term`);
-- a **newline** — rewritten to `;` when stored (`a⏎b` comes back as `a;b`).
+- a **newline** — rewritten to `;` when stored (`a⏎b` comes back as `a;b`);
+- a **dollar sign** — Sway replaces `$name` with the matching `set $name ...` variable from its
+  config, even inside quotes (`$ws1` lands on whatever your config sets `$ws1` to). Which names
+  are defined differs from one config to the next, so `$` is rejected everywhere.
 
 The same rule applies to `--mark-match`, `--workspace`, and `--output`.
 
