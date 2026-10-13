@@ -22,7 +22,6 @@ new_column = true
 
 [[step]]
 slot = "right-top"
-new_column = true
 split = "v"
 
 [[step]]

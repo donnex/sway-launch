@@ -183,7 +183,12 @@ below) plus five integration test files:
   shares are safe to record because every shipped template sizes tiled windows in `ppt`;
   a tiled `px` size would make them output-dependent. The recorded files capture current behavior,
   not intended behavior, so a known-wrong shape is recorded as it is until the fix for it lands
-  and updates the file. `builtin_template_name_resolves_and_launches_without_a_toml_extension`
+  and updates the file. It also fails any template whose `new_column`/`new_row` action reports
+  anything but `"changed"`: a relative move that moves nothing leaves the tree identical, so the
+  shape comparison can't see it, yet it reports `"unconfirmed"` on one output and leans on the
+  trailing-edge guard (`"skipped"`) on several. Nine such dead `new_column` steps once shipped
+  (a newly launched window already lands to the right of the focused one, so on a `splith`
+  workspace it already *is* the trailing child). `builtin_template_name_resolves_and_launches_without_a_toml_extension`
   compares the built-in `quad-grid` against the same recorded file.
   `every_basic_example_script_launches_successfully` extends this to `examples/scripts/`'s six
   foot-only "basic" scripts (`dual-terminals`, `triple-row`, `column-split`, `quad-terminals`,

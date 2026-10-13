@@ -413,3 +413,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   percentages over 100 — `ppt` must be 1-100, `px` at least 1. Sway ignores a zero size and clamps
   a percentage over 100, so a typo such as `600ppt` for `60ppt` used to exit 0 with the window
   unchanged or oversized; it is now an error, which `--validate` also catches. (#48)
+- The `master-dual-stack`, `master-dual-stack-wide`, `master-triple-stack`, `dual-sidebars`,
+  `dual-sidebars-wide`, `dual-stack-sidebars` and `sidebar-right-dual-stack` built-in templates no
+  longer report a `move right` as `"unconfirmed"` (or, with a second output, `"skipped"`) in
+  `--json` output. Those steps asked for a new column on a window that was already the rightmost
+  one, so they never moved anything, yet read as though part of the template had failed. The
+  layouts they build are unchanged. (#78)
