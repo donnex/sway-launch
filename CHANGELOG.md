@@ -201,6 +201,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Running `sway-launch` where it can't reach Sway — outside a Sway session (cron, a systemd unit,
+  ssh), or with `SWAYSOCK` pointing at the wrong place — now says so: the error names Sway IPC, the
+  socket path and the variable it came from, or that neither `SWAYSOCK` nor `I3SOCK` is set. A plain
+  launch used to print only a bare OS error such as `No such file or directory (os error 2)` or
+  `Invalid argument (os error 22)`. (#35)
 - The `examples/scripts/retarget-floating` example no longer fails when another foot terminal is
   open, which is the usual case when running it from foot: its `--existing` step matched every
   window with app_id `foot` and stopped with "windows match". The terminal it launches now gets its

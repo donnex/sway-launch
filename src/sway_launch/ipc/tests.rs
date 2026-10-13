@@ -6,7 +6,10 @@ use super::*;
 fn preferred_socket_path_prefers_swaysock_over_i3sock() {
     assert_eq!(
         preferred_socket_path(Some("/sway.sock".into()), Some("/i3.sock".into())),
-        Some(std::path::PathBuf::from("/sway.sock"))
+        Some(SocketPath {
+            path: std::path::PathBuf::from("/sway.sock"),
+            variable: "SWAYSOCK",
+        })
     );
 }
 
@@ -14,13 +17,38 @@ fn preferred_socket_path_prefers_swaysock_over_i3sock() {
 fn preferred_socket_path_falls_back_to_i3sock() {
     assert_eq!(
         preferred_socket_path(None, Some("/i3.sock".into())),
-        Some(std::path::PathBuf::from("/i3.sock"))
+        Some(SocketPath {
+            path: std::path::PathBuf::from("/i3.sock"),
+            variable: "I3SOCK",
+        })
     );
 }
 
 #[test]
 fn preferred_socket_path_is_none_when_neither_is_set() {
     assert_eq!(preferred_socket_path(None, None), None);
+}
+
+// connect_error_at / undiscovered_socket_error
+
+#[test]
+fn connect_error_at_names_sway_ipc_the_path_its_source_and_the_cause() {
+    let socket = SocketPath {
+        path: std::path::PathBuf::from("/tmp/example-sway.sock"),
+        variable: "I3SOCK",
+    };
+    let error = std::io::Error::from(std::io::ErrorKind::NotFound);
+    let message = connect_error_at(&socket, &error);
+    assert!(message.starts_with("cannot reach Sway IPC at /tmp/example-sway.sock (from I3SOCK): "));
+    assert!(message.contains(&error.to_string()));
+    assert!(message.ends_with("is this running inside a Sway session?"));
+}
+
+#[test]
+fn undiscovered_socket_error_names_both_variables_and_how_to_fix_it() {
+    let message = undiscovered_socket_error(swayipc::Error::SocketNotFound);
+    assert!(message.starts_with("cannot reach Sway IPC: neither SWAYSOCK nor I3SOCK is set"));
+    assert!(message.contains("export SWAYSOCK"));
 }
 
 // quote_sway_string
