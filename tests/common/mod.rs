@@ -7,7 +7,7 @@
 use std::fs;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::process::{self, Command};
+use std::process::{self, Command, Output};
 
 /// A per-process scratch directory for fixtures and marker files, so nothing
 /// depends on a fixed path in a shared temp directory.
@@ -73,4 +73,32 @@ pub fn sway_launch_without_a_compositor() -> Command {
         .env("SWAYSOCK", "/nonexistent/sway-launch-test-socket")
         .env_remove("I3SOCK");
     command
+}
+
+/// Asserts that `output` is clap's usage error for `flag` conflicting with
+/// `conflicting` -- not merely a failure.
+///
+/// A bare `!output.status.success()` passes for the wrong reason once the
+/// conflict is gone: the binary then runs the combination and usually fails
+/// later anyway (a layout parser rejecting a template's fields, an IPC call
+/// with no socket), so the test keeps passing while the regression it pins
+/// has already happened. clap's usage errors exit 2 and runtime failures
+/// exit 1, so the exit code plus clap's own wording tells the two apart.
+/// `flag` is matched as a prefix of clap's rendering, so `"--layout"` matches
+/// `'--layout <LAYOUT>'`.
+pub fn assert_conflict_error(output: &Output, flag: &str, conflicting: &str) {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "{flag} with {conflicting} should be a usage error (exit 2): {stderr}"
+    );
+    assert!(
+        stderr.contains(&format!("the argument '{flag}")) && stderr.contains("cannot be used with"),
+        "expected clap's conflict error for {flag}: {stderr}"
+    );
+    assert!(
+        stderr.contains(conflicting),
+        "expected the conflict error to name {conflicting}: {stderr}"
+    );
 }

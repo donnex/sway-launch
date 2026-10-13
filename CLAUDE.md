@@ -293,8 +293,14 @@ harness — that's why these live here instead of as `#[cfg(test)]` modules in `
 Helpers more than one of them needs live in `tests/common/mod.rs`, pulled in with `mod common;`:
 `TempToml` (a TOML fixture removed on drop), `test_temp_dir()` (the per-process scratch directory
 it writes into) and `sway_launch_without_a_compositor()` (the binary aimed at a socket that cannot
-exist, for tests that need an IPC call to fail). Add a shared helper there rather than copying it
-into a second test file. `tests/live_sway.rs` still carries its own copies of a few `tree.rs`
+exist, for tests that need an IPC call to fail) and `assert_conflict_error()` (exit 2 plus clap's
+`cannot be used with` wording naming both flags). Every flag-conflict test uses that last one rather
+than a bare `!output.status.success()`: once a conflict is dropped the combination usually still
+fails later for an unrelated reason (a layout parser rejecting a template's fields, no Sway socket),
+exiting 1, so a bare failure check keeps passing after the regression it pins. The `--debug-events`
+conflict tests also run through `sway_launch_without_a_compositor()`, since without the conflict
+that mode subscribes and prints forever inside a Sway session. Add a shared helper there rather
+than copying it into a second test file. `tests/live_sway.rs` still carries its own copies of a few `tree.rs`
 predicates (`find_node`, `node_is_floating`, the workspace/output ancestor walks, `parent_layout`):
 the crate is a binary only, so an integration test can't call them, and sharing them needs a
 library/binary split, which hasn't been done.

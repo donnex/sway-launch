@@ -9,7 +9,7 @@
 
 mod common;
 
-use common::sway_launch_without_a_compositor;
+use common::{assert_conflict_error, sway_launch_without_a_compositor};
 use std::process::Command;
 
 #[test]
@@ -536,14 +536,18 @@ fn a_closed_stdout_exits_cleanly_instead_of_panicking() {
 fn debug_events_conflicts_with_a_command() {
     // --debug-events never acts on a window, so a command alongside it could
     // only be discarded -- it used to parse cleanly and dump events while
-    // silently never launching `foot`. clap rejects this before any IPC, so
-    // it stays headless-safe.
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    // silently never launching `foot`.
+    //
+    // The three --debug-events conflict tests run without a compositor: if
+    // the conflict were ever dropped, --debug-events would subscribe and
+    // print events forever inside a Sway session, hanging the test instead
+    // of failing it.
+    let output = sway_launch_without_a_compositor()
         .args(["--debug-events", "foot"])
         .output()
         .expect("failed to run sway-launch binary");
 
-    assert!(!output.status.success());
+    assert_conflict_error(&output, "--debug-events", "[COMMAND]");
 }
 
 #[test]
@@ -552,25 +556,22 @@ fn debug_events_rejects_json_rather_than_ignoring_it() {
     // debug_events() writes plain `Event: N` lines and never sees the flag, so
     // a raw event dump has no JSON shape for --json to take, so it's rejected
     // rather than accepted and discarded, consistent with --completions.
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch_without_a_compositor()
         .args(["--debug-events", "--json"])
         .output()
         .expect("failed to run sway-launch binary");
 
-    assert!(
-        !output.status.success(),
-        "--debug-events --json should be rejected, not silently ignored"
-    );
+    assert_conflict_error(&output, "--debug-events", "--json");
 }
 
 #[test]
 fn debug_events_conflicts_with_a_per_window_flag() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch_without_a_compositor()
         .args(["--debug-events", "--con-id", "42", "--floating"])
         .output()
         .expect("failed to run sway-launch binary");
 
-    assert!(!output.status.success());
+    assert_conflict_error(&output, "--debug-events", "--floating");
 }
 
 #[test]

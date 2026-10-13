@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::{sway_launch_without_a_compositor, TempToml};
+use common::{assert_conflict_error, sway_launch_without_a_compositor, TempToml};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -318,7 +318,7 @@ fn layout_conflicts_with_a_per_window_flag() {
         .output()
         .expect("failed to run sway-launch binary");
 
-    assert!(!output.status.success());
+    assert_conflict_error(&output, "--layout", "--floating");
 }
 
 #[test]
@@ -334,7 +334,7 @@ fn layout_conflicts_with_stray_apps_flag() {
         .output()
         .expect("failed to run sway-launch binary");
 
-    assert!(!output.status.success());
+    assert_conflict_error(&output, "--layout", "--apps");
 }
 
 #[test]
@@ -353,7 +353,7 @@ fn layout_conflicts_with_stray_bindings_flag() {
         .output()
         .expect("failed to run sway-launch binary");
 
-    assert!(!output.status.success());
+    assert_conflict_error(&output, "--layout", "--bindings");
 }
 
 #[test]

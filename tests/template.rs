@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::TempToml;
+use common::{assert_conflict_error, TempToml};
 use std::process::Command;
 
 #[test]
@@ -915,7 +915,7 @@ fn show_template_conflicts_with_a_command() {
         .output()
         .expect("failed to run sway-launch binary");
 
-    assert!(!output.status.success());
+    assert_conflict_error(&output, "--show-template", "[COMMAND]");
 }
 
 #[test]
@@ -925,7 +925,7 @@ fn show_template_conflicts_with_template() {
         .output()
         .expect("failed to run sway-launch binary");
 
-    assert!(!output.status.success());
+    assert_conflict_error(&output, "--show-template", "--template");
 }
 
 #[test]
@@ -944,7 +944,7 @@ fn template_conflicts_with_layout() {
         .output()
         .expect("failed to run sway-launch binary");
 
-    assert!(!output.status.success());
+    assert_conflict_error(&output, "--template", "--layout");
 }
 
 #[test]
