@@ -539,9 +539,9 @@ fn exit_on_write_failure(error: &io::Error) -> ! {
 /// "changed"|"already_satisfied"|"unconfirmed"|"skipped"}`. `"kind"` is the
 /// action's stable flag name (`"new_column"`, `"mark"`), the field to match
 /// on; `"command"` is the Sway command text it ran, absent for a skip, which
-/// never rendered one. A `"reason"` field is added only for `"skipped"` (the
-/// same machine-readable `SkippedAction.reason` identifier this project has
-/// always used, not prose).
+/// never rendered one. A `"reason"` field is added only for `"skipped"`: the
+/// machine-readable `ActionStatus::Skipped` reason (`"floating"`,
+/// `"fullscreen"`, `"trailing_workspace_edge"`), not prose.
 ///
 /// `"unconfirmed"` is deliberately its own status rather than folded into
 /// `"changed"`: the command was sent and the wait elapsed, but the change was

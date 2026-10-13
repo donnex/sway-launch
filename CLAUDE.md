@@ -229,7 +229,7 @@ below) plus five integration test files:
   test leaves behind used to change what later ones exercised — not just their timing. Outputs
   were the worst of it: seven tests called `create_output` and never removed the output, so every
   test sorting after `dual_output_template_*` ran with two or more outputs, enough to make
-  `relocates_to_another_output()` silently skip the `move right` that
+  the multi-output move guard silently skip the `move right` that
   `new_column_and_new_row_complete_promptly_when_already_at_the_edge` exists to send, while it kept
   passing on elapsed time alone. Three rules now hold for every test: it calls `fresh_workspace()`
   first (focuses the compositor's original output and switches to an empty workspace named after
@@ -925,7 +925,7 @@ workspace's siblings before the subsequent move relocates it — an external rev
 potential semantic surprise (the window arguably "should" restructure on the target workspace, not
 the origin one). Investigated live rather than assumed: confirmed harmless in every case tried
 (solo origin workspace, non-solo origin workspace, and the multi-output case where
-`relocates_to_another_output()` above already applies) — whatever `move right`/`move down` did on
+the move guard below already applies) — whatever `move right`/`move down` did on
 the origin workspace is entirely superseded once `move workspace`/`move container to output`
 relocates the window elsewhere, so it always lands as an ordinary new sibling in the target's
 existing layout with the origin workspace's other windows completely undisturbed. No reorder
@@ -935,11 +935,31 @@ needed. Confirmed by `tests/live_sway.rs`'s
 both `--new-column`+`--output` and `--new-row`+`--output` in one test, against one created
 output).
 
-Before including `NewColumn`/`NewRow` in the plan at all, `build_actions()` calls
-`relocates_to_another_output(container_id, direction)`, which checks `get_outputs()` (skipping the
-guard entirely when there's only one output) and, if more than one exists, `get_tree()` +
-`is_at_the_trailing_workspace_edge()` to see whether `container_id` is at risk of the relocation
-described above. This originally checked only "is `container_id` the only window in its
+Immediately before sending each `NewColumn`/`NewRow`, `run()`'s `execute_plan()` asks
+`current_move_skip_reason(container_id, direction)` (`query.rs`: one `get_outputs()` + one
+`get_tree()` on a shared connection) whether the move is safe *now*, and the pure
+`tree::move_skip_reason()` answers with a reason or `None`, following the order of Sway's own
+`cmd_move_in_direction()`/`container_move_in_direction()`: a floating window (`node_is_floating()`)
+is skipped on any setup, reason `"floating"`, since Sway only nudges it 10 px — never a new column
+or row, yet the rect change used to read as a confirmed `"changed"`; with more than one output, a
+fullscreen window (`fullscreen_mode != 0`) is skipped, reason `"fullscreen"`, since Sway sends it
+straight to the next output whatever its tree position (a layout step retargeting an earlier step's
+fullscreen window, or an app that maps fullscreen itself — the fixed action order only protects a
+window the same step makes fullscreen); then, still only with more than one output,
+`is_at_the_trailing_workspace_edge()`, reason `"trailing_workspace_edge"`, for the relocation
+described above. With a single output Sway no-ops a fullscreen or trailing-edge move, so neither is
+skipped there. The check used to run once per move while *planning*, in `build_actions()`, so
+`--new-row` was judged against a tree `--new-column` was about to change — on a `splitv` workspace
+`[A, W]` it skipped a `move down` that `move right`'s re-orientation had made safe (found by a
+review; the stale answer was never seen letting a dangerous move through, only blocking a safe
+one). Checking per move, against the tree the earlier actions left, is pinned headlessly by
+`launch.rs`'s `execute_plan_judges_new_row_only_after_new_column_has_run` (`execute_plan()` takes
+the guard and the action runner as closures for exactly this) and live by
+`new_row_is_judged_after_new_column_has_run`; the two new reasons by
+`new_column_and_new_row_skip_a_floating_window_instead_of_nudging_it` and
+`new_column_skips_a_fullscreen_window_on_a_multi_output_setup`. The fullscreen and floating
+branches came from reading Sway's source, not from a live reproduction of the escalation itself.
+The trailing-edge check originally checked only "is `container_id` the only window in its
 workspace" — live testing found that too narrow: a *non-solo* workspace can escalate too, whenever
 `container_id` is already the trailing child of a workspace whose own `layout` already matches the
 move's axis (confirmed live: two windows side by side, `move right` on the rightmost relocated it
@@ -962,28 +982,23 @@ sub-container *with* a sibling still pops out onto the same output (probed live 
 axis-mismatched and the axis-matched worst case), so the replay correctly lets it run. Modelling
 the source rather than adding a third shape rule is deliberate: both earlier rules were reasonable
 generalizations from the cases tried live, and both missed a branch the source spells out.
-Floating windows are never flagged, since Sway won't move them out of their floating parent.
+`is_at_the_trailing_workspace_edge()` itself never flags a floating window (that's
+`move_skip_reason()`'s earlier branch), since Sway won't move one out of its floating parent.
 When flagged, the action is skipped (logged under `--verbose`) rather than run, trading a silent
 cross-monitor relocation for a silent no-op — confirmed by `tests/live_sway.rs`'s
 `new_column_does_not_relocate_a_solo_window_to_a_different_output`,
 `new_column_does_not_relocate_a_non_solo_window_at_the_trailing_edge`, and (both nested cases —
 with a sibling, run; as a lone child of a `tabbed` or `splitv` wrapper, skipped — in one test)
 `new_column_does_not_relocate_a_nested_window_to_a_different_output`. A skip is also structurally
-reported, not just logged: `build_actions()` returns `Vec<PlannedAction<'a>>` (`enum PlannedAction
-{ Run(SwayAction<'a>), Skip(SkippedAction) }`) instead of a bare `Vec<SwayAction<'a>>`, interleaving
-a skip in its actual fixed-order position rather than collecting skips into a separate side list —
-`SkippedAction { kind, reason }` holds short, stable, machine-readable `&'static str` identifiers
-(`ActionKind::flag_name()`'s `"new_column"`/`"new_row"`, `"trailing_workspace_edge"`), not a human-facing message (that's still
-what the `--verbose` `diagnostic!` next to each skip is for). `run()` folds each `PlannedAction` into
-an `ActionRecord { kind, command, status }` (`ActionStatus::Changed`/`AlreadySatisfied`/`Skipped { reason
-}` — see "`--json`'s richer schema" below for the full design of this, added later alongside the
-`already_satisfied` distinction), so a `PlannedAction::Skip` never actually calls `.run()` — it
-short-circuits straight to an `ActionStatus::Skipped` record. Previously a skip was visible only via
-a `--verbose` log line, invisible to a `--json` caller; surfacing it in `RunOutcome`/`--json` closes
-that gap without changing the log line at all. `build_actions_for_preview()` (`--dry-run`) filters
-down to just the `Run` half — always the *only* half there anyway, since `check_relocation: false`
-never produces a `Skip`. Only one skip mechanism exists today, so `SkippedAction.reason` is a plain
-`&'static str` rather than an enum; revisit if a second one ever appears.
+reported, not just logged: `execute_plan()` records it as an `ActionRecord { kind, command: None,
+status: ActionStatus::Skipped { reason } }` in its actual fixed-order position, never calling
+`.run()` for it — `kind` is `ActionKind::flag_name()`'s `"new_column"`/`"new_row"` and `reason` one
+of the short, stable, machine-readable `&'static str` identifiers above, not a human-facing message
+(that's what the `--verbose` `diagnostic!` next to each skip is for). See "`--json`'s richer schema"
+below for the full design of `ActionStatus`. `build_actions()` is therefore pure and infallible, and
+`build_actions_for_preview()` (`--dry-run`) is just `build_actions(0)`. Only one skip mechanism
+exists today, so the reason is a plain `&'static str` rather than an enum; revisit if a second one
+ever appears.
 `step_action_records_json()`'s step-number arithmetic (`step_index + 1`) is unit-tested headlessly
 with a synthetic `ActionRecord` (`main.rs`'s
 `step_action_records_json_tags_each_entry_with_a_1_based_step_number`) rather than only via a real
@@ -1053,10 +1068,9 @@ read answers a single question:
   200ms. `poll_matches()` and the tree helpers it calls (`parent_node_layout`, `node_by_id`,
   `position_matches`) therefore take `&mut Connection`
   rather than opening their own.
-- `relocates_to_another_output()`: its `get_outputs()` and `get_tree()` calls are two halves of one
+- `current_move_skip_reason()`: its `get_outputs()` and `get_tree()` calls are two halves of one
   check, so they share a connection too. Cheaper than the poll cycle's case (there's no loop to
-  amplify it, and the `outputs.len() < 2` early return means the tree fetch only happens on a
-  multi-output setup at all), but there's no reason for the two to differ.
+  amplify it), but there's no reason for the two to differ.
 
 Everything else still opens its own.
 
@@ -1190,10 +1204,10 @@ made a wait-time action's "success" quietly weaker than an event-confirmed one's
 review's point, and a fair one. Covered live on both sides by
 `height_confirms_via_poll_when_resized_with_a_sibling` (`"changed"`) and
 `height_and_width_fall_back_gracefully_when_solo_window_clamps_the_resize` (`"unconfirmed"`),
-which run the same command against a window with and without a sibling. `run()` builds each
-`ActionRecord` directly from a `PlannedAction` (see above) — `Run` becomes `Changed`/
-`AlreadySatisfied`/`Unconfirmed` from the `ActionOutcome` it returned, `Skip` becomes `Skipped { reason }` directly, with no
-`.run()` call at all. `main.rs`'s `action_record_json()` renders one record as
+which run the same command against a window with and without a sibling. `execute_plan()` builds
+each `ActionRecord` directly: an action that ran becomes `Changed`/`AlreadySatisfied`/`Unconfirmed`
+from the `ActionOutcome` it returned, and a guarded move it skipped becomes `Skipped { reason }`
+with no `.run()` call at all. `main.rs`'s `action_record_json()` renders one record as
 `{"kind": ..., "command": ..., "status": "changed"|"already_satisfied"|"unconfirmed"|"skipped"[, "reason": ...]}` —
 `"command"` absent and `"reason"` present only for `"skipped"`. A single invocation's `--json`
 output is now `{"container_id": N, "actions": [...]}` (`actions_json()`).
@@ -1272,13 +1286,11 @@ launching anything — the review's suggestion, and the reason Phase 2's `build_
 `sway_command()` split (see "Orchestration" above and the `sway_command()` bullet under "Core
 model" above) was worth doing first: both were designed with this in mind, not retrofitted for it.
 
-`SwayLaunch::build_actions_for_preview()` calls `build_actions(0, false)` — the `false` is
-`check_relocation`, a new parameter on `build_actions()` that, when `false`, skips
-`relocates_to_another_output()`'s live `get_outputs()`/`get_tree()` call entirely and always
-includes `NewColumn`/`NewRow` in the plan. `run()` itself passes `true` (unchanged behavior — it's
-about to run the action for real, so it needs the real answer); a preview has no real
-`container_id` yet (nothing has launched) to check the guard against anyway, so skipping it is what
-makes previewing fully IPC-free, not just IPC-light. The placeholder `container_id: 0` passed to
+`SwayLaunch::build_actions_for_preview()` is just `build_actions(0)`: `build_actions()` never
+touches Sway IPC (the `NewColumn`/`NewRow` guard runs per move inside `run()`'s `execute_plan()`,
+see "Orchestration" above), so a preview always includes `NewColumn`/`NewRow` when the flag is set —
+it has no real `container_id` (nothing has launched) and no tree to judge them against anyway. The
+placeholder `container_id: 0` passed to
 `build_actions()` is never actually shown: `main.rs`'s dry-run printing calls
 `SwayAction::sway_command_verb()` (new — `sway_command()`'s own building block, `sway_command()`
 itself just `format!("[con_id={}] {}", self.container_id, self.sway_command_verb())`), not
@@ -2046,8 +2058,8 @@ comments, name things clearly instead" style). Two rule-specific overrides:
     drivers and the `state_satisfied`/`poll_matches` fetching halves (exempt) *alongside* the pure
     deciding halves — `state_satisfies`, `poll_grace`, `polls`, `matches_window_event` — that stay
     measured, and
-    `launch.rs`'s `run`/`resolve_container_id`/`debug_events` and `build_actions()`'s
-    `relocates_to_another_output()` call are exempt while the rest of `build_actions()` is not.
+    `launch.rs`'s `run`/`resolve_container_id`/`debug_events` are exempt while `build_actions()`
+    and `execute_plan()` (which takes its guard and action runner as closures) are not.
     `SwayLaunch::resolve_container_id`'s `Target::ConId` branch never touches the socket and is
     covered headlessly by `tests/json_output.rs` driving the binary with `--con-id`.
 

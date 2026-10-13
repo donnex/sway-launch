@@ -897,9 +897,20 @@ your behalf. That happens when the window is already the trailing (rightmost) ch
 laid out horizontally (or tabbed), and also when it's the only window inside a container sitting at
 that trailing edge, which Sway treats the same as the container itself. The second case includes a
 lone window you've run `layout tabbed` on, and every first window on a workspace when your Sway
-config sets `workspace_layout tabbed` or `stacking`. Run with `--verbose` to see when this happens, or check `--json`'s
-`"actions"` array (see [JSON output](#json-output) below) for a machine-readable signal instead of
-parsing a log line.
+config sets `workspace_layout tabbed` or `stacking`. A window that's already fullscreen is skipped
+too on a multi-monitor setup (reason `fullscreen`), since Sway sends a fullscreen window's `move
+right` straight to the next output whatever its position — for example a layout step retargeting
+an earlier step's fullscreen window, or an app that starts fullscreen. With a single output Sway
+leaves it in place, so nothing is skipped.
+
+A floating window is skipped on every setup (reason `floating`): Sway only nudges a floating
+window 10 px for `move right`, which is never a new column.
+
+The check runs right before the move is sent, against the tree as the earlier actions in the same
+invocation left it, so `--new-column --new-row` judges the row move after the column move has
+happened. Run with `--verbose` to see when a move is skipped and why, or check `--json`'s
+`"actions"` array (see [JSON output](#json-output) below) for a machine-readable `"reason"`
+(`trailing_workspace_edge`, `fullscreen` or `floating`) instead of parsing a log line.
 
 ### New row
 
@@ -910,8 +921,9 @@ sway-launch -a foot foot
 sway-launch --new-row foot
 ```
 
-Subject to the same multi-monitor skip as [New column](#new-column) above, along the vertical axis
-instead (where a stacked layout counts as vertical, the way tabbed counts as horizontal).
+Subject to the same skips as [New column](#new-column) above — the multi-monitor ones along the
+vertical axis instead (where a stacked layout counts as vertical, the way tabbed counts as
+horizontal), and the floating one on every setup.
 
 ### Scratchpad
 
@@ -976,8 +988,8 @@ output. `actions` lists every planned action, in order, each as `{"kind": ..., "
     if you chain further actions assuming this one took effect, this is the field that tells you
     it may not have.
   - `"skipped"` — the action was never run at all, with a machine-readable `"reason"` field added
-    alongside `"status"`. Currently only `--new-column`/`--new-row`'s multi-output relocation guard
-    (see "New column"/"New row" above) produces one.
+    alongside `"status"`. Currently only `--new-column`/`--new-row`'s guard produces one, with
+    reason `trailing_workspace_edge`, `fullscreen` or `floating` (see "New column"/"New row" above).
 
 ```shell
 $ sway-launch --json --floating --mark pinned foot
@@ -1089,10 +1101,11 @@ what it would run.
 
 The preview is statically planned, not a guaranteed prediction of what a real run will do: `move
 right`/`move down` (`--new-column`/`--new-row`) always show as planned here, even on a multi-monitor
-setup where a real run's relocation guard (see [JSON output](#json-output) above) would skip one of
-them to avoid throwing the window onto a different output. Checking that guard needs a live query
-against Sway's actual output layout, which would defeat the point of a preview that works with no
-Sway session running at all.
+setup where a real run's guard (see [JSON output](#json-output) above) would skip one of them to
+avoid throwing the window onto a different output, or for a floating window. Checking that guard
+needs a live query against the window's actual state and Sway's output layout at the moment the move
+would run, which would defeat the point of a preview that works with no Sway session running at
+all.
 
 A `target_id` reference in a `--layout`/`--template` step still resolves during a dry run (so the
 plan doesn't error out partway through), but against a placeholder rather than a real container id,

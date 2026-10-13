@@ -260,8 +260,8 @@ fn is_scratchpad_workspace(workspace_name: Option<&str>) -> bool {
 }
 
 /// The direction `NewColumn` ("move right") / `NewRow` ("move down") moves
-/// in — used only by `is_at_the_trailing_workspace_edge()` to know which
-/// layouts count as parallel to the move.
+/// in — used by `move_skip_reason()` and `is_at_the_trailing_workspace_edge()`
+/// to know which layouts count as parallel to the move.
 #[derive(Copy, Clone)]
 pub(super) enum MoveDirection {
     Right,
@@ -291,7 +291,8 @@ pub(super) enum MoveDirection {
 ///   `stacking`.
 ///
 /// Floating windows (and anything inside a floating container) are never
-/// flagged: Sway refuses to move them out of their floating parent at all.
+/// flagged here: Sway refuses to move them out of their floating parent at
+/// all. A floating window itself is `move_skip_reason()`'s concern instead.
 pub(super) fn is_at_the_trailing_workspace_edge(
     tree: &Node,
     container_id: i64,
@@ -347,6 +348,43 @@ pub(super) fn is_at_the_trailing_workspace_edge(
         }
         return container_depth == 2 && chain[1].nodes.len() == 1;
     }
+}
+
+/// Why `NewColumn`/`NewRow` must not send its `move right`/`move down` to
+/// `container_id` right now, as `ActionStatus::Skipped`'s machine-readable
+/// reason — or `None` when the move is safe to send. Follows the order of
+/// Sway's own `cmd_move_in_direction()`/`container_move_in_direction()`
+/// (`sway/commands/move.c`), which check two things before the tree walk
+/// `is_at_the_trailing_workspace_edge()` replays:
+///
+/// - `"floating"`, on any setup: Sway nudges a floating window by 10 px and
+///   returns, which is never a new column or row — and the rect change would
+///   otherwise read as a confirmed move.
+/// - `"fullscreen"`, with more than one output: a fullscreen window's move
+///   goes straight to the next output in that direction, whatever its tree
+///   position. With a single output there's nowhere to go and Sway no-ops.
+/// - `"trailing_workspace_edge"`, with more than one output: the tree walk.
+///
+/// A container that isn't in the tree yields `None`: the move's own
+/// existence check is what reports a closed window.
+pub(super) fn move_skip_reason(
+    tree: &Node,
+    container_id: i64,
+    direction: MoveDirection,
+    multiple_outputs: bool,
+) -> Option<&'static str> {
+    let node = find_node(tree, container_id)?;
+    if node_is_floating(node) {
+        return Some("floating");
+    }
+    if !multiple_outputs {
+        return None;
+    }
+    if node.fullscreen_mode.is_some_and(|mode| mode != 0) {
+        return Some("fullscreen");
+    }
+    is_at_the_trailing_workspace_edge(tree, container_id, direction)
+        .then_some("trailing_workspace_edge")
 }
 
 fn is_parallel(layout: NodeLayout, direction: MoveDirection) -> bool {

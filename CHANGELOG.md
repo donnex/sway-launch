@@ -40,7 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     sits left of or above the primary one.
   - On a multi-monitor setup, a `--new-column`/`--new-row` that Sway would carry onto another
     output — a window at the edge of its workspace, including the only window inside a container
-    there — is skipped rather than run. (#70)
+    there, or a window that's already fullscreen — is skipped rather than run. On a floating
+    window both are skipped on any setup, since Sway would only nudge it 10 px. Each move is
+    checked right before it's sent, so `--new-column --new-row` judges the row move against the
+    layout the column move left. (#70, #110)
 - Every action confirms that the state it asked for is actually in effect before returning, rather
   than only waiting. An action Sway fires an event for (`--floating`, `--fullscreen`, `--focus`,
   `--workspace`, `--output`, `--mark`, `--scratchpad`) waits for that event and then checks the

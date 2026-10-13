@@ -3,12 +3,10 @@
 //! Two audiences, kept apart on purpose. `RunOutcome`, `ActionRecord`,
 //! `ActionStatus` and `LaunchOwnership` are public, and `main.rs` renders them
 //! into `--json`, so their shape is a contract with anyone scripting against
-//! this tool. `ActionOutcome`, `PlannedAction` and `SkippedAction` are
-//! internal, and exist because the distinctions the executor draws while
-//! working (planned versus skipped, observed versus merely sent) are finer
-//! than the ones worth publishing.
+//! this tool. `ActionOutcome` is internal, and exists because the distinction
+//! the executor draws while working (observed versus merely sent) is finer
+//! than the one worth publishing.
 
-use super::SwayAction;
 use std::fmt;
 
 /// `SwayLaunch::run()`'s result: the resolved container id, plus every
@@ -117,8 +115,8 @@ pub struct UnmatchedWindow {
 }
 
 /// One entry in `RunOutcome.actions`: either an action that actually ran, or
-/// one `build_actions()` chose not to run at all (the multi-output relocation
-/// guard — see its own doc comment).
+/// a `NewColumn`/`NewRow` the executor chose not to send at all (see
+/// `tree::move_skip_reason()`).
 ///
 /// `kind` is the action's stable identity, the same for both cases: the
 /// `snake_case` name of the CLI flag that produced it
@@ -146,9 +144,10 @@ pub struct ActionRecord {
 /// short, stable, machine-readable identifier (not prose) — the same spirit
 /// as `SwayAction::sway_command_verb()`'s stable text, not a human-facing
 /// message (that's what the existing `--verbose` `diagnostic!` next to each
-/// skip is for). Only one skip mechanism exists today (the multi-output
-/// relocation guard), so `reason` is a plain `&'static str` rather than a
-/// nested enum — revisit if a second one ever appears.
+/// skip is for). Only one skip mechanism exists today (the `NewColumn`/
+/// `NewRow` guard, whose reasons are `"floating"`, `"fullscreen"` and
+/// `"trailing_workspace_edge"`), so `reason` is a plain `&'static str` rather
+/// than a nested enum — revisit if a second one ever appears.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionStatus {
     Changed,
@@ -159,8 +158,8 @@ pub enum ActionStatus {
 
 /// What `SwayAction::run()` observed, before `SwayLaunch::run()` folds it
 /// together with the skip case into an `ActionStatus`. Separate from
-/// `ActionStatus` because a skip is decided while *planning* and never reaches
-/// `run()` at all.
+/// `ActionStatus` because a skipped action is never sent, so
+/// `SwayAction::run()` never sees it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ActionOutcome {
     /// The change was observed: a confirmation event arrived and the requested
@@ -176,23 +175,4 @@ pub(super) enum ActionOutcome {
     /// one. It is, however, a weaker claim than `Changed`, and saying so is
     /// the point.
     Unconfirmed,
-}
-
-/// One `SwayAction` `SwayLaunch::build_actions()` planned to run, or one it
-/// decided to skip instead (interleaved in the same `Vec` so the overall
-/// fixed order survives — see `build_actions()`'s doc comment for why a
-/// skip needs a defined position at all, not just a separate side list).
-#[derive(Debug)]
-pub(super) enum PlannedAction<'a> {
-    Run(SwayAction<'a>),
-    Skip(SkippedAction),
-}
-
-/// One action `SwayLaunch::build_actions()` decided not to include in the
-/// plan, and why — see `ActionStatus::Skipped`, which is what actually
-/// carries this into `RunOutcome`/`--json`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct SkippedAction {
-    pub(super) kind: &'static str,
-    pub(super) reason: &'static str,
 }

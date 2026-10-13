@@ -1817,7 +1817,7 @@ fn new_column_does_not_relocate_a_solo_window_to_a_different_output() {
     // comment: "move right" on a window with no sibling to move past within
     // its workspace can otherwise relocate the whole workspace to the next
     // output in that direction, rather than a same-workspace no-op.
-    // SwayLaunch::run() guards against this via relocates_to_another_output();
+    // SwayLaunch::run() guards against this via current_move_skip_reason();
     // this proves the guard actually prevents the relocation. Also asserts
     // on --json's unified "actions" array reporting the skip (RunOutcome)
     // rather than adding a second, near-identical test. The output is a
@@ -1875,7 +1875,7 @@ fn new_column_does_not_relocate_a_solo_window_to_a_different_output() {
 #[test]
 fn new_column_does_not_relocate_a_non_solo_window_at_the_trailing_edge() {
     fresh_workspace();
-    // Regression test for a gap found in relocates_to_another_output()
+    // Regression test for a gap found in the multi-output move guard
     // while developing docs/plan-poll-based-wait-time-actions.md's
     // NewColumn/NewRow poll matcher: the original guard only checked "is
     // container_id the *only* window in its workspace" — manual swaymsg
@@ -1917,6 +1917,155 @@ fn new_column_does_not_relocate_a_non_solo_window_at_the_trailing_edge() {
         Some(output_before.as_str()),
         "the trailing window of a non-solo workspace should not be relocated to a different \
          output by --new-column either"
+    );
+}
+
+/// Runs `sway-launch --con-id <con_id> <flags> --json`, asserts it succeeded,
+/// and returns its `"actions"` array.
+fn json_actions_for(con_id: i64, flags: &[&str]) -> serde_json::Value {
+    let con_id = con_id.to_string();
+    let mut args = vec!["--con-id", con_id.as_str()];
+    args.extend_from_slice(flags);
+    args.push("--json");
+    let output = sway_launch_command()
+        .args(&args)
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    let json: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("--json output should be valid JSON");
+    json["actions"].clone()
+}
+
+#[test]
+fn new_column_and_new_row_skip_a_floating_window_instead_of_nudging_it() {
+    fresh_workspace();
+    // Sway's "move right"/"move down" on a floating window nudges it 10 px
+    // and returns -- never a new column or row. The move guard used to let it
+    // through (it only modelled tiled windows), and the rect change then read
+    // as a confirmed "changed". Needs no second output: this skip applies on
+    // any setup.
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&["--floating"]);
+    // Settled first: until the window's first layout transaction applies, its
+    // rect includes the title bar, which would read as a move.
+    let rect_before = get_settled_node(&mut connection, container_id).rect;
+
+    let actions = json_actions_for(container_id, &["--new-column", "--new-row"]);
+
+    assert_eq!(
+        actions,
+        serde_json::json!([
+            { "kind": "new_column", "status": "skipped", "reason": "floating" },
+            { "kind": "new_row", "status": "skipped", "reason": "floating" },
+        ]),
+        "a floating window's moves should be skipped: {actions:?}"
+    );
+    let rect_after = get_settled_node(&mut connection, container_id).rect;
+    assert_eq!(
+        (rect_after.x, rect_after.y),
+        (rect_before.x, rect_before.y),
+        "the floating window should not have been nudged"
+    );
+}
+
+#[test]
+fn new_column_skips_a_fullscreen_window_on_a_multi_output_setup() {
+    fresh_workspace();
+    // Sway sends a fullscreen window's "move right" straight to the next
+    // output, whatever its tree position. The target here is a *leading*
+    // sibling, which the trailing-edge walk alone lets through, so the skip
+    // has to come from the fullscreen check -- the case a layout step that
+    // retargets an earlier step's fullscreen window would hit.
+    let mut connection = connect();
+    let _created_output = CreatedOutput::new(&mut connection);
+
+    let (first_id, _first_guard) = launch_foot(&[]);
+    let (_second_id, _second_guard) = launch_foot(&[]);
+    run_command_ok(
+        &mut connection,
+        &format!("[con_id={first_id}] fullscreen enable"),
+    );
+    let tree_before = connection.get_tree().expect("get_tree should succeed");
+    let output_before = output_containing(&tree_before, first_id, None)
+        .expect("launched window should be found in the tree")
+        .to_string();
+
+    let actions = json_actions_for(first_id, &["--new-column"]);
+
+    assert_eq!(
+        actions,
+        serde_json::json!([
+            { "kind": "new_column", "status": "skipped", "reason": "fullscreen" },
+        ]),
+        "a fullscreen window's --new-column should be skipped: {actions:?}"
+    );
+    let tree_after = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        output_containing(&tree_after, first_id, None),
+        Some(output_before.as_str()),
+        "a fullscreen window's --new-column should not move it to a different output"
+    );
+}
+
+#[test]
+fn new_row_is_judged_after_new_column_has_run() {
+    fresh_workspace();
+    // On a splitv workspace [A, W], W is the trailing child of a vertical
+    // workspace -- so judged up front, --new-row looks like it would escalate
+    // to another output. But --new-column runs first, and its "move right"
+    // re-orients the workspace horizontally with W at the end, where "move
+    // down" is a safe perpendicular move. The guard used to decide both moves
+    // while planning, so it skipped --new-row against a tree that no longer
+    // existed by the time it would have run.
+    let mut connection = connect();
+    let _created_output = CreatedOutput::new(&mut connection);
+
+    let (first_id, _first_guard) = launch_foot(&[]);
+    run_command_ok(&mut connection, &format!("[con_id={first_id}] splitv"));
+    let (second_id, _second_guard) = launch_foot(&[]);
+    let tree_before = connection.get_tree().expect("get_tree should succeed");
+    let workspace_node =
+        parent_node(&tree_before, second_id).expect("the target should have a parent");
+    assert_eq!(workspace_node.node_type, NodeType::Workspace);
+    assert_eq!(workspace_node.layout, swayipc::NodeLayout::SplitV);
+    assert_eq!(
+        workspace_node.nodes.last().map(|node| node.id),
+        Some(second_id),
+        "expected the target to be the vertical workspace's trailing child"
+    );
+    let output_before = output_containing(&tree_before, second_id, None)
+        .expect("launched window should be found in the tree")
+        .to_string();
+
+    let actions = json_actions_for(second_id, &["--new-column", "--new-row"]);
+
+    let statuses: Vec<&str> = actions
+        .as_array()
+        .expect("actions should be an array")
+        .iter()
+        .map(|action| action["status"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        statuses.len(),
+        2,
+        "expected one record per move: {actions:?}"
+    );
+    assert!(
+        !statuses.contains(&"skipped"),
+        "neither move should be skipped once each is judged against the tree it runs on: \
+         {actions:?}"
+    );
+    let tree_after = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        output_containing(&tree_after, second_id, None),
+        Some(output_before.as_str()),
+        "neither move should have relocated the window to a different output"
     );
 }
 
@@ -2060,7 +2209,7 @@ fn new_column_and_new_row_output_guard_still_applies_when_combined_with_output()
     // Companion to the workspace case above: when --new-column/--new-row and
     // --output are combined in one invocation and the window is at the
     // trailing edge of an axis-matched, multi-output-eligible workspace,
-    // relocates_to_another_output() should still skip the (redundant, and
+    // the multi-output move guard should still skip the (redundant, and
     // in a single-output world dangerous) "move right"/"move down" exactly
     // as it does when --new-column/--new-row runs alone -- confirmed live
     // this combination doesn't bypass or double up on the existing guard.

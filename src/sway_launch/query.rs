@@ -12,9 +12,9 @@
 
 use super::ipc::{ipc_error, new_connection};
 use super::tree::{
-    expected_position, find_node, find_parent_layout, find_workspace_node,
-    is_at_the_trailing_workspace_edge, matching_container_ids, node_position, present_ids,
-    recheck_launched_windows, resolve_matches, ContainerState, MoveDirection, RecheckedWindow,
+    expected_position, find_node, find_parent_layout, find_workspace_node, matching_container_ids,
+    move_skip_reason, node_position, present_ids, recheck_launched_windows, resolve_matches,
+    ContainerState, MoveDirection, RecheckedWindow,
 };
 use super::values::Position;
 use swayipc::{Connection, Node, NodeLayout};
@@ -66,50 +66,42 @@ pub(super) fn container_state(container_id: i64) -> Result<Option<ContainerState
     Ok(ContainerState::from_tree(&tree, container_id))
 }
 
-/// Whether running NewColumn/NewRow on `container_id` right now would risk
-/// Sway relocating it (and its whole workspace) to a different output
-/// rather than moving it within the workspace or no-oping.
+/// Why NewColumn/NewRow must not send its move to `container_id` right now,
+/// or `None` when it's safe — `move_skip_reason()` over a fresh tree and
+/// output count. `SwayLaunch::run()` asks immediately before each move rather
+/// than while planning, so the answer reflects whatever the actions before it
+/// (a `--new-column` ahead of a `--new-row`, say) did to the tree.
 ///
-/// The tree half is `is_at_the_trailing_workspace_edge()`, which replays
-/// Sway's own `move right`/`move down` walk rather than approximating it
-/// with a shape rule — see its doc comment and CLAUDE.md's Orchestration
-/// section for the two shape rules that preceded it and the cases each one
-/// missed (a trailing window with a sibling to its left; a window that is
-/// the only child of a sub-container at the workspace's trailing edge).
+/// The tree half replays Sway's own `move right`/`move down` rather than
+/// approximating it with a shape rule — see `move_skip_reason()` and
+/// `is_at_the_trailing_workspace_edge()`, and CLAUDE.md's Orchestration
+/// section for the shape rules that preceded it and the cases each missed.
 ///
 /// A failed `get_outputs()`/`get_tree()` propagates as an error rather than
-/// being treated as "safe to proceed": the caller (`build_actions()`) is about
-/// to run a command whose safety this check exists to establish, so an
-/// unanswerable check is a reason to stop, not to guess. Only an unfindable
-/// `container_id`/workspace yields `false`, since that genuinely means the
-/// escalation this guards against can't apply.
-pub(super) fn relocates_to_another_output(
+/// being treated as "safe to proceed": the caller is about to run a command
+/// whose safety this check exists to establish, so an unanswerable check is a
+/// reason to stop, not to guess.
+pub(super) fn current_move_skip_reason(
     container_id: i64,
     direction: MoveDirection,
-) -> Result<bool, String> {
-    // One connection for both reads. They answer halves of a single question,
-    // and the early return below means the tree fetch only happens on a
-    // multi-output setup anyway — same reasoning as `run_wait_time()`'s shared
-    // poll connection, just without a loop to amplify the cost.
+) -> Result<Option<&'static str>, String> {
+    // One connection for both reads: they answer halves of a single question.
     let mut connection = new_connection()?;
 
     let outputs = match connection.get_outputs() {
         Ok(outputs) => outputs,
         Err(error) => return Err(ipc_error(error)),
     };
-    if outputs.len() < 2 {
-        return Ok(false);
-    }
-
     let tree = match connection.get_tree() {
         Ok(tree) => tree,
         Err(error) => return Err(ipc_error(error)),
     };
 
-    Ok(is_at_the_trailing_workspace_edge(
+    Ok(move_skip_reason(
         &tree,
         container_id,
         direction,
+        outputs.len() > 1,
     ))
 }
 
