@@ -213,6 +213,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   editor and then stop with a timeout. The README now also explains how to find an application's
   `app_id` or `class` (`swaymsg -t get_tree`, or `--debug-events` while it opens), and that the
   value can differ between XWayland and native Wayland, distro packages and Flatpaks. (#40)
+- The `dev-workspace` example script now actually gives VS Code most of the width. It set
+  `--width 65ppt` on VS Code while it was still the only window on its workspace, which Sway
+  ignores, so the editor and the terminal column always came out at 50% each. The width now goes on
+  the first terminal (`35ppt`), and the `--new-column` that had nothing to move past is gone. (#46)
 - `sway-launch --help` no longer prints notes meant for the program's maintainers under
   `--debug-events` and `--completions`, and its option descriptions now match what the options do:
   `--mark-match` says it requires `--existing`, the per-window actions say "the window" rather than
