@@ -15,6 +15,8 @@ swaymsg, foot, figlet, grim, and cargo on PATH.
 import argparse
 import json
 import os
+import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -51,6 +53,9 @@ WIDTH_MARGIN = 1.25  # require this much extra horizontal room beyond the text i
 HEIGHT_MARGIN = 3.0  # keep the label well clear of vertically cramped panes
 DEFAULT_FONT_SIZE = 12  # used for the geometry-measuring first pass, and as a fallback
 FOOT_WINDOW_CLOSE_TIMEOUT_SECONDS = 5
+# Characters TOML forbids raw inside a basic string: every control character
+# but tab (escaped too, for simplicity), plus DEL.
+TOML_UNESCAPED_FORBIDDEN = {chr(code) for code in range(0x20)} | {chr(0x7F)}
 # A background color per slot, cycled if a template ever has more slots than
 # this. Chosen dark enough that white foreground text stays readable.
 SLOT_COLORS = [
@@ -116,7 +121,7 @@ def ordered_slots(sway_launch_binary, template_name):
 def figlet_render_size(text, font):
     """The (columns, rows) figlet's `font` actually renders `text` as."""
     result = subprocess.run(
-        ["figlet", "-f", font, text], check=True, capture_output=True, text=True
+        ["figlet", "-f", font, "--", text], check=True, capture_output=True, text=True
     )
     lines = result.stdout.rstrip("\n").split("\n")
     return max(len(line) for line in lines), len(lines)
@@ -133,19 +138,89 @@ def font_size_for_rect(slot, rect_width, rect_height, font):
     return int(max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, size)))
 
 
-def build_bindings_toml(slots, font_sizes, font):
+def toml_basic_string(value):
+    """`value` as a TOML basic string: every character TOML forbids raw in one
+    (a control character, DEL) written as a \\uXXXX escape, alongside `\\` and
+    `"` — so a slot name containing any of them still yields a bindings file
+    that parses."""
+    escaped = []
+    for character in value:
+        if character in ('"', "\\"):
+            escaped.append(f"\\{character}")
+        elif character in TOML_UNESCAPED_FORBIDDEN:
+            escaped.append(f"\\u{ord(character):04X}")
+        else:
+            escaped.append(character)
+    return '"' + "".join(escaped) + '"'
+
+
+def write_slot_launcher(launcher_path, slot, font_size, color, font):
+    """Writes the shell script that opens `slot`'s labeled foot window.
+
+    The binding's command goes through Sway's own command parser and then
+    `sh -c`, which a free-form slot name or --font value would otherwise be
+    pasted into as shell code — a space splits it into separate words, and a
+    quote, `;`, `$` or backtick runs the rest as a command. Launching this
+    file instead keeps both values out of that string entirely: here they are
+    shlex-quoted, and figlet receives them as positional arguments rather than
+    as text inside the inner `sh -c` script."""
+    figlet_script = 'clear; figlet -f "$1" -- "$2"; sleep infinity'
+    command = [
+        "env",
+        "LC_ALL=C.utf8",
+        "foot",
+        "-T",
+        slot,
+        "-f",
+        f"monospace:size={font_size}",
+        "-o",
+        f"colors.background={color}",
+        "-o",
+        "colors.foreground=ffffff",
+        "-e",
+        "sh",
+        "-c",
+        figlet_script,
+        "sh",
+        font,
+        slot,
+    ]
+    launcher_path.write_text(f"#!/bin/sh\nexec {shlex.join(command)}\n")
+    launcher_path.chmod(0o700)
+
+
+def build_bindings_toml(slots, font_sizes, font, launcher_dir):
+    """The bindings file for `slots`, writing each slot's launcher script into
+    `launcher_dir` along the way."""
     blocks = []
     for index, slot in enumerate(slots):
         color = SLOT_COLORS[index % len(SLOT_COLORS)]
         font_size = font_sizes.get(slot, DEFAULT_FONT_SIZE)
-        command = (
-            f"env LC_ALL=C.utf8 foot -T {slot} -f monospace:size={font_size} "
-            f"-o colors.background={color} -o colors.foreground=ffffff "
-            f"-e sh -c 'clear; figlet -f {font} {slot}; sleep infinity'"
+        launcher_path = launcher_dir / f"slot-{index}"
+        # Sway's parser and `sh -c` both still see this path itself, so it
+        # must be made of characters neither treats specially.
+        if not re.fullmatch(r"[A-Za-z0-9_./-]+", str(launcher_path)):
+            die(
+                f"temporary directory path {str(launcher_dir)!r} contains "
+                "characters that can't be passed through a Sway command; "
+                "set TMPDIR to a plain path"
+            )
+        write_slot_launcher(launcher_path, slot, font_size, color, font)
+        blocks.append(
+            f"[[binding]]\nslot = {toml_basic_string(slot)}\n"
+            f"command = {toml_basic_string(str(launcher_path))}\n"
         )
-        escaped_command = command.replace("\\", "\\\\").replace('"', '\\"')
-        blocks.append(f'[[binding]]\nslot = "{slot}"\ncommand = "{escaped_command}"\n')
-    return "\n".join(blocks)
+    bindings_toml = "\n".join(blocks)
+    # Imported here rather than at the top so a too-old Python still reaches
+    # the friendly version check instead of failing on tomllib (3.11+).
+    import tomllib  # noqa: PLC0415
+
+    parsed_slots = [
+        binding["slot"] for binding in tomllib.loads(bindings_toml)["binding"]
+    ]
+    if parsed_slots != slots:
+        die(f"bindings file did not round-trip the slot names {slots!r}")
+    return bindings_toml
 
 
 class HeadlessSway:
@@ -397,7 +472,7 @@ def generate_screenshot(
         sway,
         sway_launch_binary,
         template_path,
-        build_bindings_toml(slots, {}, font),
+        build_bindings_toml(slots, {}, font, sway.runtime_dir),
         wait_time_ms,
     )
     rects = sway.slot_rects()
@@ -417,7 +492,7 @@ def generate_screenshot(
         sway,
         sway_launch_binary,
         template_path,
-        build_bindings_toml(slots, font_sizes, font),
+        build_bindings_toml(slots, font_sizes, font, sway.runtime_dir),
         wait_time_ms,
     )
 
