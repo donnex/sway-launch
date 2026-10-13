@@ -36,6 +36,7 @@ outside of one.
 - [Installation](#installation)
 - [Quickstart](#quickstart)
 - [Basic usage](#basic-usage)
+  - [Finding a window's app_id or class](#finding-a-windows-app_id-or-class)
 - [Recreatable layouts](#recreatable-layouts)
   - [Examples](#examples)
   - [Layout files](#layout-files)
@@ -219,7 +220,9 @@ sway-launch -c Code code
 ```
 
 `--app-id` and `--class` can't be combined — pick whichever matches the application (native
-Wayland apps expose `app_id`; XWayland apps expose `class`).
+Wayland apps expose `app_id`; XWayland apps expose `class`). See
+[Finding a window's app_id or class](#finding-a-windows-app_id-or-class) below for how to look up
+the right value.
 
 **Prefer running `sway-launch` calls one at a time over backgrounding them.** Every example in
 this README — and `--layout`/`--template`'s own step-by-step execution — chains calls
@@ -249,6 +252,31 @@ after the short grace period — but correlation is best-effort there, so sequen
 more. A window is only treated as this run's own without its marker when the launched process was
 actually seen running and has since exited, the single-instance case above.
 
+### Finding a window's app_id or class
+
+`--app-id`, `--class`, `--existing` and a bindings file's `app_id`/`class` all need the value the
+application actually reports, which isn't always its command name. Open the application, then
+either:
+
+- run `swaymsg -t get_tree` and look for its window's `"app_id"` and `"class"` fields (`"class"`
+  sits under `"window_properties"`), or
+- run `sway-launch --debug-events` in a terminal and open the application while it's running: the
+  `Window` event with `change: New` carries the same fields (`app_id`, and `class` inside
+  `window_properties`). Stop it with `Ctrl-C`.
+
+A native Wayland application has an `app_id` and no `class`; an application running under XWayland
+has a `class` and no `app_id` (its `app_id` is `null`), so match it with `--class`. The same
+application can report different values depending on how it was built, packaged or started:
+
+- VS Code runs under XWayland by default, with class `Code`; started as a native Wayland client
+  (`code --ozone-platform=wayland`) its app_id is `code` instead.
+- Chromium under XWayland has class `Chromium`; as a native Wayland client its app_id is `chromium`.
+- Firefox is `firefox`, but Debian's Firefox ESR is `firefox-esr`.
+- A Flatpak application usually uses its reverse-DNS id (`org.mozilla.firefox`).
+
+With the wrong value the window still opens, but `sway-launch` never sees a match and stops with a
+timeout once `--timeout` runs out.
+
 ## Recreatable layouts
 
 Since `sway-launch` blocks on every command, its arguments can be combined into scripts that
@@ -269,7 +297,11 @@ Runnable example scripts live in [`examples/scripts/`](examples/scripts/) — ea
 standalone shell script built entirely out of `sway-launch` calls; run any of them directly (e.g.
 `examples/scripts/quad-terminals`) against a live Sway session to see the layout it builds. The
 advanced examples expect Firefox, Chromium, Thunar, and VS Code (the `code` command) to be
-installed and on `PATH`, in addition to `foot`. Declarative `--layout` example files live alongside
+installed and on `PATH`, in addition to `foot`, and match each one by the `app_id`/`class` it
+reports on a typical setup (VS Code by class `Code`, the others by app_id); if one of them times out
+on your system, check its real value (see
+[Finding a window's app_id or class](#finding-a-windows-app_id-or-class)) and edit the script to
+match. Declarative `--layout` example files live alongside
 them in [`examples/layouts/`](examples/layouts/); `--template` files live in
 [`templates/`](templates/) at the repo root instead — see [Templates](#templates) below for why.
 

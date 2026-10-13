@@ -40,5 +40,6 @@ for required_command in firefox chromium; do
     die "$required_command not found on PATH. Install Firefox and Chromium first."
 done
 
+# app_id/class values vary by backend and distro; see "Finding a window's app_id or class" in README.md.
 sway-launch -a firefox --split h 'firefox --new-window https://example.com'
 exec sway-launch -a chromium 'chromium --new-window https://example.com'

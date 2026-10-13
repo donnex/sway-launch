@@ -207,6 +207,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The VS Code example scripts (`dev-workspace`, `editor-with-floating-terminal`,
+  `quad-mixed-apps`) now match VS Code by class `Code`, the way the README does, instead of app_id
+  `code`. VS Code runs under XWayland by default, where it has no app_id, so they used to open the
+  editor and then stop with a timeout. The README now also explains how to find an application's
+  `app_id` or `class` (`swaymsg -t get_tree`, or `--debug-events` while it opens), and that the
+  value can differ between XWayland and native Wayland, distro packages and Flatpaks. (#40)
 - `sway-launch --help` no longer prints notes meant for the program's maintainers under
   `--debug-events` and `--completions`, and its option descriptions now match what the options do:
   `--mark-match` says it requires `--existing`, the per-window actions say "the window" rather than

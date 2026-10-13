@@ -40,8 +40,9 @@ for required_command in firefox thunar code; do
     die "$required_command not found on PATH. Install Firefox, Thunar, and VS Code first."
 done
 
+# app_id/class values vary by backend and distro; see "Finding a window's app_id or class" in README.md.
 sway-launch -a foot --split h foot
 sway-launch -a firefox --split v 'firefox --new-window https://example.com'
 
 sway-launch --new-row -a thunar --split h thunar
-exec sway-launch -a code code
+exec sway-launch -c Code code
