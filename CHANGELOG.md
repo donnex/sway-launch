@@ -370,3 +370,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   open with no container id printed and nothing for `--rollback-on-error` to clean up. (#27)
 - The example scripts now stop with a clear message when `sway-launch` isn't on `PATH`, instead of
   failing on their first call with the shell's own "not found" error. (#29)
+- `--debug-events` now prints output events too. It never subscribed to them, so a session left
+  running while a monitor was added, removed or reconfigured showed nothing about it, despite
+  promising every event Sway sends. (#47)

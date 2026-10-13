@@ -226,10 +226,12 @@ below) plus five integration test files:
   `--sticky` is covered by `sticky_sets_the_sticky_flag_even_on_a_tiled_window`/
   `sticky_confirms_via_poll_well_under_a_large_wait_time`.
   `--debug-events` (which runs until killed, unlike everything else here) is covered by
-  `debug_events_prints_a_real_window_event`, spawned as a background child via the `KillChildOnDrop`
-  guard (mirrors `KillOnDrop`, but for a `Child` rather than a container id) with its stdout read on
-  a separate thread and forwarded through a channel — the same shape `confirmation.rs`'s own event
-  loop uses internally. `--scratchpad` is covered by
+  `debug_events_prints_a_real_window_event` and `debug_events_prints_a_real_output_event`, each
+  spawned as a background child by `spawn_debug_events()` via the `KillChildOnDrop` guard (mirrors
+  `KillOnDrop`, but for a `Child` rather than a container id) with its stdout read on a separate
+  thread and forwarded through a channel — the same shape `confirmation.rs`'s own event loop uses
+  internally. The output test rescales the original output to make Sway send an output event,
+  rather than spending a `create_output` call, and restores the scale on drop. `--scratchpad` is covered by
   `scratchpad_moves_a_tiled_window_to_the_scratchpad`/
   `scratchpad_is_a_no_op_when_already_in_the_scratchpad`/
   `scratchpad_hides_a_window_currently_shown_from_the_scratchpad`; `--existing`'s reach into the scratchpad
@@ -1137,6 +1139,13 @@ for this specifically because `resolved_ids` already existed for an unrelated re
 
 `SwayLaunch::debug_events()` subscribes to all Sway IPC event types and prints every event until
 killed. Useful for discovering event shapes when adding a new action.
+
+"All" is a hand-maintained list, `launch.rs`'s `DEBUG_EVENT_SUBSCRIPTIONS`, not something derived
+from `swayipc`: its `EventType` is `#[non_exhaustive]`, so no match outside the crate can be
+exhaustive and a variant added upstream compiles here silently. `Output` was missing from it for a
+while, so output events never appeared. `debug_event_subscriptions_cover_every_sway_ipc_event_type_once`
+pins the list against Sway's own documented event names, so recheck both whenever `swayipc` is
+bumped.
 
 It's a standalone mode like `--completions`/`--list-templates`: it never acts on a window, so it
 `conflicts_with_all`-conflicts with the positional command, `--con-id`/`--existing`, and every

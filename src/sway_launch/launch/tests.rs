@@ -216,3 +216,42 @@ fn build_actions_for_preview_verbs_are_container_id_free() {
     let verbs: Vec<String> = actions.iter().map(|a| a.sway_command_verb()).collect();
     assert_eq!(verbs, vec!["floating enable", "mark \"pinned\""]);
 }
+
+// DEBUG_EVENT_SUBSCRIPTIONS
+
+#[test]
+fn debug_event_subscriptions_cover_every_sway_ipc_event_type_once() {
+    // Sway's own IPC event list (sway-ipc(7), "EVENTS"), by wire name. The
+    // array's length is fixed by its type, so a duplicate entry would push a
+    // real event type out; comparing as sets catches that as well as a gap.
+    let expected: std::collections::BTreeSet<&str> = [
+        "workspace",
+        "output",
+        "mode",
+        "window",
+        "barconfig_update",
+        "binding",
+        "shutdown",
+        "tick",
+        "bar_state_update",
+        "input",
+    ]
+    .into_iter()
+    .collect();
+
+    let subscribed: Vec<String> = DEBUG_EVENT_SUBSCRIPTIONS
+        .iter()
+        .map(|event_type| {
+            serde_json::to_value(event_type)
+                .expect("EventType should serialize")
+                .as_str()
+                .expect("EventType should serialize to a string")
+                .to_string()
+        })
+        .collect();
+    let subscribed_set: std::collections::BTreeSet<&str> =
+        subscribed.iter().map(String::as_str).collect();
+
+    assert_eq!(subscribed.len(), subscribed_set.len(), "duplicate entry");
+    assert_eq!(subscribed_set, expected);
+}
