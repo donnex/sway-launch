@@ -816,7 +816,9 @@ fail as an unknown output. Use `swaymsg` with a captured container id for those.
 Set the height and width of the new window. This usually works, but it depends on the current
 Sway container layout — should work on both tiled and floating windows.
 
-The format used is `100px` or `100ppt` for percent.
+The format used is `100px` or `100ppt` for percent. A pixel value must be at least 1, and a
+percentage 1-100 — `0` and percentages over 100 are rejected up front, since Sway would ignore or
+clamp them.
 
 ```shell
 sway-launch --floating --width 1200px --height 80ppt foot
@@ -1071,7 +1073,7 @@ valid: layout.toml (3 step(s))
 
 ```shell
 $ sway-launch --layout layout.toml --validate
-error: step 2: height: Must be <N>px or <N>ppt, e.g. 300px or 20ppt (ppt = percent)
+error: step 2: height: Must be <N>px (N >= 1) or <N>ppt (N 1-100), e.g. 300px or 20ppt (ppt = percent)
 ```
 
 `--json` prints `{"source": "...", "steps": N, "valid": true}` on success — `source` echoes back the

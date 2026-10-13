@@ -148,11 +148,28 @@ pub fn parse_position(value: &str) -> Position {
 /// Rejecting it here is what keeps validation's promise ("anything that
 /// passes is something the whole pipeline can handle") true, rather than only
 /// true of the parser.
+///
+/// Zero is rejected for both units, and `ppt` is capped at 100: confirmed
+/// live that Sway leaves a `0px` height unchanged, doesn't produce a zero
+/// width from `0ppt`, and clamps a percentage over 100 — each exiting 0 with
+/// an `unconfirmed` status, so a typo like `600ppt` for `60ppt` was a silent
+/// no-op or a surprising size instead of an error.
 pub fn validate_size_argument(value: &str) -> Result<String, String> {
-    let re = Regex::new(r"^(\d+)(?:px|ppt)$").unwrap();
-    match re.captures(value) {
-        Some(captures) if captures[1].parse::<i32>().is_ok() => Ok(value.to_string()),
-        _ => Err("Must be <N>px or <N>ppt, e.g. 300px or 20ppt (ppt = percent)".to_string()),
+    let re = Regex::new(r"^(\d+)(px|ppt)$").unwrap();
+    let valid = re.captures(value).is_some_and(|captures| {
+        match (captures[1].parse::<i32>(), &captures[2]) {
+            (Ok(number), "px") => number >= 1,
+            (Ok(number), _) => (1..=100).contains(&number),
+            (Err(_), _) => false,
+        }
+    });
+    if valid {
+        Ok(value.to_string())
+    } else {
+        Err(
+            "Must be <N>px (N >= 1) or <N>ppt (N 1-100), e.g. 300px or 20ppt (ppt = percent)"
+                .to_string(),
+        )
     }
 }
 
