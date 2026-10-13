@@ -9,7 +9,7 @@
 
 mod common;
 
-use common::{assert_conflict_error, sway_launch_without_a_compositor};
+use common::{assert_conflict_error, sway_launch_without_a_compositor, TestTempDir};
 use std::process::Command;
 
 #[test]
@@ -437,14 +437,11 @@ fn dry_run_never_launches_the_command() {
     // A --dry-run with a real command (not --con-id/--existing) must never
     // actually exec it -- this uses a command that would create an
     // unmistakable side effect if it ran, and confirms it didn't.
-    // Per-process path: this asserts a marker does *not* exist, so a stray
-    // one left at a predictable shared path by another run (or another
-    // user) would fail it for the wrong reason.
-    let marker_dir = std::env::temp_dir().join(format!(
-        "sway-launch-dry-run-test-marker-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir(&marker_dir);
+    // The marker lives in a fresh private directory: this asserts it does
+    // *not* exist, so one left at a predictable shared path by another run
+    // (or another user) would fail it for the wrong reason.
+    let temp_dir = TestTempDir::new();
+    let marker_dir = temp_dir.join("marker");
 
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
         .args(["--dry-run", &format!("mkdir {}", marker_dir.display())])

@@ -4,42 +4,53 @@
 // crate-wide allow below rather than one per item.
 #![allow(dead_code)]
 
-use std::fs;
+use std::fs::{self, DirBuilder};
+use std::hash::{BuildHasher, Hasher, RandomState};
+use std::io::ErrorKind;
 use std::ops::Deref;
+use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, Output};
 
-/// A per-process scratch directory for fixtures and marker files, so nothing
-/// depends on a fixed path in a shared temp directory.
+/// A private scratch directory for one test's fixtures and marker files,
+/// removed again (with everything in it) when it goes out of scope, even if
+/// an assertion panics mid-test.
 ///
-/// Two test files once independently used the fixture name "malformed", so
-/// both wrote the same path -- harmless while cargo runs test binaries one at
-/// a time, but a real collision under a parallel runner (cargo nextest),
-/// under two concurrent `cargo test --test ...` runs, or with two users on
-/// one machine. A predictable path in a shared /tmp is also writable through
-/// a symlink planted by another user, and tests/live_sway.rs's injection
-/// tests assert a marker file does *not* exist, which a stray file at a
-/// predictable path would fail for the wrong reason.
-pub fn test_temp_dir() -> PathBuf {
-    let directory = std::env::temp_dir().join(format!("sway-launch-test-{}", process::id()));
-    fs::create_dir_all(&directory).expect("failed to create the test temp directory");
-    directory
-}
+/// The name carries a random suffix and the directory is created with a
+/// plain `create()` at mode 0700, so an existing directory or symlink at that
+/// path is an error rather than silently reused. That is what makes a shared
+/// temp directory safe here: another local user can neither predict the name
+/// in advance nor pre-create it, so they can't plant a symlink inside it to
+/// redirect a fixture write, or swap a layout file between the test writing
+/// it and `sway-launch` running it (several live-suite layouts have
+/// `command` steps). A name built from the process id alone was neither --
+/// pids are small and sequential, and `create_dir_all()` accepts a directory
+/// someone else already made. It also keeps tests from colliding with each
+/// other: each one gets its own directory, so two that pick the same fixture
+/// name never share a path, and tests/live_sway.rs's injection tests, which
+/// assert a marker file does *not* exist, can't fail because of a stray file.
+pub struct TestTempDir(PathBuf);
 
-/// A TOML file fixture (layout, template, or bindings) written to
-/// `test_temp_dir()`, removed again when it goes out of scope (even if an
-/// assertion panics mid-test).
-pub struct TempToml(PathBuf);
-
-impl TempToml {
-    pub fn write(name: &str, contents: &str) -> Self {
-        let path = test_temp_dir().join(format!("{}.toml", name));
-        fs::write(&path, contents).expect("failed to write temp fixture file");
-        Self(path)
+impl TestTempDir {
+    pub fn new() -> Self {
+        let parent = std::env::temp_dir();
+        for _ in 0..16 {
+            let path = parent.join(format!(
+                "sway-launch-test-{}-{:016x}",
+                process::id(),
+                RandomState::new().build_hasher().finish()
+            ));
+            match DirBuilder::new().mode(0o700).create(&path) {
+                Ok(()) => return Self(path),
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("failed to create test temp directory {path:?}: {error}"),
+            }
+        }
+        panic!("failed to find an unused test temp directory name in {parent:?}");
     }
 }
 
-impl Deref for TempToml {
+impl Deref for TestTempDir {
     type Target = Path;
 
     fn deref(&self) -> &Path {
@@ -47,9 +58,36 @@ impl Deref for TempToml {
     }
 }
 
-impl Drop for TempToml {
+impl Drop for TestTempDir {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A TOML file fixture (layout, template, or bindings) written into its own
+/// `TestTempDir`, removed again when it goes out of scope.
+pub struct TempToml {
+    path: PathBuf,
+    _directory: TestTempDir,
+}
+
+impl TempToml {
+    pub fn write(name: &str, contents: &str) -> Self {
+        let directory = TestTempDir::new();
+        let path = directory.join(format!("{}.toml", name));
+        fs::write(&path, contents).expect("failed to write temp fixture file");
+        Self {
+            path,
+            _directory: directory,
+        }
+    }
+}
+
+impl Deref for TempToml {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.path
     }
 }
 

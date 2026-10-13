@@ -20,7 +20,7 @@
 
 mod common;
 
-use common::{test_temp_dir, TempToml};
+use common::{TempToml, TestTempDir};
 use std::io::BufRead;
 use std::process::Command;
 use std::sync::mpsc;
@@ -494,8 +494,8 @@ fn a_stalled_sway_socket_fails_instead_of_hanging_forever() {
     // returned even after the request path was fixed (#51). All three are run
     // concurrently so the test still costs one IPC_ROUND_TRIP_TIMEOUT, not
     // three.
-    let socket_path = test_temp_dir().join("stalled-sway.sock");
-    let _ = std::fs::remove_file(&socket_path);
+    let temp_dir = TestTempDir::new();
+    let socket_path = temp_dir.join("stalled-sway.sock");
     let listener =
         std::os::unix::net::UnixListener::bind(&socket_path).expect("failed to bind test socket");
 
@@ -798,12 +798,11 @@ fn exec_runs_in_sway_s_directory_and_environment_not_the_caller_s() {
     // Sway's working directory and environment rather than sway-launch's.
     // README.md's "Basic usage" documents this; pinned here so a future
     // change to how the command is launched can't alter it unnoticed.
-    let caller_directory = test_temp_dir().join("exec-caller-directory");
-    std::fs::create_dir_all(&caller_directory).expect("failed to create the caller directory");
-    let working_directory_file = test_temp_dir().join("exec-working-directory");
-    let environment_file = test_temp_dir().join("exec-environment");
-    let _ = std::fs::remove_file(&working_directory_file);
-    let _ = std::fs::remove_file(&environment_file);
+    let temp_dir = TestTempDir::new();
+    let caller_directory = temp_dir.join("exec-caller-directory");
+    std::fs::create_dir(&caller_directory).expect("failed to create the caller directory");
+    let working_directory_file = temp_dir.join("exec-working-directory");
+    let environment_file = temp_dir.join("exec-environment");
     let variable = "SWAY_LAUNCH_LIVE_TEST_CALLER_ONLY";
 
     let output = sway_launch_command()
@@ -837,8 +836,6 @@ fn exec_runs_in_sway_s_directory_and_environment_not_the_caller_s() {
         .expect("the launched command should have recorded its working directory");
     let environment = std::fs::read_to_string(&environment_file)
         .expect("the launched command should have recorded its environment");
-    let _ = std::fs::remove_file(&working_directory_file);
-    let _ = std::fs::remove_file(&environment_file);
 
     assert_ne!(
         std::path::Path::new(working_directory.trim()),
@@ -4128,8 +4125,7 @@ fn every_basic_example_script_launches_successfully() {
     // covering none of the 11.
     let mut connection = connect();
 
-    let bin_dir = test_temp_dir().join("script-bin");
-    std::fs::create_dir_all(&bin_dir).expect("failed to create temp PATH dir for scripts");
+    let bin_dir = TestTempDir::new();
     let fake_bin_path = bin_dir.join("sway-launch");
     std::fs::copy(env!("CARGO_BIN_EXE_sway-launch"), &fake_bin_path)
         .expect("failed to copy the compiled binary into the temp PATH dir");
@@ -5161,12 +5157,12 @@ fn mark_with_special_characters_is_stored_literally_not_executed() {
     // literal mark against a real compositor, rather than being split into
     // multiple Sway commands.
     let mut connection = connect();
-    let marker = test_temp_dir().join("injection-pwned");
+    let temp_dir = TestTempDir::new();
+    let marker = temp_dir.join("injection-pwned");
     let malicious_mark = format!(
         "live-sway-test-injection, exec touch {}; echo bar",
         marker.display()
     );
-    let _ = std::fs::remove_file(&marker);
 
     let (container_id, _guard) = launch_foot(&["--mark", &malicious_mark]);
 
@@ -5232,12 +5228,12 @@ fn mark_with_an_embedded_newline_is_not_executed_as_a_separate_command() {
     // rejection and, still, that nothing was executed as a side effect --
     // which is the part worth checking against a real compositor rather than
     // at the clap level.
-    let marker = test_temp_dir().join("newline-injection-pwned");
+    let temp_dir = TestTempDir::new();
+    let marker = temp_dir.join("newline-injection-pwned");
     let malicious_mark = format!(
         "live-sway-test-newline-injection\nexec touch {}",
         marker.display()
     );
-    let _ = std::fs::remove_file(&marker);
 
     let output = sway_launch_command()
         .args([
