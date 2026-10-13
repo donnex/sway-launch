@@ -87,9 +87,9 @@ Arguments:
   [COMMAND]  Command to execute
 
 Options:
-  -a, --app-id <APP_ID>               app_id match. With --existing, matches an already-open window instead of the newly launched one
-  -c, --class <CLASS>                 class match. With --existing, matches an already-open window instead of the newly launched one
-      --mark-match <MARK_MATCH>       Find the window to act on by this mark. Requires --existing
+  -a, --app-id <APP_ID>               app_id match (exact and case-sensitive, not a regex). With --existing, matches an already-open window instead of the newly launched one
+  -c, --class <CLASS>                 class match (exact and case-sensitive, not a regex). With --existing, matches an already-open window instead of the newly launched one
+      --mark-match <MARK_MATCH>       Find the window to act on by this mark (exact and case-sensitive). Requires --existing
       --con-id <CON_ID>               Act on an already-open window with this container id, instead of launching a new one
       --existing                      Act on an already-open window found via --app-id/--class/--mark-match, instead of launching a new one
   -s, --split <SPLIT>                 Change split for the window [possible values: v, h]
@@ -223,7 +223,10 @@ sway-launch -c Code code
 ```
 
 `--app-id` and `--class` can't be combined — pick whichever matches the application (native
-Wayland apps expose `app_id`; XWayland apps expose `class`). See
+Wayland apps expose `app_id`; XWayland apps expose `class`). Both compare the whole value exactly,
+case included — `-a firefox` matches only an app_id of `firefox`, not `firefox-esr`,
+`org.mozilla.firefox` or `Firefox`. That's unlike Sway's own `[app_id="..."]`/`[class="..."]`
+criteria, which are regexes, so a value copied out of a Sway config may need adjusting. See
 [Finding a window's app_id or class](#finding-a-windows-app_id-or-class) below for how to look up
 the right value.
 
@@ -258,8 +261,9 @@ actually seen running and has since exited, the single-instance case above.
 ### Finding a window's app_id or class
 
 `--app-id`, `--class`, `--existing` and a bindings file's `app_id`/`class` all need the value the
-application actually reports, which isn't always its command name. Open the application, then
-either:
+application actually reports, which isn't always its command name. The match is exact and
+case-sensitive (no regex, no substring, unlike Sway's own criteria), so copy the value verbatim.
+Open the application, then either:
 
 - run `swaymsg -t get_tree` and look for its window's `"app_id"` and `"class"` fields (`"class"`
   sits under `"window_properties"`), or
@@ -393,6 +397,7 @@ environment, not the layout file's directory or the caller's (see [Basic usage](
 step's other keys mirror the CLI flags of the same name (`app_id`, `class`, `mark_match`, `con_id`,
 `existing`, `split`, `floating`, `sticky`, `fullscreen`, `focus`, `mark`, `new_column`, `new_row`,
 `workspace`, `output`, `height`, `width`, `position`, `scratchpad`, `timeout`, `wait_time`) —
+`app_id`/`class`/`mark_match` match exactly and case-sensitively, like their CLI equivalents,
 `height`/`width`/`position`/`timeout` are validated the same way their CLI equivalents are, and a step
 without its own `timeout`/`wait_time` inherits the top-level `--timeout`/`--wait-time` values.
 Exactly one of `command`, `con_id`, `existing = true`, or `target_id` is required per step, matching
@@ -530,7 +535,7 @@ sway-launch --template template.toml --bindings bindings.toml
 A `Binding`'s keys are the same target-selection subset a layout step has (`command`, `con_id`,
 `existing`, `app_id`, `class`, `mark_match`) — exactly one of `command`/`con_id`/`existing = true` is
 required, same rule as `--layout`, and `app_id`/`class`/`mark_match` can set only one of the three,
-same rule too. A binding's `command` runs in Sway's working directory and environment, the same as
+same rule too (each an exact, case-sensitive match, as on the CLI). A binding's `command` runs in Sway's working directory and environment, the same as
 a layout step's (see [Basic usage](#basic-usage)). A template step's
 action keys (`split`, `floating`, `height`, etc.) are the same
 ones `--layout` has; `slot` and `target_id` are its only two target-selection keys, and exactly one
@@ -707,8 +712,9 @@ sway-launch --existing --mark-match dropdown-term --scratchpad
 ```
 
 `--existing` requires exactly one of `--app-id`, `--class`, or `--mark-match` (they're mutually
-exclusive — pick whichever identifies the window), and errors if that doesn't match exactly one
-window — it won't guess which one you meant. The search includes windows in Sway's scratchpad
+exclusive — pick whichever identifies the window), compares the value exactly and
+case-sensitively (see [Finding a window's app_id or class](#finding-a-windows-app_id-or-class)),
+and errors if that doesn't match exactly one window — it won't guess which one you meant. The search includes windows in Sway's scratchpad
 (hidden/stashed windows), not just visible ones — if you have both a visible and a scratchpad
 window with the same `app_id`/`class`/mark, retarget with `--con-id` instead to be unambiguous.
 
