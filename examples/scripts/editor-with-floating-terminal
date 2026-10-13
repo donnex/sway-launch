@@ -36,5 +36,6 @@ esac
 command -v sway-launch >/dev/null 2>&1 || die "sway-launch not found on PATH. Install sway-launch first."
 command -v code >/dev/null 2>&1 || die "code not found on PATH. Install VS Code first."
 
-sway-launch -a code code
+# app_id/class values vary by backend and distro; see "Finding a window's app_id or class" in README.md.
+sway-launch -c Code code
 exec sway-launch -a foot --floating --width 700px --height 450px foot
