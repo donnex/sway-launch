@@ -50,6 +50,7 @@ MAX_FONT_SIZE = 28
 WIDTH_MARGIN = 1.25  # require this much extra horizontal room beyond the text itself
 HEIGHT_MARGIN = 3.0  # keep the label well clear of vertically cramped panes
 DEFAULT_FONT_SIZE = 12  # used for the geometry-measuring first pass, and as a fallback
+FOOT_WINDOW_CLOSE_TIMEOUT_SECONDS = 5
 # A background color per slot, cycled if a template ever has more slots than
 # this. Chosen dark enough that white foreground text stays readable.
 SLOT_COLORS = [
@@ -282,7 +283,20 @@ class HeadlessSway:
         self._run_swaymsg([f"workspace {name}"])
 
     def kill_foot_windows(self):
+        """Closes every foot window and waits until Sway has actually removed
+        them: `kill` only asks each window to close, and Sway replies before
+        they're gone. A leftover still mapped when the next pass starts on the
+        same workspace would have the new windows placed relative to it, so
+        the captured layout wouldn't match the template's real shape."""
         self._run_swaymsg(["[app_id=foot] kill"])
+        deadline = time.monotonic() + FOOT_WINDOW_CLOSE_TIMEOUT_SECONDS
+        while self._foot_windows():
+            if time.monotonic() >= deadline:
+                die(
+                    "foot windows still open "
+                    f"{FOOT_WINDOW_CLOSE_TIMEOUT_SECONDS}s after killing them"
+                )
+            time.sleep(0.05)
 
     def run_sway_launch(self, sway_launch_binary, args, timeout):
         subprocess.run(
@@ -310,22 +324,28 @@ class HeadlessSway:
             temporary_path.unlink(missing_ok=True)
             raise
 
+    def _foot_windows(self):
+        """Every foot window node currently in the tree, on any workspace."""
+
+        def walk(node, windows):
+            if node.get("app_id") == "foot":
+                windows.append(node)
+            for child in node.get("nodes", []) + node.get("floating_nodes", []):
+                walk(child, windows)
+
+        windows = []
+        walk(self._run_swaymsg_json(["-t", "get_tree"]), windows)
+        return windows
+
     def slot_rects(self):
         """{slot_name: (rect_width, rect_height)} for every foot window
         currently open, matched by window title (set via -T <slot> when
         launching) rather than app_id, since every slot shares app_id=foot."""
-
-        def walk(node, rects):
-            name = node.get("name")
-            if node.get("app_id") == "foot" and name is not None:
-                rects[name] = (node["rect"]["width"], node["rect"]["height"])
-            for child in node.get("nodes", []) + node.get("floating_nodes", []):
-                walk(child, rects)
-
-        tree = self._run_swaymsg_json(["-t", "get_tree"])
-        rects = {}
-        walk(tree, rects)
-        return rects
+        return {
+            window["name"]: (window["rect"]["width"], window["rect"]["height"])
+            for window in self._foot_windows()
+            if window.get("name") is not None
+        }
 
 
 def write_bindings_file(sway, template_path, bindings_toml):
