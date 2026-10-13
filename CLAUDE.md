@@ -931,7 +931,16 @@ override was silently ignored and this tool drove the terminal's own session ins
 `ipc.rs`'s `preferred_socket_path_*` unit tests and `tests/live_sway.rs`'s
 `swaysock_wins_over_a_stale_i3sock`. When neither is set it falls back to `Connection::new()` —
 and its `i3 --get-socketpath`, then `sway --get-socketpath` steps; that fallback is unbounded,
-accepted because it only applies when the environment names no socket at all. The bound is deliberately *not* `--timeout` and not derived from it: `--timeout` waits on an
+accepted because it only applies when the environment names no socket at all. A connection that
+can't be made at all is reported by `connect_error_at()` (the path, which variable it came from,
+and "is this running inside a Sway session?") or, with neither variable set,
+`undiscovered_socket_error()` — both shared by `new_connection()` and `event_loop()`, so a launch
+(which subscribes before any other IPC call) words it the same as everything else. Outside a Sway
+session the raw errors never mention Sway: `No such file or directory (os error 2)`, or `Invalid
+argument (os error 22)` from `swayipc` connecting to the empty path a failed `sway
+--get-socketpath` printed. Pinned by `tests/json_output.rs`'s
+`a_launch_with_an_unreachable_socket_names_sway_ipc_and_the_socket`/
+`a_launch_with_neither_socket_variable_set_says_so`. The bound is deliberately *not* `--timeout` and not derived from it: `--timeout` waits on an
 application mapping a window (seconds are reasonable), while this bounds one request/response
 exchange (sub-millisecond on a healthy system), so tying them together would make `--timeout 1`
 break ordinary tree reads and `--timeout 60` restore a minute-long hang. `ipc_error()` maps the

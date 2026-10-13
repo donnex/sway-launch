@@ -183,9 +183,55 @@ fn new_column_and_new_row_report_the_relocation_checks_error() {
         );
         let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
         assert!(
-            stderr.contains("Sway IPC socket"),
+            stderr.contains("cannot reach Sway IPC"),
             "{flag}'s error should name the failed connection: {stderr:?}"
         );
+    }
+}
+
+#[test]
+fn a_launch_with_an_unreachable_socket_names_sway_ipc_and_the_socket() {
+    // A launch subscribes to events before any other IPC call, so it is the
+    // path most people hit first outside a Sway session; it used to report
+    // only the bare OS error ("No such file or directory (os error 2)").
+    let output = sway_launch_without_a_compositor()
+        .arg("foot")
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(
+        stderr.contains(
+            "cannot reach Sway IPC at /nonexistent/sway-launch-test-socket (from SWAYSOCK)"
+        ),
+        "{stderr:?}"
+    );
+    assert!(stderr.contains("inside a Sway session"), "{stderr:?}");
+}
+
+#[test]
+fn a_launch_with_neither_socket_variable_set_says_so() {
+    // With neither variable set, swayipc falls back to `sway --get-socketpath`
+    // and, when that finds nothing, connects to an empty path and reports
+    // "Invalid argument (os error 22)". An empty PATH makes that discovery
+    // fail the same way regardless of whether this machine runs Sway.
+    for args in [&["foot"][..], &["--existing", "--app-id", "foot"][..]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+            .args(args)
+            .env_remove("SWAYSOCK")
+            .env_remove("I3SOCK")
+            .env("PATH", "")
+            .output()
+            .expect("failed to run sway-launch binary");
+
+        assert!(!output.status.success(), "{args:?}");
+        let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+        assert!(
+            stderr.contains("cannot reach Sway IPC: neither SWAYSOCK nor I3SOCK is set"),
+            "{args:?}: {stderr:?}"
+        );
+        assert!(stderr.contains("export SWAYSOCK"), "{args:?}: {stderr:?}");
     }
 }
 
@@ -216,7 +262,7 @@ fn zero_timeout_is_rejected_before_touching_the_socket() {
         assert_eq!(output.status.code(), Some(2), "--timeout {timeout}");
         let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
         assert!(stderr.contains("--timeout"), "{stderr}");
-        assert!(!stderr.contains("Sway IPC socket"), "{stderr}");
+        assert!(!stderr.contains("Sway IPC"), "{stderr}");
     }
 }
 

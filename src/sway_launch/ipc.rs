@@ -6,6 +6,7 @@
 //! Everything here needs a live compositor, which is why it is exempt from the
 //! coverage target (see CLAUDE.md's Rust conventions); the exceptions are the
 //! pure helpers `preferred_socket_path()`, `ipc_error()`,
+//! `connect_error_at()`, `undiscovered_socket_error()`,
 //! `first_outcome_error()` and `quote_sway_string()`, which are unit-tested.
 
 use std::{fmt, time};
@@ -47,25 +48,36 @@ pub(super) const IPC_ROUND_TRIP_TIMEOUT: time::Duration = time::Duration::from_s
 /// `sway --get-socketpath`. That fallback is unbounded, which is accepted: it
 /// only applies when the environment doesn't name a socket at all, and the
 /// subprocess it runs is not the wedged compositor's IPC socket.
+///
+/// A connection that can't be made at all is reported through
+/// `connect_error_at()`/`undiscovered_socket_error()`, which name Sway IPC,
+/// the socket and where it came from: outside a Sway session (cron, a
+/// systemd unit, ssh) the raw error is an OS message that never mentions Sway
+/// — `No such file or directory (os error 2)`, or, with neither variable set,
+/// `Invalid argument (os error 22)` from `swayipc` connecting to the empty
+/// path a failed `sway --get-socketpath` printed.
 pub(super) fn new_connection() -> Result<Connection, String> {
-    if let Some(path) = socket_path() {
-        return connect_stream(&path, IPC_ROUND_TRIP_TIMEOUT).map(Connection::from);
-    }
-
-    match Connection::new() {
-        Ok(connection) => Ok(connection),
-        Err(error) => Err(error.to_string()),
+    match socket_path() {
+        Some(socket) => connect_stream(&socket, IPC_ROUND_TRIP_TIMEOUT).map(Connection::from),
+        None => Connection::new().map_err(undiscovered_socket_error),
     }
 }
 
-/// Connects to the socket at `path` with `round_trip_timeout` applied to both
-/// directions.
+/// A socket path and the environment variable it was read from, so a
+/// connection failure can say which one to check.
+#[derive(Debug, PartialEq)]
+struct SocketPath {
+    path: std::path::PathBuf,
+    variable: &'static str,
+}
+
+/// Connects to `socket` with `round_trip_timeout` applied to both directions.
 fn connect_stream(
-    path: &std::path::Path,
+    socket: &SocketPath,
     round_trip_timeout: time::Duration,
 ) -> Result<std::os::unix::net::UnixStream, String> {
-    let stream = std::os::unix::net::UnixStream::connect(path)
-        .map_err(|error| format!("failed to connect to the Sway IPC socket: {}", error))?;
+    let stream = std::os::unix::net::UnixStream::connect(&socket.path)
+        .map_err(|error| connect_error_at(socket, &error))?;
     // Applied to both directions: a wedged compositor can stall a write
     // (socket buffer full, nothing draining it) as readily as a read.
     stream
@@ -100,10 +112,34 @@ pub(super) fn ipc_error(error: swayipc::Error) -> String {
     error.to_string()
 }
 
+/// The message for a socket named by the environment that couldn't be
+/// connected to: what was being reached, at which path, from which variable,
+/// and the likeliest cause.
+fn connect_error_at(socket: &SocketPath, error: &dyn fmt::Display) -> String {
+    format!(
+        "cannot reach Sway IPC at {} (from {}): {} — is this running inside a Sway session?",
+        socket.path.display(),
+        socket.variable,
+        error
+    )
+}
+
+/// The message for a connection attempted with neither `SWAYSOCK` nor
+/// `I3SOCK` set, after `swayipc`'s own `--get-socketpath` discovery failed.
+/// `swayipc`'s error is kept at the end for completeness, but on its own it's
+/// typically `Invalid argument (os error 22)` and says nothing useful.
+fn undiscovered_socket_error(error: swayipc::Error) -> String {
+    format!(
+        "cannot reach Sway IPC: neither SWAYSOCK nor I3SOCK is set, and no running Sway could be \
+         found — run sway-launch from inside a Sway session, or export SWAYSOCK ({})",
+        ipc_error(error)
+    )
+}
+
 /// The Sway IPC socket path from the environment. `None` when neither
 /// variable is set, which is what sends `new_connection()` and `event_loop()`
 /// down their unbounded fallback.
-fn socket_path() -> Option<std::path::PathBuf> {
+fn socket_path() -> Option<SocketPath> {
     preferred_socket_path(std::env::var_os("SWAYSOCK"), std::env::var_os("I3SOCK"))
 }
 
@@ -119,8 +155,16 @@ fn socket_path() -> Option<std::path::PathBuf> {
 fn preferred_socket_path(
     swaysock: Option<std::ffi::OsString>,
     i3sock: Option<std::ffi::OsString>,
-) -> Option<std::path::PathBuf> {
-    swaysock.or(i3sock).map(std::path::PathBuf::from)
+) -> Option<SocketPath> {
+    let (value, variable) = match (swaysock, i3sock) {
+        (Some(value), _) => (value, "SWAYSOCK"),
+        (None, Some(value)) => (value, "I3SOCK"),
+        (None, None) => return None,
+    };
+    Some(SocketPath {
+        path: std::path::PathBuf::from(value),
+        variable,
+    })
 }
 
 /// Opens a subscription whose `subscribe()` handshake is bounded by
@@ -150,13 +194,14 @@ fn preferred_socket_path(
 /// subscription and the requests around it always reach the same compositor,
 /// and shares its unbounded fallback when the environment names no socket.
 pub(super) fn event_loop(subscriptions: &[EventType]) -> Result<EventStream, String> {
-    let Some(path) = socket_path() else {
+    let Some(socket) = socket_path() else {
         return Connection::new()
-            .and_then(|connection| connection.subscribe(subscriptions))
+            .map_err(undiscovered_socket_error)?
+            .subscribe(subscriptions)
             .map_err(ipc_error);
     };
 
-    let stream = connect_stream(&path, IPC_ROUND_TRIP_TIMEOUT)?;
+    let stream = connect_stream(&socket, IPC_ROUND_TRIP_TIMEOUT)?;
     let handle = stream
         .try_clone()
         .map_err(|error| format!("failed to clone the Sway IPC socket: {}", error))?;
