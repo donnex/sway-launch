@@ -233,7 +233,7 @@ impl LayoutStep {
             sticky: self.sticky,
             fullscreen: self.fullscreen,
             focus: self.focus,
-            mark: self.mark.as_deref().unwrap_or_default(),
+            mark: self.mark.as_deref(),
             new_column: self.new_column,
             new_row: self.new_row,
             workspace: self.workspace.as_deref(),

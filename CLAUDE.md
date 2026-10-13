@@ -350,8 +350,8 @@ A `SwayAction` knows how to:
   `sway_command()` is their serialization point, formatting a `Size`/`Position` back into Sway's
   `<n>px`/`<n>ppt` or space-separated `move position <x> <y>` syntax, rather than interpolating a
   pre-validated string.
-- declare which `WindowChange` event(s) would confirm it completed
-  (`ActionKind::matching_window_change_events()`) — and, by that answer, commit to the matching
+- declare which `WindowChange` event (if any) would confirm it completed
+  (`ActionKind::matching_window_change_event()`) — and, by that answer, commit to the matching
   confirmation logic: an event-confirmed kind needs a real `state_satisfies()` arm (without one its
   event arrives, is rejected, and the action times out after a command that worked), a polled one
   needs `polls()`/`poll_matches()` arms (without them it's reported `unconfirmed` on every run).
@@ -456,7 +456,7 @@ stated goal (safer internals, less repeated parsing) to actually land.
   Confirmed live that moving a still-*tiled* window to the scratchpad first fires a
   `WindowChange::Floating` event (Sway auto-floats it as part of the move) before the `Move` that
   actually confirms it; `matches_window_event()` needs no special handling for this — the
-  `Floating` event's change type simply isn't in `Scratchpad`'s matching-events list, so it's
+  `Floating` event's change type isn't `Scratchpad`'s matching event, so it's
   skipped like any other non-matching event while `run_wait_matching_events()` keeps waiting for
   the `Move`. Confirmed by `tests/live_sway.rs`'s `scratchpad_moves_a_tiled_window_to_the_scratchpad`.
 

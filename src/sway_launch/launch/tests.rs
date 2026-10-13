@@ -13,7 +13,7 @@ fn minimal_sway_launch() -> SwayLaunch<'static> {
         sticky: false,
         fullscreen: false,
         focus: false,
-        mark: "",
+        mark: None,
         new_column: false,
         new_row: false,
         workspace: None,
@@ -58,7 +58,7 @@ fn build_actions_includes_every_flag_in_the_documented_fixed_order() {
     sway_launch.height = Some(Size::Pixels(300));
     sway_launch.width = Some(Size::Pixels(400));
     sway_launch.position = Some(Position::Center);
-    sway_launch.mark = "pinned";
+    sway_launch.mark = Some("pinned");
     sway_launch.scratchpad = true;
 
     let actions = sway_launch
@@ -126,7 +126,7 @@ fn build_actions_includes_every_flag_in_the_documented_fixed_order() {
 fn build_actions_gives_event_confirmed_actions_the_timeout_and_the_rest_the_wait_time() {
     let mut sway_launch = minimal_sway_launch();
     sway_launch.floating = true;
-    sway_launch.mark = "pinned";
+    sway_launch.mark = Some("pinned");
     sway_launch.split = Some(Split::V);
     sway_launch.height = Some(Size::Pixels(300));
     sway_launch.new_column = true;
@@ -151,7 +151,7 @@ fn build_actions_gives_event_confirmed_actions_the_timeout_and_the_rest_the_wait
 }
 
 #[test]
-fn build_actions_omits_mark_when_empty() {
+fn build_actions_omits_mark_when_unset() {
     let sway_launch = minimal_sway_launch();
     let actions = sway_launch
         .build_actions(42, true)
@@ -212,7 +212,7 @@ fn build_actions_for_preview_never_touches_ipc_even_with_new_column_set() {
 fn build_actions_for_preview_verbs_are_container_id_free() {
     let mut sway_launch = minimal_sway_launch();
     sway_launch.floating = true;
-    sway_launch.mark = "pinned";
+    sway_launch.mark = Some("pinned");
     let actions = sway_launch.build_actions_for_preview();
     let verbs: Vec<String> = actions.iter().map(|a| a.sway_command_verb()).collect();
     assert_eq!(verbs, vec!["floating enable", "mark \"pinned\""]);
