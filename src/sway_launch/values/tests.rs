@@ -13,8 +13,18 @@ fn validate_size_argument_accepts_ppt() {
 }
 
 #[test]
-fn validate_size_argument_accepts_zero() {
-    assert_eq!(validate_size_argument("0px"), Ok("0px".to_string()));
+fn validate_size_argument_rejects_zero_for_both_units() {
+    // Sway leaves a 0px size unchanged and doesn't produce a zero size from
+    // 0ppt either, so both used to exit 0 as a silent no-op.
+    assert!(validate_size_argument("0px").is_err());
+    assert!(validate_size_argument("0ppt").is_err());
+    assert!(validate_size_argument("000px").is_err());
+}
+
+#[test]
+fn validate_size_argument_accepts_one_for_both_units() {
+    assert_eq!(validate_size_argument("1px"), Ok("1px".to_string()));
+    assert_eq!(validate_size_argument("1ppt"), Ok("1ppt".to_string()));
 }
 
 #[test]
@@ -77,11 +87,17 @@ fn validate_size_argument_rejects_one_past_the_largest_representable_value() {
 }
 
 #[test]
-fn validate_size_argument_applies_the_same_bound_to_ppt() {
-    assert_eq!(
-        validate_size_argument("2147483647ppt"),
-        Ok("2147483647ppt".to_string())
-    );
+fn validate_size_argument_accepts_100_ppt() {
+    assert_eq!(validate_size_argument("100ppt"), Ok("100ppt".to_string()));
+}
+
+#[test]
+fn validate_size_argument_rejects_ppt_above_100() {
+    // Sway clamps a percentage over 100, so a typo like 600ppt for 60ppt
+    // used to exit 0 with a surprising size instead of an error.
+    assert!(validate_size_argument("101ppt").is_err());
+    assert!(validate_size_argument("600ppt").is_err());
+    assert!(validate_size_argument("2147483647ppt").is_err());
     assert!(validate_size_argument("4294967295ppt").is_err());
 }
 
@@ -303,7 +319,6 @@ fn split_display_h_is_horizontal() {
 #[test]
 fn parse_size_parses_pixels() {
     assert_eq!(parse_size("300px"), Size::Pixels(300));
-    assert_eq!(parse_size("0px"), Size::Pixels(0));
 }
 
 #[test]

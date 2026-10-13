@@ -373,3 +373,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--debug-events` now prints output events too. It never subscribed to them, so a session left
   running while a monitor was added, removed or reconfigured showed nothing about it, despite
   promising every event Sway sends. (#47)
+- `--height`/`--width` (and a layout or template step's `height`/`width`) now reject `0` and
+  percentages over 100 — `ppt` must be 1-100, `px` at least 1. Sway ignores a zero size and clamps
+  a percentage over 100, so a typo such as `600ppt` for `60ppt` used to exit 0 with the window
+  unchanged or oversized; it is now an error, which `--validate` also catches. (#48)

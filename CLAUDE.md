@@ -370,6 +370,12 @@ narrowest domain anything downstream uses, not the widest one the parser happens
 by `validate_size_argument_accepts_the_largest_representable_pixel_value`/
 `validate_size_argument_rejects_one_past_the_largest_representable_value`.
 
+The validator also enforces a lower bound for both units (`0px`/`0ppt` rejected) and an upper
+bound of 100 for `ppt`: confirmed live that Sway leaves a `0px` height unchanged, doesn't produce
+a zero width from `0ppt`, and clamps a percentage over 100, each exiting 0 with an `unconfirmed`
+status — so a typo was a silent no-op rather than an error, including under `--validate`. Pinned
+by `validate_size_argument_rejects_zero_for_both_units`/`validate_size_argument_rejects_ppt_above_100`.
+
 `sway_command()` becomes each variant's serialization point (`Size`/`Position` both
 implement `Display`, rendering the identical `<n>px`/`<n>ppt`/`center`/`<x>,<y>` text the CLI/TOML
 side accepts; for `Size`, `sway_command_verb()` interpolates that same `Display`, so the
