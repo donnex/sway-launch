@@ -88,6 +88,15 @@ impl ActionKind<'_> {
     /// The `WindowChange` event(s) that would confirm this kind of action, or
     /// `None` for one Sway fires no event for, which confirms by polling
     /// instead.
+    ///
+    /// Answering `Some` here commits a kind to recognising its own end state
+    /// in `state_satisfies()`: `run_wait_matching_events()` accepts a matching
+    /// event only once that returns `true`, so a kind without a real arm there
+    /// sees its event arrive, rejects it every time, and times out after a
+    /// command that worked. Answering `None` commits it to a `polls()`/
+    /// `poll_matches()` arm instead, or to being reported unconfirmed on every
+    /// run. Every match on `ActionKind` in this file names each variant rather
+    /// than ending in `_`, so a new kind can't skip either decision silently.
     fn matching_window_change_events(&self) -> Option<Vec<WindowChange>> {
         match self {
             ActionKind::Floating => Some(vec![WindowChange::Floating]),
@@ -323,7 +332,13 @@ impl SwayAction<'_> {
             ActionKind::Focus => state.focused,
             ActionKind::Scratchpad => state.in_scratchpad,
             ActionKind::Mark(mark) => state.marks.iter().any(|held| held == mark),
-            _ => false,
+            ActionKind::Split(_)
+            | ActionKind::Sticky
+            | ActionKind::NewColumn
+            | ActionKind::NewRow
+            | ActionKind::Height(_)
+            | ActionKind::Width(_)
+            | ActionKind::Position(_) => false,
         }
     }
 
@@ -338,7 +353,18 @@ impl SwayAction<'_> {
     fn poll_grace(&self) -> time::Duration {
         match self.kind {
             ActionKind::NewColumn | ActionKind::NewRow => MOVE_POLL_GRACE,
-            _ => WAIT_TIME_POLL_GRACE,
+            ActionKind::Split(_)
+            | ActionKind::Sticky
+            | ActionKind::Height(_)
+            | ActionKind::Width(_)
+            | ActionKind::Position(_)
+            | ActionKind::Floating
+            | ActionKind::Fullscreen
+            | ActionKind::Focus
+            | ActionKind::Workspace(_)
+            | ActionKind::Output(_)
+            | ActionKind::Mark(_)
+            | ActionKind::Scratchpad => WAIT_TIME_POLL_GRACE,
         }
     }
 
@@ -359,7 +385,13 @@ impl SwayAction<'_> {
             ActionKind::Height(Size::Pixels(_)) | ActionKind::Width(Size::Pixels(_)) => true,
             ActionKind::Height(Size::Percent(_)) | ActionKind::Width(Size::Percent(_)) => false,
             ActionKind::NewColumn | ActionKind::NewRow => baseline.is_some(),
-            _ => false,
+            ActionKind::Floating
+            | ActionKind::Fullscreen
+            | ActionKind::Focus
+            | ActionKind::Workspace(_)
+            | ActionKind::Output(_)
+            | ActionKind::Mark(_)
+            | ActionKind::Scratchpad => false,
         }
     }
 
@@ -424,7 +456,14 @@ impl SwayAction<'_> {
             ActionKind::NewColumn | ActionKind::NewRow => baseline.is_some_and(|baseline| {
                 node_by_id(connection, container_id).is_some_and(|node| node.rect != baseline)
             }),
-            _ => false,
+            ActionKind::Height(Size::Percent(_)) | ActionKind::Width(Size::Percent(_)) => false,
+            ActionKind::Floating
+            | ActionKind::Fullscreen
+            | ActionKind::Focus
+            | ActionKind::Workspace(_)
+            | ActionKind::Output(_)
+            | ActionKind::Mark(_)
+            | ActionKind::Scratchpad => false,
         }
     }
 
@@ -442,7 +481,18 @@ impl SwayAction<'_> {
             ActionKind::NewColumn | ActionKind::NewRow => {
                 node_by_id(connection, self.container_id).map(|node| node.rect)
             }
-            _ => None,
+            ActionKind::Split(_)
+            | ActionKind::Sticky
+            | ActionKind::Height(_)
+            | ActionKind::Width(_)
+            | ActionKind::Position(_)
+            | ActionKind::Floating
+            | ActionKind::Fullscreen
+            | ActionKind::Focus
+            | ActionKind::Workspace(_)
+            | ActionKind::Output(_)
+            | ActionKind::Mark(_)
+            | ActionKind::Scratchpad => None,
         }
     }
 
