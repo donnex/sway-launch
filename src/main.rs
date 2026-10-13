@@ -1516,32 +1516,31 @@ const ROLLBACK_CLOSE_POLL_INTERVAL: time::Duration = time::Duration::from_millis
 /// whether it has become important to someone. It is opt-in for that reason.
 ///
 /// A kill that itself fails (e.g. the window already closed on its own in the
-/// meantime) is logged to stderr and
-/// recorded rather than treated as fatal — it doesn't stop the rest of the
-/// rollback, and the original step failure being reported by `fail_step()`
-/// stays the primary error either way. Returns both outcomes separately (see
+/// meantime) is logged to stderr and recorded rather than treated as fatal —
+/// it doesn't stop the rest of the rollback, unless the compositor itself has
+/// stopped answering (see `send_rollback_kills()`), and the original step
+/// failure being reported by `fail_step()` stays the primary error either way. Returns both outcomes separately (see
 /// `RollbackOutcome`), for `fail_with_rollback()` to report alongside that
 /// error: "closed" and "tried to close and couldn't confirm it" are different
 /// facts, and a caller cleaning up after a failed run needs to tell them
 /// apart.
 fn rollback(launched_container_ids: &[i64]) -> RollbackOutcome {
-    let mut accepted = Vec::new();
-    let mut failed = Vec::new();
-    for &container_id in launched_container_ids.iter().rev() {
-        match sway_launch::kill_container(container_id) {
-            Ok(()) => accepted.push(container_id),
-            Err(error) => {
-                diagnostic!(
-                    "{}--rollback-on-error failed to close container {}: {}",
-                    stderr_label(Severity::Warning),
-                    container_id,
-                    error
-                );
-                failed.push(container_id);
-            }
+    let kills = send_rollback_kills(launched_container_ids, sway_launch::kill_container);
+    if kills.compositor_unreachable {
+        // Polling the tree would only wait out another IPC timeout against
+        // the same compositor, so an accepted kill stays unconfirmed.
+        if !kills.accepted.is_empty() {
+            diagnostic!(
+                "{}--rollback-on-error couldn't confirm that container(s) {} closed: the \
+                 compositor stopped responding",
+                stderr_label(Severity::Warning),
+                join_ids(&kills.accepted)
+            );
         }
+        let still_open = kills.accepted.clone();
+        return classify_rollback(kills.accepted, kills.failed, &still_open);
     }
-    let still_open = wait_for_containers_to_close(&accepted);
+    let still_open = wait_for_containers_to_close(&kills.accepted);
     for container_id in &still_open {
         diagnostic!(
             "{}--rollback-on-error asked container {} to close, but it was still open after {} ms",
@@ -1550,7 +1549,71 @@ fn rollback(launched_container_ids: &[i64]) -> RollbackOutcome {
             ROLLBACK_CLOSE_GRACE.as_millis()
         );
     }
-    classify_rollback(accepted, failed, &still_open)
+    classify_rollback(kills.accepted, kills.failed, &still_open)
+}
+
+/// The kill half of `rollback()`, before any wait for windows to close.
+struct RollbackKills {
+    /// Ids whose `[con_id] kill` Sway accepted, in the order they were sent.
+    accepted: Vec<i64>,
+    /// Ids whose kill failed, or that were never sent one because the
+    /// compositor had already stopped answering.
+    failed: Vec<i64>,
+    /// Whether a kill failed because the compositor couldn't be reached or
+    /// didn't answer (see `sway_launch::KillError`).
+    compositor_unreachable: bool,
+}
+
+/// Sends `kill` to every id in `launched_container_ids`,
+/// most-recently-launched first, warning about each one that fails.
+///
+/// A kill Sway refuses doesn't stop the rest. One that fails because the
+/// compositor didn't answer does: every remaining id goes straight into
+/// `failed` under a single warning, since each further attempt would fail the
+/// same way, and against a stalled compositor would first wait out another
+/// full IPC timeout — ten seconds per launched window, on a run already
+/// reporting a failure (#94). `kill` is a parameter so the stopping rule can
+/// be tested without a compositor.
+fn send_rollback_kills(
+    launched_container_ids: &[i64],
+    mut kill: impl FnMut(i64) -> Result<(), sway_launch::KillError>,
+) -> RollbackKills {
+    let mut kills = RollbackKills {
+        accepted: Vec::new(),
+        failed: Vec::new(),
+        compositor_unreachable: false,
+    };
+    let mut remaining = launched_container_ids.iter().rev().copied();
+    while let Some(container_id) = remaining.next() {
+        match kill(container_id) {
+            Ok(()) => kills.accepted.push(container_id),
+            Err(error) => {
+                diagnostic!(
+                    "{}--rollback-on-error failed to close container {}: {}",
+                    stderr_label(Severity::Warning),
+                    container_id,
+                    error
+                );
+                kills.failed.push(container_id);
+                if let sway_launch::KillError::Unreachable(_) = error {
+                    kills.compositor_unreachable = true;
+                    let skipped: Vec<i64> = remaining.collect();
+                    if !skipped.is_empty() {
+                        diagnostic!(
+                            "{}--rollback-on-error skipped closing {} more window(s) ({}): the \
+                             compositor is not responding",
+                            stderr_label(Severity::Warning),
+                            skipped.len(),
+                            join_ids(&skipped)
+                        );
+                    }
+                    kills.failed.extend(skipped);
+                    break;
+                }
+            }
+        }
+    }
+    kills
 }
 
 /// Polls the tree until none of `container_ids` is left in it, or
@@ -1651,6 +1714,52 @@ mod tests {
         let outcome = classify_rollback(vec![20, 10], vec![], &[10, 20]);
         assert!(outcome.rolled_back.is_empty());
         assert_eq!(outcome.failed, vec![20, 10]);
+    }
+
+    #[test]
+    fn send_rollback_kills_moves_on_past_a_kill_sway_refuses() {
+        let mut attempted = Vec::new();
+        let kills = send_rollback_kills(&[10, 20, 30], |container_id| {
+            attempted.push(container_id);
+            if container_id == 20 {
+                Err(sway_launch::KillError::Refused(
+                    "no matching node".to_string(),
+                ))
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(attempted, vec![30, 20, 10]);
+        assert_eq!(kills.accepted, vec![30, 10]);
+        assert_eq!(kills.failed, vec![20]);
+        assert!(!kills.compositor_unreachable);
+    }
+
+    #[test]
+    fn send_rollback_kills_stops_at_the_first_unanswered_kill_and_fails_the_rest() {
+        let mut attempted = Vec::new();
+        let kills = send_rollback_kills(&[10, 20, 30, 40], |container_id| {
+            attempted.push(container_id);
+            if container_id == 30 {
+                Err(sway_launch::KillError::Unreachable(
+                    "Sway IPC did not respond".to_string(),
+                ))
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(attempted, vec![40, 30]);
+        assert_eq!(kills.accepted, vec![40]);
+        assert_eq!(kills.failed, vec![30, 20, 10]);
+        assert!(kills.compositor_unreachable);
+    }
+
+    #[test]
+    fn send_rollback_kills_with_nothing_launched_attempts_nothing() {
+        let kills = send_rollback_kills(&[], |_| panic!("no kill should be sent"));
+        assert!(kills.accepted.is_empty());
+        assert!(kills.failed.is_empty());
+        assert!(!kills.compositor_unreachable);
     }
 
     #[test]

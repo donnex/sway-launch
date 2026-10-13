@@ -1414,15 +1414,23 @@ that creates a window rather than acting on one already resolved, so `SwayAction
 ownership to report and returns just its `ActionOutcome`. On any failure — an id collision, a step failing to convert, or a
 step's own `.run()` failing — `fail_step()` calls `rollback()` first (if the flag is set), which
 best-effort `[con_id] kill`s every tracked id, most-recently-launched first, via the new
-`sway_launch::kill_container()` (a thin `pub` wrapper around the existing private
-`run_sway_command()`, added specifically so `main.rs` can reach it — the only other
-Sway-IPC-touching function `main.rs` can reach is `query.rs`'s `containers_still_present()`, which
-`rollback()` uses to confirm the kills actually closed their windows; everything else in the
-`sway_launch` module stays crate-internal, reachable only from within it). A kill
-that
-itself fails (e.g. the window already closed on its own) is logged and skipped rather than treated
-as fatal — it doesn't stop the rest of the rollback, and the original step failure stays the error
-actually reported. `fail_step()` is shared by all three failure branches specifically so an id
+`sway_launch::kill_container()` (a thin `pub` wrapper around the same connect-and-`run_command()`
+path the private `run_sway_command()` uses, added specifically so `main.rs` can reach it — the only
+other Sway-IPC-touching function `main.rs` can reach is `query.rs`'s `containers_still_present()`,
+which `rollback()` uses to confirm the kills actually closed their windows; everything else in the
+`sway_launch` module stays crate-internal, reachable only from within it). A kill that itself fails
+(e.g. the window already closed on its own) is logged and skipped rather than treated as fatal — it
+doesn't stop the rest of the rollback, and the original step failure stays the error actually
+reported. The one failure that *does* stop it is the compositor not answering: `kill_container()`
+returns a `KillError` that tells `Refused` (Sway replied, the kill failed) from `Unreachable` (no
+connection, or no reply within `IPC_ROUND_TRIP_TIMEOUT`), and `send_rollback_kills()` puts every
+remaining id straight into `rollback_failed` after the first `Unreachable`, skipping the
+close-confirmation wait too. Without that, a step that failed on a stalled compositor cost another
+10s per launched window before the failure was even reported (#94). The stopping rule is
+unit-tested headlessly through `send_rollback_kills()`'s injected `kill`, and live by
+`rollback_on_error_stops_trying_once_the_compositor_stops_answering`, which points the binary at a
+proxy socket that forwards to the real compositor until three windows have launched, then stops
+answering. `fail_step()` is shared by all three failure branches specifically so an id
 collision or conversion error on step *N* still rolls back steps *1..N-1*'s real windows, not just
 a failure inside `SwayAction::run()` itself. A step whose *own* window resolved and then failed on
 a later action *within that same step* is covered too: `SwayLaunch::run()` stamps every failure
