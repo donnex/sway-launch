@@ -1841,6 +1841,20 @@ would have the new windows placed relative to it, capturing a shape the template
 own default 80-column canvas rather than the pane's real width, which reintroduced the same
 wrapping bug this two-pass measurement exists to avoid; labels are left-aligned instead.
 
+Each binding's `command` is the path of a small per-slot launcher script the tool writes into the
+compositor's runtime directory, not an inline `foot ... sh -c '...'` string. A binding's command
+goes through Sway's command parser and then `sh -c`, and slot names are free-form (the schema
+only requires them non-blank), so pasting a slot or `--font` into that string let a space split
+it into separate words (`slot = "main editor"` silently measured and labeled nothing) and a
+quote, `;`, `$` or backtick run as shell code. The launcher `shlex`-quotes both values and hands
+them to `figlet` as positional arguments; the only thing left in the Sway-parsed string is the
+launcher's own path, which the tool refuses (with a `TMPDIR` hint) if it contains anything
+outside `[A-Za-z0-9_./-]`. The bindings TOML escapes control characters too and is parsed back
+with `tomllib` before use, so a slot name TOML can't carry raw fails there rather than inside
+`sway-launch` against a temporary file the user never saw. A slot containing a control character
+still launches, but Sway reports no window title for it, so that one slot falls back to the
+default label size.
+
 Screenshots are written to `--output-dir` (default `screenshots/` at the repo root) as one
 `<template-name>.png` per template; `--only <name>` (repeatable) limits a run to specific
 templates, useful when iterating on one shape. Unlike most other generated output in this repo,
