@@ -39,16 +39,15 @@ fn build_actions_is_empty_when_no_flags_are_set() {
 
 #[test]
 fn build_actions_includes_every_flag_in_the_documented_fixed_order() {
-    // Pins build_actions()'s plan order: every flag except new_column/new_row
-    // (which need a live get_outputs()/get_tree() call inside
-    // relocates_to_another_output() even just to build the plan, so
-    // they're covered separately by tests/live_sway.rs, not headlessly
-    // here) is exercised together, asserting both that each one
-    // produces its documented action *and* that the overall order
-    // matches CLAUDE.md's Architecture section exactly: Workspace ->
-    // Output -> Split -> Floating -> Sticky -> Fullscreen -> Focus ->
-    // Height -> Width -> Position -> Mark -> Scratchpad.
+    // Pins build_actions()'s full plan order against CLAUDE.md's
+    // Architecture section: NewColumn -> NewRow -> Workspace -> Output ->
+    // Split -> Floating -> Sticky -> Fullscreen -> Focus -> Height ->
+    // Width -> Position -> Mark -> Scratchpad. check_relocation: false is
+    // what lets new_column/new_row join in headlessly; the relocation
+    // guard itself is covered by tests/live_sway.rs.
     let mut sway_launch = minimal_sway_launch();
+    sway_launch.new_column = true;
+    sway_launch.new_row = true;
     sway_launch.workspace = Some("3");
     sway_launch.output = Some("HDMI-A-1");
     sway_launch.split = Some(Split::H);
@@ -63,12 +62,16 @@ fn build_actions_includes_every_flag_in_the_documented_fixed_order() {
     sway_launch.scratchpad = true;
 
     let actions = sway_launch
-        .build_actions(42, true)
-        .expect("none of these flags touch IPC while building the plan");
+        .build_actions(42, false)
+        .expect("check_relocation: false makes no IPC call, so this can't fail");
 
     let kinds: Vec<&str> = actions
         .iter()
         .map(|planned| match planned {
+            PlannedAction::Run(action) if matches!(action.kind, ActionKind::NewColumn) => {
+                "new_column"
+            }
+            PlannedAction::Run(action) if matches!(action.kind, ActionKind::NewRow) => "new_row",
             PlannedAction::Run(action) if matches!(action.kind, ActionKind::Workspace(_)) => {
                 "workspace"
             }
@@ -95,6 +98,8 @@ fn build_actions_includes_every_flag_in_the_documented_fixed_order() {
     assert_eq!(
         kinds,
         vec![
+            "new_column",
+            "new_row",
             "workspace",
             "output",
             "split",
