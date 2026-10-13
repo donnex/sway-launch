@@ -537,9 +537,6 @@ fn expected_position_center_without_an_output_rect_is_none() {
 
 #[test]
 fn expected_position_centers_against_the_given_output_rect() {
-    // Coverable headlessly now that the output geometry is passed in
-    // rather than looked up here — this arm used to need a live socket
-    // and was exempt from coverage accordingly.
     let node = node_with_geometry(400, 300, 0, 25);
     assert_eq!(
         expected_position(&Position::Center, &node, Some(rect(0, 0, 1920, 1080))),

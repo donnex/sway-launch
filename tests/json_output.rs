@@ -550,9 +550,8 @@ fn debug_events_conflicts_with_a_command() {
 fn debug_events_rejects_json_rather_than_ignoring_it() {
     // Same reasoning as completions_rejects_json_rather_than_ignoring_it:
     // debug_events() writes plain `Event: N` lines and never sees the flag, so
-    // a raw event dump has no JSON shape for --json to take. It was accepted
-    // and discarded until a review noticed the inconsistency with
-    // --completions, which had already been fixed for exactly this.
+    // a raw event dump has no JSON shape for --json to take, so it's rejected
+    // rather than accepted and discarded, consistent with --completions.
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
         .args(["--debug-events", "--json"])
         .output()

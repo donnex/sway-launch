@@ -57,10 +57,9 @@ pub use values::{
 /// `PID_MARKER_FALLBACK_GRACE` — this must stay well short of `--timeout`
 /// rather than growing into a second hang. The `.min(wait_time)` cap exists
 /// because this constant alone isn't: it's 10x the CLI's own 20ms
-/// `--wait-time` default, and an earlier version of this code used it
-/// unconditionally, so any fallback case at default settings cost ~220ms
-/// instead of the ~40ms (`2 * wait_time`) it cost before this feature
-/// existed — confirmed live before the cap was added. 200ms comfortably
+/// `--wait-time` default, so using it uncapped would make any fallback case
+/// at default settings cost ~220ms instead of ~40ms (`2 * wait_time`),
+/// confirmed live. 200ms comfortably
 /// covers every matcher this project has shipped (`Split`, `Sticky`, `Height`,
 /// `Width`, `Position`, `NewColumn`, `NewRow`), all confirmed live to
 /// converge in a handful of milliseconds when they converge at all.

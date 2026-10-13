@@ -238,11 +238,8 @@ fn every_other_polling_variant_keeps_the_full_grace() {
 // SwayAction::polls
 //
 // These assert which variants opt into polling at all — a pure decision
-// with no IPC. They previously went through poll_matches(), whose
-// Some/None return carried the same information but needed a live tree
-// read to produce it, so headlessly they could only ever observe
-// Some(false) and asserted the opt-in indirectly. The match outcome
-// itself still needs a real compositor: see tests/live_sway.rs.
+// with no IPC. The match outcome itself still needs a real compositor: see
+// tests/live_sway.rs.
 
 #[test]
 fn split_polls() {

@@ -36,9 +36,8 @@ impl fmt::Display for Split {
 }
 
 /// A validated `--height`/`--width` value, parsed once via `parse_size()`
-/// rather than carried as a string and re-parsed on every use (previously,
-/// `SwayAction::poll_matches()`'s `Height`/`Width` arms each called
-/// `parse_pixel_value()` on the raw string on every poll iteration).
+/// rather than carried as a string and re-parsed on every use (such as on
+/// every iteration of `SwayAction::poll_matches()`'s `Height`/`Width` arms).
 /// `Display` renders the same `<n>px`/`<n>ppt` text `sway_command()` needs
 /// to interpolate into the Sway command, and that `SwayAction::Display`
 /// needs for its human-readable `Sway action: ...` line — this makes
@@ -47,10 +46,9 @@ impl fmt::Display for Split {
 ///
 /// `i32`, not `u32`, deliberately: the geometry these values are ultimately
 /// compared against is `swayipc::Rect`'s, which is `i32`. Carrying them as
-/// `u32` meant `poll_matches()` had to cast (`*pixels as i32`), so a value
-/// above `i32::MAX` — which `validate_size_argument()` used to accept, since
-/// it only checked `u32` — wrapped negative and could never match anything
-/// the compositor reported. Negative values never reach here regardless
+/// `u32` would mean casting in `poll_matches()`, where a value above
+/// `i32::MAX` wraps negative and can never match anything the compositor
+/// reports. Negative values never reach here regardless
 /// (`validate_size_argument()`'s `\d+` rejects the sign outright), so the
 /// signed type costs nothing and removes the cast rather than moving the
 /// mismatch somewhere else.
@@ -139,12 +137,12 @@ pub fn parse_position(value: &str) -> Position {
 /// 11+ digits) must be rejected here, not discovered as a panic later.
 ///
 /// The bound is `i32`, matching `Size`'s own representation and therefore the
-/// `swayipc::Rect` geometry a pixel size is eventually compared against. It
-/// used to be `u32`, which was the wrong invariant to promise: a value in
-/// `i32::MAX+1..=u32::MAX` passed validation, was rendered into a real Sway
-/// command, and then wrapped negative on its way into `width_matches()`/
-/// `height_matches()`, so it could never be confirmed — the accepted domain
-/// was larger than the domain the rest of the program could represent.
+/// `swayipc::Rect` geometry a pixel size is eventually compared against. A
+/// wider bound such as `u32` would let a value in `i32::MAX+1..=u32::MAX`
+/// pass validation, reach Sway as a real command, and then wrap negative on
+/// its way into `width_matches()`/`height_matches()`, so it could never be
+/// confirmed — an accepted domain larger than the one the rest of the
+/// program can represent.
 /// Rejecting it here is what keeps validation's promise ("anything that
 /// passes is something the whole pipeline can handle") true, rather than only
 /// true of the parser.
@@ -214,7 +212,7 @@ pub fn validate_position_argument(value: &str) -> Result<String, String> {
 ///
 /// The escaping exists to stop a `,`/`;` in a value from being read back as
 /// an additional Sway command, and it does that correctly — but confirmed
-/// live (2026-08-31) that Sway's own parser does *not* strip the escape
+/// live that Sway's own parser does *not* strip the escape
 /// characters back out again: `mark "has\"quote"` stores the literal
 /// `has\"quote`, and `mark "has\\backslash"` stores `has\\backslash`. So a
 /// value containing `"` or `\` is silently corrupted rather than rejected,
@@ -242,7 +240,7 @@ pub fn validate_sway_string_argument(value: &str) -> Result<String, String> {
             character
         ));
     }
-    // A newline is rewritten rather than stored: confirmed live (2026-09-01)
+    // A newline is rewritten rather than stored: confirmed live
     // that `mark "a<LF>b"` is stored as `a;b`, so --mark-match could never
     // find it again — the same round-trip failure as `"`/`\` above, reached by
     // a different mechanism (Sway's parser normalizing the separator rather
@@ -343,11 +341,11 @@ pub fn validate_exec_command(value: &str) -> Result<String, String> {
 /// match on.
 ///
 /// A blank value still has to go, for the same reason a blank `--mark` did:
-/// it can only ever match nothing. It also used to produce a message that
-/// contradicted the command line — an empty `--app-id` was indistinguishable
-/// from an absent one after `unwrap_or_default()`, so `--existing --app-id ''`
-/// reported "--existing requires --app-id, --class, or --mark-match" at a
-/// caller who had just passed `--app-id`.
+/// it can only ever match nothing. Letting it through would also produce a
+/// message that contradicts the command line — an empty `--app-id` is
+/// indistinguishable from an absent one after `unwrap_or_default()`, so
+/// `--existing --app-id ''` would report "--existing requires --app-id,
+/// --class, or --mark-match" at a caller who had just passed `--app-id`.
 pub fn validate_non_blank_argument(value: &str) -> Result<String, String> {
     if value.trim().is_empty() {
         return Err("Must not be empty or whitespace-only".to_string());

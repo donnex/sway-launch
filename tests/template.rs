@@ -749,7 +749,7 @@ fn list_templates_json_output_reports_slots_and_slot_names() {
 
 #[test]
 fn list_templates_plain_output_includes_slot_count_and_names() {
-    // Per user decision 2026-08-22: plain output also reports slot info,
+    // Plain output also reports slot info,
     // matching --json rather than staying description-only. Checks
     // quad-grid's own line specifically (rather than scanning the whole
     // listing for the substring "slot", which would false-positive on

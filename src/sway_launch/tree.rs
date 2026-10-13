@@ -107,12 +107,11 @@ pub(super) fn resolve_matches(matches: Vec<i64>, criteria: &str) -> Result<i64, 
 /// `SwayAction::state_satisfies()` needs to decide whether what an action asked
 /// for is what's in effect, and nothing else.
 ///
-/// Exists so that decision can be pure. Each of these fields used to be read by
-/// its own IPC helper called straight from the arm that needed it, which left
-/// the interpretation ("is 300px what this window is?", "is this the workspace
-/// asked for?") wedged behind a socket and therefore only reachable by the
-/// live-Sway suite. Fetching once, up front, leaves the fetch as the only part
-/// needing a compositor.
+/// Exists so that decision can be pure: reading each field through its own IPC
+/// helper from the arm that needs it would wedge the interpretation ("is 300px
+/// what this window is?", "is this the workspace asked for?") behind a socket,
+/// reachable only by the live-Sway suite. Fetching once, up front, leaves the
+/// fetch as the only part needing a compositor.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(super) struct ContainerState {
     pub(super) workspace: Option<String>,
@@ -167,14 +166,14 @@ pub(super) fn node_is_floating(node: &Node) -> bool {
 /// comment on `Scratchpad`) would otherwise be misreported as already in the
 /// scratchpad the moment it's floating, before it actually is.
 ///
-/// Deliberately not the node's own `scratchpad_state` field either, which an
-/// earlier version OR'd in as a secondary signal. That field means "this
-/// window belongs to the scratchpad", not "it is hidden there": it stays
-/// `fresh`/`changed` while the window is *shown* on an ordinary workspace via
-/// `scratchpad show`, so on Sway 1.11 (which populates it) a shown dropdown
-/// window looked already-hidden and `--scratchpad` short-circuited without
-/// sending anything. Sway 1.9 leaves the field at `none` even for a hidden
-/// window, so it was never reliable in the other direction either.
+/// Deliberately not the node's own `scratchpad_state` field either, not even
+/// as a secondary signal. That field means "this window belongs to the
+/// scratchpad", not "it is hidden there": it stays `fresh`/`changed` while the
+/// window is *shown* on an ordinary workspace via `scratchpad show`, so on
+/// Sway 1.11 (which populates it) a shown dropdown window would look
+/// already-hidden and `--scratchpad` would short-circuit without sending
+/// anything. Sway 1.9 leaves the field at `none` even for a hidden window, so
+/// it isn't reliable in the other direction either.
 pub(super) fn tree_shows_container_in_scratchpad(tree: &Node, container_id: i64) -> bool {
     find_containing_name(tree, container_id, NodeType::Workspace, None).as_deref()
         == Some("__i3_scratch")
@@ -400,9 +399,8 @@ pub(super) fn height_matches(node: &Node, expected_px: i32) -> bool {
 ///
 /// Split out from `position_matches()` so this comparison is ordinary pure
 /// logic with its own tests, rather than something only reachable through a
-/// live `get_tree()`: an external review pointed out that burying decision
-/// logic behind a `&mut Connection` is what pushes correctness-critical code
-/// below the coverage gate. `expected_position()` was separated from its own
+/// live `get_tree()`: burying decision logic behind a `&mut Connection` would
+/// push correctness-critical code below the coverage gate. `expected_position()` was separated from its own
 /// output lookup for the same reason.
 ///
 /// The `deco_rect`-unset case is a fullscreen window: confirmed live that its

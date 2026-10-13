@@ -558,12 +558,9 @@ fn event_reader_threads_stay_bounded_across_a_long_layout() {
     // whose receiver is gone, so it breaks out and releases both thread and
     // socket. The cost is therefore a small constant, not O(steps).
     //
-    // This test exists because the code comment here previously asserted the
-    // opposite -- that a large layout accumulates one thread and socket per
-    // event-confirmed action -- which was never measured, and was taken at
-    // face value by an external reviewer as a high-severity resource leak.
-    // An unverified claim in a comment is exactly as costly as an unverified
-    // claim in code, so the property is now enforced rather than described.
+    // The bound is easy to doubt from reading the code alone (a reader
+    // thread per action looks like it accumulates), so it's enforced here
+    // rather than only described.
     //
     // Mark is used for every step because it is the one event-confirmed action
     // with no already_at_target() short-circuit: re-applying a mark still
@@ -1542,10 +1539,9 @@ fn scratchpad_hides_a_window_currently_shown_from_the_scratchpad() {
 #[test]
 fn existing_matches_a_window_in_the_scratchpad() {
     fresh_workspace();
-    // Coverage gap found during a review pass: README.md/CLAUDE.md document
-    // that --existing's tree walk reaches Sway's __i3_scratch scratchpad —
-    // a hidden window is just as eligible a match as a visible one — but
-    // nothing here actually drove that path against a real compositor.
+    // README.md/CLAUDE.md document that --existing's tree walk reaches
+    // Sway's __i3_scratch scratchpad — a hidden window is just as eligible a
+    // match as a visible one.
     let mut connection = connect();
     let (container_id, _guard) = launch_foot(&["--scratchpad"]);
 
@@ -1772,7 +1768,7 @@ fn new_column_does_not_relocate_a_nested_window_to_a_different_output() {
 #[test]
 fn new_column_combined_with_workspace_lands_on_the_target_workspace_correctly() {
     fresh_workspace();
-    // Regression test for an external review's question about action order (see CLAUDE.md):
+    // Pins a question about action order (see CLAUDE.md):
     // SwayLaunch::run()'s fixed order runs NewColumn before Workspace, so
     // `--new-column --workspace <target>` restructures the window relative
     // to its *origin* workspace's siblings before moving it away. Confirmed
@@ -1968,8 +1964,7 @@ fn floating_centered_and_scratchpadded_together_lands_hidden_but_correctly_confi
     // Combination coverage: --scratchpad always runs last (after Floating/
     // Position/etc.), specifically so earlier actions like centering still
     // apply to a visible window before it's hidden away -- the classic
-    // "dropdown terminal" pattern. An external review agreed this ordering
-    // is correct but suggested a regression test to confirm centering and
+    // "dropdown terminal" pattern. This confirms centering and
     // scratchpad-ing don't race (e.g. --position center silently failing
     // once the window is already hidden).
     let mut connection = connect();
@@ -2387,10 +2382,9 @@ fn rollback_on_error_undoes_launches_not_mutations_to_existing_windows() {
     // place -- there's no mechanism tracking or reversing individual
     // mutations, only whether this invocation created the window.
     //
-    // Raised by an external review as a semantic mismatch a user could read
-    // the wrong way. The behavior is intentional and documented; what it
-    // lacked was a test, so a future change can't quietly widen or narrow it
-    // without saying so.
+    // A user could read "rollback" the wrong way. The behavior is
+    // intentional and documented; this test keeps a future change from
+    // quietly widening or narrowing it without saying so.
     let mut connection = connect();
     let (existing_id, _existing_guard) = launch_foot(&[]);
 

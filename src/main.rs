@@ -7,7 +7,7 @@ use std::{io, process, time};
 /// `eprintln!`, minus the panic when stderr is a closed pipe.
 ///
 /// `eprintln!` panics on a failed write, so `sway-launch -v ... 2>&1 | head
-/// -n1` used to abort with exit 101 on the next diagnostic, stopping between
+/// -n1` would abort with exit 101 on the next diagnostic, stopping between
 /// two actions and leaving the window half-arranged. A diagnostic nobody can
 /// read is no reason to stop the work it describes, so the write error is
 /// dropped. Defined ahead of the `mod` declarations so every module can use
@@ -1415,9 +1415,8 @@ fn fail_step(
 /// `launched_container_ids`, most-recently-launched first, via a fresh
 /// `[con_id] kill` command each.
 ///
-/// Killing by an id recorded earlier has been raised as a time-of-check
-/// problem — the worry being that the id might by then refer to some other
-/// window. It can't: Sway allocates container ids monotonically and does not
+/// Killing by an id recorded earlier is not a time-of-check problem: the id
+/// can't by then refer to some other window, because Sway allocates container ids monotonically and does not
 /// reuse them, confirmed by six launch/kill cycles handing out 5, 6, 7, 8, 9,
 /// 10 with no repeat. An id this invocation launched therefore always refers to
 /// exactly the container it launched, or to nothing at all (in which case the
@@ -1427,8 +1426,10 @@ fn fail_step(
 /// have started *using* that window since it launched, and rollback closes it
 /// anyway. That is deliberate and documented in README's "Layout files"
 /// section — the feature undoes launches, and there is no way to ask a window
-/// whether it has become important to someone. It is opt-in for that reason. A kill that itself fails (e.g. the window
-/// already closed on its own in the meantime) is logged to stderr and
+/// whether it has become important to someone. It is opt-in for that reason.
+///
+/// A kill that itself fails (e.g. the window already closed on its own in the
+/// meantime) is logged to stderr and
 /// recorded rather than treated as fatal — it doesn't stop the rest of the
 /// rollback, and the original step failure being reported by `fail_step()`
 /// stays the primary error either way. Returns both outcomes separately (see
