@@ -70,6 +70,8 @@ SLOT_COLORS = [
 # every window to its own separate named workspace by design, so nothing
 # stays on the workspace this script captures — a single-output screenshot
 # can't depict "spread across workspaces" at all, not even partially.
+# src/template/tests.rs reads this line back to check README.md's previews and
+# screenshots/ against it, so keep it a one-line set literal.
 EXCLUDED_TEMPLATES = {"dual-output.toml", "workspace-spread.toml"}
 
 

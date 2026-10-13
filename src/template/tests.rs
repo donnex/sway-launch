@@ -790,3 +790,172 @@ fn distinct_slot_names_deduplicates_and_ignores_target_id_steps() {
 
     assert_eq!(distinct_slot_names(&template), vec!["editor"]);
 }
+
+fn repository_file(relative_path: &str) -> String {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path);
+    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{relative_path}: {error}"))
+}
+
+struct ReadmeTemplateRow {
+    preview: String,
+    category: String,
+    slots: String,
+}
+
+/// README.md's "Templates" table, keyed by template name: every table row
+/// whose Template cell links into `templates/`.
+fn readme_template_rows() -> std::collections::BTreeMap<String, ReadmeTemplateRow> {
+    let readme = repository_file("README.md");
+    let mut rows = std::collections::BTreeMap::new();
+    for line in readme.lines().filter(|line| line.starts_with("| ")) {
+        let cells: Vec<&str> = line.trim_matches('|').split(" | ").map(str::trim).collect();
+        let [preview, category, template, _shape, slots] = cells.as_slice() else {
+            continue;
+        };
+        let Some(name) = template
+            .strip_prefix("[`")
+            .and_then(|rest| rest.split_once("`](templates/"))
+            .map(|(name, _)| name.to_string())
+        else {
+            continue;
+        };
+        let duplicate = rows.insert(
+            name.clone(),
+            ReadmeTemplateRow {
+                preview: preview.to_string(),
+                category: category.to_string(),
+                slots: slots.to_string(),
+            },
+        );
+        assert!(duplicate.is_none(), "README.md lists {name:?} twice");
+    }
+    rows
+}
+
+/// The screenshot script's own `EXCLUDED_TEMPLATES` set, read back from the
+/// script so there's one list rather than a copy here to keep in sync.
+fn screenshot_excluded_template_names() -> Vec<String> {
+    let script = repository_file("scripts/generate-layout-screenshots");
+    let line = script
+        .lines()
+        .find(|line| line.starts_with("EXCLUDED_TEMPLATES = {"))
+        .expect("scripts/generate-layout-screenshots should define EXCLUDED_TEMPLATES");
+    line.split('"')
+        .skip(1)
+        .step_by(2)
+        .map(|file_name| {
+            file_name
+                .strip_suffix(".toml")
+                .unwrap_or_else(|| panic!("EXCLUDED_TEMPLATES entry {file_name:?} lacks .toml"))
+                .to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn readme_templates_table_matches_every_builtin_template() {
+    // README.md's "Templates" table repeats each template's category and
+    // slot count by hand; the template file is the source of truth.
+    let mut rows = readme_template_rows();
+    for template in builtin_templates() {
+        let row = rows.remove(template.name).unwrap_or_else(|| {
+            panic!(
+                "README.md's \"Templates\" table has no row for {:?} \
+                 (category {:?}, {} slot(s))",
+                template.name, template.category, template.slots
+            )
+        });
+        assert_eq!(
+            row.category, template.category,
+            "README.md's category for {:?} disagrees with its [template] table",
+            template.name
+        );
+        assert_eq!(
+            row.slots,
+            template.slots.to_string(),
+            "README.md's slot count for {:?} disagrees with its steps",
+            template.name
+        );
+    }
+    assert!(
+        rows.is_empty(),
+        "README.md's \"Templates\" table lists templates that don't exist: {:?}",
+        rows.keys().collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn every_builtin_template_has_a_screenshot_unless_the_screenshot_script_excludes_it() {
+    let excluded = screenshot_excluded_template_names();
+    let names: Vec<&str> = builtin_templates()
+        .iter()
+        .map(|template| template.name)
+        .collect();
+    for name in &excluded {
+        assert!(
+            names.contains(&name.as_str()),
+            "EXCLUDED_TEMPLATES names {name:?}, which isn't a template"
+        );
+    }
+
+    let rows = readme_template_rows();
+    let screenshots_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("screenshots");
+    for name in &names {
+        let preview = &rows
+            .get(*name)
+            .unwrap_or_else(|| panic!("README.md has no row for {name:?}"))
+            .preview;
+        let screenshot = format!("screenshots/{name}.png");
+        if excluded.iter().any(|excluded_name| excluded_name == name) {
+            assert_eq!(
+                preview, "—",
+                "{name:?} is in EXCLUDED_TEMPLATES, so README.md's preview cell should be \"—\""
+            );
+        } else {
+            assert!(
+                screenshots_dir.join(format!("{name}.png")).is_file(),
+                "{screenshot} is missing; run scripts/generate-layout-screenshots --only {name}"
+            );
+            assert!(
+                preview.contains(&format!("src=\"{screenshot}\"")),
+                "README.md's preview cell for {name:?} should embed {screenshot}"
+            );
+        }
+    }
+
+    for entry in std::fs::read_dir(&screenshots_dir).expect("screenshots/ should be readable") {
+        let path = entry.expect("screenshots/ entry should be readable").path();
+        let stem = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or_default();
+        assert!(
+            names.contains(&stem) && !excluded.iter().any(|name| name == stem),
+            "{} doesn't belong to any screenshotted template",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn builtin_templates_header_comment_repeats_its_description() {
+    // Each file's header comment restates its [template] description for a
+    // reader of the raw file; this keeps the two from drifting apart.
+    for template in builtin_templates() {
+        let contents = builtin(template.name).expect("listed built-in should resolve");
+        let header: Vec<&str> = contents
+            .lines()
+            .map_while(|line| line.strip_prefix('#'))
+            .flat_map(str::split_whitespace)
+            .collect();
+        let description: Vec<&str> = template.description.split_whitespace().collect();
+        assert!(
+            header
+                .windows(description.len())
+                .any(|words| words == description),
+            "{:?}'s header comment should repeat its description {:?}",
+            template.name,
+            template.description
+        );
+    }
+}

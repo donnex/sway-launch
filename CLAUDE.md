@@ -1769,6 +1769,18 @@ produces is exactly as much a bug as a stale doc or a CI workflow drifting from 
 it immediately, not as a follow-up. A new template file needs a row added to README.md's
 "Templates" table, thumbnail included, in the same change too, for the same reason.
 
+The hand-copied parts of this are pinned by tests in `src/template/tests.rs`, the same way
+`readme_help_block_matches_the_rendered_help` pins the help block:
+`readme_templates_table_matches_every_builtin_template` requires exactly one README row per
+built-in, with the category and slot count `--list-templates` reports;
+`every_builtin_template_has_a_screenshot_unless_the_screenshot_script_excludes_it` requires
+`screenshots/<name>.png` and a matching preview cell for every template outside the screenshot
+script's `EXCLUDED_TEMPLATES` (read back from the script itself, so it stays the one list — keep it
+a single-line set literal), a `—` cell for those inside it, and no stray PNGs; and
+`builtin_templates_header_comment_repeats_its_description` requires each file's header comment to
+restate its `[template]` `description`. None of them can tell whether a screenshot still depicts
+its template's current shape — regenerating after a shape change is still on whoever changes it.
+
 ## Changelog
 
 - `CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/): dated
