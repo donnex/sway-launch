@@ -2075,12 +2075,6 @@ mod tests {
     }
 
     #[test]
-    fn json_result_serializes_container_id() {
-        let value = serde_json::json!({ "container_id": 42 });
-        assert_eq!(value.to_string(), "{\"container_id\":42}");
-    }
-
-    #[test]
     fn actions_json_renders_changed_already_satisfied_and_skipped() {
         let actions = [
             sway_launch::ActionRecord {

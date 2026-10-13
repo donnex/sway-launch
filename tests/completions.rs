@@ -4,6 +4,9 @@
 // subprocess) is only set for integration tests, not for the bin crate's
 // own unit test harness.
 
+mod common;
+
+use common::assert_conflict_error;
 use std::process::Command;
 
 #[test]
@@ -30,8 +33,5 @@ fn completions_rejects_json_rather_than_ignoring_it() {
         .output()
         .expect("failed to run sway-launch binary");
 
-    assert!(
-        !output.status.success(),
-        "--completions --json should be rejected, not silently ignored"
-    );
+    assert_conflict_error(&output, "--completions", "--json");
 }
