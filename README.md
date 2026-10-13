@@ -91,7 +91,7 @@ Options:
       --existing                      Act on an already-open window found via --app-id/--class/--mark-match, instead of launching a new one
   -s, --split <SPLIT>                 Change split for the window [possible values: v, h]
   -f, --floating                      Make the window floating
-      --sticky                        Make the window sticky (shows on all workspaces)
+      --sticky                        Make the window sticky (once floating, shows on every workspace)
       --fullscreen                    Make the window fullscreen
       --focus                         Focus the window
   -m, --mark <MARK>                   Mark the window, replacing its existing marks (a mark another window holds moves to this one)
@@ -715,10 +715,11 @@ sway-launch --floating 'firefox --new-window https://example.com'
 
 ### Sticky
 
-Makes the window sticky (shows on the current output across every workspace, instead of just the
-one it was launched on). Confirmed to work regardless of floating state — pair with `--floating`
-for the common case (a small utility window you want visible no matter which workspace you switch
-to), but a tiled window can be made sticky too.
+Makes the window sticky: a floating sticky window shows on the current output across every
+workspace, instead of just the one it was launched on. Sticky only takes effect while the window is
+floating, so pair it with `--floating` (a small utility window you want visible no matter which
+workspace you switch to). On a tiled window Sway just records the flag — the window stays on its
+own workspace — and it applies if the window is floated later.
 
 ```shell
 sway-launch --floating --sticky foot

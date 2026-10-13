@@ -136,7 +136,7 @@ struct Args {
     #[clap(short, long)]
     floating: bool,
 
-    /// Make the window sticky (shows on all workspaces)
+    /// Make the window sticky (once floating, shows on every workspace)
     #[clap(long)]
     sticky: bool,
 

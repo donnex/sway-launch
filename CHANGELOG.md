@@ -59,9 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Requires `--layout` or `--template`.
 - `master-dual-stack-left`/`master-triple-stack-left` built-in templates — `master-dual-stack`/
   `master-triple-stack` mirrored to the other side (stack on the left, main window on the right).
-- `--sticky` flag (and the matching `--layout`/`--template` step field) to make a window show on
-  every workspace instead of just the one it was launched on. Works regardless of floating state,
-  pairs well with `--floating`.
+- `--sticky` flag (and the matching `--layout`/`--template` step field) to make a floating window
+  show on every workspace instead of just the one it was launched on. Sticky only takes effect
+  while the window is floating, so pair it with `--floating`: on a tiled window Sway just records
+  the flag, and it applies if the window is floated later (#66).
 - `--dry-run`: prints the planned sequence of Sway commands instead of running them, numbered
   continuously across every step — never touches Sway IPC or launches anything. Works with a direct
   command or `--layout`/`--template`; `--json` prints a structured `{"steps": [...]}` object.

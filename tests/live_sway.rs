@@ -993,20 +993,59 @@ fn swaysock_wins_over_a_stale_i3sock() {
 }
 
 #[test]
-fn sticky_sets_the_sticky_flag_even_on_a_tiled_window() {
-    fresh_workspace();
-    // Confirmed live (manual investigation, not automated here since it's a
-    // one-off design finding rather than a regression risk): unlike
-    // Position, which Sway rejects outright against a tiled window, `sticky
-    // enable` succeeds unconditionally regardless of floating state — the
-    // window here is deliberately left tiled (no --floating) to assert that
-    // finding rather than assume it.
+fn sticky_floating_window_follows_a_workspace_switch() {
+    let workspace = fresh_workspace();
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&["--floating", "--sticky"]);
+
+    let elsewhere = format!("{workspace}-elsewhere");
+    run_command_ok(&mut connection, &format!("workspace {elsewhere}"));
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        workspace_containing(&tree, container_id, None),
+        Some(elsewhere.as_str()),
+        "a floating sticky window should follow the switch to another workspace"
+    );
+}
+
+#[test]
+fn sticky_on_a_tiled_window_only_takes_effect_once_floated() {
+    // Sway accepts `sticky enable` against a tiled window and sets the flag,
+    // but only carries a *floating* sticky window across workspace switches.
+    // README.md's "Sticky" section documents exactly this, so this pins all
+    // three halves: the flag is set, the tiled window stays put, and the flag
+    // applies once the window is floated later.
+    let workspace = fresh_workspace();
     let mut connection = connect();
     let (container_id, _guard) = launch_foot(&["--sticky"]);
 
     let node = get_node(&mut connection, container_id);
     assert!(!node_is_floating(&node), "window should still be tiled");
     assert!(node.sticky, "window should be marked sticky");
+
+    let elsewhere = format!("{workspace}-elsewhere");
+    run_command_ok(&mut connection, &format!("workspace {elsewhere}"));
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        workspace_containing(&tree, container_id, None),
+        Some(workspace.as_str()),
+        "a tiled sticky window should stay on its own workspace"
+    );
+
+    run_command_ok(&mut connection, &format!("workspace {workspace}"));
+    run_command_ok(
+        &mut connection,
+        &format!("[con_id={container_id}] floating enable"),
+    );
+    let later = format!("{workspace}-later");
+    run_command_ok(&mut connection, &format!("workspace {later}"));
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        workspace_containing(&tree, container_id, None),
+        Some(later.as_str()),
+        "the sticky flag should take effect once the window is floated"
+    );
 }
 
 #[test]
