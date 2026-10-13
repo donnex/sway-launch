@@ -190,7 +190,9 @@ pub struct TemplateStep {
 /// window), the same target-selection fields `LayoutStep` has, minus
 /// `target_id` (which only ever makes sense on a `TemplateStep`, referencing
 /// another slot's resolved window).
+// Serialize is test-only — see LayoutStep's matching note in layout.rs.
 #[derive(Deserialize)]
+#[cfg_attr(test, derive(serde::Serialize))]
 #[serde(deny_unknown_fields)]
 pub struct Binding {
     pub slot: String,
