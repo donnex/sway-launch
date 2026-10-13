@@ -261,14 +261,14 @@ fn node_is_floating(node: &Node) -> bool {
 }
 
 /// The name of the nearest `NodeType::Workspace` ancestor of `con_id` —
-/// mirrors `tree.rs`'s private `find_containing_name()`. Also used to
+/// mirrors `tree.rs`'s `ContainerState::from_tree()` workspace lookup. Also used to
 /// detect Sway's scratchpad (the fixed internal workspace named
 /// `__i3_scratch`) in a way that's reliable on both Sway 1.9 (still what
 /// `apt` installs on Ubuntu 24.04/CI) and 1.11, unlike the node's own
 /// `scratchpad_state` field — that field stays `none` on Sway 1.9 even for a
 /// genuinely scratchpadded window, and stays `fresh`/`changed` on 1.11 for
 /// one merely shown via `scratchpad show` (see `tree.rs`'s
-/// `tree_shows_container_in_scratchpad()` doc comment).
+/// `is_scratchpad_workspace()` doc comment).
 fn workspace_containing<'a>(
     node: &'a Node,
     con_id: i64,

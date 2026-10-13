@@ -15,34 +15,70 @@
 use super::values::Position;
 use swayipc::{Node, NodeLayout, NodeType};
 
-pub(super) fn window_app_id_match(node: &Node, app_id_match: &str) -> bool {
-    let node_app_id = match node.app_id.as_ref().ok_or(()) {
-        Ok(app_id) => app_id,
-        Err(_) => return false,
-    };
+/// `node`'s direct children, tiling (`nodes`) first, then floating
+/// (`floating_nodes`) — the order every walk in this module visits them in.
+fn children(node: &Node) -> impl DoubleEndedIterator<Item = &Node> {
+    node.nodes.iter().chain(node.floating_nodes.iter())
+}
 
-    node_app_id == app_id_match
+/// `node` itself followed by every node below it, tiling and floating, in
+/// depth-first pre-order.
+pub(super) fn descendants(node: &Node) -> impl Iterator<Item = &Node> {
+    let mut stack = vec![node];
+    std::iter::from_fn(move || {
+        let current = stack.pop()?;
+        stack.extend(children(current).rev());
+        Some(current)
+    })
+}
+
+/// The path from `tree` down to `container_id`, `tree` first and the container
+/// last, through tiling and floating children alike — or `None` when the
+/// container isn't in `tree`. The one walk every "where is this container"
+/// question below is answered from: each of them is a lookup on this path.
+pub(super) fn ancestors_of(tree: &Node, container_id: i64) -> Option<Vec<&Node>> {
+    fn walk<'a>(node: &'a Node, container_id: i64, path: &mut Vec<&'a Node>) -> bool {
+        path.push(node);
+        if node.id == container_id || children(node).any(|child| walk(child, container_id, path)) {
+            return true;
+        }
+        path.pop();
+        false
+    }
+
+    let mut path = Vec::new();
+    walk(tree, container_id, &mut path).then_some(path)
+}
+
+/// The nearest node on `path` (the target itself included) whose `node_type`
+/// is `kind`.
+fn nearest_of_kind<'a>(path: &[&'a Node], kind: NodeType) -> Option<&'a Node> {
+    path.iter()
+        .rev()
+        .copied()
+        .find(|node| node.node_type == kind)
+}
+
+fn name_of_nearest(path: &[&Node], kind: NodeType) -> Option<String> {
+    nearest_of_kind(path, kind).and_then(|node| node.name.clone())
+}
+
+pub(super) fn window_app_id_match(node: &Node, app_id_match: &str) -> bool {
+    node.app_id.as_deref() == Some(app_id_match)
 }
 
 pub(super) fn window_class_match(node: &Node, class_match: &str) -> bool {
-    let window_properties = match node.window_properties.as_ref().ok_or(()) {
-        Ok(window_properties) => window_properties,
-        Err(_) => return false,
-    };
-
-    let node_class = match window_properties.class.as_ref().ok_or(()) {
-        Ok(class) => class,
-        Err(_) => return false,
-    };
-
-    node_class == class_match
+    node.window_properties
+        .as_ref()
+        .and_then(|window_properties| window_properties.class.as_deref())
+        == Some(class_match)
 }
 
 pub(super) fn window_mark_match(node: &Node, mark_match: &str) -> bool {
     node.marks.iter().any(|mark| mark == mark_match)
 }
 
-/// Recursively collects the container ids of every node in `tree` (tiling
+/// Collects the container ids of every node in `tree` (tiling
 /// and floating children at every level) whose app_id/class/mark matches,
 /// used to target an already-open window instead of launching a new one.
 /// The three criteria are mutually exclusive by construction (enforced at
@@ -56,28 +92,22 @@ pub(super) fn matching_container_ids(
     class_match: &str,
     mark_match: &str,
 ) -> Vec<i64> {
-    let matches = if !app_id_match.is_empty() {
-        window_app_id_match(tree, app_id_match)
-    } else if !class_match.is_empty() {
-        window_class_match(tree, class_match)
-    } else if !mark_match.is_empty() {
-        window_mark_match(tree, mark_match)
-    } else {
-        false
+    let matches = |node: &Node| {
+        if !app_id_match.is_empty() {
+            window_app_id_match(node, app_id_match)
+        } else if !class_match.is_empty() {
+            window_class_match(node, class_match)
+        } else if !mark_match.is_empty() {
+            window_mark_match(node, mark_match)
+        } else {
+            false
+        }
     };
 
-    let mut ids = if matches { vec![tree.id] } else { vec![] };
-
-    for child in tree.nodes.iter().chain(tree.floating_nodes.iter()) {
-        ids.extend(matching_container_ids(
-            child,
-            app_id_match,
-            class_match,
-            mark_match,
-        ));
-    }
-
-    ids
+    descendants(tree)
+        .filter(|node| matches(node))
+        .map(|node| node.id)
+        .collect()
 }
 
 /// Turns the container ids `matching_container_ids()` found into a single
@@ -127,15 +157,17 @@ impl ContainerState {
     /// Derives `container_id`'s state from an already-fetched tree, or `None`
     /// when the container isn't in it.
     pub(super) fn from_tree(tree: &Node, container_id: i64) -> Option<Self> {
-        let node = find_node(tree, container_id)?;
+        let path = ancestors_of(tree, container_id)?;
+        let node = *path.last()?;
+        let workspace = name_of_nearest(&path, NodeType::Workspace);
 
         Some(ContainerState {
-            workspace: find_containing_name(tree, container_id, NodeType::Workspace, None),
-            output: find_containing_name(tree, container_id, NodeType::Output, None),
+            in_scratchpad: is_scratchpad_workspace(workspace.as_deref()),
+            workspace,
+            output: name_of_nearest(&path, NodeType::Output),
             floating: node_is_floating(node),
             fullscreen: node.fullscreen_mode.is_some_and(|mode| mode != 0),
             focused: node.focused,
-            in_scratchpad: tree_shows_container_in_scratchpad(tree, container_id),
             marks: node.marks.clone(),
         })
     }
@@ -157,8 +189,8 @@ pub(super) fn node_is_floating(node: &Node) -> bool {
         )
 }
 
-/// Whether `container_id` is currently hidden in Sway's scratchpad, given an
-/// already-fetched `tree`: whether its ancestor workspace is the fixed
+/// Whether a container whose nearest ancestor workspace is `workspace_name` is
+/// currently hidden in Sway's scratchpad: whether that workspace is the fixed
 /// internal workspace Sway names `__i3_scratch`, confirmed live to be
 /// populated reliably on both Sway 1.9 and 1.11. Deliberately not
 /// `node_is_floating()`: a window Sway auto-floats as part of moving it to
@@ -174,33 +206,8 @@ pub(super) fn node_is_floating(node: &Node) -> bool {
 /// already-hidden and `--scratchpad` would short-circuit without sending
 /// anything. Sway 1.9 leaves the field at `none` even for a hidden window, so
 /// it isn't reliable in the other direction either.
-pub(super) fn tree_shows_container_in_scratchpad(tree: &Node, container_id: i64) -> bool {
-    find_containing_name(tree, container_id, NodeType::Workspace, None).as_deref()
-        == Some("__i3_scratch")
-}
-
-/// Recursively walks `node` tracking the name of the nearest ancestor whose
-/// `node_type` matches `kind`, returning that name once `con_id` is found —
-/// e.g. with `kind: NodeType::Workspace`, the name of the workspace
-/// containing `con_id`.
-pub(super) fn find_containing_name(
-    node: &Node,
-    con_id: i64,
-    kind: NodeType,
-    current: Option<&str>,
-) -> Option<String> {
-    let current = if node.node_type == kind {
-        node.name.as_deref()
-    } else {
-        current
-    };
-    if node.id == con_id {
-        return current.map(String::from);
-    }
-    node.nodes
-        .iter()
-        .chain(node.floating_nodes.iter())
-        .find_map(|child| find_containing_name(child, con_id, kind, current))
+fn is_scratchpad_workspace(workspace_name: Option<&str>) -> bool {
+    workspace_name == Some("__i3_scratch")
 }
 
 /// The direction `NewColumn` ("move right") / `NewRow` ("move down") moves
@@ -241,12 +248,22 @@ pub(super) fn is_at_the_trailing_workspace_edge(
     container_id: i64,
     direction: MoveDirection,
 ) -> bool {
-    let Some(workspace) = find_workspace_node(tree, container_id) else {
+    let Some(path) = ancestors_of(tree, container_id) else {
         return false;
     };
-    let Some(chain) = tiling_ancestry(workspace, container_id) else {
+    let Some(workspace_index) = path
+        .iter()
+        .rposition(|node| node.node_type == NodeType::Workspace)
+    else {
         return false;
     };
+    let chain = &path[workspace_index..];
+    let reached_through_tiling_children_only = chain
+        .windows(2)
+        .all(|pair| pair[0].nodes.iter().any(|child| child.id == pair[1].id));
+    if !reached_through_tiling_children_only {
+        return false;
+    }
     let container_depth = chain.len() - 1;
     if container_depth == 0 {
         return false;
@@ -290,33 +307,8 @@ fn is_parallel(layout: NodeLayout, direction: MoveDirection) -> bool {
     }
 }
 
-/// The path from `node` down to `container_id` through tiling children
-/// (`nodes`) only, `node` first and the container last — `None` when the
-/// container isn't reachable that way, which includes every floating window.
-fn tiling_ancestry(node: &Node, container_id: i64) -> Option<Vec<&Node>> {
-    if node.id == container_id {
-        return Some(vec![node]);
-    }
-    node.nodes.iter().find_map(|child| {
-        tiling_ancestry(child, container_id).map(|mut path| {
-            path.insert(0, node);
-            path
-        })
-    })
-}
-
-pub(super) fn find_workspace_node(node: &Node, container_id: i64) -> Option<&Node> {
-    if node.node_type == NodeType::Workspace {
-        return if contains_id(node, container_id) {
-            Some(node)
-        } else {
-            None
-        };
-    }
-    node.nodes
-        .iter()
-        .chain(node.floating_nodes.iter())
-        .find_map(|child| find_workspace_node(child, container_id))
+pub(super) fn find_workspace_node(tree: &Node, container_id: i64) -> Option<&Node> {
+    nearest_of_kind(&ancestors_of(tree, container_id)?, NodeType::Workspace)
 }
 
 /// Which of `container_ids` are still anywhere in `tree`, in the order given —
@@ -325,42 +317,18 @@ pub(super) fn present_ids(tree: &Node, container_ids: &[i64]) -> Vec<i64> {
     container_ids
         .iter()
         .copied()
-        .filter(|&container_id| contains_id(tree, container_id))
+        .filter(|&container_id| find_node(tree, container_id).is_some())
         .collect()
 }
 
-pub(super) fn contains_id(node: &Node, container_id: i64) -> bool {
-    node.id == container_id
-        || node
-            .nodes
-            .iter()
-            .chain(node.floating_nodes.iter())
-            .any(|child| contains_id(child, container_id))
+pub(super) fn find_parent_layout(tree: &Node, container_id: i64) -> Option<NodeLayout> {
+    let path = ancestors_of(tree, container_id)?;
+    let parent_index = path.len().checked_sub(2)?;
+    Some(path[parent_index].layout)
 }
 
-pub(super) fn find_parent_layout(node: &Node, container_id: i64) -> Option<NodeLayout> {
-    if node
-        .nodes
-        .iter()
-        .chain(node.floating_nodes.iter())
-        .any(|child| child.id == container_id)
-    {
-        return Some(node.layout);
-    }
-    node.nodes
-        .iter()
-        .chain(node.floating_nodes.iter())
-        .find_map(|child| find_parent_layout(child, container_id))
-}
-
-pub(super) fn find_node(node: &Node, container_id: i64) -> Option<&Node> {
-    if node.id == container_id {
-        return Some(node);
-    }
-    node.nodes
-        .iter()
-        .chain(node.floating_nodes.iter())
-        .find_map(|child| find_node(child, container_id))
+pub(super) fn find_node(tree: &Node, container_id: i64) -> Option<&Node> {
+    descendants(tree).find(|node| node.id == container_id)
 }
 
 /// Whether `node`'s current width matches a `resize set width <expected_px>px`

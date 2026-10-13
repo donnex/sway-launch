@@ -117,7 +117,12 @@ below) plus five integration test files:
   the `Node`/`WindowEvent` JSON fixtures more than one module's tests need. A new module's unit
   tests go in its own `tests.rs` the same way, never inline. Adding to this module means picking the layer first: a new
   predicate belongs in `tree.rs` unless it genuinely cannot answer from a `&Node`, in which case
-  the fetching half goes in `query.rs` and the deciding half still goes in `tree.rs`.
+  the fetching half goes in `query.rs` and the deciding half still goes in `tree.rs`. Within
+  `tree.rs`, the tree is walked in exactly two places: `ancestors_of()` (the root-to-container
+  path, for every "where is this container" question — its parent layout, nearest
+  workspace/output) and `descendants()` (every node, for finding one by id or every match). A new
+  predicate is a lookup on one of those, not another hand-written recursion over `nodes` +
+  `floating_nodes`.
 - `src/layout.rs` — `--layout`'s TOML schema (`Layout`/`LayoutStep`) and
   `LayoutStep::to_sway_launch()`, which converts one step into a `sway_launch::SwayLaunch` (see
   "Layout files" below).
@@ -511,7 +516,7 @@ stated goal (safer internals, less repeated parsing) to actually land.
   reproducing the exact pre-fix hang/error this paragraph describes; confirmed live in both
   directions (broken on 1.9, fixed on both 1.9 and 1.11) during that investigation. `Scratchpad`
   was found to need this the same way, live: re-running `--scratchpad` on an already-scratchpadded
-  window fires no event at all. Its own check is `tree_shows_container_in_scratchpad()`, which
+  window fires no event at all. Its own check is `is_scratchpad_workspace()`, which
   checks the container's ancestor workspace name — Sway's scratchpad is always the fixed internal
   workspace named `__i3_scratch` — rather than `node_is_floating()`, deliberately, since the
   auto-float event described above would otherwise make `already_at_target()` misreport a window
@@ -531,7 +536,7 @@ stated goal (safer internals, less repeated parsing) to actually land.
   workspace via `scratchpad show`, so the OR made a shown dropdown window look already-hidden and
   `--scratchpad` short-circuited as `already_satisfied` without sending anything. The ancestor
   workspace name alone decides now, pinned by `tree.rs`'s
-  `tree_shows_container_in_scratchpad_false_for_a_shown_scratchpad_window` and `tests/live_sway.rs`'s
+  `in_scratchpad_false_for_a_shown_scratchpad_window` and `tests/live_sway.rs`'s
   `scratchpad_hides_a_window_currently_shown_from_the_scratchpad`. `Mark` was
   checked live too and found *not* to need this — re-applying a mark the container already has
   still fires
