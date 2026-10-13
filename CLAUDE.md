@@ -291,8 +291,9 @@ a subprocess), which is only set for files under `tests/`, not for the bin crate
 harness — that's why these live here instead of as `#[cfg(test)]` modules in `src/main.rs`.
 
 Helpers more than one of them needs live in `tests/common/mod.rs`, pulled in with `mod common;`:
-`TempToml` (a TOML fixture removed on drop), `test_temp_dir()` (the per-process scratch directory
-it writes into) and `sway_launch_without_a_compositor()` (the binary aimed at a socket that cannot
+`TempToml` (a TOML fixture removed on drop), `TestTempDir` (a fresh scratch directory per test,
+randomly named, created mode 0700 with a plain `create()` so a pre-planted directory or symlink is
+an error rather than reused, and removed on drop; `TempToml` writes into its own) and `sway_launch_without_a_compositor()` (the binary aimed at a socket that cannot
 exist, for tests that need an IPC call to fail) and `assert_conflict_error()` (exit 2 plus clap's
 `cannot be used with` wording naming both flags). Every flag-conflict test uses that last one rather
 than a bare `!output.status.success()`: once a conflict is dropped the combination usually still
