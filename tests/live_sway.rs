@@ -5221,20 +5221,20 @@ fn bindings_file_resolves_existing_and_command_slots_to_real_windows() {
         .contains(&"live-sway-test-bindings-primary".to_string()));
 }
 
-#[test]
-fn debug_events_prints_a_real_window_event() {
-    fresh_workspace();
-    // --debug-events runs until killed, so it doesn't fit this file's usual
-    // spawn-and-wait-for-exit pattern — spawns it as a background child with
-    // its stdout read on a separate thread and forwarded through a channel,
-    // the same shape confirmation.rs's own event loop uses internally.
+/// Spawns `sway-launch --debug-events` as a background child and forwards
+/// its stdout line by line through a channel. It runs until killed, so it
+/// doesn't fit this file's usual spawn-and-wait-for-exit pattern; the reader
+/// thread is the same shape confirmation.rs's own event loop uses internally.
+/// Returns once the subscription has had time to establish, so an event the
+/// caller triggers next isn't sent before anything is listening.
+fn spawn_debug_events() -> (KillChildOnDrop, mpsc::Receiver<String>) {
     let mut child = sway_launch_command()
         .arg("--debug-events")
         .stdout(std::process::Stdio::piped())
         .spawn()
         .expect("failed to spawn sway-launch --debug-events");
     let stdout = child.stdout.take().expect("child should have piped stdout");
-    let _child_guard = KillChildOnDrop(child);
+    let child_guard = KillChildOnDrop(child);
 
     let (line_sender, line_receiver) = mpsc::channel();
     std::thread::spawn(move || {
@@ -5250,30 +5250,89 @@ fn debug_events_prints_a_real_window_event() {
         }
     });
 
-    // Give the event subscription time to establish before triggering the
-    // window it needs to see — otherwise the New event could fire before
-    // --debug-events is actually subscribed.
     std::thread::sleep(Duration::from_millis(300));
-    let (_container_id, _guard) = launch_foot(&[]);
+    (child_guard, line_receiver)
+}
 
+/// Whether a line satisfying `matches` arrives on `lines` within 10s.
+fn debug_events_line_arrives(
+    lines: &mpsc::Receiver<String>,
+    matches: impl Fn(&str) -> bool,
+) -> bool {
     let deadline = Instant::now() + Duration::from_secs(10);
-    let mut found = false;
-    while !found {
+    loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            break;
+            return false;
         }
-        match line_receiver.recv_timeout(remaining) {
-            Ok(line) => {
-                found = line.contains("WindowEvent") && line.contains("change: New");
-            }
-            Err(_) => break,
+        match lines.recv_timeout(remaining) {
+            Ok(line) if matches(&line) => return true,
+            Ok(_) => {}
+            Err(_) => return false,
         }
     }
+}
+
+#[test]
+fn debug_events_prints_a_real_window_event() {
+    fresh_workspace();
+    let (_child_guard, lines) = spawn_debug_events();
+    let (_container_id, _guard) = launch_foot(&[]);
 
     assert!(
-        found,
+        debug_events_line_arrives(&lines, |line| line.contains("WindowEvent")
+            && line.contains("change: New")),
         "expected --debug-events to print a New WindowEvent within 10s"
+    );
+}
+
+/// Sets an output's scale back to what it was when dropped, even on
+/// assertion panic, so a test that changes it can't leave every later test
+/// running against a rescaled output.
+struct RestoreOutputScale {
+    output: String,
+    scale: f64,
+}
+
+impl Drop for RestoreOutputScale {
+    fn drop(&mut self) {
+        if let Ok(mut connection) = try_connect(live_socket()) {
+            let _ = connection.run_command(format!("output {} scale {}", self.output, self.scale));
+        }
+    }
+}
+
+#[test]
+fn debug_events_prints_a_real_output_event() {
+    // Output events were once missing from --debug-events' subscription list,
+    // so it printed nothing at all while outputs were added, removed or
+    // reconfigured. Rescaling the original output is the cheapest way to make
+    // Sway send one: it needs no create_output (see the budget note under
+    // CLAUDE.md's "Orchestration" section).
+    fresh_workspace();
+    let mut connection = connect();
+    let output = original_output().to_string();
+    let scale = connection
+        .get_outputs()
+        .expect("get_outputs should succeed")
+        .into_iter()
+        .find(|candidate| candidate.name == output)
+        .and_then(|candidate| candidate.scale)
+        .unwrap_or(1.0);
+    let _restore_scale = RestoreOutputScale {
+        output: output.clone(),
+        scale,
+    };
+
+    let (_child_guard, lines) = spawn_debug_events();
+    run_command_ok(
+        &mut connection,
+        &format!("output {output} scale {}", scale * 2.0),
+    );
+
+    assert!(
+        debug_events_line_arrives(&lines, |line| line.contains("OutputEvent")),
+        "expected --debug-events to print an OutputEvent within 10s"
     );
 }
 

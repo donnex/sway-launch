@@ -23,6 +23,25 @@ use std::io::Write;
 use std::time;
 use swayipc::EventType;
 
+/// Every event type `--debug-events` subscribes to, which its help text
+/// promises is all of them. Mirrors `swayipc`'s `EventType` by hand: that enum
+/// is `#[non_exhaustive]`, so nothing outside the crate can match on it
+/// exhaustively, and a variant added upstream compiles here silently. Recheck
+/// this list against it whenever `swayipc` is bumped (`Output` was missing
+/// once, so `--debug-events` never showed an output being added or removed).
+pub(super) const DEBUG_EVENT_SUBSCRIPTIONS: [EventType; 10] = [
+    EventType::Workspace,
+    EventType::Output,
+    EventType::Mode,
+    EventType::Window,
+    EventType::BarConfigUpdate,
+    EventType::Binding,
+    EventType::Shutdown,
+    EventType::Tick,
+    EventType::BarStateUpdate,
+    EventType::Input,
+];
+
 /// What `SwayLaunch::run()` should act on: launch a new window (the
 /// original, still-default behavior), a specific already-open window by
 /// container id, or an already-open window found by matching
@@ -62,19 +81,7 @@ pub struct SwayLaunch<'a> {
 
 impl<'a> SwayLaunch<'a> {
     pub fn debug_events(&self) -> Result<(), String> {
-        let subscriptions = [
-            EventType::Workspace,
-            EventType::Mode,
-            EventType::Window,
-            EventType::BarConfigUpdate,
-            EventType::Binding,
-            EventType::Shutdown,
-            EventType::Tick,
-            EventType::BarStateUpdate,
-            EventType::Input,
-        ];
-
-        for (i, event) in event_loop(&subscriptions)?.enumerate() {
+        for (i, event) in event_loop(&DEBUG_EVENT_SUBSCRIPTIONS)?.enumerate() {
             let event = match event {
                 Ok(event) => event,
                 Err(error) => return Err(error.to_string()),
