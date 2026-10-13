@@ -156,8 +156,8 @@ wheels = [
 ]
 
 [[package]]
-name = "sway-launch"
-version = "0.1.0"
+name = "sway-launch-maintainer-tools"
+version = "0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
