@@ -623,6 +623,19 @@ stated goal (safer internals, less repeated parsing) to actually land.
   live by `launch_timeout_names_the_window_its_app_id_filter_rejected` and
   `launch_timeout_says_when_the_command_exited_without_a_window`, and headlessly (the prefix) by
   `tests/json_output.rs`'s `a_failing_action_names_itself_in_the_error`.
+  A rejected window whose pid carries the marker is also rechecked rather than given up on: some
+  clients set their app_id/class only after mapping (an XWayland app's late `WM_CLASS`, a Wayland
+  client's late `set_app_id`), and Sway sends no window event when either changes — confirmed live
+  with foot's OSC 176 runtime app-id escape, which fires only a `title` event. Every
+  `LATE_PROPERTY_RECHECK_INTERVAL` (50ms, slower than the wait-time poll since it can run for the
+  whole `--timeout`), `query.rs`'s `recheck_launched_windows_now()` re-reads those windows through
+  one shared connection and hands the decision to the pure `tree.rs` `recheck_launched_windows()`;
+  the first to match is returned as `Launched`, a closed one stops being rechecked, and a timeout
+  reports each one's latest app_id/class, with a note that it was rechecked. Covered live by
+  `launch_matches_a_window_that_sets_its_app_id_after_mapping`, which skips itself (with a note on
+  stderr) when foot ignores OSC 176: Ubuntu 24.04's foot 1.16.2, which the CI live job installs,
+  does, and the window's app_id never changes. The skip is decided from the tree, not a foot
+  version, so a window whose app_id did change and still wasn't matched always fails.
   Which of the two ends the wait is reported back as a `LaunchOwnership` (`Launched` for the
   marked-process-gone branch, `Adopted` for the grace-elapsed one), the distinction
   `--rollback-on-error` keys its destructive cleanup off — see its own section below.

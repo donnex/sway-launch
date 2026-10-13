@@ -5562,6 +5562,87 @@ fn launch_timeout_names_the_window_its_app_id_filter_rejected() {
     );
 }
 
+/// Whether a failed launch's only unmatched window still has `initial_app_id`
+/// in the tree, meaning the client never changed it. Closes that window.
+fn late_app_id_was_never_set(stderr: &str, initial_app_id: &str) -> bool {
+    let Some(error) = stderr
+        .lines()
+        .next_back()
+        .and_then(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+    else {
+        return false;
+    };
+    let Some(container_id) = error["unmatched_windows"][0]["container_id"].as_i64() else {
+        return false;
+    };
+    let _guard = KillOnDrop(container_id);
+    let mut connection = connect();
+    get_node(&mut connection, container_id).app_id.as_deref() == Some(initial_app_id)
+}
+
+#[test]
+fn launch_matches_a_window_that_sets_its_app_id_after_mapping() {
+    fresh_workspace();
+    // Some apps set their app_id/class only after the window maps, and Sway
+    // sends no window event when they change. A launch used to decide on the
+    // New event alone, so it ignored its own window and timed out beside it.
+    // foot's OSC 176 escape changes its app_id at runtime, standing in for
+    // such an app: the window maps as "late-probe-early" and becomes
+    // "late-probe" half a second later, with no event in between.
+    let temp_dir = TestTempDir::new();
+    let script = temp_dir.join("set-app-id-late");
+    std::fs::write(
+        &script,
+        "sleep 0.5\nprintf '\\033]176;late-probe\\033\\\\'\nexec sleep 60\n",
+    )
+    .expect("failed to write the app_id script");
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--timeout",
+            "10",
+            "--json",
+            "--verbose",
+            "--app-id",
+            "late-probe",
+            &format!("foot --app-id=late-probe-early sh '{}'", script.display()),
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let elapsed = started.elapsed();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if !output.status.success() && late_app_id_was_never_set(&stderr, "late-probe-early") {
+        // OSC 176 is newer than some distributions' foot (Ubuntu 24.04's
+        // 1.16.2 ignores it), so there was no late change to notice. A window
+        // whose app_id did change still fails below.
+        eprintln!("skipped: this foot ignores OSC 176, so its app_id never changed");
+        return;
+    }
+    assert!(output.status.success(), "sway-launch failed: {stderr}");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|_| panic!("stdout should be JSON: {:?}", output.stdout));
+    let container_id = json["container_id"]
+        .as_i64()
+        .unwrap_or_else(|| panic!("expected a container_id in {json}"));
+    let _guard = KillOnDrop(container_id);
+
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "the late app_id should be noticed promptly, not at --timeout: took {elapsed:?}"
+    );
+    assert!(
+        stderr.contains(&format!("Event mismatch: New con_id {container_id}"))
+            && stderr.contains("Recheck match"),
+        "the window should be rejected on its New event, then matched by a recheck: {stderr}"
+    );
+    let mut connection = connect();
+    assert_eq!(
+        get_node(&mut connection, container_id).app_id.as_deref(),
+        Some("late-probe")
+    );
+}
+
 #[test]
 fn layout_launch_timeout_reports_its_step_and_rolls_back_earlier_steps() {
     fresh_workspace();
