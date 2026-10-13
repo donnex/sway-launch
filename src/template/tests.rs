@@ -137,14 +137,13 @@ fn resolve_rejects_blank_binding_command_naming_the_slot() {
 }
 
 #[test]
-fn resolve_rejects_two_steps_sharing_a_slot_name() {
-    let template = minimal_template(vec![minimal_step(), minimal_step()]);
-    let bindings = Bindings {
-        binding: vec![minimal_binding()],
-    };
-    let error = resolve(&template, &bindings)
-        .err()
-        .expect("two steps sharing a slot should error");
+fn parse_rejects_two_steps_sharing_a_slot_name() {
+    let error = parse(
+        "[template]\ndescription = \"A test template.\"\ncategory = \"Test\"\n\n\
+         [[step]]\nslot = \"editor\"\n\n[[step]]\nslot = \"editor\"\n",
+    )
+    .err()
+    .expect("two steps sharing a slot should be rejected when the template is parsed");
     assert!(
         error.contains("editor") && error.contains("more than once"),
         "error should name the offending slot and describe the actual mistake: {:?}",
@@ -765,7 +764,7 @@ fn builtin_templates_reports_slots_and_slot_names_matching_the_apps_ordering() {
     // --list-templates --json's "slots"/"slot_names" fields promise:
     // slots is the count, slot_names is that same order --apps zips
     // against (bindings_from_apps() uses the identical
-    // distinct_slot_names() helper, so this also indirectly confirms
+    // slot_names() helper, so this also indirectly confirms
     // the two never disagree).
     let templates = builtin_templates();
     let quad_grid = templates
@@ -793,7 +792,7 @@ fn every_builtin_template_resolves_and_converts_without_a_compositor() {
         let template = parse(file.contents_utf8().expect("template should be UTF-8"))
             .unwrap_or_else(|error| panic!("{name} failed to parse: {error}"));
         let bindings = Bindings {
-            binding: distinct_slot_names(&template)
+            binding: slot_names(&template)
                 .into_iter()
                 .map(|slot| Binding {
                     slot: slot.to_string(),
@@ -826,18 +825,18 @@ fn every_builtin_template_resolves_and_converts_without_a_compositor() {
 }
 
 #[test]
-fn distinct_slot_names_deduplicates_and_ignores_target_id_steps() {
+fn slot_names_lists_slot_steps_in_order_and_ignores_target_id_steps() {
     let mut editor_step = minimal_step();
     editor_step.slot = Some("editor".to_string());
-    let mut repeated_step = minimal_step();
-    repeated_step.slot = Some("editor".to_string());
     let mut target_id_step = minimal_step();
     target_id_step.slot = None;
     target_id_step.target_id = Some("editor".to_string());
+    let mut terminal_step = minimal_step();
+    terminal_step.slot = Some("terminal".to_string());
 
-    let template = minimal_template(vec![editor_step, repeated_step, target_id_step]);
+    let template = minimal_template(vec![editor_step, target_id_step, terminal_step]);
 
-    assert_eq!(distinct_slot_names(&template), vec!["editor"]);
+    assert_eq!(slot_names(&template), vec!["editor", "terminal"]);
 }
 
 fn repository_file(relative_path: &str) -> String {

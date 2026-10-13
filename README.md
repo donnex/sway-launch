@@ -119,7 +119,7 @@ Options:
       --list-templates                List built-in --template names and exit
       --show-template <NAME_OR_PATH>  Print a --template's raw TOML and exit, without running it. Same NAME_OR_PATH resolution as --template: a built-in name (see --list-templates), or a path ending in .toml. With --json, prints {"name": ..., "contents": "..."}
       --bindings <BINDINGS>           Bindings file supplying each --template slot's application identity. Requires --template; conflicts with --apps
-      --apps <APPS>                   Comma-separated list of commands to launch into --template's slots, in the order they first appear in the template. Requires --template; conflicts with --bindings
+      --apps <APPS>                   Comma-separated list of commands to launch into --template's slots, in the order the template's slot steps appear. Requires --template; conflicts with --bindings
       --rollback-on-error             If a --layout/--template step fails, kill every window this invocation itself launched, by an earlier step or by the failing step before it failed (not one it merely retargeted via con_id/existing/target_id), rather than leaving them open. Requires --layout or --template
   -h, --help                          Print help
   -V, --version                       Print version
@@ -508,8 +508,8 @@ Every template file requires a `[template]` table with `description` and `catego
 `Sidebar`, `Floating`, `Multi-workspace/output`, `Retargeting`; not a closed set — a new shape can
 introduce a new category). `description` should be a complete, self-contained sentence.
 
-Applied to a plain list of commands, launched into the slots in the order they first appear in the
-template:
+Applied to a plain list of commands, launched into the slots in the order the template's slot steps
+appear:
 
 ```shell
 sway-launch --template template.toml --apps code,foot
@@ -550,7 +550,8 @@ action keys (`split`, `floating`, `height`, etc.) are the same
 ones `--layout` has; `slot` and `target_id` are its only two target-selection keys, and exactly one
 is required per step — a `slot` step resolves its window via a binding, a `target_id` step
 retargets an earlier `slot`'s resolved window (see `id`/`target_id` above; a template step's
-resolved `id` is always its slot name). `--template` requires exactly one of `--bindings`/`--apps`,
+resolved `id` is always its slot name). Each slot name may appear on only one step; a later step
+acts on the same window again with `target_id`. `--template` requires exactly one of `--bindings`/`--apps`,
 and conflicts with `--layout` and every per-window flag, same reasoning as `--layout`. See
 [`templates/quad-grid.toml`](templates/quad-grid.toml).
 

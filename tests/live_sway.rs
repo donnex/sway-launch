@@ -4107,7 +4107,7 @@ fn recorded_template_shape(name: &str) -> Option<String> {
 }
 
 /// Every built-in template's slot names, keyed by template name, as
-/// `--list-templates --json` reports them — the same first-appearance order
+/// `--list-templates --json` reports them — the same slot-step order
 /// `--apps` binds against, taken from the binary itself rather than worked
 /// out again here from the template text.
 fn builtin_slot_names() -> std::collections::HashMap<String, Vec<String>> {

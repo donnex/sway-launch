@@ -288,7 +288,7 @@ struct Args {
     bindings: Option<PathBuf>,
 
     /// Comma-separated list of commands to launch into --template's slots,
-    /// in the order they first appear in the template. Requires --template;
+    /// in the order the template's slot steps appear. Requires --template;
     /// conflicts with --bindings
     #[clap(long)]
     apps: Option<String>,
@@ -1116,14 +1116,14 @@ fn run_template(path: &Path, bindings_source: BindingsSource, args: &Args) -> ! 
 }
 
 /// Builds `Bindings` from `--apps`' comma-separated command list, mapping
-/// them 1:1 onto the template's distinct `slot` names in first-appearance
-/// order. Each binding launches its command unfiltered (no `app_id`/`class`
+/// them 1:1 onto the template's `slot` steps in the order they appear.
+/// Each binding launches its command unfiltered (no `app_id`/`class`
 /// match), the same as a plain `sway-launch <command>` with no `-a`/`-c`.
 fn bindings_from_apps(
     parsed_template: &template::Template,
     apps: &str,
 ) -> Result<template::Bindings, String> {
-    let slots = template::distinct_slot_names(parsed_template);
+    let slots = template::slot_names(parsed_template);
 
     let apps: Vec<&str> = apps.split(',').map(str::trim).collect();
     if apps.len() != slots.len() {

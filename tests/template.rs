@@ -438,11 +438,10 @@ fn template_apps_count_mismatch_names_the_missing_slots() {
 
 #[test]
 fn template_rejects_two_steps_sharing_a_slot_name() {
-    // Two steps sharing a slot are rejected by resolve() itself, with a
-    // template-shaped error naming the slot -- this used to be left for
-    // run_steps()'s generic "id already used by an earlier step" check to
-    // catch instead (an implementation detail, not the actual authoring
-    // mistake), so the error text this asserts on changed accordingly.
+    // Two steps sharing a slot are rejected as soon as the template is
+    // parsed, with a template-shaped error naming the slot, rather than
+    // left for run_steps()'s generic "id already used by an earlier step"
+    // check (an implementation detail, not the actual authoring mistake).
     let template = TempToml::write(
         "duplicate-slot-template",
         "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n\n[[step]]\nslot = \"editor\"\n",
@@ -467,6 +466,42 @@ fn template_rejects_two_steps_sharing_a_slot_name() {
     assert!(stderr.contains("slot"));
     assert!(stderr.contains("editor"));
     assert!(stderr.contains("more than once"));
+}
+
+#[test]
+fn template_rejects_two_steps_sharing_a_slot_name_before_counting_apps() {
+    // With --apps the slot count is checked before resolve() runs, so a
+    // repeated slot has to be caught earlier still -- otherwise the count
+    // check reports a misleading "needs 1 application(s)" for a template
+    // that's actually invalid.
+    let template = TempToml::write(
+        "duplicate-slot-apps-template",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n\n[[step]]\nslot = \"editor\"\n",
+    );
+
+    for apps in ["code", "code,foot"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+            .args([
+                "--template",
+                template.to_str().unwrap(),
+                "--apps",
+                apps,
+                "--validate",
+            ])
+            .output()
+            .expect("failed to run sway-launch binary");
+
+        assert!(!output.status.success());
+        let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+        assert!(
+            stderr.contains("editor") && stderr.contains("more than once"),
+            "--apps {apps}: {stderr}"
+        );
+        assert!(
+            !stderr.contains("application(s)"),
+            "--apps {apps}: {stderr}"
+        );
+    }
 }
 
 #[test]
