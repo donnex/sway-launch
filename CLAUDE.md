@@ -225,7 +225,8 @@ below) plus five integration test files:
   XWayland/X11 client (a real window's `WM_CLASS`) to match against, and no such client (e.g.
   `xterm`) has been available in this project's dev/CI environments so far — `--class` stays
   unit-test-only (`window_class_match`, `matches_window_event`'s class arm) until one is.
-  `--sticky` is covered by `sticky_sets_the_sticky_flag_even_on_a_tiled_window`/
+  `--sticky` is covered by `sticky_floating_window_follows_a_workspace_switch`/
+  `sticky_on_a_tiled_window_only_takes_effect_once_floated`/
   `sticky_confirms_via_poll_well_under_a_large_wait_time`.
   `--debug-events` (which runs until killed, unlike everything else here) is covered by
   `debug_events_prints_a_real_window_event` and `debug_events_prints_a_real_output_event`, each
@@ -777,12 +778,17 @@ stated goal (safer internals, less repeated parsing) to actually land.
     `node_is_floating()`'s doc comment) — confirmed live that `sticky` is a plain `bool` with no
     Sway-1.9/1.11 quirk found, and that `sticky enable` sets it directly and immediately,
     regardless of the container's floating state (it succeeds — and the field flips — even against
-    a still-*tiled* window, confirmed live by deliberately not floating it first; Sway's own docs
-    describe sticky as floating-only, but that wasn't observed as an enforced restriction here).
-    No known no-op case, same as `Split` — re-applying an already-set sticky state matches on the
-    very first poll. Confirmed live by `tests/live_sway.rs`'s
-    `sticky_sets_the_sticky_flag_even_on_a_tiled_window` and
-    `sticky_confirms_via_poll_well_under_a_large_wait_time`.
+    a still-*tiled* window). **The flag is not the effect, though:** Sway only carries a
+    *floating* sticky window across workspace switches, so on a tiled window the flag is merely
+    recorded and the window stays on its own workspace until it's floated. An earlier version of
+    the README read the flag test as "works regardless of floating state", which told users the
+    `--floating` pairing was optional when it isn't. The poll confirms what `sticky enable`
+    actually does (set the flag), so `"changed"` is still accurate for a tiled window — README.md
+    states the floating requirement instead. No known no-op case, same as `Split` — re-applying an
+    already-set sticky state matches on the very first poll. Confirmed live by
+    `tests/live_sway.rs`'s `sticky_floating_window_follows_a_workspace_switch` (the effect),
+    `sticky_on_a_tiled_window_only_takes_effect_once_floated` (flag set, window stays put, applies
+    once floated), and `sticky_confirms_via_poll_well_under_a_large_wait_time`.
   - **`NewColumn`/`NewRow`** — the one pair with no fixed target to check against (a successful move
     can land the window almost anywhere in the tree), so these are the only variants that also use
     `poll_baseline()`: `run_wait_time()` snapshots the container's own `rect` (via `node_by_id()`)
@@ -867,10 +873,10 @@ change shape, only *when* each `SwayAction` gets constructed. Each flag now cont
 `launch.rs`, `build_actions_includes_every_flag_in_the_documented_fixed_order` in particular,
 which pins the exact order above) — before the split, testing the order meant testing `run()`
 end-to-end against live Sway, since building and running were the same inseparable step. `Sticky`
-runs immediately after `Floating` — a conventional pairing (sticky is most useful on a small
-floating utility window), not a hard dependency: live testing confirmed `--sticky` alone, with no
-`--floating`, works identically (see `SwayAction::poll_matches()`'s `Sticky` arm above), so this
-ordering is about grouping related flags together, not about one requiring the other to run first.
+runs immediately after `Floating` — sticky only takes effect on a floating window, but the order
+between the two isn't load-bearing: Sway records the flag on a tiled window and applies it once
+the window is floated (see `SwayAction::poll_matches()`'s `Sticky` arm above), so this ordering is
+about grouping related flags together, not about one requiring the other to run first.
 `Scratchpad` runs last deliberately — it's the one action that hides the window away, so every
 other action (size, position, mark) gets a chance to apply to it first while it's still
 visible/tiled, and a `--mark` set earlier in the same invocation is still there to retarget the
