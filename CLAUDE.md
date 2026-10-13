@@ -2717,6 +2717,18 @@ had no release since September 2024 and still declares the now-deprecated `node2
 nothing newer to bump to; `actions-rust-lang/audit` is a composite action with no Node runtime of
 its own, so it sidesteps the issue rather than just deferring it).
 
+**`Cargo.toml` declares `rust-version`** (currently `1.85`, the floor the locked dependency set
+itself needs — `clap`, `clap_complete` and `toml` all declare it), so a too-old compiler reports
+the requirement against `sway-launch` rather than failing inside a dependency; README.md's
+"Installation" section states the same figure. This is a floor for *building* the crate, separate
+from the Rust conventions' "target the latest stable" rule, which is about the development
+toolchain. `check.yml`'s `msrv` job reads the value back out of `Cargo.toml` and runs `cargo build
+--locked` (binary only) on exactly that toolchain, so a dependency bump or a newer std API that
+raises the real floor fails CI instead of silently drifting past the declared one. It builds
+rather than tests on purpose: the integration tests use `std::io::pipe` (stable since 1.87), and
+the declared floor promises nothing about running them. Raise `rust-version` and README.md's
+figure together, in the change that needs it.
+
 Both workflows declare `GITHUB_TOKEN` permissions explicitly rather than inheriting the repository
 default, which on a repo created before GitHub changed that default (or with it set permissively)
 hands every job a read/write token it has no use for. `check.yml` declares `contents: read` at

@@ -71,6 +71,35 @@ jobs:
           cargo llvm-cov --locked --ignore-filename-regex '(^|/)(main|ipc|query|test_support|tests)\.rs$' \
             --fail-under-lines 68 --fail-under-regions 68 --fail-under-functions 77
 
+  # Builds the shipped binary with the toolchain Cargo.toml's rust-version
+  # declares, so that floor can't silently drift past what a dependency bump
+  # or a newly used std API actually needs. Builds only, deliberately: the
+  # test suites use std::io::pipe (stable since 1.87), and the declared floor
+  # is a promise about building sway-launch, not about running its tests.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Read rust-version from Cargo.toml
+        id: msrv
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)"
+          test -n "$version" || { echo "::error::no rust-version in Cargo.toml"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Build with the declared minimum Rust version
+        run: cargo +${{ steps.msrv.outputs.version }} build --locked
+
   lint-scripts-and-docs:
     runs-on: ubuntu-latest
     steps:

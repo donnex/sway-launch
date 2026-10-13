@@ -53,13 +53,16 @@ outside of one.
 
 ## Installation
 
-Build from source with Cargo:
+Build from source with Cargo. This needs Rust 1.85 or newer — distribution packages are often
+older (Ubuntu 24.04 ships 1.75, Debian 12 ships 1.63), so install a current toolchain via
+rustup if yours is behind:
 
 ```shell
-cargo build --release
+cargo build --release --locked
 ```
 
-The binary is written to `target/release/sway-launch` — put it somewhere on your `PATH`.
+The binary is written to `target/release/sway-launch` — put it somewhere on your `PATH`. Or build
+and install it to `~/.cargo/bin` in one step with `cargo install --path . --locked`.
 
 Prebuilt Linux x86_64 binaries for tagged releases are also available from the
 [Releases page](https://github.com/donnex/sway-launch/releases).

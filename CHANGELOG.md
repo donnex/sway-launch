@@ -85,6 +85,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `master-dual-stack-wide` built-in template — `master-dual-stack` with a wider stack (60%/40%
   instead of ~65%/35%), better suited to browser/documentation/chat-style pairing than the
   narrower IDE-oriented ratio.
+- A declared minimum Rust version for building from source: 1.85. An older compiler — common with
+  distribution-packaged Rust — now gets a clear message naming `sway-launch` and the version it
+  needs, instead of a dependency error about `clap`. The README's Installation section says so up
+  front, and shows `cargo install --path . --locked` for building and installing in one step. (#67)
 
 ### Changed
 
