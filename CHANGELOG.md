@@ -54,7 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--wait-time` and report the action as unconfirmed rather than hang or fail. An action whose
   target window has already closed fails straight away, naming the container. (#65)
 - `--app-id`/`--class` matching, so a call in a multi-window script matches the right window rather
-  than whichever one happened to appear first.
+  than whichever one happened to appear first. The value (like `--mark-match`'s) must match exactly,
+  case included — unlike Sway's own regex criteria, `-a firefox` doesn't match
+  `org.mozilla.firefox` — and the help text and README now say so. (#86)
 - `--con-id`/`--existing`, applying any of the actions above to an already-open window instead of
   launching a new one. `--existing` errors rather than guessing when its criteria match zero or
   more than one window, and with `--mark-match <MARK>` it can find a window by a mark set earlier

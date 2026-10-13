@@ -101,19 +101,20 @@ fn per_window_and(extras: &[&'static str]) -> Vec<&'static str> {
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    /// app_id match. With --existing, matches an already-open window instead
-    /// of the newly launched one
+    /// app_id match (exact and case-sensitive, not a regex). With --existing,
+    /// matches an already-open window instead of the newly launched one
     #[clap(short, long, conflicts_with_all = ["class", "con_id", "mark_match"],
         value_parser = sway_launch::validate_non_blank_argument)]
     app_id: Option<String>,
 
-    /// class match. With --existing, matches an already-open window instead
-    /// of the newly launched one
+    /// class match (exact and case-sensitive, not a regex). With --existing,
+    /// matches an already-open window instead of the newly launched one
     #[clap(short, long, conflicts_with_all = ["con_id", "mark_match"],
         value_parser = sway_launch::validate_non_blank_argument)]
     class: Option<String>,
 
-    /// Find the window to act on by this mark. Requires --existing
+    /// Find the window to act on by this mark (exact and case-sensitive).
+    /// Requires --existing
     #[clap(long, conflicts_with_all = ["class", "con_id"],
         value_parser = sway_launch::validate_sway_string_argument)]
     mark_match: Option<String>,
