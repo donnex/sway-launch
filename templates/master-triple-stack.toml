@@ -26,7 +26,6 @@ split = "h"
 
 [[step]]
 slot = "stack-top"
-new_column = true
 split = "v"
 width = "30ppt"
 

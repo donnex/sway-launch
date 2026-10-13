@@ -25,7 +25,6 @@ split = "h"
 
 [[step]]
 slot = "sidebar-top"
-new_column = true
 split = "v"
 width = "25ppt"
 

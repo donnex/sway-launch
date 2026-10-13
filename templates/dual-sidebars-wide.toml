@@ -27,11 +27,9 @@ split = "h"
 
 [[step]]
 slot = "main"
-new_column = true
 
 [[step]]
 slot = "sidebar-right"
-new_column = true
 
 [[step]]
 target_id = "main"

@@ -10,6 +10,10 @@
 # first-launched slot (main) can't be resized directly — sizing the second
 # slot instead reshapes both, since sway redistributes the space between
 # them.
+#
+# stack-top needs no new_column: sway places a newly launched window to the
+# right of the focused one, so on main's splith workspace it already lands
+# as the trailing column. A move right there would be a no-op.
 
 [template]
 description = "One large main window on the left, two smaller windows stacked in a column on the right."
@@ -21,7 +25,6 @@ split = "h"
 
 [[step]]
 slot = "stack-top"
-new_column = true
 split = "v"
 width = "35ppt"
 

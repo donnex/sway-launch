@@ -3870,6 +3870,21 @@ fn launch_template_and_render_shape(
     );
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|error| panic!("{template} printed invalid --json output: {error}"));
+    // A relative move that doesn't change the window's geometry is a dead
+    // step: it reports "unconfirmed" on one output, and leans on the
+    // trailing-edge guard ("skipped") on several. A shape snapshot can't
+    // catch one, since the tree is identical with or without it.
+    let dead_moves: Vec<_> = parsed["actions"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{template} --json output lacks actions: {parsed}"))
+        .iter()
+        .filter(|action| matches!(action["kind"].as_str(), Some("new_column" | "new_row")))
+        .filter(|action| action["status"] != "changed")
+        .collect();
+    assert!(
+        dead_moves.is_empty(),
+        "{template} has new_column/new_row steps that moved nothing: {dead_moves:?}"
+    );
     // Total step count (slot steps + target_id steps, e.g.
     // retarget-by-slot.toml's retarget step) is how many container ids
     // --apps reports — --apps only sizes the *slot* count.
