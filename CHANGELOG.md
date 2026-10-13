@@ -125,7 +125,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   real run reports, so a preview and a run can be compared directly.
 - `--validate`: parses and validates a `--layout`/`--template` file (formats, target-field
   consistency, `target_id` references, and for `--template`, `--bindings`/`--apps` resolution)
-  without launching anything or touching Sway IPC, and names the file it checked.
+  without launching anything or touching Sway IPC, and names the file it checked. An error names
+  the file that holds the mistake, and the step number for a mistake in a step
+  (`layout.toml: step 2: height: ...`): a bad binding is reported under the `--bindings` file (or
+  `--apps`), not under the template it was applied to — with a built-in template, that used to
+  read as a fault in the shipped template. A real run reports its errors the same way. (#106)
 - `--completions <SHELL>` for bash, zsh, fish, elvish and PowerShell.
 - `--verbose`, and `--debug-events`: a raw dump of every window, workspace, output and other event
   Sway sends, for diagnosing what the compositor actually does. (#47)

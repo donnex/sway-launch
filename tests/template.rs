@@ -274,8 +274,10 @@ fn template_validate_reports_a_step_error() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
-    assert!(stderr.contains("step 1"));
-    assert!(stderr.contains("height"));
+    assert!(
+        stderr.contains(&format!("{}: step 1: height", template.display())),
+        "a step error should name the template file and the step: {stderr:?}"
+    );
 }
 
 #[test]
@@ -434,6 +436,7 @@ fn template_apps_count_mismatch_names_the_missing_slots() {
     let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
     assert!(stderr.contains("editor"));
     assert!(stderr.contains("terminal"));
+    assert!(stderr.contains("--apps: "), "{stderr:?}");
 }
 
 #[test]
@@ -546,6 +549,74 @@ fn template_rejects_unused_binding() {
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
     assert!(stderr.contains("terminal"));
+    assert!(
+        stderr.contains(&format!(
+            "{}: binding(s) for unused slot(s)",
+            bindings.display()
+        )),
+        "a bindings mistake should name the bindings file: {stderr:?}"
+    );
+    assert!(
+        !stderr.contains(&template.display().to_string()),
+        "a bindings mistake should not be blamed on the template: {stderr:?}"
+    );
+}
+
+#[test]
+fn template_bindings_mistake_for_a_builtin_names_the_bindings_file_not_the_builtin() {
+    let bindings = TempToml::write("builtin-missing-binding-bindings", "");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            "quad-grid",
+            "--bindings",
+            bindings.to_str().unwrap(),
+            "--validate",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(
+        stderr.contains(&format!(
+            "{}: no binding for slot \"top-left\"",
+            bindings.display()
+        )),
+        "{stderr:?}"
+    );
+    assert!(!stderr.contains("quad-grid:"), "{stderr:?}");
+}
+
+#[test]
+fn template_step_without_slot_or_target_id_names_the_template_and_step() {
+    let template = TempToml::write(
+        "step-number-template",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n\
+         [[step]]\nslot = \"editor\"\n\n[[step]]\nfloating = true\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            template.to_str().unwrap(),
+            "--apps",
+            "foot",
+            "--validate",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(
+        stderr.contains(&format!(
+            "{}: step 2: template step must set exactly one of: slot, target_id",
+            template.display()
+        )),
+        "{stderr:?}"
+    );
 }
 
 #[test]

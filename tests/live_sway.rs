@@ -5869,7 +5869,8 @@ fn layout_launch_timeout_reports_its_step_and_rolls_back_earlier_steps() {
 
     let message = error["error"].as_str().expect("error should be a string");
     assert!(
-        message.starts_with("step 2: ") && message.contains("appeared within 2 sec"),
+        message.starts_with(&format!("{}: step 2: ", path.display()))
+            && message.contains("appeared within 2 sec"),
         "the error should name the step that timed out: {message}"
     );
     let rolled_back = error["rolled_back"]

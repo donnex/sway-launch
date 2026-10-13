@@ -1103,13 +1103,25 @@ fn run_template(path: &Path, bindings_source: BindingsSource, args: &Args) -> ! 
         }
         BindingsSource::Apps(apps) => match bindings_from_apps(&parsed_template, apps) {
             Ok(bindings) => bindings,
-            Err(error) => fail(args.json, &format!("{}: {}", path.display(), error)),
+            Err(error) => fail(args.json, &format!("--apps: {}", error)),
         },
     };
 
+    // A binding mistake is named after the file it's in (or --apps), not the
+    // template: with a built-in, the template's name would read as a fault
+    // in the shipped file rather than in the user's bindings.
     let resolved_steps = match template::resolve(&parsed_template, &bindings) {
         Ok(resolved_steps) => resolved_steps,
-        Err(error) => fail(args.json, &format!("{}: {}", path.display(), error)),
+        Err(error @ template::ResolveError::Bindings(_)) => {
+            let bindings_label = match bindings_source {
+                BindingsSource::File(bindings_path) => bindings_path.display().to_string(),
+                BindingsSource::Apps(_) => "--apps".to_string(),
+            };
+            fail(args.json, &format!("{}: {}", bindings_label, error))
+        }
+        Err(error @ template::ResolveError::Step { .. }) => {
+            fail(args.json, &format!("{}: {}", path.display(), error))
+        }
     };
 
     run_steps(&resolved_steps, args);
@@ -1141,10 +1153,7 @@ fn bindings_from_apps(
         .find(|(_, app)| app.is_empty())
         .map(|(slot, _)| slot)
     {
-        return Err(format!(
-            "--apps: empty application for slot {:?}",
-            empty_slot
-        ));
+        return Err(format!("empty application for slot {:?}", empty_slot));
     }
 
     let binding = slots
@@ -1354,7 +1363,7 @@ fn run_steps_validate(steps: &[layout::LayoutStep], args: &Args) -> ! {
 /// a real run (`run_steps()`) and the offline modes (`plan_steps_offline()`),
 /// so a rule added here applies to all three — `--validate` can't call a file
 /// valid that a real run would reject, which is the point of `--validate`.
-/// Returns the bare message; the caller adds the `step N:` prefix
+/// Returns the bare message; the caller adds the `<source>: step N:` prefix
 /// (`step_error()`), since a real run reports through `fail_step()` instead.
 fn plan_step<'a>(
     step: &'a layout::LayoutStep,
@@ -1379,7 +1388,7 @@ fn plan_step<'a>(
 /// later step's `target_id` to resolve against: each named step's own index
 /// stands in as a placeholder. It's never printed — `dry_run_step()` never
 /// names a container id — it only keeps a legitimate `target_id` reference
-/// from failing its lookup. Stops at the first error, already `step N:`
+/// from failing its lookup. Stops at the first error, already `<source>: step N:`
 /// prefixed.
 fn plan_steps_offline<'a>(
     steps: &'a [layout::LayoutStep],
@@ -1388,8 +1397,8 @@ fn plan_steps_offline<'a>(
     let mut resolved_ids = HashMap::new();
     let mut planned = Vec::with_capacity(steps.len());
     for (index, step) in steps.iter().enumerate() {
-        let sway_launch =
-            plan_step(step, args, &resolved_ids).map_err(|error| step_error(index, &error))?;
+        let sway_launch = plan_step(step, args, &resolved_ids)
+            .map_err(|error| step_error(args, index, &error))?;
         planned.push(sway_launch);
         if let Some(id) = step.id.as_deref() {
             resolved_ids.insert(id.to_string(), index as i64);
@@ -1398,10 +1407,13 @@ fn plan_steps_offline<'a>(
     Ok(planned)
 }
 
-/// Prefixes a step's error with its 1-based step number, the one format
-/// every step failure is reported in.
-fn step_error(index: usize, message: &str) -> String {
-    format!("step {}: {}", index + 1, message)
+/// Prefixes a step's error with the `--layout`/`--template` it came from and
+/// its 1-based step number (`<source>: step N: <message>`), the one format
+/// every step failure is reported in — the same `<file>: ` prefix file-read
+/// and parse errors carry, so a script applying several files in a row, or a
+/// keybinding's log, can tell which one failed.
+fn step_error(args: &Args, index: usize, message: &str) -> String {
+    format!("{}: step {}: {}", steps_source(args), index + 1, message)
 }
 
 /// The `--layout`/`--template` argument as the user gave it — exactly one is
@@ -1417,7 +1429,7 @@ fn steps_source(args: &Args) -> String {
         .to_string()
 }
 
-/// Reports a step failure (`step N: <message>`) — shared by every failure
+/// Reports a step failure (`<source>: step N: <message>`) — shared by every failure
 /// branch in `run_steps()`, since an id collision or a step-conversion error
 /// is caught *before* that step's own `SwayLaunch::run()` ever executes, but
 /// earlier steps may already have launched real windows needing the same
@@ -1475,7 +1487,7 @@ fn fail_step(
     fail_with_rollback(
         args.json,
         &sway_launch::RunError {
-            message: step_error(index, &error.message),
+            message: step_error(args, index, &error.message),
             container_id,
             ..error
         },
@@ -2057,7 +2069,9 @@ mod tests {
         );
         assert_eq!(
             plan_steps_offline(&steps, &offline_args()).err(),
-            Some("step 2: id \"main\" was already used by an earlier step".to_string())
+            Some(
+                "unused.toml: step 2: id \"main\" was already used by an earlier step".to_string()
+            )
         );
     }
 
@@ -2067,7 +2081,7 @@ mod tests {
         let error = plan_steps_offline(&steps, &offline_args())
             .err()
             .expect("an unknown target_id should fail");
-        assert!(error.starts_with("step 2: "), "{error}");
+        assert!(error.starts_with("unused.toml: step 2: "), "{error}");
     }
 
     #[test]
