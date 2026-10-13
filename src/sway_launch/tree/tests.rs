@@ -166,27 +166,59 @@ fn resolve_matches_errors_listing_ids_on_multiple_matches() {
     );
 }
 
-// find_containing_name / find_workspace_node / contains_id /
-// is_at_the_trailing_workspace_edge
+// descendants / ancestors_of
 
-#[test]
-fn find_containing_name_finds_the_nearest_ancestor_of_kind() {
-    let leaf = leaf_node_value(10, Some("foot"), None);
-    let workspace = workspace_node_tree(2, "main", vec![leaf], vec![]);
-    assert_eq!(
-        find_containing_name(&workspace, 10, NodeType::Workspace, None),
-        Some("main".to_string())
-    );
+fn ids<'a>(nodes: impl IntoIterator<Item = &'a Node>) -> Vec<i64> {
+    nodes.into_iter().map(|node| node.id).collect()
 }
 
 #[test]
-fn find_containing_name_returns_none_when_id_not_found() {
+fn descendants_visits_self_then_tiling_then_floating_depth_first() {
+    let inner = container_node_value(2, vec![leaf_node_value(10, Some("foot"), None)], vec![]);
+    let tree = node_tree(
+        1,
+        vec![inner, leaf_node_value(11, Some("foot"), None)],
+        vec![leaf_node_value(20, Some("foot"), None)],
+    );
+    assert_eq!(ids(descendants(&tree)), vec![1, 2, 10, 11, 20]);
+}
+
+#[test]
+fn ancestors_of_returns_the_root_to_target_path() {
+    let inner = container_node_value(2, vec![leaf_node_value(10, Some("foot"), None)], vec![]);
+    let tree = node_tree(1, vec![inner], vec![]);
+    let path = ancestors_of(&tree, 10).expect("the container is in the tree");
+    assert_eq!(ids(path), vec![1, 2, 10]);
+}
+
+#[test]
+fn ancestors_of_reaches_floating_children() {
+    let floating = container_node_value(3, vec![leaf_node_value(20, Some("foot"), None)], vec![]);
+    let tree = node_tree(
+        1,
+        vec![leaf_node_value(10, Some("foot"), None)],
+        vec![floating],
+    );
+    let path = ancestors_of(&tree, 20).expect("the container is in the tree");
+    assert_eq!(ids(path), vec![1, 3, 20]);
+}
+
+#[test]
+fn ancestors_of_the_root_is_just_the_root() {
     let tree = node_tree(1, vec![], vec![]);
     assert_eq!(
-        find_containing_name(&tree, 999, NodeType::Workspace, None),
-        None
+        ids(ancestors_of(&tree, 1).expect("the root is in the tree")),
+        vec![1]
     );
 }
+
+#[test]
+fn ancestors_of_is_none_when_id_not_found() {
+    let tree = node_tree(1, vec![leaf_node_value(10, Some("foot"), None)], vec![]);
+    assert!(ancestors_of(&tree, 999).is_none());
+}
+
+// find_workspace_node / is_at_the_trailing_workspace_edge
 
 #[test]
 fn find_workspace_node_locates_the_workspace_containing_the_id() {
@@ -201,20 +233,6 @@ fn find_workspace_node_returns_none_when_id_not_found() {
     let leaf = leaf_node_value(10, Some("foot"), None);
     let workspace = workspace_node_tree(2, "main", vec![leaf], vec![]);
     assert!(find_workspace_node(&workspace, 999).is_none());
-}
-
-#[test]
-fn contains_id_true_for_self_and_descendants() {
-    let leaf = leaf_node_value(10, Some("foot"), None);
-    let tree = node_tree(1, vec![leaf], vec![]);
-    assert!(contains_id(&tree, 1));
-    assert!(contains_id(&tree, 10));
-}
-
-#[test]
-fn contains_id_false_when_absent() {
-    let tree = node_tree(1, vec![], vec![]);
-    assert!(!contains_id(&tree, 42));
 }
 
 #[test]
@@ -362,10 +380,16 @@ fn node_is_floating_false_for_a_plain_tiled_node() {
     assert!(!node_is_floating(&node));
 }
 
-// tree_shows_container_in_scratchpad
+// ContainerState::from_tree's in_scratchpad
+
+fn in_scratchpad(tree: &Node, container_id: i64) -> bool {
+    ContainerState::from_tree(tree, container_id)
+        .expect("the container is in the tree")
+        .in_scratchpad
+}
 
 #[test]
-fn tree_shows_container_in_scratchpad_true_via_ancestor_workspace_name() {
+fn in_scratchpad_true_via_ancestor_workspace_name() {
     // Regression test for a CI failure against Sway 1.9 (still what
     // `apt` installs on Ubuntu 24.04/CI): scratchpad_state stays
     // Some(ScratchpadState::None) there even for a genuinely
@@ -374,11 +398,11 @@ fn tree_shows_container_in_scratchpad_true_via_ancestor_workspace_name() {
     // all on the leaf node.
     let leaf = leaf_node_value(10, Some("foot"), None);
     let tree = workspace_node_tree(2, "__i3_scratch", vec![leaf], vec![]);
-    assert!(tree_shows_container_in_scratchpad(&tree, 10));
+    assert!(in_scratchpad(&tree, 10));
 }
 
 #[test]
-fn tree_shows_container_in_scratchpad_false_for_a_shown_scratchpad_window() {
+fn in_scratchpad_false_for_a_shown_scratchpad_window() {
     // A scratchpad window brought onto an ordinary workspace via
     // `scratchpad show` keeps scratchpad_state "fresh"/"changed" on Sway
     // 1.11, but isn't hidden in the scratchpad — --scratchpad must still
@@ -388,17 +412,17 @@ fn tree_shows_container_in_scratchpad_false_for_a_shown_scratchpad_window() {
         leaf["scratchpad_state"] = serde_json::json!(state);
         let tree = workspace_node_tree(2, "1", vec![leaf], vec![]);
         assert!(
-            !tree_shows_container_in_scratchpad(&tree, 10),
+            !in_scratchpad(&tree, 10),
             "scratchpad_state {state:?} on an ordinary workspace"
         );
     }
 }
 
 #[test]
-fn tree_shows_container_in_scratchpad_false_for_an_ordinary_window() {
+fn in_scratchpad_false_for_an_ordinary_window() {
     let leaf = leaf_node_value(10, Some("foot"), None);
     let tree = workspace_node_tree(2, "1", vec![leaf], vec![]);
-    assert!(!tree_shows_container_in_scratchpad(&tree, 10));
+    assert!(!in_scratchpad(&tree, 10));
 }
 
 // ContainerState::from_tree

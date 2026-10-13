@@ -12,7 +12,7 @@
 
 use super::ipc::{ipc_error, new_connection};
 use super::tree::{
-    contains_id, expected_position, find_node, find_parent_layout, find_workspace_node,
+    expected_position, find_node, find_parent_layout, find_workspace_node,
     is_at_the_trailing_workspace_edge, matching_container_ids, node_position, present_ids,
     resolve_matches, ContainerState, MoveDirection,
 };
@@ -127,7 +127,7 @@ pub(super) fn container_exists(container_id: i64) -> Result<bool, String> {
         Ok(tree) => tree,
         Err(error) => return Err(ipc_error(error)),
     };
-    Ok(contains_id(&tree, container_id))
+    Ok(find_node(&tree, container_id).is_some())
 }
 
 /// Which of `container_ids` are still present in the current tree, in the
