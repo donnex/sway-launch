@@ -1460,8 +1460,17 @@ output, and it had already drifted silently once — giving `--debug-events` a m
 comment switched clap into its long-help layout, so `--help` stopped matching the block entirely
 while `-h` still matched it bar one line, caught only by diffing the two by hand during a docs
 review. Compared against `render_help()` (short form) rather than `render_long_help()` deliberately:
-the compact layout is what belongs in a README, since the long form runs to 126 lines. Deterministic
-because `clap`'s `wrap_help` feature isn't enabled, so rendering never consults a terminal width.
+the compact layout is what belongs in a README. Deterministic because `clap`'s `wrap_help` feature
+isn't enabled, so rendering never consults a terminal width.
+
+**`Args`' `///` comments are user-facing help, not maintainer notes.** clap renders every
+doc-comment paragraph into `--help`, so `--debug-events`'s and `--completions`' rationale for their
+conflict lists used to print verbatim there, naming `debug_events()` and "that list" to users. That
+rationale now sits in `//` comments above each field, and `main.rs`'s
+`long_help_carries_no_maintainer_notes` fails on any `--help` line containing a backtick or `()`,
+the two marks such a note tends to leave. With no field carrying a second paragraph today, `-h`
+and `--help` render identically; a field that needs one is fine, as long as it's written for a
+user.
 
 ### Built-in templates (`--template <name>`, `--list-templates`, `--show-template`)
 

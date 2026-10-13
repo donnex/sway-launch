@@ -76,8 +76,7 @@ struct Args {
         value_parser = sway_launch::validate_non_blank_argument)]
     class: Option<String>,
 
-    /// Mark match. With --existing, matches an already-open window carrying
-    /// this mark instead of the newly launched one
+    /// Find the window to act on by this mark. Requires --existing
     #[clap(long, conflicts_with_all = ["class", "con_id"],
         value_parser = sway_launch::validate_sway_string_argument)]
     mark_match: Option<String>,
@@ -92,23 +91,23 @@ struct Args {
     #[clap(long, conflicts_with_all = ["command", "con_id"])]
     existing: bool,
 
-    /// Change split for new window
+    /// Change split for the window
     #[clap(value_enum, short, long)]
     split: Option<sway_launch::Split>,
 
-    /// Make new window floating
+    /// Make the window floating
     #[clap(short, long)]
     floating: bool,
 
-    /// Make new window sticky (shows on all workspaces)
+    /// Make the window sticky (shows on all workspaces)
     #[clap(long)]
     sticky: bool,
 
-    /// Make new window fullscreen
+    /// Make the window fullscreen
     #[clap(long)]
     fullscreen: bool,
 
-    /// Focus new window
+    /// Focus the window
     #[clap(long)]
     focus: bool,
 
@@ -121,11 +120,11 @@ struct Args {
     #[clap(short, long)]
     new_column: bool,
 
-    /// Set height on new window
+    /// Set height on the window
     #[clap(long, value_parser = sway_launch::validate_size_argument)]
     height: Option<String>,
 
-    /// Set width on new window
+    /// Set width on the window
     #[clap(long, value_parser = sway_launch::validate_size_argument)]
     width: Option<String>,
 
@@ -133,15 +132,15 @@ struct Args {
     #[clap(long, short = 'r')]
     new_row: bool,
 
-    /// Move new window to workspace
+    /// Move the window to workspace
     #[clap(long, value_parser = sway_launch::validate_sway_string_argument)]
     workspace: Option<String>,
 
-    /// Move new window to output (monitor)
+    /// Move the window to output (monitor)
     #[clap(long, value_parser = sway_launch::validate_sway_string_argument)]
     output: Option<String>,
 
-    /// Set position on new window. Either "center" or "<x>,<y>" in pixels (x/y may be negative)
+    /// Set position on the window. Either "center" or "<x>,<y>" in pixels (x/y may be negative)
     #[clap(long, value_parser = sway_launch::validate_position_argument, allow_hyphen_values = true)]
     position: Option<String>,
 
@@ -161,7 +160,8 @@ struct Args {
     #[clap(long, conflicts_with = "debug_events")]
     validate: bool,
 
-    /// Timeout in seconds
+    /// Seconds to wait for the launched window, and for each event-confirmed
+    /// action, to be confirmed
     #[clap(short, long, default_value_t = 5, value_parser = sway_launch::validate_timeout_argument)]
     timeout: u64,
 
@@ -169,25 +169,27 @@ struct Args {
     #[clap(short, long, default_value_t = 20)]
     wait_time: u64,
 
-    /// Debug events. Output all Sway IPC events until stopped.
-    ///
-    /// A standalone mode like --completions/--list-templates: it never acts
-    /// on a window, so a command or per-window flag alongside it could only
-    /// be discarded. Rejected rather than ignored, same as those.
-    ///
-    /// --json is in that list too: debug_events() writes plain `Event: N`
-    /// lines regardless, so accepting the flag could only throw it away. That
-    /// is a choice rather than a constraint (Sway's events are JSON on the
-    /// wire), but until a JSON event dump exists, rejecting it is honest.
+    // A standalone mode like --completions/--list-templates: it never acts
+    // on a window, so a command or per-window flag alongside it could only
+    // be discarded. Rejected rather than ignored, same as those.
+    //
+    // --json is in that list too: debug_events() writes plain `Event: N`
+    // lines regardless, so accepting the flag could only throw it away. That
+    // is a choice rather than a constraint (Sway's events are JSON on the
+    // wire), but until a JSON event dump exists, rejecting it is honest.
+    //
+    // Kept as `//` rather than `///`: clap renders every doc-comment
+    // paragraph into `--help`, where these notes mean nothing to a user.
+    /// Print every Sway IPC event until interrupted. Can't be combined with a
+    /// command, per-window flags or --json
     #[clap(short, long, conflicts_with_all = per_window_and(&["json"]))]
     debug_events: bool,
 
+    // Conflicts with --json, unlike the other standalone modes: a completion
+    // script is shell source, so there is no JSON shape for it to take, and
+    // accepting the flag could only discard it. --list-templates and
+    // --show-template both do have one, which is why they don't conflict.
     /// Generate a shell completion script and print it to stdout
-    ///
-    /// Conflicts with --json, unlike the other standalone modes: a completion
-    /// script is shell source, so there is no JSON shape for it to take, and
-    /// accepting the flag could only discard it. --list-templates and
-    /// --show-template both do have one, which is why they don't conflict.
     #[clap(long, value_enum, conflicts_with_all = per_window_and(&[
         "debug_events", "layout", "template", "list_templates", "bindings", "apps",
         "rollback_on_error", "dry_run", "validate", "show_template", "json",
@@ -205,13 +207,12 @@ struct Args {
     /// Run a declarative TOML layout file instead of a single command; see
     /// README.md for the schema. Each step is the equivalent of one
     /// sway-launch invocation's flags, so this conflicts with every
-    /// per-window flag below, which would otherwise apply to no specific
-    /// step
+    /// per-window flag, which would otherwise apply to no specific step
     #[clap(long, conflicts_with_all = per_window_and(&["debug_events", "bindings", "apps"]))]
     layout: Option<PathBuf>,
 
     /// Run a reusable declarative TOML layout template instead of a single
-    /// command; see README.md for the schema. Steps declare a `slot` instead
+    /// command; see README.md for the schema. Steps declare a slot instead
     /// of an application, resolved via --bindings or --apps. Either a path
     /// to a template file ending in .toml, or a built-in template name with
     /// no extension (see --list-templates). Conflicts with --layout and
@@ -1650,8 +1651,8 @@ mod tests {
         //
         // Compared against render_help() (the short form, what `-h` prints)
         // rather than render_long_help(), because that's the compact layout
-        // the README carries deliberately -- the long form runs to 126 lines
-        // and would crowd out the rest of the file.
+        // the README carries deliberately -- a field's extra doc paragraphs
+        // would crowd out the rest of the file.
         //
         // Read via CARGO_MANIFEST_DIR rather than a relative path so this
         // doesn't depend on the test harness's working directory.
@@ -1668,6 +1669,21 @@ mod tests {
             "README.md's help block is out of sync with the CLI's own `-h` output. \
              Replace the block with:\n\n{rendered}\n"
         );
+    }
+
+    #[test]
+    fn long_help_carries_no_maintainer_notes() {
+        // clap renders every `///` paragraph on an `Args` field into
+        // `--help`, so a rationale note written for whoever edits `Args`
+        // (naming a function, or a backticked identifier) ends up in front
+        // of users. Such notes belong in `//` comments above the field.
+        let rendered = Args::command().render_long_help().to_string();
+        for line in rendered.lines() {
+            assert!(
+                !line.contains('`') && !line.contains("()"),
+                "--help line reads like a maintainer note; move it to a `//` comment:\n{line}"
+            );
+        }
     }
 
     #[test]

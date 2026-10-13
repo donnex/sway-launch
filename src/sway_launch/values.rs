@@ -152,7 +152,7 @@ pub fn validate_size_argument(value: &str) -> Result<String, String> {
     let re = Regex::new(r"^(\d+)(?:px|ppt)$").unwrap();
     match re.captures(value) {
         Some(captures) if captures[1].parse::<i32>().is_ok() => Ok(value.to_string()),
-        _ => Err("Must be in format <HEIGHT>px|ppt. E.g. 300px/20ppt. ppt = percent".to_string()),
+        _ => Err("Must be <N>px or <N>ppt, e.g. 300px or 20ppt (ppt = percent)".to_string()),
     }
 }
 

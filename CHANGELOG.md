@@ -201,6 +201,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `sway-launch --help` no longer prints notes meant for the program's maintainers under
+  `--debug-events` and `--completions`, and its option descriptions now match what the options do:
+  `--mark-match` says it requires `--existing`, the per-window actions say "the window" rather than
+  "new window" (they apply equally to a window picked with `--con-id`/`--existing`), and
+  `--timeout` says it applies to the launch and to each event-confirmed action rather than to the
+  whole run. A bad `--width` value no longer gets an error asking for `<HEIGHT>px|ppt`. (#37)
 - Running `sway-launch` where it can't reach Sway — outside a Sway session (cron, a systemd unit,
   ssh), or with `SWAYSOCK` pointing at the wrong place — now says so: the error names Sway IPC, the
   socket path and the variable it came from, or that neither `SWAYSOCK` nor `I3SOCK` is set. A plain

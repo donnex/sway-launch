@@ -85,43 +85,41 @@ Arguments:
 Options:
   -a, --app-id <APP_ID>               app_id match. With --existing, matches an already-open window instead of the newly launched one
   -c, --class <CLASS>                 class match. With --existing, matches an already-open window instead of the newly launched one
-      --mark-match <MARK_MATCH>       Mark match. With --existing, matches an already-open window carrying this mark instead of the newly launched one
+      --mark-match <MARK_MATCH>       Find the window to act on by this mark. Requires --existing
       --con-id <CON_ID>               Act on an already-open window with this container id, instead of launching a new one
       --existing                      Act on an already-open window found via --app-id/--class/--mark-match, instead of launching a new one
-  -s, --split <SPLIT>                 Change split for new window [possible values: v, h]
-  -f, --floating                      Make new window floating
-      --sticky                        Make new window sticky (shows on all workspaces)
-      --fullscreen                    Make new window fullscreen
-      --focus                         Focus new window
+  -s, --split <SPLIT>                 Change split for the window [possible values: v, h]
+  -f, --floating                      Make the window floating
+      --sticky                        Make the window sticky (shows on all workspaces)
+      --fullscreen                    Make the window fullscreen
+      --focus                         Focus the window
   -m, --mark <MARK>                   Mark the window, replacing its existing marks (a mark another window holds moves to this one)
   -n, --new-column                    Move window to new column (move right)
-      --height <HEIGHT>               Set height on new window
-      --width <WIDTH>                 Set width on new window
+      --height <HEIGHT>               Set height on the window
+      --width <WIDTH>                 Set width on the window
   -r, --new-row                       Move window to new row (move down)
-      --workspace <WORKSPACE>         Move new window to workspace
-      --output <OUTPUT>               Move new window to output (monitor)
-      --position <POSITION>           Set position on new window. Either "center" or "<x>,<y>" in pixels (x/y may be negative)
+      --workspace <WORKSPACE>         Move the window to workspace
+      --output <OUTPUT>               Move the window to output (monitor)
+      --position <POSITION>           Set position on the window. Either "center" or "<x>,<y>" in pixels (x/y may be negative)
       --scratchpad                    Move window to the scratchpad
       --dry-run                       Print the planned sequence of Sway commands instead of running them — works with a direct command or --layout/--template. Never touches Sway IPC or launches anything
       --validate                      Validate a --layout/--template file (and, for --template, --bindings/--apps resolution) without launching anything or touching Sway IPC. Requires --layout or --template
-  -t, --timeout <TIMEOUT>             Timeout in seconds [default: 5]
+  -t, --timeout <TIMEOUT>             Seconds to wait for the launched window, and for each event-confirmed action, to be confirmed [default: 5]
   -w, --wait-time <WAIT_TIME>         Wait time in ms. Used for actions that do not have a corresponding Sway IPC event [default: 20]
-  -d, --debug-events                  Debug events. Output all Sway IPC events until stopped
+  -d, --debug-events                  Print every Sway IPC event until interrupted. Can't be combined with a command, per-window flags or --json
       --completions <COMPLETIONS>     Generate a shell completion script and print it to stdout [possible values: bash, elvish, fish, powershell, zsh]
   -v, --verbose                       Verbose output
       --json                          Print the result as a JSON object instead of a bare container id
-      --layout <LAYOUT>               Run a declarative TOML layout file instead of a single command; see README.md for the schema. Each step is the equivalent of one sway-launch invocation's flags, so this conflicts with every per-window flag below, which would otherwise apply to no specific step
-      --template <TEMPLATE>           Run a reusable declarative TOML layout template instead of a single command; see README.md for the schema. Steps declare a `slot` instead of an application, resolved via --bindings or --apps. Either a path to a template file ending in .toml, or a built-in template name with no extension (see --list-templates). Conflicts with --layout and every per-window flag, same reasoning as --layout
+      --layout <LAYOUT>               Run a declarative TOML layout file instead of a single command; see README.md for the schema. Each step is the equivalent of one sway-launch invocation's flags, so this conflicts with every per-window flag, which would otherwise apply to no specific step
+      --template <TEMPLATE>           Run a reusable declarative TOML layout template instead of a single command; see README.md for the schema. Steps declare a slot instead of an application, resolved via --bindings or --apps. Either a path to a template file ending in .toml, or a built-in template name with no extension (see --list-templates). Conflicts with --layout and every per-window flag, same reasoning as --layout
       --list-templates                List built-in --template names and exit
       --show-template <NAME_OR_PATH>  Print a --template's raw TOML and exit, without running it. Same NAME_OR_PATH resolution as --template: a built-in name (see --list-templates), or a path ending in .toml. With --json, prints {"name": ..., "contents": "..."}
       --bindings <BINDINGS>           Bindings file supplying each --template slot's application identity. Requires --template; conflicts with --apps
       --apps <APPS>                   Comma-separated list of commands to launch into --template's slots, in the order they first appear in the template. Requires --template; conflicts with --bindings
       --rollback-on-error             If a --layout/--template step fails, kill every window this invocation itself launched, by an earlier step or by the failing step before it failed (not one it merely retargeted via con_id/existing/target_id), rather than leaving them open. Requires --layout or --template
-  -h, --help                          Print help (see more with '--help')
+  -h, --help                          Print help
   -V, --version                       Print version
 ```
-
-(`--help` prints the same options in a longer, one-paragraph-per-flag form.)
 
 ## Quickstart
 
@@ -1037,7 +1035,7 @@ valid: layout.toml (3 step(s))
 
 ```shell
 $ sway-launch --layout layout.toml --validate
-step 2: height: Must be in format <HEIGHT>px|ppt. E.g. 300px/20ppt. ppt = percent
+step 2: height: Must be <N>px or <N>ppt, e.g. 300px or 20ppt (ppt = percent)
 ```
 
 `--json` prints `{"source": "...", "steps": N, "valid": true}` on success — `source` echoes back the
