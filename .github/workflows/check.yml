@@ -53,10 +53,16 @@ jobs:
       - name: cargo test
         run: cargo test --locked
 
+      # Pinned, not left at install-action's default of "latest": the gate
+      # below is tuned to a few points under a measured baseline, and a
+      # release that counts regions or lines differently could move the
+      # numbers past that headroom on a commit that changed no code. Bump it
+      # deliberately, re-measuring the baseline in the same change, and keep
+      # the version in CLAUDE.md's Commands section in step.
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
         with:
-          tool: cargo-llvm-cov
+          tool: cargo-llvm-cov@0.9.1
 
       # Excluded by filename: main.rs (CLI wiring, covered by the tests/
       # integration suites), ipc.rs and query.rs (compositor-bound, covered by
@@ -106,8 +112,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Taken from whatever the runner image's apt ships rather than pinned,
+      # so the versions are printed instead: a new finding that appears on a
+      # commit that touched no script can then be traced to a tool upgrade
+      # from the log alone.
       - name: Install shellcheck and shfmt
-        run: sudo apt-get update && sudo apt-get install -y shellcheck shfmt
+        run: |
+          set -euo pipefail
+          sudo apt-get update && sudo apt-get install -y shellcheck shfmt
+          shellcheck --version
+          echo "shfmt $(shfmt --version)"
 
       # Discovered by shebang rather than listed by name, so a shell script
       # added under scripts/ or examples/scripts/ is linted automatically
@@ -135,8 +149,11 @@ jobs:
       - name: shfmt
         run: shfmt -i 2 -d ${{ steps.shell-scripts.outputs.files }}
 
+      # Pinned because rules are added and tightened between releases, which
+      # would otherwise turn this job red without any Markdown changing. Keep
+      # the version in CLAUDE.md's Commands section in step.
       - name: Install markdownlint
-        run: npm install -g markdownlint-cli
+        run: npm install -g markdownlint-cli@0.49.1
 
       - name: markdownlint
         run: markdownlint '**/*.md'
