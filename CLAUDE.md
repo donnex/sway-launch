@@ -1088,7 +1088,14 @@ plain output, after the per-failure warnings `rollback()` already emitted): "clo
 close and couldn't" are different facts, and collapsing them loses information either way — a
 failed kill usually means the window had already closed on its own, but this run can't confirm
 that, so reporting it as still-open progress would assert something untrue while dropping it would
-hide a window the caller may still need to deal with. `fail_step()` therefore filters *every*
+hide a window the caller may still need to deal with. A *successful* kill isn't taken as a close
+either: Sway's `kill` only sends the client a close request and replies once it's sent, and a
+client is free to ignore it (an unsaved-changes prompt), so `rollback()` waits up to
+`ROLLBACK_CLOSE_GRACE` (1s, polling `sway_launch::containers_still_present()`) for each accepted id
+to leave the tree, and a window still present when that runs out goes under `rollback_failed`, not
+`rolled_back` — classified by the pure `classify_rollback()`, unit-tested in `main.rs`. No live
+test pins the still-open branch, since no client available to this project's dev/CI environments
+ignores a close request (`foot` closes on the first poll). `fail_step()` therefore filters *every*
 attempted id out of `PartialProgress`, not just the successful ones, leaving the three lists
 non-overlapping: `container_ids` open, `rolled_back` closed, `rollback_failed` unknown. Only
 reachable with a real compositor (a step must have genuinely launched a window for it to be
@@ -1374,8 +1381,10 @@ ownership to report and returns just its `ActionOutcome`. On any failure — an 
 step's own `.run()` failing — `fail_step()` calls `rollback()` first (if the flag is set), which
 best-effort `[con_id] kill`s every tracked id, most-recently-launched first, via the new
 `sway_launch::kill_container()` (a thin `pub` wrapper around the existing private
-`run_sway_command()`, added specifically so `main.rs` can reach it — every other Sway-IPC-touching
-function in the `sway_launch` module stays crate-internal, reachable only from within it). A kill
+`run_sway_command()`, added specifically so `main.rs` can reach it — the only other
+Sway-IPC-touching function `main.rs` can reach is `query.rs`'s `containers_still_present()`, which
+`rollback()` uses to confirm the kills actually closed their windows; everything else in the
+`sway_launch` module stays crate-internal, reachable only from within it). A kill
 that
 itself fails (e.g. the window already closed on its own) is logged and skipped rather than treated
 as fatal — it doesn't stop the rest of the rollback, and the original step failure stays the error

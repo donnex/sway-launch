@@ -2358,12 +2358,15 @@ fn rollback_on_error_kills_earlier_launched_windows_when_a_later_step_fails() {
         "expected a non-empty rolled_back list reported in the JSON error: {stderr:?}"
     );
 
-    std::thread::sleep(Duration::from_millis(300));
+    // No settle sleep: a kill is only a close request, so rollback waits for
+    // each window to leave the tree before listing it under rolled_back. A
+    // window reported rolled back must therefore already be gone the moment
+    // the process exits.
     let tree = connection.get_tree().expect("get_tree should succeed");
     assert_eq!(
         count_app_id_windows(&tree, "foot"),
         0,
-        "the first step's window should have been killed by --rollback-on-error"
+        "a window listed under rolled_back should already be gone: {stderr:?}"
     );
 }
 
