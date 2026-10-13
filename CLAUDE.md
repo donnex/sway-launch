@@ -1620,7 +1620,15 @@ convention (see "Example layout scripts" below), so requiring external files to 
 nothing while making the two paths mutually exclusive by construction — confirmed by
 `tests/template.rs`'s `template_toml_suffixed_name_is_never_treated_as_a_builtin` (a `.toml`-suffixed
 value that happens to share a real built-in's name still fails as a file read, not a lookup) and
-`template_unknown_builtin_name_errors_clearly`.
+`template_unknown_builtin_name_errors_clearly`. The split decides resolution only, not wording:
+when a `.toml` read fails with `NotFound` and the value is a bare filename (no directory
+component) whose stem is a built-in, `builtin_name_hint()` appends `; there is a built-in template
+"<name>", use <flag> <name>` to the OS error — writing a built-in's name with the extension its
+repo file carries is an easy mistake, and the bare error didn't say the name itself was right.
+`resolve_template_contents()` takes the originating flag (`--template`/`--show-template`) only to
+word that hint. Covered by `main.rs`'s `builtin_name_hint_*` unit tests and `tests/template.rs`'s
+`template_missing_builtin_name_with_toml_suffix_hints_at_the_bare_name`/
+`show_template_missing_builtin_name_with_toml_suffix_hints_at_the_bare_name`.
 
 `builtin()` rejects a name containing `/` or `\` outright rather than looking it up. `include_dir`'s
 `get_file()` searches nested directories, while `builtin_templates()` (`--list-templates`, via
