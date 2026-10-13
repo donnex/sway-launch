@@ -2696,11 +2696,11 @@ Both workflows declare `GITHUB_TOKEN` permissions explicitly rather than inherit
 default, which on a repo created before GitHub changed that default (or with it set permissively)
 hands every job a read/write token it has no use for. `check.yml` declares `contents: read` at
 workflow level, with only its `audit` job re-declaring its own (`issues: write`, which the audit
-action needs to file advisories). `release.yml` has no workflow-level block; instead every job
-declares its own, `contents: read` on `check` and `build` and `contents: write` on the `publish`
-job alone, so neither of the others can write. Any new job needing more than read access should
-declare it on the job, not widen a workflow-level grant — and a new `release.yml` job must declare
-its permissions itself, since there is no workflow-level default there to fall back on.
+action needs to file advisories). `release.yml` does the same: `contents: read` at workflow level,
+with only the `publish` job re-declaring `contents: write`, so neither `check` nor `build` can
+write (both also restate `contents: read` on the job, which is redundant but harmless). Any new
+job needing more than read access should declare it on the job, not widen the workflow-level
+grant; a new job that declares nothing starts read-only in both files.
 
 Every third-party action in both workflows is pinned to a full commit SHA with its tag in a
 trailing comment (`uses: actions/checkout@<sha> # v7.0.1`), never a movable tag or branch, so a
