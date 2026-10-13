@@ -158,12 +158,12 @@ struct Args {
     new_column: bool,
 
     /// Set height on the window
-    #[clap(long, value_parser = sway_launch::validate_size_argument)]
-    height: Option<String>,
+    #[clap(long, value_parser = sway_launch::parse_size)]
+    height: Option<sway_launch::Size>,
 
     /// Set width on the window
-    #[clap(long, value_parser = sway_launch::validate_size_argument)]
-    width: Option<String>,
+    #[clap(long, value_parser = sway_launch::parse_size)]
+    width: Option<sway_launch::Size>,
 
     /// Move window to new row (move down)
     #[clap(long, short = 'r')]
@@ -178,8 +178,8 @@ struct Args {
     output: Option<String>,
 
     /// Set position on the window. Either "center" or "<x>,<y>" in pixels (x/y may be negative)
-    #[clap(long, value_parser = sway_launch::validate_position_argument, allow_hyphen_values = true)]
-    position: Option<String>,
+    #[clap(long, value_parser = sway_launch::parse_position, allow_hyphen_values = true)]
+    position: Option<sway_launch::Position>,
 
     /// Move window to the scratchpad
     #[clap(long)]
@@ -424,9 +424,9 @@ fn main() {
         new_row: args.new_row,
         workspace: args.workspace.as_deref(),
         output: args.output.as_deref(),
-        height: args.height.as_deref().map(sway_launch::parse_size),
-        width: args.width.as_deref().map(sway_launch::parse_size),
-        position: args.position.as_deref().map(sway_launch::parse_position),
+        height: args.height,
+        width: args.width,
+        position: args.position,
         scratchpad: args.scratchpad,
         timeout: time::Duration::from_secs(args.timeout),
         wait_time: time::Duration::from_millis(args.wait_time),
@@ -1853,7 +1853,7 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(args.workspace, Some("2".to_string()));
-        assert_eq!(args.position, Some("center".to_string()));
+        assert_eq!(args.position, Some(sway_launch::Position::Center));
     }
 
     #[test]
@@ -2097,8 +2097,8 @@ mod tests {
             "foot",
         ])
         .unwrap();
-        assert_eq!(args.height, Some("80ppt".to_string()));
-        assert_eq!(args.width, Some("1200px".to_string()));
+        assert_eq!(args.height, Some(sway_launch::Size::Percent(80)));
+        assert_eq!(args.width, Some(sway_launch::Size::Pixels(1200)));
     }
 
     #[test]

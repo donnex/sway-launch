@@ -204,18 +204,24 @@ impl LayoutStep {
             sway_launch::validate_timeout_seconds(timeout)
                 .map_err(|error| format!("timeout: {}", error))?;
         }
-        if let Some(height) = self.height.as_deref() {
-            sway_launch::validate_size_argument(height)
-                .map_err(|error| format!("height: {}", error))?;
-        }
-        if let Some(width) = self.width.as_deref() {
-            sway_launch::validate_size_argument(width)
-                .map_err(|error| format!("width: {}", error))?;
-        }
-        if let Some(position) = self.position.as_deref() {
-            sway_launch::validate_position_argument(position)
-                .map_err(|error| format!("position: {}", error))?;
-        }
+        let height = self
+            .height
+            .as_deref()
+            .map(sway_launch::parse_size)
+            .transpose()
+            .map_err(|error| format!("height: {}", error))?;
+        let width = self
+            .width
+            .as_deref()
+            .map(sway_launch::parse_size)
+            .transpose()
+            .map_err(|error| format!("width: {}", error))?;
+        let position = self
+            .position
+            .as_deref()
+            .map(sway_launch::parse_position)
+            .transpose()
+            .map_err(|error| format!("position: {}", error))?;
 
         Ok(sway_launch::SwayLaunch {
             target,
@@ -232,9 +238,9 @@ impl LayoutStep {
             new_row: self.new_row,
             workspace: self.workspace.as_deref(),
             output: self.output.as_deref(),
-            height: self.height.as_deref().map(sway_launch::parse_size),
-            width: self.width.as_deref().map(sway_launch::parse_size),
-            position: self.position.as_deref().map(sway_launch::parse_position),
+            height,
+            width,
+            position,
             scratchpad: self.scratchpad,
             timeout: self
                 .timeout

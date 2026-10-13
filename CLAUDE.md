@@ -50,12 +50,11 @@ below) plus five integration test files:
   `sway_launch::SwayLaunch` (direct CLI mode) or dispatches to `run_layout()`/`layout.rs`
   (`--layout` mode) or `run_template()`/`template.rs` (`--template` mode) — both funnel into the
   shared `run_steps()` (see "`--template`" below). Argument validation itself (e.g.
-  `--height`/`--width` must match `\d+(px|ppt)`) lives in `sway_launch/values.rs` as
-  `pub fn validate_size_argument`/`validate_position_argument`/
-  `validate_sway_string_argument`, referenced from `main.rs`'s
-  `#[clap(value_parser = ...)]` attributes, so both the CLI parser and `layout.rs`'s TOML steps
-  validate the same way without duplicating the regexes. `validate_sway_string_argument` is the
-  third of these, covering `--mark`/`--mark-match`/`--workspace`/`--output` — every value
+  `--height`/`--width` must be `<N>px`/`<N>ppt`) lives in `sway_launch/values.rs` as
+  `pub fn parse_size`/`parse_position`/`validate_sway_string_argument`, referenced from
+  `main.rs`'s `#[clap(value_parser = ...)]` attributes, so both the CLI parser and `layout.rs`'s
+  TOML steps validate the same way without duplicating the format. `validate_sway_string_argument`
+  is the third of these, covering `--mark`/`--mark-match`/`--workspace`/`--output` — every value
   interpolated into a Sway command as a quoted string: it rejects a blank value, and both
   characters `quote_sway_string()` escapes (`"` and `\`), since Sway was confirmed live to store
   the escape character literally rather than unescaping it, silently corrupting the value instead
@@ -94,7 +93,7 @@ below) plus five integration test files:
 
   | Module | Holds |
   | --- | --- |
-  | `values.rs` | `Split`/`Size`/`Position`, the `validate_*` functions and their `parse_*` pairs |
+  | `values.rs` | `Split`/`Size`/`Position`, `parse_size`/`parse_position`, and the `validate_*` functions |
   | `ipc.rs` | connections, socket discovery, command dispatch, the event subscription, `kill_container` |
   | `tree.rs` | every pure `&Node` predicate — matching, geometry, `ContainerState::from_tree` |
   | `query.rs` | fetch-a-tree-then-delegate wrappers, and nothing else |
@@ -363,16 +362,17 @@ review suggested this (typed values instead of repeatedly re-parsing/re-validati
 CLI/TOML-facing surface didn't change at all (`--height 300px`, `position = "100,200"`, etc. still
 parse identically) — only the internal representation, from the moment a `SwayLaunch` is
 constructed (`main.rs`'s `Args`, `layout.rs`'s `LayoutStep::to_sway_launch()`) onward.
-`validate_size_argument`/`validate_position_argument` still do the actual CLI/TOML-facing
-validation (unchanged contract: `Result<String, String>`, still what `main.rs`'s `#[clap(value_parser
-= ...)]` and `layout.rs`'s manual `to_sway_launch()` checks call) — `parse_size()`/`parse_position()`
-are new, separate, **infallible** functions that convert an already-validated string into the typed
-form, `.expect()`-ing that the digits parse as `i32` cleanly. That `.expect()` is only sound
-because both validators were tightened in the same change to also reject a value that matches the
-`\d+` shape but overflows (e.g. an absurd 11-digit pixel count) — without that, a
-value passing validation but failing to parse would panic instead of erroring cleanly, the exact
-failure mode this project treats as a bug elsewhere (see the Content/security-review discipline
-generally).
+`parse_size()`/`parse_position()` (`fn(&str) -> Result<Size|Position, String>`) validate and
+convert in one step: `main.rs`'s `#[clap(value_parser = ...)]` hands clap the parser directly, so
+`Args.height`/`width` are `Option<Size>` and `position` is `Option<Position>`, and
+`layout.rs`'s `to_sway_launch()` calls the same parser once per field, prefixing the error with the
+field name. This replaced an earlier pair per format — a regex-based `validate_*` returning the
+original `Result<String, String>`, then an infallible `parse_*` that re-split the string and
+`.expect()`ed it to work — which defined each format twice and left every caller to remember to
+validate before parsing, or panic (#63). The digits are checked by hand (ASCII only, a leading `-`
+only for a coordinate, since `str::parse::<i32>()` alone would also accept `+5`), and the `i32`
+parse itself is the overflow check, so the bound lives in exactly one place and the `regex`
+dependency went away with it.
 
 `Size`'s bound was `u32` at first, and that was the wrong invariant to promise: `swayipc::Rect` is
 `i32`, so `poll_matches()` had to cast (`*pixels as i32`), and a value in `i32::MAX+1..=u32::MAX`
@@ -380,16 +380,16 @@ validated, reached Sway as a real `resize set` command, and *then* wrapped negat
 the front door, unrepresentable by the time anything tried to confirm it. An external review caught
 the mismatch. Fixed by moving `Size` itself to `i32` (which deletes the cast rather than relocating
 the mismatch) and bounding the validator to match; negative values can't arrive regardless, since
-the `\d+` regex rejects the sign. The lesson generalizes: a validator's bound has to be the
+`parse_size()` rejects the sign. The lesson generalizes: a validator's bound has to be the
 narrowest domain anything downstream uses, not the widest one the parser happens to accept — pinned
-by `validate_size_argument_accepts_the_largest_representable_pixel_value`/
-`validate_size_argument_rejects_one_past_the_largest_representable_value`.
+by `parse_size_accepts_the_largest_representable_pixel_value`/
+`parse_size_rejects_one_past_the_largest_representable_value`.
 
 The validator also enforces a lower bound for both units (`0px`/`0ppt` rejected) and an upper
 bound of 100 for `ppt`: confirmed live that Sway leaves a `0px` height unchanged, doesn't produce
 a zero width from `0ppt`, and clamps a percentage over 100, each exiting 0 with an `unconfirmed`
 status — so a typo was a silent no-op rather than an error, including under `--validate`. Pinned
-by `validate_size_argument_rejects_zero_for_both_units`/`validate_size_argument_rejects_ppt_above_100`.
+by `parse_size_rejects_zero_for_both_units`/`parse_size_rejects_ppt_above_100`.
 
 `sway_command()` becomes each variant's serialization point (`Size`/`Position` both
 implement `Display`, rendering the identical `<n>px`/`<n>ppt`/`center`/`<x>,<y>` text the CLI/TOML
@@ -1276,8 +1276,8 @@ command/`--con-id`/`--existing` validation, since a layout file satisfies that r
 own). `main.rs`'s `run_layout()` reads the file, parses it via `layout::parse()`
 (`toml::from_str::<layout::Layout>`), then hands `parsed_layout.step` to `run_steps()` (shared with
 `--template`, see below), which converts each `[[step]]` in order to a `sway_launch::SwayLaunch` via
-`LayoutStep::to_sway_launch()` (reusing `sway_launch::validate_size_argument`/
-`validate_position_argument` — the same validators the CLI's `--height`/`--width`/`--position`
+`LayoutStep::to_sway_launch()` (reusing `sway_launch::parse_size`/
+`parse_position` — the same parsers the CLI's `--height`/`--width`/`--position`
 flags use — plus the same `command`/`con_id`/`existing` one-of-four-required rule `main.rs`
 enforces for the direct-CLI case, `target_id` being the fourth, layout-only option) and calls
 `.run()` on it, stopping at the first error. Prints one container id per line as each step
