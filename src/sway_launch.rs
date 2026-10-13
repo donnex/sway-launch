@@ -34,7 +34,6 @@ mod test_support;
 mod tree;
 mod values;
 
-pub use action::SwayAction;
 pub use ipc::{kill_container, KillError};
 pub use launch::{debug_events, SwayLaunch, Target};
 pub use outcome::{ActionRecord, ActionStatus, LaunchOwnership, RunError, UnmatchedWindow};

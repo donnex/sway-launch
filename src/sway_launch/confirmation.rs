@@ -137,9 +137,9 @@ impl ActionKind<'_> {
             // Sway's own move-direction semantics can instead escalate and
             // relocate the whole workspace to the next output in that
             // direction. `SwayLaunch::run()` guards against this (see
-            // `relocates_to_another_output()`) by skipping NewColumn/
-            // NewRow rather than silently moving the window to a
-            // different monitor when that's the situation.
+            // `tree::move_skip_reason()`) by skipping NewColumn/NewRow
+            // rather than silently moving the window to a different
+            // monitor when that's the situation.
             // No WindowChange variant exists for sticky at all — confirmed
             // live by subscribing to window events while toggling
             // `sticky enable`/`sticky disable` on a live container: zero

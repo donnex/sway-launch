@@ -941,3 +941,93 @@ fn is_at_the_trailing_workspace_edge_false_when_id_not_found() {
         MoveDirection::Right
     ));
 }
+
+// move_skip_reason
+
+fn workspace_with_a_floating_window(container_id: i64) -> Node {
+    let mut floating = leaf_node_value(container_id, Some("foot"), None);
+    floating["type"] = serde_json::json!("floating_con");
+    let mut value = container_node_value(2, vec![leaf_node_value(9, None, None)], vec![floating]);
+    value["type"] = serde_json::json!("workspace");
+    value["name"] = serde_json::json!("main");
+    value["layout"] = serde_json::json!("splith");
+    serde_json::from_value(value).expect("valid Node test fixture")
+}
+
+/// `[A, W]` laid out `splith`, so W (10) is a leading sibling the tree walk
+/// alone would let through — the fullscreen reason has to come from W itself.
+fn leading_window_with_fullscreen_mode(fullscreen_mode: u8) -> Node {
+    let mut window = leaf_node_value(10, Some("foot"), None);
+    window["fullscreen_mode"] = serde_json::json!(fullscreen_mode);
+    workspace_node_tree_with_layout(
+        2,
+        "main",
+        "splith",
+        vec![window, leaf_node_value(11, None, None)],
+    )
+}
+
+#[test]
+fn move_skip_reason_flags_a_floating_window_even_with_a_single_output() {
+    let workspace = workspace_with_a_floating_window(10);
+    for multiple_outputs in [false, true] {
+        for direction in [MoveDirection::Right, MoveDirection::Down] {
+            assert_eq!(
+                move_skip_reason(&workspace, 10, direction, multiple_outputs),
+                Some("floating")
+            );
+        }
+    }
+}
+
+#[test]
+fn move_skip_reason_flags_a_fullscreen_window_with_more_than_one_output() {
+    for fullscreen_mode in [1, 2] {
+        let workspace = leading_window_with_fullscreen_mode(fullscreen_mode);
+        assert_eq!(
+            move_skip_reason(&workspace, 10, MoveDirection::Right, true),
+            Some("fullscreen")
+        );
+    }
+}
+
+#[test]
+fn move_skip_reason_lets_a_fullscreen_window_through_with_a_single_output() {
+    let workspace = leading_window_with_fullscreen_mode(1);
+    assert_eq!(
+        move_skip_reason(&workspace, 10, MoveDirection::Right, false),
+        None
+    );
+}
+
+#[test]
+fn move_skip_reason_lets_a_leading_window_that_is_not_fullscreen_through() {
+    let workspace = leading_window_with_fullscreen_mode(0);
+    assert_eq!(
+        move_skip_reason(&workspace, 10, MoveDirection::Right, true),
+        None
+    );
+}
+
+#[test]
+fn move_skip_reason_flags_the_trailing_edge_only_with_more_than_one_output() {
+    let workspace =
+        workspace_node_tree_with_layout(2, "main", "splith", vec![leaf_node_value(10, None, None)]);
+    assert_eq!(
+        move_skip_reason(&workspace, 10, MoveDirection::Right, true),
+        Some("trailing_workspace_edge")
+    );
+    assert_eq!(
+        move_skip_reason(&workspace, 10, MoveDirection::Right, false),
+        None
+    );
+}
+
+#[test]
+fn move_skip_reason_is_none_when_the_container_is_not_in_the_tree() {
+    let workspace = workspace_with_a_floating_window(10);
+    assert_eq!(
+        move_skip_reason(&workspace, 999, MoveDirection::Right, true),
+        None
+    );
+}

@@ -13,10 +13,9 @@
 use super::action::{ActionKind, ExecAction, SwayAction};
 use super::ipc::event_loop;
 use super::outcome::{
-    ActionOutcome, ActionRecord, ActionStatus, LaunchOwnership, PlannedAction, RunError,
-    RunOutcome, SkippedAction,
+    ActionOutcome, ActionRecord, ActionStatus, LaunchOwnership, RunError, RunOutcome,
 };
-use super::query::{find_existing_container_id, relocates_to_another_output};
+use super::query::{current_move_skip_reason, find_existing_container_id};
 use super::tree::MoveDirection;
 use super::values::{Position, Size, Split};
 use std::io::Write;
@@ -136,85 +135,18 @@ impl<'a> SwayLaunch<'a> {
     /// Builds the sequence of `SwayAction`s `run()` would apply against
     /// `container_id`, in the same fixed order `run()` always used, without
     /// running any of them — the "plan" half of the plan-then-execute split
-    /// `run()` itself is now just the "execute" half of. Exists as its own
-    /// method (rather than inlined into `run()`) so `--dry-run` can print
-    /// the plan instead of running it.
+    /// `run()` itself is the "execute" half of. Exists as its own method
+    /// (rather than inlined into `run()`) so `--dry-run` can print the plan
+    /// instead of running it.
     ///
-    /// `check_relocation` controls whether `NewColumn`/`NewRow` actually
-    /// call `relocates_to_another_output()` (a live `get_outputs()`/
-    /// `get_tree()` read) to decide whether to skip them — `run()` passes
-    /// `true`, needing the real answer since it's about to run the action
-    /// for real. `--dry-run` (via `build_actions_for_preview()`) passes
-    /// `false`: previewing a plan has no real `container_id` to check
-    /// against yet (nothing has launched), so the check can't give a
-    /// meaningful answer anyway, and skipping it entirely is what makes
-    /// previewing fully IPC-free — `NewColumn`/`NewRow` are always included
-    /// in a preview when the flag is set, same as every other action.
-    ///
-    /// Each entry the guard above skips is interleaved in-place as
-    /// `PlannedAction::Skip`, alongside why — `--verbose` already logged
-    /// this via `diagnostic!` before this existed; this is what lets `run()`
-    /// also surface it in `RunOutcome`/`--json`, in its correct position in
-    /// the fixed order, instead of a skip being visible only in a
-    /// `--verbose` log line. Never appears when `check_relocation` is
-    /// `false` (a preview has nothing to actually check).
-    fn build_actions(
-        &self,
-        container_id: i64,
-        check_relocation: bool,
-    ) -> Result<Vec<PlannedAction<'a>>, String> {
-        let planned = |kind| {
-            PlannedAction::Run(SwayAction::new(
-                container_id,
-                kind,
-                self.verbose,
-                self.timeout,
-                self.wait_time,
-            ))
-        };
-        let mut actions = Vec::new();
-
-        if self.new_column {
-            if check_relocation && relocates_to_another_output(container_id, MoveDirection::Right)?
-            {
-                if self.verbose {
-                    diagnostic!(
-                        "Skipping new-column: container id {} is at the trailing edge of \
-                         its workspace along that axis, and more than one output exists — \
-                         \"move right\" would relocate it to a different output instead of \
-                         moving it within the workspace",
-                        container_id
-                    );
-                }
-                actions.push(PlannedAction::Skip(SkippedAction {
-                    kind: ActionKind::NewColumn.flag_name(),
-                    reason: "trailing_workspace_edge",
-                }));
-            } else {
-                actions.push(planned(ActionKind::NewColumn));
-            }
-        }
-        if self.new_row {
-            if check_relocation && relocates_to_another_output(container_id, MoveDirection::Down)? {
-                if self.verbose {
-                    diagnostic!(
-                        "Skipping new-row: container id {} is at the trailing edge of \
-                         its workspace along that axis, and more than one output exists — \
-                         \"move down\" would relocate it to a different output instead of \
-                         moving it within the workspace",
-                        container_id
-                    );
-                }
-                actions.push(PlannedAction::Skip(SkippedAction {
-                    kind: ActionKind::NewRow.flag_name(),
-                    reason: "trailing_workspace_edge",
-                }));
-            } else {
-                actions.push(planned(ActionKind::NewRow));
-            }
-        }
-
+    /// Pure: the multi-output/floating guard for `NewColumn`/`NewRow` is not
+    /// consulted here but by `execute_plan()`, immediately before each move
+    /// is sent. Deciding it while planning meant judging `--new-row` against
+    /// a tree its own `--new-column` was about to change.
+    fn build_actions(&self, container_id: i64) -> Vec<SwayAction<'a>> {
         let requested = [
+            self.new_column.then_some(ActionKind::NewColumn),
+            self.new_row.then_some(ActionKind::NewRow),
             self.workspace.map(ActionKind::Workspace),
             self.output.map(ActionKind::Output),
             self.split.map(ActionKind::Split),
@@ -228,31 +160,85 @@ impl<'a> SwayLaunch<'a> {
             self.mark.map(ActionKind::Mark),
             self.scratchpad.then_some(ActionKind::Scratchpad),
         ];
-        actions.extend(requested.into_iter().flatten().map(planned));
-
-        Ok(actions)
+        requested
+            .into_iter()
+            .flatten()
+            .map(|kind| {
+                SwayAction::new(
+                    container_id,
+                    kind,
+                    self.verbose,
+                    self.timeout,
+                    self.wait_time,
+                )
+            })
+            .collect()
     }
 
     /// The `--dry-run` entry point: every `SwayAction` this `SwayLaunch`
     /// would apply, in order, without a real `container_id` (nothing has
-    /// launched) and without touching Sway IPC at all — see
-    /// `build_actions()`'s doc comment for why `check_relocation: false`
-    /// is what makes that possible. Infallible (`build_actions()` only
-    /// ever errors via the relocation check this skips), so callers don't
-    /// need to handle a `--dry-run` preview failing the way a real `run()`
-    /// can. `check_relocation: false` never produces a `PlannedAction::Skip`
-    /// entry, so filtering down to just the `Run` half loses nothing here.
+    /// launched) and without touching Sway IPC at all. A preview always
+    /// lists `NewColumn`/`NewRow` when the flag is set: whether a real run
+    /// skips one depends on the tree at the moment it would be sent.
     pub fn build_actions_for_preview(&self) -> Vec<SwayAction<'a>> {
-        self.build_actions(0, false)
-            .expect(
-                "check_relocation: false means build_actions() makes no IPC call, so it can't fail",
-            )
-            .into_iter()
-            .filter_map(|planned| match planned {
-                PlannedAction::Run(action) => Some(action),
-                PlannedAction::Skip(_) => None,
-            })
-            .collect()
+        self.build_actions(0)
+    }
+
+    /// Runs `plan` in order, stopping at the first failure, and records what
+    /// happened to each action. Before a `NewColumn`/`NewRow` is sent,
+    /// `move_skip_reason` is asked whether that move is safe *now* — after
+    /// every earlier action in the plan has run — and a `Some(reason)` skips
+    /// it with that reason instead (see `tree::move_skip_reason()`).
+    ///
+    /// Both the guard and the action runner are parameters only so the order
+    /// of checks and runs can be pinned headlessly; `run()` passes the real
+    /// `current_move_skip_reason()` and `SwayAction::run()`.
+    fn execute_plan(
+        &self,
+        plan: Vec<SwayAction<'a>>,
+        mut move_skip_reason: impl FnMut(MoveDirection) -> Result<Option<&'static str>, String>,
+        mut run_action: impl FnMut(&SwayAction<'a>) -> Result<ActionOutcome, RunError>,
+    ) -> Result<Vec<ActionRecord>, RunError> {
+        let mut records = Vec::new();
+        for action in plan {
+            let kind = action.kind_name();
+            let direction = match action.kind {
+                ActionKind::NewColumn => Some(MoveDirection::Right),
+                ActionKind::NewRow => Some(MoveDirection::Down),
+                _ => None,
+            };
+            if let Some(direction) = direction {
+                if let Some(reason) = move_skip_reason(direction)? {
+                    if self.verbose {
+                        diagnostic!(
+                            "Skipping {}: container id {} {}",
+                            kind,
+                            action.container_id,
+                            skip_explanation(reason, direction)
+                        );
+                    }
+                    records.push(ActionRecord {
+                        kind,
+                        command: None,
+                        status: ActionStatus::Skipped { reason },
+                    });
+                    continue;
+                }
+            }
+
+            let command = action.sway_command_verb();
+            let outcome = run_action(&action)?;
+            records.push(ActionRecord {
+                kind,
+                command: Some(command),
+                status: match outcome {
+                    ActionOutcome::Changed => ActionStatus::Changed,
+                    ActionOutcome::AlreadySatisfied => ActionStatus::AlreadySatisfied,
+                    ActionOutcome::Unconfirmed => ActionStatus::Unconfirmed,
+                },
+            });
+        }
+        Ok(records)
     }
 
     pub fn run(&self) -> Result<RunOutcome, RunError> {
@@ -270,42 +256,45 @@ impl<'a> SwayLaunch<'a> {
             ..error
         };
 
-        let mut actions = Vec::new();
-        for planned in self
-            .build_actions(container_id, true)
-            .map_err(|error| resolved(error.into()))?
-        {
-            let record = match planned {
-                PlannedAction::Run(action) => {
-                    let kind = action.kind_name();
-                    let command = action.sway_command_verb();
-                    let outcome = action.run().map_err(resolved)?;
-                    ActionRecord {
-                        kind,
-                        command: Some(command),
-                        status: match outcome {
-                            ActionOutcome::Changed => ActionStatus::Changed,
-                            ActionOutcome::AlreadySatisfied => ActionStatus::AlreadySatisfied,
-                            ActionOutcome::Unconfirmed => ActionStatus::Unconfirmed,
-                        },
-                    }
-                }
-                PlannedAction::Skip(skipped) => ActionRecord {
-                    kind: skipped.kind,
-                    command: None,
-                    status: ActionStatus::Skipped {
-                        reason: skipped.reason,
-                    },
-                },
-            };
-            actions.push(record);
-        }
+        let actions = self
+            .execute_plan(
+                self.build_actions(container_id),
+                |direction| current_move_skip_reason(container_id, direction),
+                SwayAction::run,
+            )
+            .map_err(resolved)?;
 
         Ok(RunOutcome {
             container_id,
             actions,
             launch_ownership,
         })
+    }
+}
+
+/// The `--verbose` prose for one of `tree::move_skip_reason()`'s reasons,
+/// completing "container id N ...".
+fn skip_explanation(reason: &str, direction: MoveDirection) -> String {
+    let command = match direction {
+        MoveDirection::Right => "move right",
+        MoveDirection::Down => "move down",
+    };
+    match reason {
+        "floating" => format!(
+            "is floating — \"{}\" would only nudge it 10 px, not give it a new column or row",
+            command
+        ),
+        "fullscreen" => format!(
+            "is fullscreen and more than one output exists — \"{}\" would send it to a \
+             different output",
+            command
+        ),
+        _ => format!(
+            "is at the trailing edge of its workspace along that axis, and more than one output \
+             exists — \"{}\" would relocate it to a different output instead of moving it \
+             within the workspace",
+            command
+        ),
     }
 }
 

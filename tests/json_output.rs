@@ -190,10 +190,10 @@ fn a_failing_action_names_itself_in_the_error() {
 
 #[test]
 fn new_column_and_new_row_report_the_relocation_checks_error() {
-    // build_actions() consults relocates_to_another_output() before including
-    // NewColumn/NewRow, which needs a live get_outputs()/get_tree() call even
-    // to build the plan. When that read fails, the error has to surface rather
-    // than the guard being silently skipped and the action silently included.
+    // run() consults current_move_skip_reason() right before sending
+    // NewColumn/NewRow, which needs a live get_outputs()/get_tree() call.
+    // When that read fails, the error has to surface rather than the guard
+    // being silently skipped and the move silently sent.
     //
     // This replaces two unit tests that asserted the same propagation by
     // assuming the machine running them had no reachable Sway socket at all —
@@ -297,12 +297,11 @@ fn zero_timeout_is_rejected_before_touching_the_socket() {
 
 #[test]
 fn dry_run_never_touches_the_socket_even_for_new_column_and_new_row() {
-    // --dry-run's whole point: NewColumn/NewRow normally need a live
-    // get_outputs()/get_tree() call (relocates_to_another_output()) even
-    // just to decide whether to include them, but --dry-run skips that
-    // check entirely -- confirmed here by combining --con-id (which alone
-    // never touches the socket) with --new-column/--new-row, which
-    // definitely would without --dry-run's check_relocation: false.
+    // --dry-run's whole point: a real run asks the compositor
+    // (current_move_skip_reason()) before sending each NewColumn/NewRow, but
+    // --dry-run never runs anything, so it never asks -- confirmed here by
+    // combining --con-id (which alone never touches the socket) with
+    // --new-column/--new-row, which definitely would without --dry-run.
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
         .args(["--con-id", "42", "--new-column", "--new-row", "--dry-run"])
         .output()

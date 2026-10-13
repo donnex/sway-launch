@@ -31,10 +31,26 @@ fn minimal_sway_launch() -> SwayLaunch<'static> {
 #[test]
 fn build_actions_is_empty_when_no_flags_are_set() {
     let sway_launch = minimal_sway_launch();
-    let actions = sway_launch
-        .build_actions(42, true)
-        .expect("no flags set means no IPC call at all, so this can't fail");
-    assert!(actions.is_empty());
+    assert!(sway_launch.build_actions(42).is_empty());
+}
+
+fn kind_label(action: &SwayAction) -> &'static str {
+    match action.kind {
+        ActionKind::NewColumn => "new_column",
+        ActionKind::NewRow => "new_row",
+        ActionKind::Workspace(_) => "workspace",
+        ActionKind::Output(_) => "output",
+        ActionKind::Split(_) => "split",
+        ActionKind::Floating => "floating",
+        ActionKind::Sticky => "sticky",
+        ActionKind::Fullscreen => "fullscreen",
+        ActionKind::Focus => "focus",
+        ActionKind::Height(_) => "height",
+        ActionKind::Width(_) => "width",
+        ActionKind::Position(_) => "position",
+        ActionKind::Mark(_) => "mark",
+        ActionKind::Scratchpad => "scratchpad",
+    }
 }
 
 #[test]
@@ -42,9 +58,9 @@ fn build_actions_includes_every_flag_in_the_documented_fixed_order() {
     // Pins build_actions()'s full plan order against CLAUDE.md's
     // Architecture section: NewColumn -> NewRow -> Workspace -> Output ->
     // Split -> Floating -> Sticky -> Fullscreen -> Focus -> Height ->
-    // Width -> Position -> Mark -> Scratchpad. check_relocation: false is
-    // what lets new_column/new_row join in headlessly; the relocation
-    // guard itself is covered by tests/live_sway.rs.
+    // Width -> Position -> Mark -> Scratchpad. Planning never consults the
+    // NewColumn/NewRow guard (execute_plan() does, per move), so both are
+    // always planned.
     let mut sway_launch = minimal_sway_launch();
     sway_launch.new_column = true;
     sway_launch.new_row = true;
@@ -61,40 +77,9 @@ fn build_actions_includes_every_flag_in_the_documented_fixed_order() {
     sway_launch.mark = Some("pinned");
     sway_launch.scratchpad = true;
 
-    let actions = sway_launch
-        .build_actions(42, false)
-        .expect("check_relocation: false makes no IPC call, so this can't fail");
+    let actions = sway_launch.build_actions(42);
 
-    let kinds: Vec<&str> = actions
-        .iter()
-        .map(|planned| match planned {
-            PlannedAction::Run(action) if matches!(action.kind, ActionKind::NewColumn) => {
-                "new_column"
-            }
-            PlannedAction::Run(action) if matches!(action.kind, ActionKind::NewRow) => "new_row",
-            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Workspace(_)) => {
-                "workspace"
-            }
-            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Output(_)) => "output",
-            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Split(_)) => "split",
-            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Floating) => "floating",
-            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Sticky) => "sticky",
-            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Fullscreen) => {
-                "fullscreen"
-            }
-            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Focus) => "focus",
-            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Height(_)) => "height",
-            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Width(_)) => "width",
-            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Position(_)) => {
-                "position"
-            }
-            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Mark(_)) => "mark",
-            PlannedAction::Run(action) if matches!(action.kind, ActionKind::Scratchpad) => {
-                "scratchpad"
-            }
-            other => panic!("unexpected planned action: {:?}", other),
-        })
-        .collect();
+    let kinds: Vec<&str> = actions.iter().map(kind_label).collect();
     assert_eq!(
         kinds,
         vec![
@@ -114,11 +99,8 @@ fn build_actions_includes_every_flag_in_the_documented_fixed_order() {
             "scratchpad",
         ]
     );
-    for planned in &actions {
-        match planned {
-            PlannedAction::Run(action) => assert_eq!(action.container_id, 42),
-            PlannedAction::Skip(skipped) => panic!("unexpected skip: {:?}", skipped),
-        }
+    for action in &actions {
+        assert_eq!(action.container_id, 42);
     }
 }
 
@@ -131,14 +113,9 @@ fn build_actions_gives_event_confirmed_actions_the_timeout_and_the_rest_the_wait
     sway_launch.height = Some(Size::Pixels(300));
     sway_launch.new_column = true;
 
-    let actions = sway_launch
-        .build_actions(42, false)
-        .expect("check_relocation: false makes no IPC call, so this can't fail");
+    let actions = sway_launch.build_actions(42);
 
-    for planned in &actions {
-        let PlannedAction::Run(action) = planned else {
-            panic!("unexpected skip: {:?}", planned);
-        };
+    for action in &actions {
         let expected = if action.kind.is_event_confirmed() {
             sway_launch.timeout
         } else {
@@ -153,45 +130,137 @@ fn build_actions_gives_event_confirmed_actions_the_timeout_and_the_rest_the_wait
 #[test]
 fn build_actions_omits_mark_when_unset() {
     let sway_launch = minimal_sway_launch();
-    let actions = sway_launch
-        .build_actions(42, true)
-        .expect("no flags set means no IPC call at all, so this can't fail");
-    assert!(!actions
-            .iter()
-            .any(|planned| matches!(planned, PlannedAction::Run(action) if matches!(action.kind, ActionKind::Mark(_)))));
+    assert!(!sway_launch
+        .build_actions(42)
+        .iter()
+        .any(|action| matches!(action.kind, ActionKind::Mark(_))));
 }
 
-// build_actions()'s error propagation when relocates_to_another_output()
-// can't read the tree is covered by tests/json_output.rs's
-// new_column_and_new_row_report_the_relocation_checks_error, not here: it
-// needs no reachable Sway socket, which a unit test can't arrange safely
-// (std::env::set_var is process-global, and this harness is multi-threaded),
-// while an integration test can set it per-invocation on the child process.
-//
-// The guard's actual behavior (skip vs. include) needs a live compositor
-// either way: see tests/live_sway.rs's new_column_does_not_relocate_*.
+// SwayLaunch::execute_plan
 
 #[test]
-fn build_actions_with_check_relocation_false_never_touches_ipc() {
-    // The whole point of check_relocation: false — confirms
-    // new_column/new_row are always included (never skipped, and
-    // never erroring) with no reachable Sway socket, whereas
-    // check_relocation: true would read the tree (see the note above).
+fn execute_plan_judges_new_row_only_after_new_column_has_run() {
+    // The guard used to run while planning, so --new-row was judged against
+    // a tree --new-column was about to change. Recording every guard call
+    // and every run in one log pins that each move is checked right before
+    // it's sent, after everything ahead of it in the plan has run.
     let mut sway_launch = minimal_sway_launch();
     sway_launch.new_column = true;
     sway_launch.new_row = true;
-    let actions = sway_launch
-        .build_actions(42, false)
-        .expect("check_relocation: false makes no IPC call, so this can't fail");
-    assert!(actions
-            .iter()
-            .any(|planned| matches!(planned, PlannedAction::Run(action) if matches!(action.kind, ActionKind::NewColumn))));
-    assert!(actions
-            .iter()
-            .any(|planned| matches!(planned, PlannedAction::Run(action) if matches!(action.kind, ActionKind::NewRow))));
-    assert!(!actions
-        .iter()
-        .any(|planned| matches!(planned, PlannedAction::Skip(_))));
+    sway_launch.floating = true;
+    let log = std::cell::RefCell::new(Vec::new());
+
+    let records = sway_launch
+        .execute_plan(
+            sway_launch.build_actions(42),
+            |direction| {
+                log.borrow_mut().push(match direction {
+                    MoveDirection::Right => "check right",
+                    MoveDirection::Down => "check down",
+                });
+                Ok(match direction {
+                    MoveDirection::Right => None,
+                    MoveDirection::Down => Some("trailing_workspace_edge"),
+                })
+            },
+            |action| {
+                log.borrow_mut().push(kind_label(action));
+                Ok(ActionOutcome::Changed)
+            },
+        )
+        .expect("neither closure fails");
+
+    assert_eq!(
+        log.into_inner(),
+        vec!["check right", "new_column", "check down", "floating"]
+    );
+    assert_eq!(
+        records,
+        vec![
+            ActionRecord {
+                kind: "new_column",
+                command: Some("move right".to_string()),
+                status: ActionStatus::Changed,
+            },
+            ActionRecord {
+                kind: "new_row",
+                command: None,
+                status: ActionStatus::Skipped {
+                    reason: "trailing_workspace_edge",
+                },
+            },
+            ActionRecord {
+                kind: "floating",
+                command: Some("floating enable".to_string()),
+                status: ActionStatus::Changed,
+            },
+        ]
+    );
+}
+
+#[test]
+fn execute_plan_maps_each_action_outcome_to_its_status() {
+    let mut sway_launch = minimal_sway_launch();
+    sway_launch.floating = true;
+    sway_launch.focus = true;
+    sway_launch.height = Some(Size::Percent(50));
+    let records = sway_launch
+        .execute_plan(
+            sway_launch.build_actions(42),
+            |_| panic!("no move in the plan, so the guard is never asked"),
+            |action| {
+                Ok(match action.kind {
+                    ActionKind::Floating => ActionOutcome::Changed,
+                    ActionKind::Focus => ActionOutcome::AlreadySatisfied,
+                    _ => ActionOutcome::Unconfirmed,
+                })
+            },
+        )
+        .expect("neither closure fails");
+    let statuses: Vec<ActionStatus> = records.iter().map(|record| record.status).collect();
+    assert_eq!(
+        statuses,
+        vec![
+            ActionStatus::Changed,
+            ActionStatus::AlreadySatisfied,
+            ActionStatus::Unconfirmed,
+        ]
+    );
+}
+
+#[test]
+fn execute_plan_stops_at_a_failed_guard_check_without_sending_the_move() {
+    let mut sway_launch = minimal_sway_launch();
+    sway_launch.new_column = true;
+    sway_launch.floating = true;
+    let error = sway_launch
+        .execute_plan(
+            sway_launch.build_actions(42),
+            |_| Err("cannot reach Sway IPC".to_string()),
+            |action| panic!("nothing should run, but {:?} did", action.kind),
+        )
+        .expect_err("an unanswerable guard check stops the run");
+    assert_eq!(error.message, "cannot reach Sway IPC");
+}
+
+#[test]
+fn execute_plan_stops_at_the_first_failed_action() {
+    let mut sway_launch = minimal_sway_launch();
+    sway_launch.floating = true;
+    sway_launch.focus = true;
+    let ran = std::cell::RefCell::new(Vec::new());
+    let error = sway_launch
+        .execute_plan(
+            sway_launch.build_actions(42),
+            |_| Ok(None),
+            |action| {
+                ran.borrow_mut().push(kind_label(action));
+                Err(RunError::from("floating failed".to_string()))
+            },
+        )
+        .expect_err("the first action fails");
+    assert_eq!(error.message, "floating failed");
+    assert_eq!(ran.into_inner(), vec!["floating"]);
 }
 
 // SwayLaunch::build_actions_for_preview
@@ -201,9 +270,8 @@ fn build_actions_for_preview_never_touches_ipc_even_with_new_column_set() {
     let mut sway_launch = minimal_sway_launch();
     sway_launch.new_column = true;
     sway_launch.floating = true;
-    // Would panic (build_actions_for_preview()'s own .expect()) if this
-    // somehow tried an IPC call in this headless test environment —
-    // passing at all is the assertion.
+    // build_actions() is pure, so a preview lists the move even though a
+    // real run might skip it.
     let actions = sway_launch.build_actions_for_preview();
     assert_eq!(actions.len(), 2);
 }
