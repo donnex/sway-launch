@@ -172,9 +172,9 @@ fn preferred_socket_path(
 ///
 /// `subscribe()` is a request/response exchange like any other, run on the
 /// calling thread, so a compositor that accepts a connection and then stops
-/// answering used to block it forever: every launch subscribes before making
+/// answering would block it forever: every launch subscribes before making
 /// any other IPC call, so `sway-launch --timeout 2 foot` against such a socket
-/// never returned (`--timeout` only starts counting once the subscription
+/// would never return (`--timeout` only starts counting once the subscription
 /// exists). The handshake therefore runs with the same socket timeout
 /// `new_connection()` uses.
 ///

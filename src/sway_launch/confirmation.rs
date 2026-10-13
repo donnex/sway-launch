@@ -368,9 +368,9 @@ impl SwayAction<'_> {
     ///
     /// Reads through the caller's `connection` rather than opening its own:
     /// `run_poll_then_fallback()` calls this up to 20 times inside a 200ms
-    /// grace period, and each variant used to open one or two fresh Sway IPC
-    /// connections per iteration (`Position` two, for `get_tree()` plus
-    /// `get_outputs()`) — ~40 connects and handshakes for a single action.
+    /// grace period, so opening one or two fresh Sway IPC connections per
+    /// iteration (`Position` needs `get_tree()` plus `get_outputs()`) would
+    /// cost ~40 connects and handshakes for a single action.
     ///
     /// Errors reading the tree (transient IPC hiccup, container gone) fold
     /// into "not confirmed yet" rather than propagating: this only ever
@@ -415,10 +415,9 @@ impl SwayAction<'_> {
             // the documented "already at the edge" no-op still incidentally
             // restructures the tree around *other* siblings (Sway wraps
             // one in a new split container) even though the target window's
-            // own `rect` never changes, which made an earlier
-            // parent/sibling-list comparison here false-positive on
-            // exactly the no-op case this whole mechanism exists to fall
-            // back gracefully on.
+            // own `rect` never changes, so a parent/sibling-list comparison
+            // would false-positive on exactly the no-op case this whole
+            // mechanism exists to fall back gracefully on.
             ActionKind::NewColumn | ActionKind::NewRow => baseline.is_some_and(|baseline| {
                 node_by_id(connection, container_id).is_some_and(|node| node.rect != baseline)
             }),
@@ -433,8 +432,8 @@ impl SwayAction<'_> {
     /// own fields, with no prior snapshot needed. Returns `None` if the
     /// tree can't be read, which `poll_matches()` treats as "no matcher
     /// applies" for these two variants — without a baseline there's nothing
-    /// to compare against, so falling back to the original unconditional
-    /// sleep is the only sound choice.
+    /// to compare against, so falling back to the unconditional sleep is
+    /// the only sound choice.
     fn poll_baseline(&self, connection: &mut Connection) -> Option<swayipc::Rect> {
         match self.kind {
             ActionKind::NewColumn | ActionKind::NewRow => {
@@ -449,12 +448,11 @@ impl SwayAction<'_> {
     /// soon as it does (the fast path). Several wait-time actions have
     /// legitimate no-op outcomes where confirmation never arrives (a solo
     /// window's clamped resize, a move already at the workspace edge) —
-    /// telling that apart from
-    /// "hasn't happened yet" is impossible from tree state alone, so once
-    /// the grace period elapses this falls back to today's original
-    /// behavior: assume success and sleep out the rest of `wait_time`,
-    /// mirroring `run_wait_matching_exec_event()`'s
-    /// `PID_MARKER_FALLBACK_GRACE` fallback.
+    /// telling that apart from "hasn't happened yet" is impossible from tree
+    /// state alone, so once the grace period elapses this falls back to
+    /// assuming success and sleeping out the rest of `wait_time`, mirroring
+    /// `run_wait_matching_exec_event()`'s `PID_MARKER_FALLBACK_GRACE`
+    /// fallback.
     /// Returns whether the change was actually observed —
     /// `false` means the grace period elapsed and this fell back to sleeping,
     /// which the caller reports as `ActionStatus::Unconfirmed` rather than
@@ -470,13 +468,10 @@ impl SwayAction<'_> {
         // CLI's own 20ms default, polling for the full 200ms before
         // falling back would make the fallback path (a legitimate, common
         // case — a solo-window resize clamp, a tiled NewColumn/NewRow
-        // already at the edge) take ~220ms total instead of the ~40ms it
-        // cost before this feature existed, a regression this constant's
-        // own original design was supposed to rule out. Confirmed live
-        // this fix restores that bound: with the cap, the fallback path
-        // costs `wait_time` (pre-sleep) + at most `wait_time` (grace, now
-        // capped, plus whatever's left of the sleep) — back to roughly
-        // `2 * wait_time`, same worst case as before polling existed.
+        // already at the edge) take ~220ms total instead of ~40ms. With the
+        // cap, the fallback path costs `wait_time` (pre-sleep) + at most
+        // `wait_time` (grace plus whatever's left of the sleep) — roughly
+        // `2 * wait_time`, confirmed live.
         let grace = self.poll_grace().min(wait_time);
         let poll_started = time::Instant::now();
         loop {
@@ -526,16 +521,14 @@ impl SwayAction<'_> {
         // This one is a fast fail: --wait-time is the caller's own knob and is
         // deliberately unbounded, so sleeping it out in full only to report
         // that the target had already closed before the wait even began is
-        // pure delay in front of a foregone answer. A step with
-        // `wait_time = 3600000` against a window that's already gone used to
-        // sit there for an hour before saying so.
+        // pure delay in front of a foregone answer (`wait_time = 3600000`
+        // would otherwise sit for an hour before saying so).
         //
         // It doesn't replace the post-sleep check below, which covers the
         // different case of a window closing *during* the wait, and is the one
         // guaranteeing the container still exists at the moment the command is
-        // actually sent. Two get_tree() calls per wait-time action, then,
-        // where there used to be one — a handful per invocation, none of them
-        // in a loop.
+        // actually sent. The extra get_tree() runs a handful of times per
+        // invocation, never in a loop.
         if !container_exists(container_id)? {
             return Err(format!(
                 "container id {} no longer exists — window may have closed",
@@ -569,7 +562,7 @@ impl SwayAction<'_> {
         // One connection for the whole poll cycle — the baseline snapshot
         // and every poll iteration below share it, rather than each tree
         // read opening its own. Failing to open one isn't fatal: there's
-        // simply nothing to poll with, so this falls back to the original
+        // simply nothing to poll with, so this falls back to the
         // unconditional sleep, exactly as a variant with no matcher does.
         let mut poll_connection = new_connection().ok();
 
@@ -612,14 +605,10 @@ impl SwayAction<'_> {
     /// short-circuit path, which is the cheap half of the trade — that path
     /// already pays for a `get_tree()`.
     ///
-    /// The container-exists check stays ahead of the subscription. It used to
-    /// be load-bearing there for a second reason: `subscribe()` is itself a
-    /// request/response handshake, and while it ran unbounded, a compositor
-    /// that accepted a connection and then stopped answering hung there
-    /// forever unless a bounded read came first. `event_loop()` now bounds the
-    /// handshake itself (by `IPC_ROUND_TRIP_TIMEOUT`, like every other request),
-    /// so that reason is gone and the order is only about failing fast on a
-    /// closed window before opening a subscription for it.
+    /// The container-exists check stays ahead of the subscription only to
+    /// fail fast on a closed window before opening a subscription for it;
+    /// `event_loop()` bounds the subscribe handshake itself (by
+    /// `IPC_ROUND_TRIP_TIMEOUT`, like every other request).
     fn run_wait_matching_events(&self) -> Result<ActionOutcome, String> {
         // Same check, same reason, and the same error text as
         // run_wait_time()'s: on Sway 1.9 (still what `apt` installs on
@@ -688,27 +677,16 @@ impl SwayAction<'_> {
         // per step at 3 and 3. Pinned by tests/live_sway.rs's
         // `event_reader_threads_stay_bounded_across_a_long_layout`.
         //
-        // An earlier version of this comment claimed the opposite ("for a large
-        // generated layout ... this accumulates rather than staying bounded")
-        // and was believed for long enough to reach an external reviewer, who
-        // reasonably rated it a high-severity resource leak on the strength of
-        // it. The bound is a real property worth stating, but note it depends
-        // on later events arriving: the *last* event-confirmed action's reader
-        // does stay blocked until the process exits, which is why the bound is
-        // a small constant rather than zero.
-        //
-        // That last reader was raised again (2026-09-02) as a lifetime problem
-        // rather than a leak: an operation returns while resources it opened
-        // are still held, released only by process exit. Accurate, and left as
-        // is. The suggested fix — one owned event reader per SwayLaunch run,
-        // with an explicit shutdown protocol — buys nothing for a CLI that
-        // exits moments later, and would replace a per-action subscription
-        // (which is also what makes each action's wait independent, see
-        // Scratchpad's shared WindowChange::Move in
-        // matching_window_change_events()) with shared mutable state to
-        // coordinate. Revisit if this ever becomes a library, gains a
-        // long-lived mode, or needs cancellation — at which point the reader's
-        // lifetime stops being bounded by the process's.
+        // The bound depends on later events arriving: the *last*
+        // event-confirmed action's reader stays blocked until the process
+        // exits, which is why it's a small constant rather than zero. One
+        // owned event reader per SwayLaunch run, with an explicit shutdown
+        // protocol, would buy nothing for a CLI that exits moments later, and
+        // would replace a per-action subscription (which is also what makes
+        // each action's wait independent, see Scratchpad's shared
+        // WindowChange::Move in matching_window_change_events()) with shared
+        // mutable state to coordinate. Revisit if this ever becomes a
+        // library, gains a long-lived mode, or needs cancellation.
         let (event_sender, event_receiver) = mpsc::channel();
         thread::spawn(move || {
             for event in event_loop {
@@ -863,11 +841,11 @@ impl ExecAction<'_> {
     /// anything, because that's also what the moments before the marked
     /// process exists look like (Sway's `exec` returns once it has forked),
     /// and what a launcher that drops the environment looks like. Reading
-    /// "absent" as "gone" there used to claim whichever matching window
-    /// arrived first — measured live as two concurrent `--template` runs
-    /// reporting the same container id in 4 of 7 trials, each having taken
-    /// the other's window during its own startup gap. A marker that's never
-    /// seen therefore always ends through the grace period, as `Adopted`.
+    /// "absent" as "gone" there would claim whichever matching window arrived
+    /// first — measured live as two concurrent `--template` runs reporting
+    /// the same container id in 4 of 7 trials, each taking the other's window
+    /// during its own startup gap. A marker that's never seen therefore always
+    /// ends through the grace period, as `Adopted`.
     ///
     /// Which of those two ends the wait is reported back as the returned
     /// `LaunchOwnership` (see its own doc comment): a marked process that's

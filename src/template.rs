@@ -238,8 +238,8 @@ pub fn parse_bindings(contents: &str) -> Result<Bindings, String> {
 /// template-level workspace with its own output, or vice versa.
 ///
 /// A repeated `slot` name is rejected here directly, with a template-shaped
-/// error naming the slot — this used to be left for `run_steps()`'s generic
-/// "id already used by an earlier step" check to catch instead, which is
+/// error naming the slot, rather than left for `run_steps()`'s generic
+/// "id already used by an earlier step" check to catch, which would be
 /// technically correct but describes an implementation detail (a
 /// resolved-layout-step id collision) rather than the actual template
 /// authoring mistake a user made. `used_slots` already exists to track which

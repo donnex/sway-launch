@@ -168,8 +168,7 @@ pub(super) fn classify_marker_reads(
 /// program starts. The caller only reads it as "gone" after an earlier scan
 /// returned `Present`; see that function's doc comment.
 ///
-/// This scans every process, which looks alarming and has been raised as a
-/// performance concern; measured before acting on it. A full miss — the worst
+/// This scans every process, which is cheap in practice. A full miss — the worst
 /// case, where every `/proc/<pid>/environ` is read — costs 0.5ms on a 26-process
 /// system and 16ms on a 525-process one. It runs only while the caller still
 /// needs an answer, at most every `MARKER_SCAN_INTERVAL`, inside a window

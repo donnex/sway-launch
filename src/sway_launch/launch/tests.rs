@@ -39,8 +39,7 @@ fn build_actions_is_empty_when_no_flags_are_set() {
 
 #[test]
 fn build_actions_includes_every_flag_in_the_documented_fixed_order() {
-    // Regression test for the SwayLaunch::run() -> build_actions() split
-    // (an external review's suggestion): every flag except new_column/new_row
+    // Pins build_actions()'s plan order: every flag except new_column/new_row
     // (which need a live get_outputs()/get_tree() call inside
     // relocates_to_another_output() even just to build the plan, so
     // they're covered separately by tests/live_sway.rs, not headlessly
@@ -159,13 +158,10 @@ fn build_actions_omits_mark_when_empty() {
 
 // build_actions()'s error propagation when relocates_to_another_output()
 // can't read the tree is covered by tests/json_output.rs's
-// new_column_and_new_row_report_the_relocation_checks_error, not here.
-// Two unit tests used to assert it directly, by assuming the machine
-// running them had no reachable Sway socket — which is true on a CI runner
-// and false in a Sway session, where both failed outright. A unit test
-// can't state that precondition safely (std::env::set_var is
-// process-global, and this harness is multi-threaded), so the assertion
-// moved to a test that can set it per-invocation on the child process.
+// new_column_and_new_row_report_the_relocation_checks_error, not here: it
+// needs no reachable Sway socket, which a unit test can't arrange safely
+// (std::env::set_var is process-global, and this harness is multi-threaded),
+// while an integration test can set it per-invocation on the child process.
 //
 // The guard's actual behavior (skip vs. include) needs a live compositor
 // either way: see tests/live_sway.rs's new_column_does_not_relocate_*.

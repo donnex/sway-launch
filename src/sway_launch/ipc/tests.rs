@@ -70,8 +70,7 @@ fn quote_sway_string_escapes_backslashes() {
 
 #[test]
 fn quote_sway_string_wraps_a_value_containing_a_newline() {
-    // Regression test: confirmed live (this project's security review,
-    // 2026-08-21) that a literal newline embedded in a --mark value
+    // Regression test: confirmed live that a literal newline embedded in a --mark value
     // can't break out of the quoting either -- Sway's own parser treats
     // it as part of the quoted literal, not a command separator, the
     // same as the comma/semicolon case below. quote_sway_string()
