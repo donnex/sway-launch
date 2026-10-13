@@ -1031,7 +1031,7 @@ closed on its own — or the window was asked to close but was still open a seco
 appears under `rollback_failed` instead, a field present only when there's something in it:
 
 ```shell
-{"error":"step 2: move right: container id 437 no longer exists — window may have closed","rolled_back":[],"rollback_failed":[437]}
+{"error":"layout.toml: step 2: move right: container id 437 no longer exists — window may have closed","rolled_back":[],"rollback_failed":[437]}
 ```
 
 The three lists never overlap and mean different things: `container_ids` is still open,
@@ -1048,7 +1048,7 @@ its own. Whatever container the failing step targeted — launched or retargeted
 
 ```shell
 $ sway-launch --layout layout.toml --json
-{"container_id":439,"container_ids":[437,438,439],"containers":{"editor":437},"error":"step 3: floating enable: no matching window event within 5 sec","rolled_back":[]}
+{"container_id":439,"container_ids":[437,438,439],"containers":{"editor":437},"error":"layout.toml: step 3: floating enable: no matching window event within 5 sec","rolled_back":[]}
 ```
 
 `container_ids`/`containers` carry the same meaning they do on success. Anything `rolled_back`
@@ -1111,8 +1111,11 @@ valid: layout.toml (3 step(s))
 
 ```shell
 $ sway-launch --layout layout.toml --validate
-error: step 2: height: Must be <N>px (N >= 1) or <N>ppt (N 1-100), e.g. 300px or 20ppt (ppt = percent)
+error: layout.toml: step 2: height: Must be <N>px (N >= 1) or <N>ppt (N 1-100), e.g. 300px or 20ppt (ppt = percent)
 ```
+
+An error names the file holding the mistake, and the step for a mistake in a step: a bad binding is
+reported under the `--bindings` file (or `--apps`), not the template it's applied to.
 
 `--json` prints `{"source": "...", "steps": N, "valid": true}` on success — `source` echoes back the
 `--layout`/`--template` argument as given, not a canonicalized path — or the same structured

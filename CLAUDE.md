@@ -1309,7 +1309,7 @@ already escapes control characters.
 Parses and validates a `--layout`/`--template` file without launching anything or touching Sway
 IPC, exiting 0 (`valid: <source> (N step(s))`, or `{"source": ..., "steps": N, "valid": true}`
 under `--json`, `<source>` echoing the `--layout`/`--template` argument as given) or 1 (the same
-`step N: <message>`/structured-`--json`-error shape every other runtime failure uses). Requires
+`<source>: step N: <message>`/structured-`--json`-error shape every other runtime failure uses). Requires
 `--layout` or `--template` (the manual `Args::command().error(...)` check mirrors
 `--rollback-on-error`'s existing one exactly, same reasoning: this needs to fire in `main()`'s
 direct-CLI fallthrough path, since `--layout`/`--template` themselves always exit before reaching
@@ -1327,7 +1327,10 @@ convert every step, propagate the first error, done.
 per step between real runs. They used to carry three hand-written copies of that loop, which had
 already started to drift in how they reported errors — and a check added to one copy but not
 another would let `--validate` call a file valid that a real run rejects. `step_error()` is the one
-`step N: <message>` formatter, used by `plan_steps_offline()` and `fail_step()` alike. A new
+`<source>: step N: <message>` formatter, used by `plan_steps_offline()` and `fail_step()` alike —
+the `--layout`/`--template` argument as given (`steps_source()`) leads, the same `<file>:` prefix
+file-read and parse errors carry, so a script applying several files in a row can tell which one
+failed. A new
 per-step rule belongs in `plan_step()` (or `to_sway_launch()`), never in one mode's loop. A `--template`'s own
 `--bindings`/`--apps` resolution (slot count, duplicate slots, binding correctness) already
 happens unconditionally before `run_steps()` is ever reached (`run_template()`'s own
@@ -1485,7 +1488,14 @@ across different applications, or shared/bundled independently of any specific o
 comma-separated list, zips it 1:1 onto the template's `slot` steps in the order they appear,
 erroring on a count mismatch), then calls `template::resolve()` and hands the result to the
 same `run_steps()` `--layout` uses — a resolved template is just a `Vec<layout::LayoutStep>`, so
-nothing downstream needs to know a template was involved. `--template` requires exactly one of
+nothing downstream needs to know a template was involved. `resolve()` returns a
+`template::ResolveError` rather than a bare string, split by which input holds the mistake:
+`Bindings` (a missing, duplicate, unused, or malformed binding) is reported under the bindings
+file's path, or `--apps` (as are `bindings_from_apps()`'s own errors), and `Step { index, .. }` (a
+template step setting neither/both of `slot`/`target_id`, or a blank one) under the template's,
+as `step N:` with the same 1-based number `run_steps()` would use. Before this every one of them
+was prefixed with the template's name, so a typo in a user's bindings file for a built-in read as a
+fault in the shipped template. `--template` requires exactly one of
 `--bindings`/`--apps`, and the reverse also holds: `--bindings`/`--apps` require `--template`. Both
 directions are manual checks in `main()`, not `clap`'s declarative `requires`/`conflicts_with` —
 `requires = "template"` on the `bindings`/`apps` fields was tried first, but a live-Sway-review

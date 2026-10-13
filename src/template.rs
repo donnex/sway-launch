@@ -252,6 +252,28 @@ pub fn parse_bindings(contents: &str) -> Result<Bindings, String> {
     toml::from_str(contents).map_err(|error| error.to_string())
 }
 
+/// Why `resolve()` failed, split by which input holds the mistake so the
+/// caller can name the right file: a binding problem belongs to the
+/// `--bindings` file (or `--apps`), a step problem to the template, at the
+/// 1-based step number `run_steps()` would report for the same step — each
+/// template step resolves to exactly one layout step, so the two agree.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ResolveError {
+    Bindings(String),
+    Step { index: usize, message: String },
+}
+
+impl std::fmt::Display for ResolveError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResolveError::Bindings(message) => formatter.write_str(message),
+            ResolveError::Step { index, message } => {
+                write!(formatter, "step {}: {}", index + 1, message)
+            }
+        }
+    }
+}
+
 /// Resolves a `Template` against `Bindings` into ordinary `LayoutStep`s —
 /// the actual output type is `layout::LayoutStep`, not a template-specific
 /// type, so nothing downstream (`to_sway_launch()`, `run_steps()`) needs to
@@ -265,42 +287,50 @@ pub fn parse_bindings(contents: &str) -> Result<Bindings, String> {
 /// template-level workspace with its own output, or vice versa.
 ///
 /// Expects a template from `parse()`, which has already rejected a slot
-/// used by more than one step.
-pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutStep>, String> {
+/// used by more than one step. Errors say which input they belong to (see
+/// `ResolveError`).
+pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutStep>, ResolveError> {
     let mut bindings_by_slot = HashMap::new();
     for binding in &bindings.binding {
-        sway_launch::require_non_blank("binding.slot", &binding.slot)?;
+        sway_launch::require_non_blank("binding.slot", &binding.slot)
+            .map_err(ResolveError::Bindings)?;
         if bindings_by_slot
             .insert(binding.slot.as_str(), binding)
             .is_some()
         {
-            return Err(format!("slot {:?} has more than one binding", binding.slot));
+            return Err(ResolveError::Bindings(format!(
+                "slot {:?} has more than one binding",
+                binding.slot
+            )));
         }
     }
 
     let mut used_slots = HashSet::new();
     let mut steps = Vec::with_capacity(template.step.len());
 
-    for step in &template.step {
+    for (index, step) in template.step.iter().enumerate() {
+        let step_error = |message: String| ResolveError::Step { index, message };
         let target_fields_set = [step.slot.is_some(), step.target_id.is_some()]
             .into_iter()
             .filter(|&set| set)
             .count();
         if target_fields_set != 1 {
-            return Err("template step must set exactly one of: slot, target_id".to_string());
+            return Err(step_error(
+                "template step must set exactly one of: slot, target_id".to_string(),
+            ));
         }
         if let Some(slot) = step.slot.as_deref() {
-            sway_launch::require_non_blank("slot", slot)?;
+            sway_launch::require_non_blank("slot", slot).map_err(step_error)?;
         }
         if let Some(target_id) = step.target_id.as_deref() {
-            sway_launch::require_non_blank("target_id", target_id)?;
+            sway_launch::require_non_blank("target_id", target_id).map_err(step_error)?;
         }
 
         let (id, target_id, command, con_id, existing, app_id, class, mark_match) =
             if let Some(slot) = step.slot.as_deref() {
-                let binding = bindings_by_slot
-                    .get(slot)
-                    .ok_or_else(|| format!("no binding for slot {:?}", slot))?;
+                let binding = bindings_by_slot.get(slot).ok_or_else(|| {
+                    ResolveError::Bindings(format!("no binding for slot {:?}", slot))
+                })?;
 
                 let target_fields_set = [
                     binding.command.is_some(),
@@ -311,22 +341,27 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
                 .filter(|&set| set)
                 .count();
                 if target_fields_set != 1 {
-                    return Err(format!(
+                    return Err(ResolveError::Bindings(format!(
                         "binding for slot {:?} must set exactly one of: command, con_id, existing",
                         slot
-                    ));
+                    )));
                 }
                 if let Some(command) = binding.command.as_deref() {
-                    sway_launch::require_non_blank("command", command)
-                        .map_err(|error| format!("binding for slot {:?}: {}", slot, error))?;
+                    sway_launch::require_non_blank("command", command).map_err(|error| {
+                        ResolveError::Bindings(format!("binding for slot {:?}: {}", slot, error))
+                    })?;
                 }
                 for (field, value) in [
                     ("app_id", binding.app_id.as_deref()),
                     ("class", binding.class.as_deref()),
                 ] {
                     if let Some(value) = value {
-                        sway_launch::require_non_blank(field, value)
-                            .map_err(|error| format!("binding for slot {:?}: {}", slot, error))?;
+                        sway_launch::require_non_blank(field, value).map_err(|error| {
+                            ResolveError::Bindings(format!(
+                                "binding for slot {:?}: {}",
+                                slot, error
+                            ))
+                        })?;
                     }
                 }
                 let match_fields_set = [
@@ -338,16 +373,16 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
                 .filter(|&set| set)
                 .count();
                 if match_fields_set > 1 {
-                    return Err(format!(
+                    return Err(ResolveError::Bindings(format!(
                         "binding for slot {:?} must set only one of: app_id, class, mark_match",
                         slot
-                    ));
+                    )));
                 }
                 if binding.mark_match.is_some() && !binding.existing {
-                    return Err(format!(
+                    return Err(ResolveError::Bindings(format!(
                         "binding for slot {:?}: mark_match requires existing = true",
                         slot
-                    ));
+                    )));
                 }
                 // Caught here rather than left to to_sway_launch(): the
                 // resulting LayoutStep would fail there too, but as
@@ -360,11 +395,11 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
                     && binding.class.is_none()
                     && binding.mark_match.is_none()
                 {
-                    return Err(format!(
+                    return Err(ResolveError::Bindings(format!(
                         "binding for slot {:?}: existing = true requires app_id, class, or \
                          mark_match",
                         slot
-                    ));
+                    )));
                 }
 
                 used_slots.insert(slot);
@@ -433,10 +468,10 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
     if !unused.is_empty() {
         let mut unused = unused;
         unused.sort_unstable();
-        return Err(format!(
+        return Err(ResolveError::Bindings(format!(
             "binding(s) for unused slot(s): {}",
             unused.join(", ")
-        ));
+        )));
     }
 
     Ok(steps)

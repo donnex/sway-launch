@@ -120,7 +120,10 @@ fn layout_rejects_app_id_and_mark_match_together() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
-    assert!(stderr.contains("step 1"));
+    assert!(
+        stderr.contains(&format!("{}: step 1: ", path.display())),
+        "a step error should name the layout file it came from: {stderr:?}"
+    );
 }
 
 #[test]

@@ -60,6 +60,68 @@ fn resolve_rejects_step_without_slot_or_target_id() {
 }
 
 #[test]
+fn resolve_reports_a_template_step_error_with_its_1_based_step_number() {
+    let mut second = minimal_step();
+    second.slot = None;
+    let template = minimal_template(vec![minimal_step(), second]);
+    let bindings = Bindings {
+        binding: vec![minimal_binding()],
+    };
+    let error = resolve(&template, &bindings)
+        .err()
+        .expect("a step with neither slot nor target_id should be rejected");
+    assert_eq!(
+        error,
+        ResolveError::Step {
+            index: 1,
+            message: "template step must set exactly one of: slot, target_id".to_string(),
+        }
+    );
+    assert_eq!(
+        error.to_string(),
+        "step 2: template step must set exactly one of: slot, target_id"
+    );
+}
+
+#[test]
+fn resolve_reports_a_blank_target_id_as_a_step_error() {
+    let mut step = minimal_step();
+    step.slot = None;
+    step.target_id = Some("  ".to_string());
+    let template = minimal_template(vec![step]);
+    let bindings = Bindings { binding: vec![] };
+    assert!(matches!(
+        resolve(&template, &bindings),
+        Err(ResolveError::Step { index: 0, .. })
+    ));
+}
+
+#[test]
+fn resolve_reports_binding_mistakes_as_bindings_errors_without_a_step_number() {
+    let template = minimal_template(vec![minimal_step()]);
+    let mut existing_without_matcher = minimal_binding();
+    existing_without_matcher.command = None;
+    existing_without_matcher.existing = true;
+    let mut unused = minimal_binding();
+    unused.slot = "terminal".to_string();
+    for bindings in [
+        vec![],
+        vec![existing_without_matcher],
+        vec![minimal_binding(), minimal_binding()],
+        vec![minimal_binding(), unused],
+    ] {
+        let error = resolve(&template, &Bindings { binding: bindings })
+            .err()
+            .expect("a binding mistake should be rejected");
+        assert!(
+            matches!(error, ResolveError::Bindings(_)),
+            "a binding mistake belongs to the bindings, not a template step: {error:?}"
+        );
+        assert!(!error.to_string().starts_with("step "), "{error}");
+    }
+}
+
+#[test]
 fn resolve_rejects_slot_and_target_id_together() {
     let mut step = minimal_step();
     step.target_id = Some("editor".to_string());
@@ -77,6 +139,7 @@ fn resolve_rejects_blank_slot() {
     let template = minimal_template(vec![step]);
     let bindings = Bindings { binding: vec![] };
     let error = resolve(&template, &bindings)
+        .map_err(|error| error.to_string())
         .err()
         .expect("blank slot should be rejected");
     assert!(
@@ -93,6 +156,7 @@ fn resolve_rejects_blank_target_id() {
     let template = minimal_template(vec![step]);
     let bindings = Bindings { binding: vec![] };
     let error = resolve(&template, &bindings)
+        .map_err(|error| error.to_string())
         .err()
         .expect("blank target_id should be rejected");
     assert!(
@@ -110,6 +174,7 @@ fn resolve_rejects_blank_binding_slot() {
         binding: vec![binding],
     };
     let error = resolve(&template, &bindings)
+        .map_err(|error| error.to_string())
         .err()
         .expect("blank binding slot should be rejected");
     assert!(
@@ -127,6 +192,7 @@ fn resolve_rejects_blank_binding_command_naming_the_slot() {
         binding: vec![binding],
     };
     let error = resolve(&template, &bindings)
+        .map_err(|error| error.to_string())
         .err()
         .expect("blank binding command should be rejected");
     assert!(
@@ -233,6 +299,7 @@ fn resolve_errors_on_missing_binding() {
     let template = minimal_template(vec![minimal_step()]);
     let bindings = Bindings { binding: vec![] };
     let error = resolve(&template, &bindings)
+        .map_err(|error| error.to_string())
         .err()
         .expect("missing binding should error");
     assert!(error.contains("editor"));
@@ -253,6 +320,7 @@ fn resolve_errors_on_binding_with_no_target_field_naming_the_slot() {
         }],
     };
     let error = resolve(&template, &bindings)
+        .map_err(|error| error.to_string())
         .err()
         .expect("binding with no target field should error");
     assert!(
@@ -282,6 +350,7 @@ fn resolve_errors_on_binding_with_command_and_con_id_together() {
         }],
     };
     let error = resolve(&template, &bindings)
+        .map_err(|error| error.to_string())
         .err()
         .expect("binding with command and con_id together should error");
     assert!(error.contains("editor"));
@@ -302,6 +371,7 @@ fn resolve_errors_on_binding_with_app_id_and_class_together() {
         }],
     };
     let error = resolve(&template, &bindings)
+        .map_err(|error| error.to_string())
         .err()
         .expect("binding with app_id and class together should error");
     assert!(error.contains("editor"));
@@ -319,6 +389,7 @@ fn resolve_errors_on_binding_with_class_and_mark_match_together() {
         binding: vec![binding],
     };
     let error = resolve(&template, &bindings)
+        .map_err(|error| error.to_string())
         .err()
         .expect("binding with class and mark_match together should error");
     assert!(error.contains("editor"));
@@ -335,6 +406,7 @@ fn resolve_rejects_a_blank_binding_app_id_naming_the_slot() {
         binding: vec![binding],
     };
     let error = resolve(&template, &bindings)
+        .map_err(|error| error.to_string())
         .err()
         .expect("a blank binding app_id should be rejected");
     assert!(
@@ -354,6 +426,7 @@ fn resolve_rejects_a_blank_binding_class_naming_the_slot() {
         binding: vec![binding],
     };
     let error = resolve(&template, &bindings)
+        .map_err(|error| error.to_string())
         .err()
         .expect("a blank binding class should be rejected");
     assert!(
@@ -371,6 +444,7 @@ fn resolve_rejects_binding_mark_match_without_existing() {
         binding: vec![binding],
     };
     let error = resolve(&template, &bindings)
+        .map_err(|error| error.to_string())
         .err()
         .expect("binding mark_match without existing should be rejected");
     assert!(error.contains("editor"));
@@ -387,6 +461,7 @@ fn resolve_rejects_binding_existing_without_a_matcher_naming_the_slot() {
         binding: vec![binding],
     };
     let error = resolve(&template, &bindings)
+        .map_err(|error| error.to_string())
         .err()
         .expect("existing without a matcher should be rejected");
     assert!(
@@ -417,6 +492,7 @@ fn resolve_errors_on_unused_binding() {
         binding: vec![minimal_binding()],
     };
     let error = resolve(&template, &bindings)
+        .map_err(|error| error.to_string())
         .err()
         .expect("unused binding should error");
     assert!(error.contains("editor"));
@@ -429,6 +505,7 @@ fn resolve_errors_on_duplicate_slot_within_bindings() {
         binding: vec![minimal_binding(), minimal_binding()],
     };
     let error = resolve(&template, &bindings)
+        .map_err(|error| error.to_string())
         .err()
         .expect("duplicate binding slot should error");
     assert!(error.contains("editor"));
