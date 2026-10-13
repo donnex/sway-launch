@@ -334,7 +334,13 @@ A `SwayAction` knows how to:
   `<n>px`/`<n>ppt` or space-separated `move position <x> <y>` syntax, rather than interpolating a
   pre-validated string.
 - declare which `WindowChange` event(s) would confirm it completed
-  (`ActionKind::matching_window_change_events()`)
+  (`ActionKind::matching_window_change_events()`) — and, by that answer, commit to the matching
+  confirmation logic: an event-confirmed kind needs a real `state_satisfies()` arm (without one its
+  event arrives, is rejected, and the action times out after a command that worked), a polled one
+  needs `polls()`/`poll_matches()` arms (without them it's reported `unconfirmed` on every run).
+  Every `ActionKind` match in `confirmation.rs` names each variant rather than ending in `_`, so a
+  new kind doesn't compile until both are decided, and `confirmation/tests.rs`'s
+  `every_event_confirmed_kind_can_recognise_its_own_end_state` pins the first half
 
 `ExecAction::sway_command(token)` renders the launch command instead, taking the per-invocation PID
 marker as an argument since it doesn't exist until the action runs. The command itself is passed

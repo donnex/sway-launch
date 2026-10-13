@@ -488,8 +488,28 @@ fn a_polled_action_never_matches_a_window_event() {
 
 // ActionKind::is_event_confirmed
 
-#[test]
-fn is_event_confirmed_agrees_with_the_matching_events() {
+/// One instance of every `ActionKind`. The exhaustive match below has no
+/// purpose but to stop compiling when a variant is added, pointing here so the
+/// new kind is added to this list too.
+fn one_of_every_kind() -> [ActionKind<'static>; 14] {
+    fn every_variant_is_listed(kind: ActionKind) {
+        match kind {
+            ActionKind::Split(_)
+            | ActionKind::Floating
+            | ActionKind::Sticky
+            | ActionKind::Fullscreen
+            | ActionKind::Focus
+            | ActionKind::NewColumn
+            | ActionKind::NewRow
+            | ActionKind::Workspace(_)
+            | ActionKind::Output(_)
+            | ActionKind::Mark(_)
+            | ActionKind::Height(_)
+            | ActionKind::Width(_)
+            | ActionKind::Position(_)
+            | ActionKind::Scratchpad => {}
+        }
+    }
     let kinds = [
         ActionKind::Split(Split::H),
         ActionKind::Floating,
@@ -506,7 +526,13 @@ fn is_event_confirmed_agrees_with_the_matching_events() {
         ActionKind::Position(Position::Center),
         ActionKind::Scratchpad,
     ];
-    let event_confirmed: Vec<ActionKind> = kinds
+    kinds.into_iter().for_each(every_variant_is_listed);
+    kinds
+}
+
+#[test]
+fn is_event_confirmed_agrees_with_the_matching_events() {
+    let event_confirmed: Vec<ActionKind> = one_of_every_kind()
         .into_iter()
         .filter(ActionKind::is_event_confirmed)
         .collect();
@@ -606,6 +632,32 @@ fn state_satisfies_is_false_for_an_action_with_no_state_to_check() {
     let action = targeted(ActionKind::Split(Split::H));
 
     assert!(!action.state_satisfies(Some(&state)));
+}
+
+#[test]
+fn every_event_confirmed_kind_can_recognise_its_own_end_state() {
+    // run_wait_matching_events() accepts a matching event only once
+    // state_satisfies() agrees, so an event-confirmed kind it can never
+    // satisfy would time out after every successful command.
+    let state = ContainerState {
+        workspace: Some("web".to_string()),
+        output: Some("HDMI-A-1".to_string()),
+        floating: true,
+        fullscreen: true,
+        focused: true,
+        in_scratchpad: true,
+        marks: vec!["foo".to_string()],
+    };
+
+    for kind in one_of_every_kind()
+        .into_iter()
+        .filter(ActionKind::is_event_confirmed)
+    {
+        assert!(
+            targeted(kind).state_satisfies(Some(&state)),
+            "{kind:?} is event-confirmed but state_satisfies() never accepts it"
+        );
+    }
 }
 
 #[test]
