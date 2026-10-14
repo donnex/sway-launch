@@ -515,7 +515,7 @@ fn a_polled_action_never_matches_a_window_event() {
 /// One instance of every `ActionKind`. The exhaustive match below has no
 /// purpose but to stop compiling when a variant is added, pointing here so the
 /// new kind is added to this list too.
-fn one_of_every_kind() -> [ActionKind<'static>; 14] {
+fn one_of_every_kind() -> [ActionKind<'static>; 15] {
     fn every_variant_is_listed(kind: ActionKind) {
         match kind {
             ActionKind::Split(_)
@@ -527,6 +527,7 @@ fn one_of_every_kind() -> [ActionKind<'static>; 14] {
             | ActionKind::NewRow
             | ActionKind::Workspace(_)
             | ActionKind::Output(_)
+            | ActionKind::WorkspaceToOutput { .. }
             | ActionKind::Mark(_)
             | ActionKind::Height(_)
             | ActionKind::Width(_)
@@ -544,6 +545,10 @@ fn one_of_every_kind() -> [ActionKind<'static>; 14] {
         ActionKind::NewRow,
         ActionKind::Workspace("web"),
         ActionKind::Output("HDMI-A-1"),
+        ActionKind::WorkspaceToOutput {
+            workspace: "web",
+            output: "HDMI-A-1",
+        },
         ActionKind::Mark("foo"),
         ActionKind::Height(Size::Pixels(300)),
         ActionKind::Width(Size::Pixels(300)),
@@ -625,6 +630,27 @@ fn state_satisfies_output_only_on_the_output_s_visible_workspace() {
     // workspace of that output onto the visible one, so it isn't there yet.
     let state = state_with(|state| state.output = Some("HEADLESS-1".to_string()));
     assert!(!output_action("HEADLESS-1").state_satisfies(Some(&state)));
+}
+
+#[test]
+fn state_satisfies_workspace_to_output_needs_both_names_but_not_visibility() {
+    let action = targeted(ActionKind::WorkspaceToOutput {
+        workspace: "3",
+        output: "HDMI-A-1",
+    });
+    let state = state_with(|state| {
+        state.workspace = Some("3".to_string());
+        state.output = Some("hdmi-a-1".to_string());
+    });
+    assert!(action.state_satisfies(Some(&state)));
+
+    let elsewhere = state_with(|state| {
+        state.workspace = Some("3".to_string());
+        state.output = Some("DP-1".to_string());
+    });
+    assert!(!action.state_satisfies(Some(&elsewhere)));
+    assert!(action.polls(None));
+    assert!(!action.kind.is_event_confirmed());
 }
 
 #[test]

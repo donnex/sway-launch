@@ -1385,6 +1385,72 @@ fn workspace_and_output_names_match_regardless_of_case() {
 }
 
 #[test]
+fn workspace_and_output_together_put_the_window_on_that_workspace_on_that_output() {
+    let home = fresh_workspace();
+    // A container move to an output lands on the workspace that output is
+    // showing, so running --output after --workspace used to drop the
+    // workspace while both reported "changed". The workspace itself is now
+    // moved to the output -- taking any window already on it along.
+    let mut connection = connect();
+    let created_output = CreatedOutput::new(&mut connection);
+    let new_output = created_output.name().to_string();
+    run_command_ok(&mut connection, &format!("workspace \"{home}\""));
+    run_command_ok(&mut connection, "workspace live-pinned-target");
+    let (occupant, _occupant_guard) = launch_foot(&[]);
+    run_command_ok(&mut connection, &format!("workspace \"{home}\""));
+
+    let output = sway_launch_command()
+        .args([
+            "--app-id",
+            "foot",
+            "--timeout",
+            "10",
+            "--wait-time",
+            "100",
+            "--workspace",
+            "live-pinned-target",
+            "--output",
+            &new_output,
+            "--json",
+            "foot",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(
+        output.status.success(),
+        "sway-launch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("--json output should be valid JSON");
+    let container_id = json["container_id"]
+        .as_i64()
+        .expect("--json output should carry the container id");
+    let _guard = KillOnDrop(container_id);
+    assert!(
+        stdout.contains("\"command\":\"move workspace to output"),
+        "the workspace, not the container, should be moved to the output: {stdout}"
+    );
+    assert!(
+        !stdout.contains("\"status\":\"unconfirmed\""),
+        "both moves should be confirmed: {stdout}"
+    );
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    for id in [container_id, occupant] {
+        assert_eq!(
+            workspace_containing(&tree, id, None),
+            Some("live-pinned-target")
+        );
+        assert_eq!(
+            output_containing(&tree, id, None),
+            Some(new_output.as_str())
+        );
+    }
+}
+
+#[test]
 fn output_moves_window_to_named_output() {
     fresh_workspace();
     // Proves the WindowChange::Move assumption documented for --output:

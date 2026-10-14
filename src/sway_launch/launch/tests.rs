@@ -40,6 +40,7 @@ fn kind_label(action: &SwayAction) -> &'static str {
         ActionKind::NewRow => "new_row",
         ActionKind::Workspace(_) => "workspace",
         ActionKind::Output(_) => "output",
+        ActionKind::WorkspaceToOutput { .. } => "workspace_to_output",
         ActionKind::Split(_) => "split",
         ActionKind::Floating => "floating",
         ActionKind::Sticky => "sticky",
@@ -86,7 +87,7 @@ fn build_actions_includes_every_flag_in_the_documented_fixed_order() {
             "new_column",
             "new_row",
             "workspace",
-            "output",
+            "workspace_to_output",
             "split",
             "floating",
             "sticky",
@@ -102,6 +103,34 @@ fn build_actions_includes_every_flag_in_the_documented_fixed_order() {
     for action in &actions {
         assert_eq!(action.container_id, 42);
     }
+}
+
+#[test]
+fn build_actions_moves_the_workspace_to_the_output_when_both_are_set() {
+    // A container move to the output would land on whatever workspace that
+    // output shows, undoing --workspace; moving the workspace keeps both.
+    let mut sway_launch = minimal_sway_launch();
+    sway_launch.output = Some("HDMI-A-1");
+    let alone = sway_launch.build_actions(42);
+    assert_eq!(alone.len(), 1);
+    assert_eq!(alone[0].kind, ActionKind::Output("HDMI-A-1"));
+
+    sway_launch.workspace = Some("3");
+    let both = sway_launch.build_actions(42);
+    assert_eq!(both.len(), 2);
+    assert_eq!(both[0].kind, ActionKind::Workspace("3"));
+    assert_eq!(
+        both[1].kind,
+        ActionKind::WorkspaceToOutput {
+            workspace: "3",
+            output: "HDMI-A-1"
+        }
+    );
+    assert_eq!(
+        both[1].sway_command(),
+        "[con_id=42] move workspace to output \"HDMI-A-1\""
+    );
+    assert_eq!(both[1].kind.flag_name(), "output");
 }
 
 #[test]

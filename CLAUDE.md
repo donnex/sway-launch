@@ -347,7 +347,9 @@ Two types, not one. **`ExecAction`** launches the window (`command`, `app_id_mat
 already-resolved container: a struct holding what every such action shares — `container_id`,
 `verbose`, and `timing` — plus a `kind: ActionKind`, one variant per remaining CLI flag (`Split`,
 `Floating`, `Sticky`, `Fullscreen`, `Focus`, `NewColumn`, `NewRow`, `Workspace`, `Output`, `Mark`,
-`Height`, `Width`, `Position`, `Scratchpad`), each holding only what its own flag specifies.
+`Height`, `Width`, `Position`, `Scratchpad`), each holding only what its own flag specifies — plus
+`WorkspaceToOutput { workspace, output }`, which no single flag produces: `build_actions()` plans
+it in `Output`'s place when `--workspace` and `--output` are both set (see Orchestration).
 `timing` is `--timeout` for an event-confirmed kind and `--wait-time` for a polled one, chosen once
 by `SwayAction::new()` from `ActionKind::is_event_confirmed()`.
 
@@ -689,7 +691,7 @@ stated goal (safer internals, less repeated parsing) to actually land.
   is never seen and so is adopted after the grace period rather than claimed — the safe direction
   to be wrong in.
 - **No event exists in Sway IPC for it** (`Split`, `Sticky`, `NewColumn`, `NewRow`, `Height`,
-  `Width`, `Position`) → `run_wait_time()`: sleeps for `--wait-time` *before* sending the command
+  `Width`, `Position`, `WorkspaceToOutput`) → `run_wait_time()`: sleeps for `--wait-time` *before* sending the command
   unconditionally (there's no signal yet to poll for), then sends it, since Sway doesn't emit an
   event to confirm any of these. `Sticky` was confirmed live to have no dedicated `WindowChange`
   variant at all — subscribing to window events while toggling `sticky enable`/`sticky disable`
@@ -932,6 +934,22 @@ window by later (e.g. `swaymsg 'mark dropdown-term scratchpad show'`), the class
 terminal" scripting pattern. The final container id is printed to stdout (`main.rs`, as a bare
 integer, or as part of a richer object under `--json` — see "`--json`'s richer schema" below) —
 this is what makes commands chainable/scriptable (see README examples).
+
+**`--workspace` and `--output` together plan `Workspace` then `WorkspaceToOutput`, not `Output`**
+(`launch.rs`'s `output_action()`, #6). Sway's `move container to output` lands on the output's
+*visible* workspace, so the old `Workspace` → `Output` pair silently undid the workspace move while
+both reported `changed`. `[con_id=N] move workspace to output Y` moves the window's own workspace
+instead (probed live on Sway 1.11: it acts on the criteria-matched container's workspace, is a
+no-op when already there, and focuses the moved workspace), so the window ends on workspace X on
+output Y — and every other window already on X moves along with it, which README.md states. Moving
+a workspace fires a workspace event, not a window one, so `WorkspaceToOutput` is polled:
+`poll_matches()` reads the tree through `query.rs`'s `container_state_on()` and asks
+`state_satisfies()`, which requires both names (ignoring case) but not visibility. The output move
+that was planned to run first in the issue's agreed fix was dropped: moving to X creates X on the
+focused output when it doesn't exist, and the workspace move then relocates it either way, so the
+extra step did nothing. Pinned by `launch.rs`'s
+`build_actions_moves_the_workspace_to_the_output_when_both_are_set` and `tests/live_sway.rs`'s
+`workspace_and_output_together_put_the_window_on_that_workspace_on_that_output`.
 
 `NewColumn`/`NewRow` running *before* `Workspace`/`Output` in this order means `--new-column
 --workspace 3` (or `--new-row --output ...`) restructures the window relative to its *origin*
