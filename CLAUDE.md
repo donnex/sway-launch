@@ -158,7 +158,9 @@ below) plus six integration test files:
   `main()`, which a unit test can't call into directly.
 - `tests/json_output.rs` — asserts `main()`'s actual stdout/stderr behavior (`--json` output,
   `--verbose` diagnostics going to stderr) by driving the compiled binary with `--con-id`, the one
-  target mode that never touches the Sway socket, so this runs headless in CI. Also covers
+  target mode that never touches the Sway socket when it has no actions (with actions it's looked
+  up first, see "Orchestration"; an unreachable socket then fails that lookup, which is what the
+  error-path tests here drive), so this runs headless in CI. Also covers
   `--dry-run`'s direct-CLI path (`--dry-run` never touches Sway IPC by design — see "`--dry-run`"
   below — so unlike most other flags it doesn't need `--con-id` specifically to stay headless) and
   `--validate`'s "requires `--layout`/`--template`" check.
@@ -905,7 +907,15 @@ stated goal (safer internals, less repeated parsing) to actually land.
 - `Exec { command, filter: Option<LaunchFilter> }` — today's original behavior: build and run an
   `ExecAction`, accepting a new window that passes `filter` (app_id or class), or any new window
   without one.
-- `ConId(id)` — the id directly, no IPC call at all.
+- `ConId(id)` — the id directly. When the run has actions, `run()` first checks it with one tree
+  read (`query.rs`'s `ensure_con_id_target()`, deciding in `tree.rs`'s `con_id_target_problem()`):
+  a missing id fails as `no window with container id N` and a workspace/output/root id as
+  `container N is a workspace, not a window` (#107). The per-action "no longer exists — window may
+  have closed" check assumed the id had been seen, so it sent a mistyped id's user looking for a
+  window that closed. A bare `--con-id N` (or a layout step with no actions) stays unchecked, so it
+  still works without a compositor; README.md says so. A split container passes, since
+  `--floating` and friends work on one (see #93's refusal for the moves that don't). Pinned live by
+  `con_id_with_actions_names_a_missing_id_and_a_non_window_before_acting`.
 - `Existing(WindowMatch)` — `get_tree()` + `matching_container_ids()` (every node `descendants()`
   yields that `WindowMatch::matches()` accepts) + `resolve_matches()`, which errors on zero or more
   than one match rather than guessing. The walk covers the entire tree returned by `get_tree()`,
@@ -2152,7 +2162,8 @@ comments, name things clearly instead" style). Two rule-specific overrides:
     `launch.rs`'s `run`/`resolve_container_id`/`debug_events` are exempt while `build_actions()`
     and `execute_plan()` (which takes its guard and action runner as closures) are not.
     `SwayLaunch::resolve_container_id`'s `Target::ConId` branch never touches the socket and is
-    covered headlessly by `tests/json_output.rs` driving the binary with `--con-id`.
+    covered headlessly by `tests/json_output.rs` driving the binary with `--con-id`; the lookup
+    `run()` adds when there are actions is `query.rs`'s, with its decision in `tree.rs`.
 
     **Adding IPC-touching code means putting it in the right module, not extending an exemption
     list.** Keep the decision pure and let the IPC layer fetch — the shape `expected_position`/

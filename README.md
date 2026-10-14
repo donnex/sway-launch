@@ -727,6 +727,13 @@ container_id="$(sway-launch -a foot foot)"
 sway-launch --con-id "$container_id" --floating
 ```
 
+With actions to apply, the id is looked up first, and a wrong one fails before anything is sent:
+`no window with container id N` for an id nothing has, or `container N is a workspace, not a
+window` (likewise for an output) for one copied from the wrong line of `swaymsg -t get_tree`. A
+bare `--con-id N` with no actions isn't looked up — it just prints the id back, without needing a
+Sway session — so in a `--layout` file a step that only names a window by `con_id` succeeds, and
+the step that later targets it is the one that reports a wrong id.
+
 Or target an already-open window by matching `--app-id`/`--class` against currently open windows,
 the same way those flags match a newly launched window:
 
@@ -1061,7 +1068,7 @@ socket, the `i3`/`sway --get-socketpath` fallback the IPC library shells out to 
 
 ```shell
 $ sway-launch --json --con-id 999999 --floating
-{"container_id":999999,"error":"floating enable: container id 999999 no longer exists — window may have closed","rolled_back":[]}
+{"container_id":999999,"error":"no window with container id 999999","rolled_back":[]}
 ```
 
 `container_id` is the container the run had already resolved — launched, or targeted via

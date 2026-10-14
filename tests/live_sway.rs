@@ -2783,6 +2783,61 @@ fn position_errors_clearly_for_a_tiled_window() {
         stderr.contains("Only floating containers can be moved to an absolute position"),
         "unexpected stderr: {stderr:?}"
     );
+    assert!(
+        stderr
+            .lines()
+            .next_back()
+            .unwrap_or_default()
+            .starts_with("error: move position 300 400: "),
+        "a failing action's error should lead with its own command: {stderr:?}"
+    );
+}
+
+#[test]
+fn con_id_with_actions_names_a_missing_id_and_a_non_window_before_acting() {
+    let workspace = fresh_workspace();
+    // A wrong --con-id used to fail inside its first action as "no longer
+    // exists — window may have closed", sending the user after a window that
+    // never existed, and a workspace id got Sway's bare "No matching node."
+    // (#107). A bare --con-id with no actions stays unchecked, by design.
+    let mut connection = connect();
+    let workspace_id = connection
+        .get_tree()
+        .expect("get_tree should succeed")
+        .iter()
+        .find(|node| node.name.as_deref() == Some(workspace.as_str()))
+        .expect("the test's workspace should be in the tree")
+        .id;
+    let missing_id = 2_000_000_000;
+
+    for (target, expected) in [
+        (
+            missing_id,
+            format!("error: no window with container id {missing_id}"),
+        ),
+        (
+            workspace_id,
+            format!("error: container {workspace_id} is a workspace, not a window"),
+        ),
+    ] {
+        let output = sway_launch_command()
+            .args(["--con-id", &target.to_string(), "--floating"])
+            .output()
+            .expect("failed to run sway-launch binary");
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            stderr.lines().next_back().unwrap_or_default(),
+            expected,
+            "unexpected stderr: {stderr:?}"
+        );
+    }
+
+    let output = sway_launch_command()
+        .args(["--con-id", &missing_id.to_string()])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(output.status.success(), "a bare --con-id is not looked up");
 }
 
 #[test]
