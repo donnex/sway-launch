@@ -2613,39 +2613,36 @@ fn position_moves_a_floating_window_to_given_coordinates() {
 }
 
 #[test]
-fn position_accepts_negative_coordinates_on_a_negatively_offset_output() {
-    fresh_workspace();
-    // Regression test for the negative-coordinates fix
-    // (parse_position's leading-minus handling, plus --position's clap
-    // `allow_hyphen_values` -- clap otherwise rejects a value starting with
-    // `-` as an unrecognized option before parse_position ever
-    // runs, confirmed live while writing this fix). Sway's coordinate space
-    // is global across every output, so an output positioned left of the
-    // primary one legitimately has a negative origin -- this places a
-    // second output there and confirms --position can target a negative
-    // absolute coordinate on it end to end, not just that the CLI accepts
-    // the flag.
+fn position_places_negative_coordinates_relative_to_the_workspace() {
+    let workspace = fresh_workspace();
+    // --position is workspace-relative, as Sway's own `move position` is, so
+    // a negative coordinate lands past the workspace's left/top edge rather
+    // than on an output left of or above this one (#64). Outer gaps move the
+    // workspace origin off the output corner, so the two readings differ.
+    // Also covers clap's `allow_hyphen_values`, without which a value
+    // starting with `-` is rejected as an unknown option.
     let mut connection = connect();
-    let created_output = CreatedOutput::new(&mut connection);
-    let new_output = created_output.name().to_string();
-    connection
-        .run_command(format!("output {new_output} position -1920 0"))
-        .expect("repositioning the output should succeed")
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()
-        .expect("repositioning the output should succeed");
+    let _gaps = OuterGaps::set(&mut connection, 40);
+    let workspace_rect = workspace_rect(&mut connection, &workspace);
+    let (container_id, _guard) =
+        launch_foot(&["--floating", "--width", "400px", "--height", "300px"]);
+    // No title bar, so rect's absolute origin is the frame's origin.
+    run_command_ok(
+        &mut connection,
+        &format!("[con_id={container_id}] border pixel 2"),
+    );
 
-    let (container_id, _guard) = launch_foot(&[
-        "--output",
-        &new_output,
-        "--floating",
-        "--position",
-        "-1000,100",
-    ]);
-
-    let node = get_settled_node(&mut connection, container_id);
-    assert_eq!(node.deco_rect.x, -1000);
-    assert_eq!(node.deco_rect.y, 100);
+    let stdout = run_position_json(container_id, &["--position", "-30,-20"]);
+    assert!(
+        stdout
+            .contains(r#""command":"move position -30 -20","kind":"position","status":"changed""#),
+        "a negative position should report changed, got {stdout:?}"
+    );
+    let node = get_node(&mut connection, container_id);
+    assert_eq!(
+        (node.rect.x, node.rect.y),
+        (workspace_rect.x - 30, workspace_rect.y - 20)
+    );
 }
 
 #[test]

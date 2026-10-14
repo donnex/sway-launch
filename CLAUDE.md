@@ -828,10 +828,13 @@ stated goal (safer internals, less repeated parsing) to actually land.
     can finish inside the transient. The live tests asserting on `deco_rect` therefore read it
     through `get_settled_node()`, which waits for `border` to stop reading `none` (every window
     they check has the default `normal` border); reading it straight after sway-launch exited
-    failed intermittently once the fallback became workspace-relative, most visibly in
-    `position_accepts_negative_coordinates_on_a_negatively_offset_output` — the old absolute
-    comparison never matched on a non-zero-origin workspace, so it kept polling until the
-    transaction applied and hid the transient. An earlier version centered on the output (via a second `get_outputs()`
+    failed intermittently once the fallback became workspace-relative, most visibly in a test
+    placing a window on a negatively offset output — the old absolute comparison never matched on
+    a non-zero-origin workspace, so it kept polling until the transaction applied and hid the
+    transient. `--position <x>,<y>` itself is workspace-relative too, the same as Sway's
+    `move position` without `absolute` (#64): README.md says so, and
+    `position_places_negative_coordinates_relative_to_the_workspace` pins a negative coordinate
+    against the workspace rect on an offset workspace. An earlier version centered on the output (via a second `get_outputs()`
     call) and compared the absolute `rect` without converting it, so it only confirmed when the
     workspace started at `(0, 0)`: with a bar or outer gaps, a correctly placed window reported
     `unconfirmed` after waiting out the poll grace — `center` always, and explicit coordinates on

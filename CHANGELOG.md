@@ -38,8 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     window that is currently shown. (#69)
   - `--height`/`--width` take `<n>px` (1 to 2147483647) or `<n>ppt` (1 to 100); a zero size or a
     percentage over 100, which Sway would ignore or clamp, is an error. (#48)
-  - `--position` takes `center` or `<x>,<y>`, negative coordinates included, for an output that
-    sits left of or above the primary one.
+  - `--position` takes `center` or `<x>,<y>`, relative to the window's workspace as Sway's own
+    `move position` is, so a bar or outer gaps shift the origin; negative values are accepted. An
+    earlier description called the coordinates global across every output, which they never were:
+    combine `--output` with `--position` to place a window on another monitor. (#64)
   - `--workspace` and `--output` match names the way Sway does, ignoring case, so `--workspace web`
     joins an existing `Web` instead of failing at `--timeout` after a move that worked. Sway's
     keywords (`next`, `prev`, `current`, `back_and_forth`, ...; `left`/`right`/`up`/`down` for an
