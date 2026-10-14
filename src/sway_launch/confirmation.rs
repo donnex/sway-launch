@@ -652,8 +652,8 @@ impl SwayAction<'_> {
         // let this command finish before the next action runs.
         thread::sleep(wait_time);
 
-        // On Sway 1.9 (still what `apt` installs on Ubuntu 24.04/CI — see
-        // node_is_floating()'s doc comment for the same version split), a
+        // On Sway 1.9 (see node_is_floating()'s doc comment for the same
+        // version split), a
         // wait-time action's [con_id=N] criteria matching zero containers is
         // "success" as far as Sway's concerned (there's simply nothing to
         // apply the command to) — unlike an event-confirmed action, which
@@ -719,8 +719,8 @@ impl SwayAction<'_> {
     /// `event_loop()` bounds the subscribe handshake itself (by
     /// `IPC_ROUND_TRIP_TIMEOUT`, like every other request).
     fn run_wait_matching_events(&self) -> Result<ActionOutcome, String> {
-        // Same check and same reason as run_wait_time()'s: on Sway 1.9 (still what `apt` installs on
-        // Ubuntu 24.04/CI) a [con_id=N] criteria matching zero containers is
+        // Same check and same reason as run_wait_time()'s: on Sway 1.9 a
+        // [con_id=N] criteria matching zero containers is
         // "success", so without this an action whose container closed since
         // it was resolved would send its command successfully and then block
         // for the full --timeout waiting on a confirmation event that can

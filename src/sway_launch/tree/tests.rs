@@ -445,8 +445,7 @@ fn in_scratchpad(tree: &Node, container_id: i64) -> bool {
 
 #[test]
 fn in_scratchpad_true_via_ancestor_workspace_name() {
-    // Regression test for a CI failure against Sway 1.9 (still what
-    // `apt` installs on Ubuntu 24.04/CI): scratchpad_state stays
+    // Regression test for a CI failure against Sway 1.9: scratchpad_state stays
     // Some(ScratchpadState::None) there even for a genuinely
     // scratchpadded window, so this must detect the scratchpad via the
     // ancestor workspace name alone, with no scratchpad_state set at

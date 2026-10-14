@@ -59,6 +59,11 @@ for required_command in sway swaymsg foot cargo; do
     die "$required_command not found on PATH. Install sway, foot, and a Rust toolchain first."
 done
 
+# Printed so a CI log records which Sway a run tested: the newest-Sway job
+# installs whatever its rolling distribution ships that day.
+sway_version="$(sway --version)" || die 'Could not read the Sway version.'
+printf '%s\n' "$sway_version"
+
 sway_pid=''
 sway_runtime_dir=''
 

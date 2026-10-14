@@ -243,9 +243,8 @@ pub(super) fn con_id_target_problem(tree: &Node, container_id: i64) -> Option<St
     ))
 }
 
-/// Whether `node` is currently floating. Sway 1.9 (still what `apt` installs
-/// on Ubuntu 24.04, confirmed live against a headless compositor during a
-/// CI-failure investigation) never populates a floating container's own
+/// Whether `node` is currently floating. Sway 1.9 (confirmed live against a
+/// headless compositor during a CI-failure investigation) never populates a floating container's own
 /// `floating` field — it stays `null` even though the container's `type` is
 /// correctly `floating_con` — while Sway 1.11 populates both. Checking
 /// `node_type` alone therefore covers both versions; the `floating` field is
