@@ -158,7 +158,8 @@ pub(super) fn named_node_value(
 /// returns, so the ancestor lookups have real ancestors to walk.
 pub(super) fn state_tree(workspace_name: &str, leaf: serde_json::Value) -> Node {
     let workspace = named_node_value(2, "workspace", workspace_name, vec![leaf]);
-    let output = named_node_value(1, "output", "HEADLESS-1", vec![workspace]);
+    let mut output = named_node_value(1, "output", "HEADLESS-1", vec![workspace]);
+    output["focus"] = serde_json::json!([2]);
     serde_json::from_value(named_node_value(0, "root", "root", vec![output]))
         .expect("valid Node test fixture")
 }

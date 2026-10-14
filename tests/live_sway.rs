@@ -1531,6 +1531,52 @@ fn output_is_a_no_op_when_already_on_the_target_output() {
 }
 
 #[test]
+fn output_brings_a_window_off_a_hidden_workspace_of_that_output() {
+    let home = fresh_workspace();
+    // Sway's `move container to output` puts a window on the output's
+    // visible workspace, even when it already sits on a hidden workspace of
+    // the same output. --output used to count "anywhere on the output" as
+    // already satisfied, sent nothing and left the window hidden.
+    let mut connection = connect();
+    run_command_ok(&mut connection, "workspace live-output-hidden");
+    let (container_id, _guard) = launch_foot(&[]);
+    run_command_ok(&mut connection, &format!("workspace \"{home}\""));
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let output_name = output_containing(&tree, container_id, None)
+        .expect("launched window should be found in the tree")
+        .to_string();
+
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--output",
+            &output_name,
+            "--timeout",
+            "5",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --output failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("\"status\":\"changed\""),
+        "the move should have been sent: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        workspace_containing(&tree, container_id, None),
+        Some(home.as_str()),
+        "the window should now be on the output's visible workspace"
+    );
+}
+
+#[test]
 fn floating_is_a_no_op_when_already_floating() {
     fresh_workspace();
     // Regression test found during a bug hunt prompted by this crate's own

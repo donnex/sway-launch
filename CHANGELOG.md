@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     keywords (`next`, `prev`, `current`, `back_and_forth`, ...; `left`/`right`/`up`/`down` for an
     output) are rejected as names: Sway acts on them even quoted, and an upper-case one such as
     `NEXT` crashes Sway 1.11. (#5)
+  - `--output` puts the window on the output's visible workspace, as Sway's own command does. A
+    window on a hidden workspace of that output used to be reported `already_satisfied` and left
+    out of view. (#91)
   - On a multi-monitor setup, a `--new-column`/`--new-row` that Sway would carry onto another
     output — a window at the edge of its workspace, including the only window inside a container
     there, or a window that's already fullscreen — is skipped rather than run. On a floating
