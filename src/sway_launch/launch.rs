@@ -16,7 +16,10 @@ use super::ipc::{quote_sway_string, run_sway_command};
 use super::outcome::{
     ActionOutcome, ActionRecord, ActionStatus, LaunchOwnership, RunError, RunOutcome,
 };
-use super::query::{current_move_skip_reason, find_existing_container_id, focused_workspace_name};
+use super::query::{
+    current_move_skip_reason, ensure_con_id_target, find_existing_container_id,
+    focused_workspace_name,
+};
 use super::target::Target;
 use super::tree::MoveDirection;
 use super::values::{Position, Size, Split};
@@ -310,9 +313,17 @@ impl<'a> SwayLaunch<'a> {
             }
         }
 
+        // A bare `--con-id N` stays unchecked, so it still works without a
+        // compositor; with actions to apply, the socket is needed anyway and
+        // a wrong id fails here, before the first one, with a clear reason.
+        let plan = self.build_actions(container_id);
+        if matches!(self.target, Target::ConId(_)) && !plan.is_empty() {
+            ensure_con_id_target(container_id).map_err(|error| resolved(error.into()))?;
+        }
+
         let actions = self
             .execute_plan(
-                self.build_actions(container_id),
+                plan,
                 |direction| current_move_skip_reason(container_id, direction),
                 SwayAction::run,
             )

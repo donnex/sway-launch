@@ -1058,3 +1058,39 @@ fn is_window_is_true_for_a_leaf_and_false_for_a_split_container() {
     assert!(is_window(find_node(&tree, 10).unwrap()));
     assert!(!is_window(&tree), "a container holding a window is not one");
 }
+
+// con_id_target_problem
+
+#[test]
+fn con_id_target_problem_accepts_a_window_and_a_split_container() {
+    let split = container_node_value(20, vec![leaf_node_value(10, Some("foot"), None)], vec![]);
+    let tree = state_tree("1", split);
+    assert_eq!(con_id_target_problem(&tree, 10), None);
+    assert_eq!(con_id_target_problem(&tree, 20), None);
+}
+
+#[test]
+fn con_id_target_problem_names_a_missing_id_as_never_a_window() {
+    let tree = state_tree("1", leaf_node_value(10, Some("foot"), None));
+    assert_eq!(
+        con_id_target_problem(&tree, 999999).as_deref(),
+        Some("no window with container id 999999")
+    );
+}
+
+#[test]
+fn con_id_target_problem_names_what_a_non_window_id_is() {
+    let tree = state_tree("1", leaf_node_value(10, Some("foot"), None));
+    assert_eq!(
+        con_id_target_problem(&tree, 2).as_deref(),
+        Some("container 2 is a workspace, not a window")
+    );
+    assert_eq!(
+        con_id_target_problem(&tree, 1).as_deref(),
+        Some("container 1 is an output, not a window")
+    );
+    assert_eq!(
+        con_id_target_problem(&tree, 0).as_deref(),
+        Some("container 0 is the root of the tree, not a window")
+    );
+}

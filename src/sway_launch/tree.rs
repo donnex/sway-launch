@@ -222,6 +222,27 @@ pub(super) fn is_window(node: &Node) -> bool {
         && node.floating_nodes.is_empty()
 }
 
+/// Why `container_id`, given by `--con-id` or a step's `con_id`, can't be
+/// acted on, or `None` when it names a window or a split container. Checked
+/// before the first action, so the message says the id was never a window
+/// rather than the later "may have closed", which assumes it was seen once.
+pub(super) fn con_id_target_problem(tree: &Node, container_id: i64) -> Option<String> {
+    let Some(node) = find_node(tree, container_id) else {
+        return Some(format!("no window with container id {}", container_id));
+    };
+    let kind = match node.node_type {
+        NodeType::Con | NodeType::FloatingCon => return None,
+        NodeType::Workspace => "a workspace",
+        NodeType::Output => "an output",
+        NodeType::Root => "the root of the tree",
+        _ => "not a container",
+    };
+    Some(format!(
+        "container {} is {}, not a window",
+        container_id, kind
+    ))
+}
+
 /// Whether `node` is currently floating. Sway 1.9 (still what `apt` installs
 /// on Ubuntu 24.04, confirmed live against a headless compositor during a
 /// CI-failure investigation) never populates a floating container's own
