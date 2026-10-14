@@ -808,3 +808,24 @@ fn deadline_after_errors_instead_of_panicking_on_an_unrepresentable_timeout() {
         .expect_err("u64::MAX seconds overflows Instant");
     assert!(error.contains("too large"), "{error}");
 }
+
+#[test]
+fn only_actions_confirmed_by_a_window_event_need_a_window_target() {
+    for kind in one_of_every_kind() {
+        let expected = matches!(
+            kind,
+            ActionKind::Workspace(_) | ActionKind::Output(_) | ActionKind::Focus
+        );
+        assert_eq!(kind.needs_a_window(), expected, "{kind:?}");
+    }
+}
+
+#[test]
+fn split_container_error_names_the_container_and_the_fix() {
+    let message = split_container_error(12);
+    assert!(
+        message.contains("container 12 is a split container"),
+        "{message}"
+    );
+    assert!(message.contains("target a window inside it"), "{message}");
+}
