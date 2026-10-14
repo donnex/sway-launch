@@ -236,7 +236,10 @@ fn resolve_fills_in_the_binding_and_sets_id_to_the_slot_name() {
 }
 
 #[test]
-fn resolve_applies_the_template_layout_context_to_a_step_without_its_own() {
+fn resolve_leaves_the_template_layout_context_to_the_run_rather_than_each_step() {
+    // The run focuses [layout]'s workspace/output once before the first step
+    // (main.rs's BuildLocation); copying it into every step as a move built
+    // the shape elsewhere and scrambled it on arrival (#45).
     let mut template = minimal_template(vec![minimal_step()]);
     template.layout.workspace = Some("3".to_string());
     template.layout.output = Some("HDMI-A-1".to_string());
@@ -245,12 +248,12 @@ fn resolve_applies_the_template_layout_context_to_a_step_without_its_own() {
     };
 
     let resolved = resolve(&template, &bindings).expect("valid template should resolve");
-    assert_eq!(resolved[0].workspace, Some("3".to_string()));
-    assert_eq!(resolved[0].output, Some("HDMI-A-1".to_string()));
+    assert_eq!(resolved[0].workspace, None);
+    assert_eq!(resolved[0].output, None);
 }
 
 #[test]
-fn resolve_lets_a_step_s_own_workspace_and_output_win_over_the_template_layout_context() {
+fn resolve_keeps_a_step_s_own_workspace_and_output_alongside_a_layout_context() {
     let mut step = minimal_step();
     step.workspace = Some("5".to_string());
     step.output = Some("DP-1".to_string());
@@ -264,22 +267,6 @@ fn resolve_lets_a_step_s_own_workspace_and_output_win_over_the_template_layout_c
     let resolved = resolve(&template, &bindings).expect("valid template should resolve");
     assert_eq!(resolved[0].workspace, Some("5".to_string()));
     assert_eq!(resolved[0].output, Some("DP-1".to_string()));
-}
-
-#[test]
-fn resolve_mixes_a_step_s_own_field_with_the_template_layout_context_s_other_field() {
-    let mut step = minimal_step();
-    step.workspace = Some("5".to_string());
-    let mut template = minimal_template(vec![step]);
-    template.layout.workspace = Some("3".to_string());
-    template.layout.output = Some("HDMI-A-1".to_string());
-    let bindings = Bindings {
-        binding: vec![minimal_binding()],
-    };
-
-    let resolved = resolve(&template, &bindings).expect("valid template should resolve");
-    assert_eq!(resolved[0].workspace, Some("5".to_string()));
-    assert_eq!(resolved[0].output, Some("HDMI-A-1".to_string()));
 }
 
 #[test]

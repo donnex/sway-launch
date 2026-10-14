@@ -191,6 +191,28 @@ impl ContainerState {
     }
 }
 
+/// The workspace holding Sway's focus: the focused node's own workspace, or
+/// the focused node itself when it's an empty workspace.
+pub(super) fn focused_workspace(tree: &Node) -> Option<&Node> {
+    let focused = descendants(tree).find(|node| node.focused)?;
+    if focused.node_type == NodeType::Workspace {
+        return Some(focused);
+    }
+    let path = ancestors_of(tree, focused.id)?;
+    nearest_of_kind(&path, NodeType::Workspace)
+}
+
+/// How many tiled windows `workspace` holds, at any depth. Floating windows
+/// don't count: they don't take part in the tiled shape a run builds.
+pub(super) fn tiled_window_count(workspace: &Node) -> usize {
+    workspace
+        .nodes
+        .iter()
+        .flat_map(descendants)
+        .filter(|node| is_window(node))
+        .count()
+}
+
 /// Whether `node` is a window rather than a split container: a tiled or
 /// floating container with nothing inside it. Sway destroys an empty split
 /// container, so one that holds no children is always a view.

@@ -138,7 +138,7 @@ fn template_dry_run_resolves_target_id_without_launching_anything() {
 }
 
 #[test]
-fn template_layout_context_applies_workspace_and_output_to_a_step_without_its_own() {
+fn template_layout_context_switches_to_its_output_and_workspace_before_the_first_step() {
     let template = TempToml::write(
         "layout-context-template",
         "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n\
@@ -165,12 +165,12 @@ fn template_layout_context_applies_workspace_and_output_to_a_step_without_its_ow
     let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
     assert_eq!(
         stdout,
-        "1. launch code\n2. move workspace \"3\"\n3. move workspace to output \"HDMI-A-1\"\n"
+        "1. focus output \"HDMI-A-1\"\n2. workspace \"3\"\n3. launch code\n"
     );
 }
 
 #[test]
-fn template_layout_context_does_not_override_a_step_s_own_workspace_and_output() {
+fn template_layout_context_leaves_a_step_s_own_workspace_move_in_place() {
     let template = TempToml::write(
         "layout-context-override-template",
         "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n\
@@ -193,7 +193,7 @@ fn template_layout_context_does_not_override_a_step_s_own_workspace_and_output()
     let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
     assert_eq!(
         stdout,
-        "1. launch code\n2. move workspace \"5\"\n3. move workspace to output \"HDMI-A-1\"\n"
+        "1. focus output \"HDMI-A-1\"\n2. workspace \"3\"\n3. launch code\n4. move workspace \"5\"\n"
     );
 }
 
@@ -1173,4 +1173,59 @@ fn template_validate_rejects_a_binding_command_sway_would_split() {
         "{stderr}"
     );
     assert!(!stderr.contains("step 1"), "{stderr}");
+}
+
+#[test]
+fn on_workspace_overrides_the_template_layout_workspace_in_the_preview() {
+    let template = TempToml::write(
+        "on-workspace-template",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n\
+         [layout]\nworkspace = \"3\"\n\n[[step]]\nslot = \"editor\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            template.to_str().unwrap(),
+            "--apps",
+            "code",
+            "--on-workspace",
+            "9",
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be a JSON object");
+    assert_eq!(json["setup"], serde_json::json!(["workspace \"9\""]));
+}
+
+#[test]
+fn template_validate_rejects_a_step_combining_workspace_with_new_column() {
+    let template = TempToml::write(
+        "workspace-new-column-template",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n\
+         [[step]]\nslot = \"editor\"\nworkspace = \"3\"\nnew_column = true\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            template.to_str().unwrap(),
+            "--apps",
+            "code",
+            "--validate",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(
+        stderr.contains("step 1: workspace can't be combined with new_column/new_row"),
+        "{stderr}"
+    );
 }

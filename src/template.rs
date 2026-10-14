@@ -109,16 +109,12 @@ pub struct Template {
     pub step: Vec<TemplateStep>,
 }
 
-/// A template file's optional `[layout]` table: a `workspace`/`output`
-/// applied to every resolved step that doesn't set its own — closes the
-/// "works if the workspace/output happens to already be in the right
-/// state" gap a template has no other way to express (see README.md's
-/// "Recreatable layouts" section), letting a template pin itself to a
-/// specific workspace/output instead of always operating on whatever's
-/// currently focused when it runs. A step's own `workspace`/`output` field
-/// still wins when set — this is a fallback applied per-field in
-/// `resolve()`, not a step-level override switch, so a step can use the
-/// template's workspace but its own output, or vice versa.
+/// A template file's optional `[layout]` table: the workspace and/or output
+/// the run builds on. `main.rs` focuses it once before the first step (see
+/// `sway_launch::BuildLocation`), so every window opens there and the shape
+/// is built in place. It used to be copied into every step as a per-step
+/// move instead, which built the shape on the old workspace and scrambled it
+/// on arrival.
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct TemplateLayoutContext {
@@ -392,14 +388,8 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
             mark: step.mark.clone(),
             new_column: step.new_column,
             new_row: step.new_row,
-            workspace: step
-                .workspace
-                .clone()
-                .or_else(|| template.layout.workspace.clone()),
-            output: step
-                .output
-                .clone()
-                .or_else(|| template.layout.output.clone()),
+            workspace: step.workspace.clone(),
+            output: step.output.clone(),
             height: step.height.clone(),
             width: step.width.clone(),
             position: step.position.clone(),

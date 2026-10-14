@@ -13,9 +13,9 @@
 use super::ipc::{ipc_error, new_connection};
 use super::target::{LaunchFilter, WindowMatch};
 use super::tree::{
-    expected_position, find_node, find_parent_layout, find_workspace_node, matching_container_ids,
-    move_skip_reason, node_position, present_ids, recheck_launched_windows, resolve_matches,
-    ContainerState, MoveDirection, RecheckedWindow,
+    expected_position, find_node, find_parent_layout, find_workspace_node, focused_workspace,
+    matching_container_ids, move_skip_reason, node_position, present_ids, recheck_launched_windows,
+    resolve_matches, tiled_window_count, ContainerState, MoveDirection, RecheckedWindow,
 };
 use super::values::Position;
 use swayipc::{Connection, Node, NodeLayout};
@@ -171,6 +171,32 @@ pub(super) fn recheck_launched_windows_now(
 /// `SwayAction::poll_matches()`'s `Height`/`Width`/`Position` arms to read
 /// a window's own current geometry, as opposed to `parent_node_layout()`,
 /// which reads its *parent's* state for `Split`.
+/// The name of the workspace Sway's focus is on, or `None` when the tree has
+/// none focused.
+pub(super) fn focused_workspace_name() -> Result<Option<String>, String> {
+    let tree = match new_connection()?.get_tree() {
+        Ok(tree) => tree,
+        Err(error) => return Err(ipc_error(error)),
+    };
+    Ok(focused_workspace(&tree).and_then(|workspace| workspace.name.clone()))
+}
+
+/// The focused workspace's name and how many tiled windows it already holds,
+/// for `--layout`/`--template`'s warning that a run is building around
+/// existing windows.
+pub fn focused_workspace_occupancy() -> Result<Option<(String, usize)>, String> {
+    let tree = match new_connection()?.get_tree() {
+        Ok(tree) => tree,
+        Err(error) => return Err(ipc_error(error)),
+    };
+    Ok(focused_workspace(&tree).and_then(|workspace| {
+        workspace
+            .name
+            .clone()
+            .map(|name| (name, tiled_window_count(workspace)))
+    }))
+}
+
 pub(super) fn container_state_on(
     connection: &mut Connection,
     container_id: i64,

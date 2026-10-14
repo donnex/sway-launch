@@ -37,9 +37,9 @@ mod tree;
 mod values;
 
 pub use ipc::{kill_container, KillError};
-pub use launch::{debug_events, SwayLaunch};
+pub use launch::{debug_events, BuildLocation, SwayLaunch};
 pub use outcome::{ActionRecord, ActionStatus, LaunchOwnership, RunError, UnmatchedWindow};
-pub use query::containers_still_present;
+pub use query::{containers_still_present, focused_workspace_occupancy};
 pub use target::{FieldStyle, Target, TargetError, TargetFields};
 pub use values::{
     escape_control_characters, parse_position, parse_size, require_non_blank,
