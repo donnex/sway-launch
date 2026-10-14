@@ -19,7 +19,7 @@ workspace/output, splitting, marking, and more (see [Actions reference](#actions
   observable, and falls back to a bounded heuristic on the rare occasions it isn't (see
   [Basic usage](#basic-usage)) — chaining calls sequentially, the default and recommended way to use
   this tool, keeps things fully deterministic throughout.
-- **Zero setup** — a single static binary; no daemon, no config file. Chain calls directly in a
+- **Zero setup** — a single binary; no daemon, no config file. Chain calls directly in a
   shell script.
 - **Built-in template library** — dozens of ready-made grid, sidebar, and master/stack layouts
   ship inside the binary. Apply one to any set of applications with `--template <name> --apps ...`
@@ -65,7 +65,8 @@ The binary is written to `target/release/sway-launch` — put it somewhere on yo
 and install it to `~/.cargo/bin` in one step with `cargo install --path . --locked`.
 
 Prebuilt Linux x86_64 binaries for tagged releases are also available from the
-[Releases page](https://github.com/donnex/sway-launch/releases).
+[Releases page](https://github.com/donnex/sway-launch/releases). They're statically linked against
+musl, so they run on any x86_64 Linux distribution regardless of its glibc version.
 
 Shell completions (bash, zsh, fish, elvish, PowerShell) can be generated with `--completions
 <SHELL>`, e.g.:

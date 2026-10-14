@@ -144,3 +144,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   distribution-packaged Rust — gets a clear message naming `sway-launch` and the version it needs,
   instead of a dependency error about `clap`. The README's Installation section says so up front,
   and shows `cargo install --path . --locked` for building and installing in one step. (#67)
+- Prebuilt Linux x86_64 release binaries, statically linked against musl, so they run on any
+  distribution whatever its glibc version. (#26)
