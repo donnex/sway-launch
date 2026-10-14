@@ -2392,53 +2392,6 @@ fn new_column_does_not_relocate_a_nested_window_to_a_different_output() {
 }
 
 #[test]
-fn new_column_combined_with_workspace_lands_on_the_target_workspace_correctly() {
-    fresh_workspace();
-    // Pins a question about action order (see CLAUDE.md):
-    // SwayLaunch::run()'s fixed order runs NewColumn before Workspace, so
-    // `--new-column --workspace <target>` restructures the window relative
-    // to its *origin* workspace's siblings before moving it away. Confirmed
-    // live this is harmless, not a bug: whatever "move right" did on the
-    // origin workspace is entirely superseded once "move workspace"
-    // relocates the window elsewhere -- it lands as an ordinary new
-    // sibling in the target workspace's existing layout, and the origin
-    // workspace's other windows are left completely undisturbed.
-    let mut connection = connect();
-    let (origin_first, _origin_first_guard) =
-        launch_foot(&["--workspace", "live-sway-test-new-column-workspace-origin"]);
-    let (_origin_second, _origin_second_guard) =
-        launch_foot(&["--workspace", "live-sway-test-new-column-workspace-origin"]);
-    let (target_first, _target_first_guard) =
-        launch_foot(&["--workspace", "live-sway-test-new-column-workspace-target"]);
-
-    connection
-        .run_command("workspace live-sway-test-new-column-workspace-origin")
-        .expect("workspace switch should succeed");
-    let (moved_id, _moved_guard) = launch_foot(&[
-        "--new-column",
-        "--workspace",
-        "live-sway-test-new-column-workspace-target",
-    ]);
-
-    let tree = connection.get_tree().expect("get_tree should succeed");
-    assert_eq!(
-        workspace_containing(&tree, moved_id, None),
-        Some("live-sway-test-new-column-workspace-target"),
-        "the window should end up on the target workspace, not stranded on its origin one"
-    );
-    assert_eq!(
-        workspace_containing(&tree, origin_first, None),
-        Some("live-sway-test-new-column-workspace-origin"),
-        "the origin workspace's own windows should be undisturbed"
-    );
-    assert_eq!(
-        workspace_containing(&tree, target_first, None),
-        Some("live-sway-test-new-column-workspace-target"),
-        "the target workspace's own pre-existing window should still be there too"
-    );
-}
-
-#[test]
 fn new_column_and_new_row_output_guard_still_applies_when_combined_with_output() {
     fresh_workspace();
     // Companion to the workspace case above: when --new-column/--new-row and
@@ -3609,9 +3562,9 @@ fn template_apps_resolve_to_real_windows() {
 #[test]
 fn template_layout_context_moves_a_step_without_its_own_workspace_to_the_template_s_workspace() {
     fresh_workspace();
-    // Proves the [layout] table's workspace fallback (template::resolve())
-    // actually reaches a real window, not just the resolved LayoutStep --
-    // the step itself sets no workspace of its own.
+    // Proves the [layout] table's workspace reaches a real window: the run
+    // switches there before the first step, so a step with no workspace of
+    // its own opens on it.
     let mut connection = connect();
     let path = TempToml::write(
         "layout-context",
@@ -3640,6 +3593,155 @@ fn template_layout_context_moves_a_step_without_its_own_workspace_to_the_templat
     let tree = connection.get_tree().expect("get_tree should succeed");
     let workspace = workspace_containing(&tree, container_id, None);
     assert_eq!(workspace, Some("live-sway-test-template-layout-context"));
+}
+
+/// Runs `template` with one foot per slot (four for these tests) and returns
+/// the `--json` output, asserting the run succeeded.
+fn run_four_slot_template(template: &str, extra_args: &[&str]) -> serde_json::Value {
+    let mut args = vec![
+        "--template",
+        template,
+        "--apps",
+        "foot,foot,foot,foot",
+        "--timeout",
+        "10",
+        "--json",
+    ];
+    args.extend_from_slice(extra_args);
+    let output = sway_launch_command()
+        .args(&args)
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "{template} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("--json output should be valid JSON")
+}
+
+/// The shape a `--json` run built, rendered the way the recorded
+/// `tests/template-shapes/` files are, after killing its windows.
+fn rendered_shape_of(connection: &mut Connection, parsed: &serde_json::Value) -> String {
+    let slot_by_container: std::collections::HashMap<i64, String> = parsed["containers"]
+        .as_object()
+        .expect("--json output should name each slot's container")
+        .iter()
+        .map(|(slot, id)| (id.as_i64().expect("a container id"), slot.clone()))
+        .collect();
+    std::thread::sleep(Duration::from_millis(300));
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let shape = render_template_shape(&tree, &slot_by_container);
+    for id in slot_by_container.keys() {
+        let _ = connection.run_command(format!("[con_id={id}] kill"));
+    }
+    shape
+}
+
+#[test]
+fn template_layout_workspace_builds_the_shape_in_place_on_that_workspace() {
+    fresh_workspace();
+    // A [layout] workspace used to be copied into every step as a move after
+    // launch, so the shape was built on the old workspace and each window
+    // then landed beside whatever the target had focused: quad-grid arrived
+    // as a 1+1+2 shape while every action reported "changed". The run now
+    // switches there first. Named after the shape test's own workspace, so
+    // the result compares byte for byte with the recorded quad-grid shape.
+    let mut connection = connect();
+    let contents = std::fs::read_to_string(templates_dir().join("quad-grid.toml"))
+        .expect("quad-grid.toml should be readable");
+    let path = TempToml::write(
+        "quad-grid-with-layout",
+        &format!("{contents}\n[layout]\nworkspace = \"template-shape-quad-grid\"\n"),
+    );
+
+    let parsed = run_four_slot_template(path.to_str().unwrap(), &[]);
+    assert!(parsed.get("warnings").is_none(), "{parsed}");
+    let shape = rendered_shape_of(&mut connection, &parsed);
+    assert_eq!(
+        Some(shape),
+        recorded_template_shape("quad-grid"),
+        "quad-grid with a [layout] workspace should build the recorded grid there"
+    );
+}
+
+#[test]
+fn a_template_warns_about_an_occupied_workspace_and_on_workspace_builds_cleanly() {
+    let home = fresh_workspace();
+    // Run from a terminal, the Quickstart grid was built around that
+    // terminal: a three-window top row. The run now says so, and
+    // --on-workspace builds the shape the template describes elsewhere.
+    let mut connection = connect();
+    let (_terminal, _terminal_guard) = launch_foot(&[]);
+
+    let crowded = run_four_slot_template("quad-grid", &[]);
+    let warnings = crowded["warnings"].as_array().cloned().unwrap_or_default();
+    assert_eq!(warnings.len(), 1, "{crowded}");
+    assert!(
+        warnings[0]
+            .as_str()
+            .is_some_and(|warning| warning.contains("already has 1 tiled window")),
+        "{crowded}"
+    );
+    rendered_shape_of(&mut connection, &crowded);
+
+    run_command_ok(&mut connection, &format!("workspace \"{home}\""));
+    let clean =
+        run_four_slot_template("quad-grid", &["--on-workspace", "template-shape-quad-grid"]);
+    assert!(clean.get("warnings").is_none(), "{clean}");
+    assert_eq!(
+        Some(rendered_shape_of(&mut connection, &clean)),
+        recorded_template_shape("quad-grid")
+    );
+}
+
+#[test]
+fn a_launch_whose_window_opens_on_another_workspace_fails_its_step() {
+    let home = fresh_workspace();
+    // A workspace switch while a step's application starts used to split
+    // the layout across two workspaces with nothing reported: Sway still
+    // puts that step's window where its exec ran, but every later step is
+    // launched on the new workspace. Here step 2's own command switches
+    // workspace before its window maps, the same race made deterministic.
+    // The step fails, naming both workspaces, and --rollback-on-error closes
+    // both windows.
+    let mut connection = connect();
+    let path = TempToml::write(
+        "focus-moved-mid-run",
+        "[[step]]\ncommand = \"foot --app-id=focus-moved-first\"\napp_id = \"focus-moved-first\"\n\n\
+         [[step]]\ncommand = 'sh -c \"swaymsg -q workspace live-focus-moved-elsewhere && exec foot \
+         --app-id=focus-moved-second\"'\napp_id = \"focus-moved-second\"\n",
+    );
+
+    let output = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--rollback-on-error",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    run_command_ok(&mut connection, &format!("workspace \"{home}\""));
+
+    assert!(!output.status.success(), "the second step should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let error_line = stderr.lines().last().unwrap_or_default();
+    let error: serde_json::Value =
+        serde_json::from_str(error_line).expect("the last stderr line should be the JSON error");
+    let message = error["error"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("step 2:")
+            && message.contains(&format!(
+                "focus moved from workspace {home:?} to \"live-focus-moved-elsewhere\""
+            )),
+        "{message}"
+    );
+    assert_eq!(
+        error["rolled_back"].as_array().map(Vec::len),
+        Some(2),
+        "both launched windows should be rolled back: {error}"
+    );
 }
 
 #[test]

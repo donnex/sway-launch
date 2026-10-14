@@ -92,6 +92,18 @@ impl LayoutStep {
         if let Some(target_id) = self.target_id.as_deref() {
             sway_launch::require_non_blank("target_id", target_id)?;
         }
+        // A relative move only ever acts on the workspace the window opened
+        // on; the workspace move after it then drops the window into the
+        // target as an ordinary new sibling, so the new row/column never
+        // takes effect there.
+        if self.workspace.is_some() && (self.new_column || self.new_row) {
+            return Err(
+                "workspace can't be combined with new_column/new_row — the relative move would \
+                 apply on the workspace the window opened on, not the target; build on the target \
+                 workspace instead (a template's [layout] table, or --on-workspace)"
+                    .to_string(),
+            );
+        }
         let target_id = self
             .target_id
             .as_deref()
@@ -196,6 +208,7 @@ impl LayoutStep {
                 .map(time::Duration::from_millis)
                 .unwrap_or(default_wait_time),
             verbose,
+            require_launch_on_focused_workspace: false,
         })
     }
 }

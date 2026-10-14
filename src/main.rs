@@ -154,8 +154,11 @@ struct Args {
     #[clap(short, long, value_parser = sway_launch::validate_sway_string_argument)]
     mark: Option<String>,
 
+    // Can't be combined with --workspace: the relative move would act on
+    // the workspace the window opened on, and the workspace move then drops
+    // it into the target as an ordinary sibling (#45).
     /// Move window to new column (move right)
-    #[clap(short, long)]
+    #[clap(short, long, conflicts_with = "workspace")]
     new_column: bool,
 
     /// Set height on the window
@@ -167,7 +170,7 @@ struct Args {
     width: Option<sway_launch::Size>,
 
     /// Move window to new row (move down)
-    #[clap(long, short = 'r')]
+    #[clap(long, short = 'r', conflicts_with = "workspace")]
     new_row: bool,
 
     /// Move the window to workspace
@@ -226,7 +229,7 @@ struct Args {
     /// Print every Sway IPC event until interrupted. Can't be combined with a
     /// command, per-window flags or --json
     #[clap(short, long, conflicts_with_all = per_window_and(&[
-        "json", "bindings", "apps", "rollback_on_error",
+        "json", "bindings", "apps", "rollback_on_error", "on_workspace",
     ]))]
     debug_events: bool,
 
@@ -237,7 +240,7 @@ struct Args {
     /// Generate a shell completion script and print it to stdout
     #[clap(long, value_enum, conflicts_with_all = per_window_and(&[
         "debug_events", "layout", "template", "list_templates", "bindings", "apps",
-        "rollback_on_error", "dry_run", "validate", "show_template", "json",
+        "rollback_on_error", "on_workspace", "dry_run", "validate", "show_template", "json",
     ]))]
     completions: Option<clap_complete::Shell>,
 
@@ -268,7 +271,7 @@ struct Args {
     /// List built-in --template names and exit
     #[clap(long, conflicts_with_all = per_window_and(&[
         "debug_events", "layout", "template", "completions", "bindings", "apps",
-        "rollback_on_error", "dry_run", "validate", "show_template",
+        "rollback_on_error", "on_workspace", "dry_run", "validate", "show_template",
     ]))]
     list_templates: bool,
 
@@ -278,7 +281,7 @@ struct Args {
     /// {"name": ..., "contents": "..."}
     #[clap(long, value_name = "NAME_OR_PATH", conflicts_with_all = per_window_and(&[
         "debug_events", "layout", "template", "completions", "bindings", "apps",
-        "rollback_on_error", "dry_run", "validate",
+        "rollback_on_error", "on_workspace", "dry_run", "validate",
     ]))]
     show_template: Option<PathBuf>,
 
@@ -300,6 +303,13 @@ struct Args {
     /// --layout or --template
     #[clap(long)]
     rollback_on_error: bool,
+
+    /// Build a --layout/--template run on this workspace: switch to it once
+    /// before the first step, so every window opens there. Overrides a
+    /// template's own [layout] workspace. Requires --layout or --template
+    #[clap(long, value_name = "WORKSPACE",
+        value_parser = sway_launch::validate_workspace_argument)]
+    on_workspace: Option<String>,
 
     /// Command to execute
     #[clap(value_parser = sway_launch::validate_exec_command)]
@@ -372,6 +382,15 @@ fn main() {
             .exit();
     }
 
+    if args.on_workspace.is_some() && args.layout.is_none() && args.template.is_none() {
+        Args::command()
+            .error(
+                ErrorKind::MissingRequiredArgument,
+                "--on-workspace requires --layout or --template",
+            )
+            .exit();
+    }
+
     if args.validate && args.layout.is_none() && args.template.is_none() {
         Args::command()
             .error(
@@ -430,10 +449,11 @@ fn main() {
         timeout: time::Duration::from_secs(args.timeout),
         wait_time: time::Duration::from_millis(args.wait_time),
         verbose: args.verbose,
+        require_launch_on_focused_workspace: false,
     };
 
     if args.dry_run {
-        print_dry_run_steps(&[dry_run_step(&sway_launch)], args.json);
+        print_dry_run_steps(&[], &[dry_run_step(&sway_launch)], args.json);
         process::exit(0);
     }
 
@@ -837,8 +857,11 @@ fn dry_run_step(sway_launch: &sway_launch::SwayLaunch) -> DryRunStep {
 /// Prints every `DryRunStep` as a continuously-numbered plain-text list
 /// (target line included as one of the numbered items), or as a single
 /// `{"steps": [{"target": ..., "actions": [{"kind": ..., "command": ...},
-/// ...]}, ...]}` object under `--json`.
-fn print_dry_run_steps(steps: &[DryRunStep], json: bool) {
+/// ...]}, ...]}` object under `--json`. `setup` is the Sway commands a
+/// `--layout`/`--template` run sends before its first step (see
+/// `sway_launch::BuildLocation`): numbered first in plain output, and a
+/// `"setup"` list under `--json`, present only when there are any.
+fn print_dry_run_steps(setup: &[String], steps: &[DryRunStep], json: bool) {
     if json {
         let steps: Vec<_> = steps
             .iter()
@@ -853,11 +876,15 @@ fn print_dry_run_steps(steps: &[DryRunStep], json: bool) {
                 serde_json::json!({ "target": step.target, "actions": actions })
             })
             .collect();
-        print_line(&serde_json::json!({ "steps": steps }).to_string());
+        let mut preview = serde_json::json!({ "steps": steps });
+        if !setup.is_empty() {
+            preview["setup"] = serde_json::json!(setup);
+        }
+        print_line(&preview.to_string());
         return;
     }
 
-    for line in dry_run_plain_lines(steps) {
+    for line in dry_run_plain_lines(setup, steps) {
         print_line(&line);
     }
 }
@@ -867,11 +894,14 @@ fn print_dry_run_steps(steps: &[DryRunStep], json: bool) {
 /// `sway_launch::escape_control_characters()`), so a layout file can't use a
 /// carriage return or a terminal escape to make the preview show something
 /// other than what it will run.
-fn dry_run_plain_lines(steps: &[DryRunStep]) -> Vec<String> {
-    let texts = steps.iter().flat_map(|step| {
-        std::iter::once(step.target.as_str())
-            .chain(step.actions.iter().map(|action| action.command.as_str()))
-    });
+fn dry_run_plain_lines(setup: &[String], steps: &[DryRunStep]) -> Vec<String> {
+    let texts = setup
+        .iter()
+        .map(String::as_str)
+        .chain(steps.iter().flat_map(|step| {
+            std::iter::once(step.target.as_str())
+                .chain(step.actions.iter().map(|action| action.command.as_str()))
+        }));
     texts
         .enumerate()
         .map(|(index, text)| {
@@ -896,7 +926,11 @@ fn run_layout(path: &Path, args: &Args) -> ! {
         Err(error) => fail(args.json, &format!("{}: {}", path.display(), error)),
     };
 
-    run_steps(&parsed_layout.step, args);
+    let build = sway_launch::BuildLocation {
+        workspace: args.on_workspace.as_deref(),
+        output: None,
+    };
+    run_steps(&parsed_layout.step, build, args);
 }
 
 /// Where `run_template()` gets each `--template` slot's application
@@ -1097,7 +1131,16 @@ fn run_template(path: &Path, bindings_source: BindingsSource, args: &Args) -> ! 
         }
     };
 
-    run_steps(&resolved_steps, args);
+    // --on-workspace wins over the template's own [layout] workspace; the
+    // template's output still applies, so a new workspace is created there.
+    let build = sway_launch::BuildLocation {
+        workspace: args
+            .on_workspace
+            .as_deref()
+            .or(parsed_template.layout.workspace.as_deref()),
+        output: parsed_template.layout.output.as_deref(),
+    };
+    run_steps(&resolved_steps, build, args);
 }
 
 /// Builds `Bindings` from `--apps`' comma-separated command list, mapping
@@ -1152,7 +1195,7 @@ fn bindings_from_apps(
 /// directly (success or failure) rather than returning, matching the rest
 /// of main()'s error-handling style. Shared by `run_layout()` and
 /// `run_template()`, since a resolved template is just more layout steps.
-fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
+fn run_steps(steps: &[layout::LayoutStep], build: sway_launch::BuildLocation, args: &Args) -> ! {
     // Checked before the --dry-run/--validate branches so all three modes
     // agree. A file with no steps parses fine (every field of a layout is
     // optional), so without this it "succeeded" silently: exit 0, no output,
@@ -1167,11 +1210,22 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
     }
 
     if args.dry_run {
-        run_steps_dry_run(steps, args);
+        run_steps_dry_run(steps, build, args);
     }
     if args.validate {
         run_steps_validate(steps, args);
     }
+
+    if let Err(error) = build.apply(args.verbose) {
+        fail(args.json, &format!("{}: {}", steps_source(args), error));
+    }
+    // Only a run that launches windows builds a shape; one that only
+    // retargets existing windows never needs to read the tree here.
+    let warnings = if steps.iter().any(|step| step.command.is_some()) {
+        occupied_workspace_warning(args)
+    } else {
+        Vec::new()
+    };
 
     let mut container_ids = Vec::new();
     let mut resolved_ids = HashMap::new();
@@ -1187,7 +1241,10 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
 
     for (index, step) in steps.iter().enumerate() {
         let sway_launch = match plan_step(step, args, &resolved_ids) {
-            Ok(sway_launch) => sway_launch,
+            Ok(sway_launch) => sway_launch::SwayLaunch {
+                require_launch_on_focused_workspace: true,
+                ..sway_launch
+            },
             Err(error) => fail_step(
                 args,
                 &launched_container_ids,
@@ -1262,14 +1319,15 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
     }
 
     if args.json {
-        print_line(
-            &serde_json::json!({
-                "container_ids": container_ids,
-                "containers": resolved_ids,
-                "actions": actions,
-            })
-            .to_string(),
-        );
+        let mut result = serde_json::json!({
+            "container_ids": container_ids,
+            "containers": resolved_ids,
+            "actions": actions,
+        });
+        if !warnings.is_empty() {
+            result["warnings"] = serde_json::json!(warnings);
+        }
+        print_line(&result.to_string());
     }
 
     if let Some(error) = stdout_failure {
@@ -1278,16 +1336,49 @@ fn run_steps(steps: &[layout::LayoutStep], args: &Args) -> ! {
     process::exit(0);
 }
 
+/// The warning a `--layout`/`--template` run gives when the workspace it's
+/// about to build on already holds tiled windows: its shapes assume an
+/// empty workspace, so they come out distorted around what's there (the
+/// terminal the command was typed into, typically). Printed to stderr and
+/// returned for `--json`'s `"warnings"`. A failure to read the tree only
+/// skips the warning: the run itself will report a compositor that isn't
+/// answering.
+fn occupied_workspace_warning(args: &Args) -> Vec<String> {
+    let Ok(Some((workspace, tiled_windows))) = sway_launch::focused_workspace_occupancy() else {
+        return Vec::new();
+    };
+    if tiled_windows == 0 {
+        return Vec::new();
+    }
+    let warning = occupied_workspace_message(&workspace, tiled_windows);
+    if !args.json {
+        diagnostic!("{}{}", stderr_label(Severity::Warning), warning);
+    }
+    vec![warning]
+}
+
+fn occupied_workspace_message(workspace: &str, tiled_windows: usize) -> String {
+    format!(
+        "workspace {:?} already has {} tiled window(s); the layout will be built around them — \
+         run it on an empty workspace (--on-workspace) for the shape it describes",
+        workspace, tiled_windows
+    )
+}
+
 /// `run_steps()`'s `--dry-run` handling: plans every step via
 /// `plan_steps_offline()` (see there for how `target_id` resolves with
 /// nothing launched) and prints its planned actions (via
 /// `print_dry_run_steps()`), continuing the numbering across steps, without
 /// ever calling `.run()` or touching Sway IPC.
-fn run_steps_dry_run(steps: &[layout::LayoutStep], args: &Args) -> ! {
+fn run_steps_dry_run(
+    steps: &[layout::LayoutStep],
+    build: sway_launch::BuildLocation,
+    args: &Args,
+) -> ! {
     match plan_steps_offline(steps, args) {
         Ok(planned) => {
             let dry_run_steps: Vec<DryRunStep> = planned.iter().map(dry_run_step).collect();
-            print_dry_run_steps(&dry_run_steps, args.json);
+            print_dry_run_steps(&build.commands(), &dry_run_steps, args.json);
             process::exit(0);
         }
         Err(error) => fail(args.json, &error),
@@ -1767,13 +1858,24 @@ mod tests {
             },
         ];
         assert_eq!(
-            dry_run_plain_lines(&steps),
+            dry_run_plain_lines(&[], &steps),
             [
                 "1. launch foot\\r\\u{1b}[2K1. launch bar",
                 "2. splith",
                 "3. target existing container",
             ]
         );
+        assert_eq!(
+            dry_run_plain_lines(&["workspace \"3\"".to_string()], &steps[1..]),
+            ["1. workspace \"3\"", "2. target existing container"]
+        );
+    }
+
+    #[test]
+    fn occupied_workspace_message_names_the_workspace_and_the_way_out() {
+        let message = occupied_workspace_message("1", 2);
+        assert!(message.contains("workspace \"1\" already has 2 tiled window(s)"));
+        assert!(message.contains("--on-workspace"));
     }
 
     #[test]
@@ -1809,6 +1911,7 @@ mod tests {
         "dry_run",
         "validate",
         "rollback_on_error",
+        "on_workspace",
         "json",
         "verbose",
         // clap's own auto-generated arguments.

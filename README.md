@@ -122,6 +122,7 @@ Options:
       --bindings <BINDINGS>           Bindings file supplying each --template slot's application identity. Requires --template; conflicts with --apps
       --apps <APPS>                   Comma-separated list of commands to launch into --template's slots, in the order the template's slot steps appear. Requires --template; conflicts with --bindings
       --rollback-on-error             If a --layout/--template step fails, kill every window this invocation itself launched, by an earlier step or by the failing step before it failed (not one it merely retargeted via con_id/existing/target_id), rather than leaving them open. Requires --layout or --template
+      --on-workspace <WORKSPACE>      Build a --layout/--template run on this workspace: switch to it once before the first step, so every window opens there. Overrides a template's own [layout] workspace. Requires --layout or --template
   -h, --help                          Print help
   -V, --version                       Print version
 ```
@@ -149,8 +150,9 @@ sway-launch --floating --position center --width 800px --height 500px foot
 ```
 
 ```shell
-# An instant 2x2 grid from a built-in template — no files to write
-sway-launch --template quad-grid --apps foot,foot,foot,foot
+# An instant 2x2 grid from a built-in template — no files to write. --on-workspace builds it on an
+# empty workspace, rather than around the terminal you typed the command into
+sway-launch --template quad-grid --apps foot,foot,foot,foot --on-workspace 9
 ```
 
 ```shell
@@ -564,8 +566,11 @@ acts on the same window again with `target_id`. `--template` requires exactly on
 and conflicts with `--layout` and every per-window flag, same reasoning as `--layout`. See
 [`templates/quad-grid.toml`](templates/quad-grid.toml).
 
-A template can also declare an optional `[layout]` table, applied to every step that doesn't set
-its own `workspace`/`output`:
+A template's shape is built wherever focus is when it runs, and assumes that workspace is empty.
+Run from a terminal, the terminal itself is on that workspace, so the shape comes out built around
+it: `sway-launch` warns when the workspace already holds tiled windows (on stderr, and as a
+`"warnings"` list under `--json`) but still runs. To build somewhere specific, a template can
+declare an optional `[layout]` table:
 
 ```toml
 [layout]
@@ -573,12 +578,17 @@ workspace = "3"
 output = "HDMI-A-1"
 ```
 
-This pins the whole template to a specific workspace/output instead of always operating on
-whatever's currently focused when it runs — closes the "works if the workspace/output happens to
-already be in the right state" gap noted above. A step's own `workspace`/`output` still wins when
-set, applied per field, so a step can mix the template's workspace with its own output (or vice
-versa). Both values are validated where they're declared, even when every step overrides them, so a
-bad one is reported as `[layout] workspace: ...` rather than against a step that inherited it.
+The run switches to that workspace before the first step — focusing the output first, so a
+workspace that doesn't exist yet is created there — and builds the whole shape in place. The view
+stays there afterwards. `--on-workspace <WORKSPACE>` does the same from the command line, for a
+`--template` or a `--layout` file, and wins over a template's own `[layout]` workspace. A step's
+own `workspace`/`output` still moves that one window afterwards, as before. Both `[layout]` values
+are validated where they're declared, so a bad one is reported as `[layout] workspace: ...`.
+
+A step whose application is still starting when focus moves to another workspace — a keybinding,
+a notification click, another script — fails, naming both workspaces: every later step would
+otherwise open on the other workspace and split the layout in two. With `--rollback-on-error`, the
+windows the run launched are closed.
 
 Every file under [`templates/`](templates/) is also built into the `sway-launch`
 binary itself as a *built-in template* — `--template <name>` (no `.toml` extension, e.g.
@@ -929,6 +939,12 @@ leaves it in place, so nothing is skipped.
 A floating window is skipped on every setup (reason `floating`): Sway only nudges a floating
 window 10 px for `move right`, which is never a new column.
 
+`--new-column` and `--new-row` can't be combined with `--workspace` (or `workspace` in the same
+layout step): the move would apply on the workspace the window opened on, and the workspace move
+afterwards drops it into the target as an ordinary new window, so the new column or row never
+appears there. Build on the target workspace instead, with `--on-workspace` or a template's
+`[layout]` table.
+
 The check runs right before the move is sent, against the tree as the earlier actions in the same
 invocation left it, so `--new-column --new-row` judges the row move after the column move has
 happened. Run with `--verbose` to see when a move is skipped and why, or check `--json`'s
@@ -1029,6 +1045,10 @@ $ sway-launch --template quad-grid --apps foot,foot,code,foot --json
 {"actions":[{"command":"splith","kind":"split","status":"changed","step":1},{"command":"splitv","kind":"split","status":"changed","step":2},{"command":"move down","kind":"new_row","status":"changed","step":3},{"command":"splith","kind":"split","status":"changed","step":3}],"container_ids":[437,438,439,440],"containers":{"bottom-left":439,"bottom-right":440,"top-left":437,"top-right":438}}
 ```
 
+A `--layout`/`--template` run that launched windows onto a workspace already holding tiled windows
+adds a `"warnings"` list of messages saying so (see [Templates](#templates)); the key is absent
+otherwise.
+
 This also applies to errors — a failure prints a JSON object to stderr instead of a plain-text
 message, so a `--json` caller never needs to interpret a plain-text error message. Read it as the
 **last line** of stderr rather than assuming stderr holds nothing else: with no reachable Sway
@@ -1115,7 +1135,10 @@ Every line is container-id-free by design: for a fresh command, there's no real 
 one for; for `--con-id`/`--existing`, showing the id on some lines and not others would be an
 inconsistent preview. `--json` prints a structured `{"steps": [{"target": "...", "actions":
 [{"kind": "...", "command": "..."}, ...]}, ...]}` object instead, each action carrying the same
-`kind`/`command` pair a real run's [JSON output](#json-output) reports.
+`kind`/`command` pair a real run's [JSON output](#json-output) reports. A `--layout`/`--template`
+run that switches workspace before its first step (`--on-workspace`, or a template's `[layout]`
+table) lists those commands first — numbered ahead of the steps in plain output, and as a
+`"setup"` list under `--json`.
 
 Control characters in a command (or anything else the preview prints) are shown as visible escapes
 — `\u{1b}` for an escape character, `\t` for a tab — rather than printed raw, so a layout or
