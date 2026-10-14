@@ -1,8 +1,9 @@
 name: Check
 
-# Runs on every push and pull request: formatting, lint, the full test
-# suite, and a dependency security audit must all pass before a change is
-# considered clean, matching the checks CLAUDE.md requires before a commit.
+# Runs on every push and pull request: scripts/run-checks (formatting, lint,
+# build and the full headless test suite), the coverage gate, the minimum
+# Rust version build, the live-Sway tests and a dependency security audit
+# must all pass before a change is considered clean.
 on:
   push:
   pull_request:
@@ -36,22 +37,34 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: cargo fmt --check
-        run: cargo fmt -- --check
+      # Taken from whatever the runner image's apt ships rather than pinned,
+      # so the versions are printed instead: a new finding that appears on a
+      # commit that touched no script can then be traced to a tool upgrade
+      # from the log alone.
+      - name: Install shellcheck and shfmt
+        run: |
+          set -euo pipefail
+          sudo apt-get update && sudo apt-get install -y shellcheck shfmt
+          shellcheck --version
+          echo "shfmt $(shfmt --version)"
 
-      # --all-features matters: tests/live_sway.rs is behind
-      # #![cfg(feature = "live-sway-tests")], so without it that file compiles
-      # to nothing and clippy lints none of its ~4,000 lines -- the one file
-      # CLAUDE.md insists must stay complete, silently exempt from the lint
-      # gate. Clippy needs no compositor, only the cfg flag.
-      - name: cargo clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+      # Pinned because rules are added and tightened between releases, which
+      # would otherwise turn this job red without any Markdown changing. Keep
+      # the version in CLAUDE.md's Commands section in step.
+      - name: Install markdownlint
+        run: npm install -g markdownlint-cli@0.49.1
 
-      - name: Build
-        run: cargo build --locked
+      - name: Install uv
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
 
-      - name: cargo test
-        run: cargo test --locked
+      # The checks every commit must pass, in one script shared with
+      # release.yml and with developers, so a new check is added in one place:
+      # fmt, clippy (--all-targets --all-features: without the feature,
+      # tests/live_sway.rs compiles to nothing and goes unlinted), build,
+      # test, shellcheck/shfmt on every shell script found by shebang,
+      # markdownlint on every tracked Markdown file, and black/ruff.
+      - name: Run checks
+        run: ./scripts/run-checks
 
       # Pinned, not left at install-action's default of "latest": the gate
       # below is tuned to a few points under a measured baseline, and a
@@ -105,67 +118,6 @@ jobs:
 
       - name: Build with the declared minimum Rust version
         run: cargo +${{ steps.msrv.outputs.version }} build --locked
-
-  lint-scripts-and-docs:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      # Taken from whatever the runner image's apt ships rather than pinned,
-      # so the versions are printed instead: a new finding that appears on a
-      # commit that touched no script can then be traced to a tool upgrade
-      # from the log alone.
-      - name: Install shellcheck and shfmt
-        run: |
-          set -euo pipefail
-          sudo apt-get update && sudo apt-get install -y shellcheck shfmt
-          shellcheck --version
-          echo "shfmt $(shfmt --version)"
-
-      # Discovered by shebang rather than listed by name, so a shell script
-      # added under scripts/ or examples/scripts/ is linted automatically
-      # instead of silently escaping both checks. Selecting by shebang (not
-      # by directory) is what keeps the one Python script in scripts/ out of
-      # it -- that has its own black/ruff steps below.
-      #
-      # The pattern matches any sh/bash/dash shebang, not just the literal
-      # `#!/bin/sh` every current script uses: a review pointed out that a
-      # script added with `#!/usr/bin/env sh` would have matched neither the
-      # old pattern nor anything else, and escaped both checks silently --
-      # exactly what discovering by shebang is meant to prevent.
-      - name: Find shell scripts
-        id: shell-scripts
-        run: |
-          set -euo pipefail
-          files="$(grep -rlE '^#!.*[ /](sh|bash|dash)$' scripts examples/scripts | sort | tr '\n' ' ')"
-          test -n "$files" || { echo "::error::no shell scripts found to lint"; exit 1; }
-          echo "files=$files" >> "$GITHUB_OUTPUT"
-          echo "Linting: $files"
-
-      - name: shellcheck
-        run: shellcheck --shell=sh ${{ steps.shell-scripts.outputs.files }}
-
-      - name: shfmt
-        run: shfmt -i 2 -d ${{ steps.shell-scripts.outputs.files }}
-
-      # Pinned because rules are added and tightened between releases, which
-      # would otherwise turn this job red without any Markdown changing. Keep
-      # the version in CLAUDE.md's Commands section in step.
-      - name: Install markdownlint
-        run: npm install -g markdownlint-cli@0.49.1
-
-      - name: markdownlint
-        run: markdownlint '**/*.md'
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
-
-      - name: black --check
-        run: uv run --group dev black --check scripts/generate-layout-screenshots
-
-      - name: ruff check
-        run: uv run --group dev ruff check scripts/generate-layout-screenshots
 
   live-sway-tests:
     runs-on: ubuntu-latest
