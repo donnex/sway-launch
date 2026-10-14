@@ -2875,7 +2875,9 @@ every push regardless) against the exact tagged commit, then builds and publishe
 when a `v*` tag is pushed. Its `check` job also fails unless the tag's version (`vX.Y.Z` minus the
 `v`) equals `Cargo.toml`'s `version`, so a tag pushed without the version-bump commit can't ship a
 binary whose `--version` disagrees with its release name. Building and publishing are separate
-jobs: `build` (read-only token) compiles and packages the archive (the binary, `README.md`, and
+jobs: `build` (read-only token) compiles for `x86_64-unknown-linux-musl`, so the published binary
+is statically linked and runs whatever the user's glibc version (no `musl-tools` needed: the crate
+has no C dependencies and Rust's musl target ships its own C runtime), and packages the archive (the binary, `README.md`, and
 `LICENSE` — BSD-3-Clause requires a binary redistribution to carry the copyright notice and
 conditions, so the project's own release artifact has to include it) and hands it on via
 `actions/upload-artifact`, and only `publish` (no checkout, no build — just a download and
