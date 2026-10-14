@@ -607,6 +607,18 @@ fn state_satisfies_workspace_only_for_the_requested_workspace() {
 }
 
 #[test]
+fn state_satisfies_workspace_and_output_ignore_case_as_sway_does() {
+    let state = state_with(|state| {
+        state.workspace = Some("Web".to_string());
+        state.output = Some("HEADLESS-1".to_string());
+    });
+
+    assert!(workspace_action("web").state_satisfies(Some(&state)));
+    assert!(output_action("headless-1").state_satisfies(Some(&state)));
+    assert!(!workspace_action("Webs").state_satisfies(Some(&state)));
+}
+
+#[test]
 fn state_satisfies_workspace_false_when_the_workspace_is_unknown() {
     let state = ContainerState::default();
     assert!(!workspace_action("3").state_satisfies(Some(&state)));

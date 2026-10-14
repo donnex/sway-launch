@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     percentage over 100, which Sway would ignore or clamp, is an error. (#48)
   - `--position` takes `center` or `<x>,<y>`, negative coordinates included, for an output that
     sits left of or above the primary one.
+  - `--workspace` and `--output` match names the way Sway does, ignoring case, so `--workspace web`
+    joins an existing `Web` instead of failing at `--timeout` after a move that worked. Sway's
+    keywords (`next`, `prev`, `current`, `back_and_forth`, ...; `left`/`right`/`up`/`down` for an
+    output) are rejected as names: Sway acts on them even quoted, and an upper-case one such as
+    `NEXT` crashes Sway 1.11. (#5)
   - On a multi-monitor setup, a `--new-column`/`--new-row` that Sway would carry onto another
     output — a window at the edge of its workspace, including the only window inside a container
     there, or a window that's already fullscreen — is skipped rather than run. On a floating
