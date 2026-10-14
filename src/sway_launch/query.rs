@@ -192,6 +192,14 @@ pub(super) fn recheck_launched_windows_now(
 /// `SwayAction::poll_matches()`'s `Height`/`Width`/`Position` arms to read
 /// a window's own current geometry, as opposed to `parent_node_layout()`,
 /// which reads its *parent's* state for `Split`.
+pub(super) fn container_state_on(
+    connection: &mut Connection,
+    container_id: i64,
+) -> Option<ContainerState> {
+    let tree = connection.get_tree().ok()?;
+    ContainerState::from_tree(&tree, container_id)
+}
+
 pub(super) fn node_by_id(connection: &mut Connection, container_id: i64) -> Option<Node> {
     let tree = connection.get_tree().ok()?;
     find_node(&tree, container_id).cloned()

@@ -23,8 +23,8 @@ use super::process_marker::{
     MarkerTracker, MARKER_SCAN_INTERVAL, PID_MARKER_FALLBACK_GRACE, PID_MARKER_VAR,
 };
 use super::query::{
-    container_state, ensure_container_exists, node_by_id, parent_node_layout, position_matches,
-    recheck_launched_windows_now,
+    container_state, container_state_on, ensure_container_exists, node_by_id, parent_node_layout,
+    position_matches, recheck_launched_windows_now,
 };
 use super::tree::{
     height_matches, width_matches, window_app_id_match, window_class_match, ContainerState,
@@ -146,6 +146,10 @@ impl ActionKind<'_> {
             // events fired either way, unlike Floating/Fullscreen/Focus
             // above, which each have a dedicated WindowChange variant.
             ActionKind::Sticky => None,
+            // Moving a workspace fires a workspace event, not a window one,
+            // and only when the workspace actually changes output, so this
+            // is polled against the tree instead.
+            ActionKind::WorkspaceToOutput { .. } => None,
             ActionKind::Split(_)
             | ActionKind::NewColumn
             | ActionKind::NewRow
@@ -349,6 +353,18 @@ impl SwayAction<'_> {
             ActionKind::Focus => state.focused,
             ActionKind::Scratchpad => state.in_scratchpad,
             ActionKind::Mark(mark) => state.marks.iter().any(|held| held == mark),
+            // Both halves of the combined request at once; whether the
+            // workspace is the one the output is showing doesn't matter here.
+            ActionKind::WorkspaceToOutput { workspace, output } => {
+                state
+                    .workspace
+                    .as_deref()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(workspace))
+                    && state
+                        .output
+                        .as_deref()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(output))
+            }
             ActionKind::Split(_)
             | ActionKind::Sticky
             | ActionKind::NewColumn
@@ -380,6 +396,7 @@ impl SwayAction<'_> {
             | ActionKind::Focus
             | ActionKind::Workspace(_)
             | ActionKind::Output(_)
+            | ActionKind::WorkspaceToOutput { .. }
             | ActionKind::Mark(_)
             | ActionKind::Scratchpad => WAIT_TIME_POLL_GRACE,
         }
@@ -398,7 +415,10 @@ impl SwayAction<'_> {
     /// without also resolving the reference dimension it's a percentage of.
     fn polls(&self, baseline: Option<swayipc::Rect>) -> bool {
         match self.kind {
-            ActionKind::Split(_) | ActionKind::Sticky | ActionKind::Position(_) => true,
+            ActionKind::Split(_)
+            | ActionKind::Sticky
+            | ActionKind::Position(_)
+            | ActionKind::WorkspaceToOutput { .. } => true,
             ActionKind::Height(Size::Pixels(_)) | ActionKind::Width(Size::Pixels(_)) => true,
             ActionKind::Height(Size::Percent(_)) | ActionKind::Width(Size::Percent(_)) => false,
             ActionKind::NewColumn | ActionKind::NewRow => baseline.is_some(),
@@ -472,6 +492,9 @@ impl SwayAction<'_> {
             ActionKind::NewColumn | ActionKind::NewRow => baseline.is_some_and(|baseline| {
                 node_by_id(connection, container_id).is_some_and(|node| node.rect != baseline)
             }),
+            ActionKind::WorkspaceToOutput { .. } => {
+                self.state_satisfies(container_state_on(connection, container_id).as_ref())
+            }
             ActionKind::Height(Size::Percent(_)) | ActionKind::Width(Size::Percent(_)) => false,
             ActionKind::Floating
             | ActionKind::Fullscreen
@@ -507,6 +530,7 @@ impl SwayAction<'_> {
             | ActionKind::Focus
             | ActionKind::Workspace(_)
             | ActionKind::Output(_)
+            | ActionKind::WorkspaceToOutput { .. }
             | ActionKind::Mark(_)
             | ActionKind::Scratchpad => None,
         }

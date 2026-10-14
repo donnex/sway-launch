@@ -850,7 +850,9 @@ sway-launch --output HDMI-A-1 foot
 
 As with Sway's own `move container to output`, the window lands on the workspace that output is
 currently showing — including when it was already on a hidden workspace of the same output, which
-brings it into view.
+brings it into view. Combined with `--workspace`, the window goes to that workspace and the
+workspace itself is moved to the output, so the window ends up on both — and so does any other
+window already on that workspace, since a workspace moves as a whole.
 
 The value is the output's connector name as `swaymsg -t get_outputs` shows it (`HDMI-A-1`,
 `DP-2`), matched ignoring case. Sway also accepts an output's make, model and serial
