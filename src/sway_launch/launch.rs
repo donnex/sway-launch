@@ -12,10 +12,11 @@
 
 use super::action::{ActionKind, ExecAction, SwayAction};
 use super::ipc::event_loop;
+use super::ipc::{quote_sway_string, run_sway_command};
 use super::outcome::{
     ActionOutcome, ActionRecord, ActionStatus, LaunchOwnership, RunError, RunOutcome,
 };
-use super::query::{current_move_skip_reason, find_existing_container_id};
+use super::query::{current_move_skip_reason, find_existing_container_id, focused_workspace_name};
 use super::target::Target;
 use super::tree::MoveDirection;
 use super::values::{Position, Size, Split};
@@ -63,6 +64,50 @@ pub struct SwayLaunch<'a> {
     pub verbose: bool,
     pub timeout: time::Duration,
     pub wait_time: time::Duration,
+
+    /// Fail a launch if focus left the workspace it started on before its
+    /// window appeared — `--layout`/`--template` set this, since their shapes
+    /// are built where focus is, and every step launched after such a switch
+    /// would open on the other workspace, splitting the shape in two.
+    pub require_launch_on_focused_workspace: bool,
+}
+
+/// Where a `--layout`/`--template` run builds: a workspace and/or output
+/// focused once before the first step, so every window opens there and the
+/// shape is built in place. Moving each window there after building it
+/// scrambled the shape, since a moved window lands next to whatever the
+/// target workspace has focused.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct BuildLocation<'a> {
+    pub workspace: Option<&'a str>,
+    pub output: Option<&'a str>,
+}
+
+impl BuildLocation<'_> {
+    /// The Sway commands that focus this location, in order: the output
+    /// first, so a new workspace is created there.
+    pub fn commands(&self) -> Vec<String> {
+        let output = self
+            .output
+            .map(|output| format!("focus output {}", quote_sway_string(output)));
+        let workspace = self
+            .workspace
+            .map(|workspace| format!("workspace {}", quote_sway_string(workspace)));
+        output.into_iter().chain(workspace).collect()
+    }
+
+    pub fn apply(&self, verbose: bool) -> Result<(), String> {
+        for command in self.commands() {
+            if verbose {
+                diagnostic!(
+                    "Sway command: {}",
+                    super::values::escape_control_characters(&command, false)
+                );
+            }
+            run_sway_command(&command).map_err(|error| format!("{}: {}", command, error))?;
+        }
+        Ok(())
+    }
 }
 
 /// `--debug-events`: subscribes to every event type and prints each event
@@ -237,6 +282,13 @@ impl<'a> SwayLaunch<'a> {
     }
 
     pub fn run(&self) -> Result<RunOutcome, RunError> {
+        let launching = matches!(self.target, Target::Exec { .. });
+        let expected_workspace = if launching && self.require_launch_on_focused_workspace {
+            focused_workspace_name()?
+        } else {
+            None
+        };
+
         let (container_id, launch_ownership) = self.resolve_container_id()?;
 
         if self.verbose {
@@ -251,6 +303,13 @@ impl<'a> SwayLaunch<'a> {
             ..error
         };
 
+        if let Some(expected) = expected_workspace {
+            let focused_now = focused_workspace_name().map_err(|error| resolved(error.into()))?;
+            if let Some(message) = focus_moved_during_launch(&expected, focused_now.as_deref()) {
+                return Err(resolved(RunError::from(message)));
+            }
+        }
+
         let actions = self
             .execute_plan(
                 self.build_actions(container_id),
@@ -264,6 +323,29 @@ impl<'a> SwayLaunch<'a> {
             actions,
             launch_ownership,
         })
+    }
+}
+
+/// Why a launch fails when focus was on `expected` as it started and is on
+/// `focused_now` once its window appeared, or `None` when it didn't move.
+///
+/// Sway places a window on the workspace its `exec` ran on, wherever focus
+/// has gone since, so the launched window itself is still where it belongs
+/// (confirmed live). What a switch breaks is every step after it: those are
+/// launched on the new workspace. Checking where the window opened therefore
+/// can't see the problem; checking where focus went can.
+fn focus_moved_during_launch(expected: &str, focused_now: Option<&str>) -> Option<String> {
+    match focused_now {
+        Some(workspace) if workspace == expected => None,
+        Some(workspace) => Some(format!(
+            "focus moved from workspace {:?} to {:?} while this step's window was opening, so \
+             later steps would build on the wrong workspace",
+            expected, workspace
+        )),
+        None => Some(format!(
+            "focus left workspace {:?} while this step's window was opening",
+            expected
+        )),
     }
 }
 

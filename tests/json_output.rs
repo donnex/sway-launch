@@ -368,8 +368,6 @@ fn dry_run_json_names_every_action_by_its_flag_not_its_command() {
             "42",
             "--new-column",
             "--new-row",
-            "--workspace",
-            "3",
             "--output",
             "HDMI-A-1",
             "--split",
@@ -411,7 +409,6 @@ fn dry_run_json_names_every_action_by_its_flag_not_its_command() {
         [
             "new_column",
             "new_row",
-            "workspace",
             "output",
             "split",
             "floating",
@@ -426,8 +423,58 @@ fn dry_run_json_names_every_action_by_its_flag_not_its_command() {
         ]
     );
     assert_eq!(
-        json["steps"][0]["actions"][12],
+        json["steps"][0]["actions"][11],
         serde_json::json!({ "kind": "mark", "command": "mark \"pinned\"" })
+    );
+
+    // --workspace can't be combined with --new-column/--new-row (#45), so
+    // it's checked on its own, together with --output's combined form.
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--con-id",
+            "42",
+            "--workspace",
+            "3",
+            "--output",
+            "HDMI-A-1",
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be a JSON object");
+    assert_eq!(
+        json["steps"][0]["actions"],
+        serde_json::json!([
+            { "kind": "workspace", "command": "move workspace \"3\"" },
+            { "kind": "output", "command": "move workspace to output \"HDMI-A-1\"" },
+        ])
+    );
+}
+
+#[test]
+fn workspace_conflicts_with_new_column_and_new_row() {
+    for flag in ["--new-column", "--new-row"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+            .args(["--con-id", "42", "--workspace", "3", flag, "--dry-run"])
+            .output()
+            .expect("failed to run sway-launch binary");
+        assert_conflict_error(&output, "--workspace", flag);
+    }
+}
+
+#[test]
+fn on_workspace_without_layout_or_template_errors() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--on-workspace", "9", "foot"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(
+        stderr.contains("--on-workspace requires --layout or --template"),
+        "{stderr}"
     );
 }
 

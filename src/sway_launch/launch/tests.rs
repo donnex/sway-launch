@@ -22,6 +22,7 @@ fn minimal_sway_launch() -> SwayLaunch<'static> {
         verbose: false,
         timeout: time::Duration::from_secs(5),
         wait_time: time::Duration::from_millis(20),
+        require_launch_on_focused_workspace: false,
     }
 }
 
@@ -349,4 +350,23 @@ fn debug_event_subscriptions_cover_every_sway_ipc_event_type_once() {
 
     assert_eq!(subscribed.len(), subscribed_set.len(), "duplicate entry");
     assert_eq!(subscribed_set, expected);
+}
+
+// focus_moved_during_launch
+
+#[test]
+fn focus_moved_during_launch_is_silent_while_focus_stays_put() {
+    assert_eq!(focus_moved_during_launch("1", Some("1")), None);
+}
+
+#[test]
+fn focus_moved_during_launch_names_both_workspaces() {
+    let message = focus_moved_during_launch("1", Some("21")).expect("focus moved");
+    assert!(
+        message.contains("focus moved from workspace \"1\" to \"21\""),
+        "{message}"
+    );
+    assert!(focus_moved_during_launch("1", None)
+        .expect("focus left")
+        .contains("left workspace \"1\""));
 }

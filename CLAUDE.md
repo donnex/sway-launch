@@ -979,21 +979,18 @@ extra step did nothing. Pinned by `launch.rs`'s
 `build_actions_moves_the_workspace_to_the_output_when_both_are_set` and `tests/live_sway.rs`'s
 `workspace_and_output_together_put_the_window_on_that_workspace_on_that_output`.
 
-`NewColumn`/`NewRow` running *before* `Workspace`/`Output` in this order means `--new-column
---workspace 3` (or `--new-row --output ...`) restructures the window relative to its *origin*
-workspace's siblings before the subsequent move relocates it — an external review flagged this as a
-potential semantic surprise (the window arguably "should" restructure on the target workspace, not
-the origin one). Investigated live rather than assumed: confirmed harmless in every case tried
-(solo origin workspace, non-solo origin workspace, and the multi-output case where
-the move guard below already applies) — whatever `move right`/`move down` did on
-the origin workspace is entirely superseded once `move workspace`/`move container to output`
-relocates the window elsewhere, so it always lands as an ordinary new sibling in the target's
-existing layout with the origin workspace's other windows completely undisturbed. No reorder
-needed. Confirmed by `tests/live_sway.rs`'s
-`new_column_combined_with_workspace_lands_on_the_target_workspace_correctly` and
-`new_column_and_new_row_output_guard_still_applies_when_combined_with_output` (the latter covers
-both `--new-column`+`--output` and `--new-row`+`--output` in one test, against one created
-output).
+**`NewColumn`/`NewRow` can't be combined with `Workspace`** (#45): a layout step setting
+`workspace` with `new_column`/`new_row` is rejected in `to_sway_launch()`, and the CLI's
+`--new-column`/`--new-row` carry `conflicts_with = "workspace"`. They run first in the fixed order,
+so the relative move acted on the window's *origin* workspace, and the workspace move after it then
+dropped the window into the target as an ordinary new sibling. An earlier live investigation
+recorded exactly that and called it harmless, since the origin workspace was left undisturbed — but
+"the new column never appears where the window ends up" is the bug, and it's what scrambled a
+template's `[layout]` workspace into the wrong shape (see the `[layout]` paragraph under
+"`--template`"). No shipped template or layout used the combination. The output equivalent
+(`new_column` + `output`) is still accepted: #45's decision covered `workspace` only, and
+`new_column_and_new_row_output_guard_still_applies_when_combined_with_output` deliberately
+exercises it against the multi-output guard.
 
 Immediately before sending each `NewColumn`/`NewRow`, `run()`'s `execute_plan()` asks
 `current_move_skip_reason(container_id, direction)` (`query.rs`: one `get_outputs()` + one
@@ -1624,33 +1621,59 @@ README field list, and a second namespace a reader has to hold in mind to answer
 `target_id` that must survive a slot rename — either is a concrete reason the two need to vary
 independently, which is exactly what's missing today.
 
-**Template-level workspace/output context (`[layout]` table).** A template file may declare an
-optional `[layout]` table (`Template.layout: TemplateLayoutContext`, `workspace`/`output`, both
-`Option<String>`, `#[serde(default)]` so the whole table is optional) applied to every resolved
-step that doesn't set its own `workspace`/`output` — closes the "works if the workspace/output
-happens to already be in the right state" gap README.md's "Recreatable layouts" section
-acknowledges, letting a template pin itself to a specific workspace/output instead of always
-operating on whatever's currently focused when it runs. `template::parse()` validates the table's
-own values (`validate_sway_string_argument()`, errors prefixed `[layout] workspace:`/
-`[layout] output:`) where they're declared: left to `to_sway_launch()`'s per-step check, a bad
-value was blamed on the first step that inherited it — a step that never set the field — and one
-every step overrides was never checked at all, so `--validate` passed a file holding a value the
-rest of the tool rejects. Covered by `parse_rejects_*_layout_context_*` in `template/tests.rs` and
-two `tests/template.rs` `--validate` cases. `resolve()` applies this as a per-field
-fallback (`step.workspace.clone().or_else(|| template.layout.workspace.clone())`, same for
-`output`), not a step-level override switch — a step can mix the template's workspace with its own
-output, or vice versa. Unlike `[template]`'s table, this one is optional: a template with no
-`[layout]` table behaves exactly as before this existed (`TemplateLayoutContext::default()`, both
-fields `None`, so `or_else()` never fires). Confirmed live by `tests/live_sway.rs`'s
-`template_layout_context_moves_a_step_without_its_own_workspace_to_the_template_s_workspace`; the
-fallback/override/mixed-field logic itself is ordinary pure logic in `resolve()`, covered headlessly
-by `template.rs`'s `resolve_applies_the_template_layout_context_to_a_step_without_its_own`,
-`resolve_lets_a_step_s_own_workspace_and_output_win_over_the_template_layout_context`,
-`resolve_mixes_a_step_s_own_field_with_the_template_layout_context_s_other_field`, and
-`resolve_leaves_workspace_and_output_unset_without_a_layout_context`, plus two
-`tests/template.rs` `--dry-run`-based end-to-end checks
-(`template_layout_context_applies_workspace_and_output_to_a_step_without_its_own`,
-`template_layout_context_does_not_override_a_step_s_own_workspace_and_output`).
+**Template-level workspace/output context (`[layout]` table) and `--on-workspace`: a run builds
+on one workspace.** A template file may declare an optional `[layout]` table (`Template.layout:
+TemplateLayoutContext`, `workspace`/`output`, both `Option<String>`, `#[serde(default)]`). It is
+not copied into the steps: `run_template()` turns it into a `sway_launch::BuildLocation`, and
+`run_steps()` applies that once before the first step (`BuildLocation::commands()`: `focus output
+"<output>"`, then `workspace "<workspace>"`), so every window opens there and the shape is built in
+place. `--on-workspace <WORKSPACE>` (run-level, in `CLI_ONLY_ARGS`, requiring `--layout`/
+`--template` via the same manual check as `--rollback-on-error`, and in every standalone mode's
+conflict list) supplies the workspace for a layout file and overrides a template's `[layout]`
+workspace while keeping its output. The view stays on that workspace afterwards. `--dry-run`
+prints those commands first (a `"setup"` list under `--json`), and `--validate` needs nothing extra:
+both values are validated where they're declared.
+
+This replaced a per-field fallback in `resolve()` that copied `[layout]`'s workspace/output into
+every step that lacked its own (#45). That moved each window after launching it, so the shape was
+built on whatever workspace was focused and each window then landed next to the target's focused
+container: `quad-grid` with a `[layout]` workspace arrived as one full-height window beside a
+column of one window above two, while every action, `move down` included, reported `"changed"`.
+The only live test of `[layout]` used a one-slot template and couldn't see it. A step's own
+`workspace`/`output` still moves that one window, as before (`workspace-spread` relies on it).
+
+**Two checks back the "one workspace" assumption up** (#105), both only for `--layout`/`--template`
+runs. First, a run that launches anything reads the focused workspace once after the switch and,
+when it already holds tiled windows (`tree::tiled_window_count()`), warns on stderr and adds a
+`"warnings"` list to the `--json` success object: run from a terminal, the Quickstart grid was
+built around that terminal. A run that only retargets existing windows skips this, so it still
+never touches IPC beyond its own steps. Second, `run_steps()` sets
+`SwayLaunch.require_launch_on_focused_workspace`, and a launching step then records the focused
+workspace before its `exec` and fails (with the window still reported and rollback-eligible, like
+any failure after a launch) if focus has moved by the time its window appears. The check is on
+*focus*, not on where the window opened, deliberately: Sway places a window on the workspace its
+`exec` ran on wherever focus has gone since (confirmed live — the first version compared the
+window's workspace and never fired), so a switch mid-launch leaves that step's window in place and
+sends every *later* step to the new workspace. A switch landing in the milliseconds between steps
+is not caught. Comparing against the focus at each step's start rather than the run's build
+workspace is also deliberate: some steps move focus on purpose (`focus`, a `WorkspaceToOutput`
+move, which focuses the moved workspace), and the steps after them must follow.
+
+Pinned by `template/tests.rs`'s
+`resolve_leaves_the_template_layout_context_to_the_run_rather_than_each_step` and
+`resolve_keeps_a_step_s_own_workspace_and_output_alongside_a_layout_context`, `tests/template.rs`'s
+`template_layout_context_switches_to_its_output_and_workspace_before_the_first_step`,
+`template_layout_context_leaves_a_step_s_own_workspace_move_in_place` and
+`on_workspace_overrides_the_template_layout_workspace_in_the_preview`, and live by
+`template_layout_workspace_builds_the_shape_in_place_on_that_workspace` (compared byte for byte with
+`tests/template-shapes/quad-grid.txt`, by naming the `[layout]` workspace after the shape test's
+own), `a_template_warns_about_an_occupied_workspace_and_on_workspace_builds_cleanly`,
+`a_launch_whose_window_opens_on_another_workspace_fails_its_step` and
+`template_layout_context_moves_a_step_without_its_own_workspace_to_the_template_s_workspace`.
+`template::parse()` validates the table's own values (`validate_workspace_argument()`/
+`validate_output_argument()`, errors prefixed `[layout] workspace:`/`[layout] output:`) where
+they're declared, covered by `parse_rejects_*_layout_context_*` in `template/tests.rs` and two
+`tests/template.rs` `--validate` cases.
 
 **`LayoutStep`/`TemplateStep` mirror `Args` by design**, and `main.rs`'s
 `schemas_mirror_args_field_for_field` test is what keeps them in sync: it reads all three field
