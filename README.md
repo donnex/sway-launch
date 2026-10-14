@@ -259,6 +259,14 @@ after the short grace period — but correlation is best-effort there, so sequen
 more. A window is only treated as this run's own without its marker when the launched process was
 actually seen running and has since exited, the single-instance case above.
 
+A client/server launcher is the one common case that always takes the slow path: `footclient`
+(with `foot --server` running), `emacsclient -c`, `code --wait`. The window belongs to the
+already-running server, so it never carries the marker, and the client you launched stays alive
+until that window closes, so it never exits either. Each such launch waits out the short grace
+period (about 2 seconds) and then uses the first window that matches, which `--rollback-on-error`
+treats as adopted and leaves open. Pass `-a`/`-c` so that only the right application's window can
+match, and chain such launches sequentially.
+
 ### Finding a window's app_id or class
 
 `--app-id`, `--class`, `--existing` and a bindings file's `app_id`/`class` all need the value the
