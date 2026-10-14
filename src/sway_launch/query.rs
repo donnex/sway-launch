@@ -94,36 +94,32 @@ pub(super) fn current_move_skip_reason(
     ))
 }
 
-/// Whether `container_id` is still present anywhere in the current tree —
-/// used by `run_wait_time()` to catch a container that closed between an
-/// earlier action resolving it and this one about to run its command
-/// against it. Needed on Sway 1.9 (still what `apt` installs on Ubuntu
+/// Errors with the one message every action driver reports for a container
+/// that closed since it was resolved, so the three call sites in
+/// `confirmation.rs` can't drift into different wording for the same
+/// condition. Needed on Sway 1.9 (still what `apt` installs on Ubuntu
 /// 24.04/CI), which treats a `[con_id=N]` criteria matching zero containers
-/// as success rather than an error; Sway 1.11 already errors clearly
-/// ("No matching node.") on its own, confirmed live, which makes this check
-/// redundant there but still required for 1.9 — see `node_is_floating()`'s
-/// doc comment for the same version split.
-pub(super) fn container_exists(container_id: i64) -> Result<bool, String> {
+/// as success rather than an error; Sway 1.11 already errors clearly ("No
+/// matching node."), confirmed live, which makes this redundant there but
+/// still required for 1.9 — see `node_is_floating()`'s doc comment for the
+/// same version split.
+pub(super) fn ensure_container_exists(container_id: i64) -> Result<(), String> {
+    existing_container(container_id).map(|_| ())
+}
+
+/// `ensure_container_exists()`, handing back the container's node for a
+/// caller that needs to know what kind of container it is.
+pub(super) fn existing_container(container_id: i64) -> Result<Node, String> {
     let tree = match new_connection()?.get_tree() {
         Ok(tree) => tree,
         Err(error) => return Err(ipc_error(error)),
     };
-    Ok(find_node(&tree, container_id).is_some())
-}
-
-/// `container_exists()` as a guard: errors with the one message every action
-/// driver reports for a container that closed since it was resolved, so the
-/// three call sites in `confirmation.rs` can't drift into different wording
-/// for the same condition.
-pub(super) fn ensure_container_exists(container_id: i64) -> Result<(), String> {
-    if container_exists(container_id)? {
-        Ok(())
-    } else {
-        Err(format!(
+    find_node(&tree, container_id).cloned().ok_or_else(|| {
+        format!(
             "container id {} no longer exists — window may have closed",
             container_id
-        ))
-    }
+        )
+    })
 }
 
 /// Which of `container_ids` are still present in the current tree, in the

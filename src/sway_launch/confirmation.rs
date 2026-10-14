@@ -23,11 +23,11 @@ use super::process_marker::{
     MarkerTracker, MARKER_SCAN_INTERVAL, PID_MARKER_FALLBACK_GRACE, PID_MARKER_VAR,
 };
 use super::query::{
-    container_state, container_state_on, ensure_container_exists, node_by_id, parent_node_layout,
-    position_matches, recheck_launched_windows_now,
+    container_state, container_state_on, ensure_container_exists, existing_container, node_by_id,
+    parent_node_layout, position_matches, recheck_launched_windows_now,
 };
 use super::target::LaunchFilter;
-use super::tree::{height_matches, width_matches, ContainerState};
+use super::tree::{height_matches, is_window, width_matches, ContainerState};
 use super::values::{escape_control_characters, Size, Split};
 use super::{MOVE_POLL_GRACE, WAIT_TIME_POLL_GRACE, WAIT_TIME_POLL_INTERVAL};
 use std::sync::mpsc;
@@ -168,6 +168,30 @@ impl ActionKind<'_> {
             // case the same way it does for Workspace/Output/Floating/
             // Fullscreen/Focus.
             ActionKind::Scratchpad => Some(WindowChange::Move),
+        }
+    }
+
+    /// Whether this kind can only be confirmed when its target is a window.
+    /// Its confirming event is a window event, and Sway sends those only for
+    /// views: on a marked split container the command applies, nothing
+    /// arrives, and the action used to time out over a move that worked
+    /// (confirmed live). `Floating`, `Fullscreen`, `Scratchpad` and `Mark`
+    /// were confirmed live to work on a split container, so they're left be.
+    pub(super) fn needs_a_window(&self) -> bool {
+        match self {
+            ActionKind::Workspace(_) | ActionKind::Output(_) | ActionKind::Focus => true,
+            ActionKind::Split(_)
+            | ActionKind::Floating
+            | ActionKind::Sticky
+            | ActionKind::Fullscreen
+            | ActionKind::NewColumn
+            | ActionKind::NewRow
+            | ActionKind::WorkspaceToOutput { .. }
+            | ActionKind::Mark(_)
+            | ActionKind::Height(_)
+            | ActionKind::Width(_)
+            | ActionKind::Position(_)
+            | ActionKind::Scratchpad => false,
         }
     }
 
@@ -713,7 +737,10 @@ impl SwayAction<'_> {
         // arm at all), and this runs a handful of times per invocation, not
         // in a loop.
         let container_id = self.container_id;
-        ensure_container_exists(container_id)?;
+        let container = existing_container(container_id)?;
+        if self.kind.needs_a_window() && !is_window(&container) {
+            return Err(split_container_error(container_id));
+        }
 
         let event_loop = event_loop(&[EventType::Window])?;
 
@@ -1266,6 +1293,16 @@ fn deadline_after(timeout: time::Duration) -> Result<time::Instant, String> {
             timeout.as_secs()
         )
     })
+}
+
+/// Why a window-only action refuses a split container. `SwayAction::run()`
+/// prefixes it with the action's verb.
+fn split_container_error(container_id: i64) -> String {
+    format!(
+        "container {} is a split container, not a window — Sway sends no window event for it, \
+         so this can't be confirmed; target a window inside it instead",
+        container_id
+    )
 }
 
 /// An event-confirmed action's timeout. `SwayAction::run()` prefixes it with

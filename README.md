@@ -739,6 +739,12 @@ and errors if that doesn't match exactly one window — it won't guess which one
 (hidden/stashed windows), not just visible ones — if you have both a visible and a scratchpad
 window with the same `app_id`/`class`/mark, retarget with `--con-id` instead to be unambiguous.
 
+A mark (or a `--con-id`) can also name a split container holding several windows — what a
+`focus parent; mark <name>` binding marks. `--floating`, `--fullscreen`, `--scratchpad` and `--mark`
+work on one, but `--workspace`, `--output` and `--focus` are refused with an error: Sway reports
+those moves only for a single window, so `sway-launch` couldn't confirm them. Target one of the
+windows inside, or use `swaymsg` directly for the container.
+
 ### Floating
 
 Makes the window floating. Useful for applications that share a single `app_id` across all their

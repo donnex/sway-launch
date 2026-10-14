@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `--workspace` and `--output` together put the window on that workspace on that output, by moving
     the workspace to the output. The output move used to land on whatever workspace the output was
     showing, silently dropping `--workspace` while both reported `changed`. (#6)
+  - `--workspace`, `--output` and `--focus` refuse a split container (say, one marked by a
+    `focus parent; mark` binding and found with `--mark-match`) with an error saying so, instead of
+    moving it and then failing at `--timeout`: Sway confirms those moves only for a window. (#93)
   - On a multi-monitor setup, a `--new-column`/`--new-row` that Sway would carry onto another
     output — a window at the edge of its workspace, including the only window inside a container
     there, or a window that's already fullscreen — is skipped rather than run. On a floating

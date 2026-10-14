@@ -191,6 +191,15 @@ impl ContainerState {
     }
 }
 
+/// Whether `node` is a window rather than a split container: a tiled or
+/// floating container with nothing inside it. Sway destroys an empty split
+/// container, so one that holds no children is always a view.
+pub(super) fn is_window(node: &Node) -> bool {
+    matches!(node.node_type, NodeType::Con | NodeType::FloatingCon)
+        && node.nodes.is_empty()
+        && node.floating_nodes.is_empty()
+}
+
 /// Whether `node` is currently floating. Sway 1.9 (still what `apt` installs
 /// on Ubuntu 24.04, confirmed live against a headless compositor during a
 /// CI-failure investigation) never populates a floating container's own

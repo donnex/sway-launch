@@ -1049,3 +1049,12 @@ fn move_skip_reason_is_none_when_the_container_is_not_in_the_tree() {
         None
     );
 }
+
+// is_window
+
+#[test]
+fn is_window_is_true_for_a_leaf_and_false_for_a_split_container() {
+    let tree = node_tree(1, vec![leaf_node_value(10, Some("foot"), None)], vec![]);
+    assert!(is_window(find_node(&tree, 10).unwrap()));
+    assert!(!is_window(&tree), "a container holding a window is not one");
+}
