@@ -328,8 +328,16 @@ impl SwayAction<'_> {
         };
 
         match self.kind {
-            ActionKind::Workspace(workspace) => state.workspace.as_deref() == Some(workspace),
-            ActionKind::Output(output) => state.output.as_deref() == Some(output),
+            // Sway matches both names case-insensitively, so `--workspace
+            // web` lands on an existing `Web`.
+            ActionKind::Workspace(workspace) => state
+                .workspace
+                .as_deref()
+                .is_some_and(|name| name.eq_ignore_ascii_case(workspace)),
+            ActionKind::Output(output) => state
+                .output
+                .as_deref()
+                .is_some_and(|name| name.eq_ignore_ascii_case(output)),
             ActionKind::Floating => state.floating,
             ActionKind::Fullscreen => state.fullscreen,
             ActionKind::Focus => state.focused,

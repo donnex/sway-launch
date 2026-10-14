@@ -771,6 +771,27 @@ fn layout_validate_rejects_a_workspace_containing_a_dollar_sign() {
 }
 
 #[test]
+fn layout_validate_rejects_sway_keywords_as_workspace_and_output_names() {
+    // Sway acts on these even quoted (an upper-case workspace keyword crashes
+    // Sway 1.11), so they can never be names.
+    for (field, value) in [("workspace", "Next"), ("output", "left")] {
+        let path = TempToml::write(
+            "keyword-name",
+            &format!("[[step]]\ncon_id = 42\n{field} = \"{value}\"\n"),
+        );
+        let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+            .args(["--layout", path.to_str().unwrap(), "--validate"])
+            .output()
+            .expect("failed to run sway-launch binary");
+
+        assert!(!output.status.success());
+        let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+        assert!(stderr.contains(&format!("{field}:")), "{stderr}");
+        assert!(stderr.contains("is a Sway keyword"), "{stderr}");
+    }
+}
+
+#[test]
 fn layout_validate_rejects_a_zero_timeout() {
     let path = TempToml::write("zero-timeout", "[[step]]\ncon_id = 42\ntimeout = 0\n");
 

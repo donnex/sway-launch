@@ -72,7 +72,18 @@ below) plus five integration test files:
   but tab too (a newline/NUL because Sway rewrites them to `;`, the rest because a name is later
   printed raw by status bars and `swaymsg`, so a shared template could otherwise plant a terminal
   escape there), and `$`, since Sway substitutes its `set $name` config
-  variables even inside a quoted argument. `validate_exec_command` covers the launch command (the
+  variables even inside a quoted argument. `--workspace`/`--output` (and a step's or a template
+  `[layout]`'s `workspace`/`output`) go through `validate_workspace_argument`/
+  `validate_output_argument` instead, which add one rule: Sway's own keywords (`next`, `prev`,
+  `next_on_output`, `prev_on_output`, `current`, `back_and_forth`, and `number`/`to` alone; for
+  outputs `left`/`right`/`up`/`down`/`current`), compared ignoring case, are rejected. Probed live
+  on Sway 1.11, one fresh compositor per value: Sway acts on every keyword even inside the quotes
+  this tool sends, so the window went elsewhere and the name confirmation waited out `--timeout`,
+  and most upper-case workspace keywords (`NEXT`, `PREV`, `CURRENT`, `NEXT_ON_OUTPUT`, but not
+  `BACK_AND_FORTH`) crash the compositor (`workspace_create: NULL name`). Sway matches workspace and
+  output names ignoring case too, so `state_satisfies()` compares them with
+  `eq_ignore_ascii_case` (#5). An output's make/model/serial identifier, which Sway also accepts, is
+  documented as unsupported rather than resolved. `validate_exec_command` covers the launch command (the
   positional CLI command and a step's/binding's `command`, checked in `to_sway_launch()`), which is
   sent to Sway raw rather than quoted (see "`Exec`" below), so it goes through Sway's own command
   parser before the shell: it rejects an unquoted, unescaped `,`/`;` (scanned with the same
@@ -271,9 +282,9 @@ below) plus five integration test files:
   asserts a wrong `--app-id` exits 1 at `--timeout` (not early, not much later), and
   `layout_launch_timeout_reports_its_step_and_rolls_back_earlier_steps` the same inside a layout —
   `step 2: ...` in the error and step 1's window in `rolled_back` and closed. An event-confirmed
-  action's timeout (`run_wait_matching_events()`) has no live test yet: the only reliable way found
-  to make Sway withhold a confirming state is the case-insensitive/keyword `--workspace`/`--output`
-  move tracked in #5, and pinning that as a timeout would pin the bug. Revisit once #5 is decided.
+  action's timeout (`run_wait_matching_events()`) has no live test: the only reliable way found
+  to make Sway withhold a confirming state was the case-insensitive/keyword `--workspace`/`--output`
+  move, which #5 fixed, so none is known now.
   `rollback_on_error_handles_a_launched_window_that_already_closed_itself` covers the scenario
   where a step-1-launched window closes on its own before a later step's failure triggers
   rollback — `rollback()`'s own `kill_container()` call against that already-gone container is

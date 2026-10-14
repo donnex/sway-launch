@@ -508,3 +508,56 @@ fn validate_timeout_argument_parses_and_bounds_the_value() {
     assert!(validate_timeout_argument("-1").is_err());
     assert!(validate_timeout_argument("five").is_err());
 }
+
+// validate_workspace_argument / validate_output_argument
+
+#[test]
+fn validate_workspace_argument_rejects_every_sway_keyword_in_any_case() {
+    for keyword in [
+        "next",
+        "NEXT",
+        "Prev",
+        "next_on_output",
+        "PREV_ON_OUTPUT",
+        "current",
+        "back_and_forth",
+        "number",
+        "to",
+    ] {
+        let error = validate_workspace_argument(keyword).unwrap_err();
+        assert!(
+            error.contains("is a Sway keyword") && error.contains("swaymsg"),
+            "{keyword}: {error}"
+        );
+    }
+}
+
+#[test]
+fn validate_workspace_argument_accepts_names_that_only_contain_a_keyword() {
+    for name in ["3", "web", "number 2", "next-up", "nextcloud"] {
+        assert_eq!(validate_workspace_argument(name), Ok(name.to_string()));
+    }
+}
+
+#[test]
+fn validate_workspace_argument_still_applies_the_shared_string_rules() {
+    assert!(validate_workspace_argument("$ws1").is_err());
+    assert!(validate_workspace_argument("  ").is_err());
+}
+
+#[test]
+fn validate_output_argument_rejects_directions_and_current_in_any_case() {
+    for keyword in ["left", "RIGHT", "Up", "down", "current"] {
+        assert!(
+            validate_output_argument(keyword)
+                .unwrap_err()
+                .contains("is a Sway keyword"),
+            "{keyword}"
+        );
+    }
+    assert_eq!(
+        validate_output_argument("HDMI-A-1"),
+        Ok("HDMI-A-1".to_string())
+    );
+    assert!(validate_output_argument("a\"b").is_err());
+}

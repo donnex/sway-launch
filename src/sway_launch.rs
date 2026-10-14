@@ -40,8 +40,9 @@ pub use outcome::{ActionRecord, ActionStatus, LaunchOwnership, RunError, Unmatch
 pub use query::containers_still_present;
 pub use values::{
     escape_control_characters, parse_position, parse_size, require_non_blank,
-    validate_exec_command, validate_non_blank_argument, validate_sway_string_argument,
-    validate_timeout_argument, validate_timeout_seconds, Position, Size, Split,
+    validate_exec_command, validate_non_blank_argument, validate_output_argument,
+    validate_sway_string_argument, validate_timeout_argument, validate_timeout_seconds,
+    validate_workspace_argument, Position, Size, Split,
 };
 
 /// The upper bound `run_poll_then_fallback()` polls `get_tree()` for a

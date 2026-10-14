@@ -246,6 +246,61 @@ pub fn validate_sway_string_argument(value: &str) -> Result<String, String> {
     Ok(value.to_string())
 }
 
+/// Values `move container to workspace` reads as keywords rather than as a
+/// workspace name, quoted or not, compared case-insensitively the way Sway
+/// matches them. Confirmed live on Sway 1.11; `number` and `to` alone are
+/// parse errors there, and `number <n>` is an ordinary name.
+const WORKSPACE_KEYWORDS: &[&str] = &[
+    "next",
+    "prev",
+    "next_on_output",
+    "prev_on_output",
+    "current",
+    "back_and_forth",
+    "number",
+    "to",
+];
+
+/// Values `move container to output` reads as directions or the current
+/// output rather than as an output name, compared case-insensitively.
+const OUTPUT_KEYWORDS: &[&str] = &["left", "right", "up", "down", "current"];
+
+/// `validate_sway_string_argument()`, plus rejecting a Sway keyword
+/// (`next`, `back_and_forth`, ...) as a `--workspace` value.
+///
+/// Sway honours the keywords even inside the quotes `sway-launch` sends, so
+/// the window went somewhere other than a workspace of that name and the
+/// confirmation then waited out `--timeout` for one that never appeared.
+/// Upper-case forms are worse: confirmed live that `move workspace "NEXT"`
+/// crashes Sway 1.11 outright.
+pub fn validate_workspace_argument(value: &str) -> Result<String, String> {
+    let value = validate_sway_string_argument(value)?;
+    reject_keyword(&value, WORKSPACE_KEYWORDS, "workspace")?;
+    Ok(value)
+}
+
+/// `validate_sway_string_argument()`, plus rejecting a Sway direction or
+/// `current` as an `--output` value. See `validate_workspace_argument()`.
+pub fn validate_output_argument(value: &str) -> Result<String, String> {
+    let value = validate_sway_string_argument(value)?;
+    reject_keyword(&value, OUTPUT_KEYWORDS, "output")?;
+    Ok(value)
+}
+
+fn reject_keyword(value: &str, keywords: &[&str], kind: &str) -> Result<(), String> {
+    match keywords
+        .iter()
+        .find(|keyword| keyword.eq_ignore_ascii_case(value))
+    {
+        Some(keyword) => Err(format!(
+            "{:?} is a Sway keyword, not a {} name — for the keyword's own meaning, run \
+             swaymsg \"[con_id=<id>] move container to {} {}\" with the printed container id",
+            value, kind, kind, keyword
+        )),
+        None => Ok(()),
+    }
+}
+
 /// `text` with every control character rendered as a visible Rust escape
 /// (`\r`, `\u{1b}`, ...), for printing user-supplied text — a layout's
 /// `command`, a TOML error quoting a file's line — to a terminal.
