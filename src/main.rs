@@ -2200,6 +2200,111 @@ mod tests {
         );
     }
 
+    /// Every `` `name()` `` in CLAUDE.md's code spans, by its last path
+    /// segment (`Args::command().render_help()` gives `command` and
+    /// `render_help`). Fenced blocks are skipped.
+    fn function_names_in_code_spans(markdown: &str) -> Vec<String> {
+        let mut in_fence = false;
+        let prose: String = markdown
+            .lines()
+            .filter(|line| {
+                if line.trim_start().starts_with("```") {
+                    in_fence = !in_fence;
+                    return false;
+                }
+                !in_fence
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut names = Vec::new();
+        for span in prose.split('`').skip(1).step_by(2) {
+            for (index, _) in span.match_indices("()") {
+                let before = &span[..index];
+                let start = before
+                    .rfind(|character: char| !(character.is_alphanumeric() || character == '_'))
+                    .map_or(0, |position| position + 1);
+                if start < index {
+                    names.push(span[start..index].to_string());
+                }
+            }
+        }
+        names
+    }
+
+    fn source_files(directory: &std::path::Path, files: &mut Vec<String>) {
+        for entry in std::fs::read_dir(directory).expect("source directory should be readable") {
+            let path = entry.expect("directory entry should be readable").path();
+            if path.is_dir() {
+                source_files(&path, files);
+            } else if let Ok(contents) = std::fs::read_to_string(&path) {
+                files.push(contents);
+            }
+        }
+    }
+
+    #[test]
+    fn claude_md_names_only_functions_that_exist() {
+        // CLAUDE.md points at functions for the reasoning behind each rule, so
+        // a renamed or removed one leaves a rule pointing nowhere. Names from
+        // outside this repository (std, clap, swayipc, Sway's own C source,
+        // Python's tempfile) and the shared conventions' illustrative `foo()`
+        // are listed here instead.
+        const EXTERNAL: &[&str] = &[
+            "argsep",
+            "cmd_move_in_direction",
+            "container_move_in_direction",
+            "contents_utf8",
+            "files",
+            "foo",
+            "generate",
+            "get_file",
+            "get_outputs",
+            "get_tree",
+            "render_help",
+            "render_long_help",
+            "TemporaryDirectory",
+            "try_clone",
+        ];
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let claude_md =
+            std::fs::read_to_string(root.join("CLAUDE.md")).expect("CLAUDE.md should be readable");
+        let mut files = Vec::new();
+        for directory in ["src", "tests", "scripts"] {
+            source_files(&root.join(directory), &mut files);
+        }
+
+        let mut missing: Vec<String> = function_names_in_code_spans(&claude_md)
+            .into_iter()
+            .filter(|name| !EXTERNAL.contains(&name.as_str()))
+            .filter(|name| {
+                let definitions = [
+                    format!("fn {name}("),
+                    format!("fn {name}<"),
+                    format!("def {name}("),
+                    format!("{name}() {{"),
+                ];
+                !files.iter().any(|contents| {
+                    definitions
+                        .iter()
+                        .any(|definition| contents.contains(definition.as_str()))
+                })
+            })
+            .collect();
+        missing.sort();
+        missing.dedup();
+        assert!(
+            missing.is_empty(),
+            "CLAUDE.md names functions that don't exist in src/, tests/ or scripts/: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn function_names_in_code_spans_takes_each_call_s_last_segment() {
+        let markdown = "see `a::b()` and `x().y()`, not `str::parse::<i32>()` or\n\
+                        ```shell\nfenced()\n```\n";
+        assert_eq!(function_names_in_code_spans(markdown), ["b", "x", "y"]);
+    }
+
     #[test]
     fn long_help_carries_no_maintainer_notes() {
         // clap renders every `///` paragraph on an `Args` field into
