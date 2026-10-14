@@ -24,9 +24,9 @@ permissions:
   contents: read
 
 jobs:
-  # Mirrors check.yml's checks against the exact tagged commit, so a release
-  # can't ship from a commit that never passed CI (e.g. a tag pushed before
-  # check.yml ran, or pointing at an older commit).
+  # Runs scripts/run-checks, as check.yml does, against the exact tagged
+  # commit, so a release can't ship from a commit that never passed CI (e.g.
+  # a tag pushed before check.yml ran, or pointing at an older commit).
   check:
     runs-on: ubuntu-latest
     # Only the publish job below writes anything; this one just runs checks.
@@ -61,23 +61,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: cargo fmt --check
-        run: cargo fmt -- --check
-
-      # --all-features matters: tests/live_sway.rs is behind
-      # #![cfg(feature = "live-sway-tests")], so without it that file compiles
-      # to nothing and clippy lints none of its ~4,000 lines -- the one file
-      # CLAUDE.md insists must stay complete, silently exempt from the lint
-      # gate. Clippy needs no compositor, only the cfg flag.
-      - name: cargo clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Build
-        run: cargo build --locked
-
-      - name: cargo test
-        run: cargo test --locked
-
       # Versions printed, not pinned -- see check.yml's matching step.
       - name: Install shellcheck and shfmt
         run: |
@@ -86,38 +69,16 @@ jobs:
           shellcheck --version
           echo "shfmt $(shfmt --version)"
 
-      # Kept identical to check.yml's own discovery step — see the comment
-      # there for why the list isn't hardcoded.
-      - name: Find shell scripts
-        id: shell-scripts
-        run: |
-          set -euo pipefail
-          files="$(grep -rlE '^#!.*[ /](sh|bash|dash)$' scripts examples/scripts | sort | tr '\n' ' ')"
-          test -n "$files" || { echo "::error::no shell scripts found to lint"; exit 1; }
-          echo "files=$files" >> "$GITHUB_OUTPUT"
-          echo "Linting: $files"
-
-      - name: shellcheck
-        run: shellcheck --shell=sh ${{ steps.shell-scripts.outputs.files }}
-
-      - name: shfmt
-        run: shfmt -i 2 -d ${{ steps.shell-scripts.outputs.files }}
-
       # Pinned to the same version as check.yml -- see the comment there.
       - name: Install markdownlint
         run: npm install -g markdownlint-cli@0.49.1
 
-      - name: markdownlint
-        run: markdownlint '**/*.md'
-
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
 
-      - name: black --check
-        run: uv run --group dev black --check scripts/generate-layout-screenshots
-
-      - name: ruff check
-        run: uv run --group dev ruff check scripts/generate-layout-screenshots
+      # The same script check.yml runs -- see the comment there.
+      - name: Run checks
+        run: ./scripts/run-checks
 
   # Builds and packages the release with a read-only token. Building runs
   # third-party code -- every dependency's build script and proc-macro -- so

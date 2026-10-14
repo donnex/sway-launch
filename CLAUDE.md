@@ -18,6 +18,13 @@ rules both apply in full because of this — there's no "private repo" fallback 
 
 ## Commands
 
+- All pre-commit checks: `scripts/run-checks` — `cargo fmt --check`, `cargo clippy --all-targets
+  --all-features -- -D warnings`, `cargo build`, `cargo test` (all `--locked`), `shellcheck`/`shfmt`
+  on every shell script under `scripts/`/`examples/scripts/` (found by shebang), `markdownlint` on
+  every tracked Markdown file (tracked only, so an untracked signal file such as `REVIEW.md` isn't
+  linted; stage a new file to include it), and `black`/`ruff` on the Python script. Stops at the
+  first failure. Both workflows run this same script (see CI below), so a new check is added there
+  once (#62). Not included: the coverage gate, the live-Sway tests and the audit.
 - Build: `cargo build`
 - Run: `cargo run -- [OPTIONS] [COMMAND]` (e.g. `cargo run -- -a foot foot`)
 - Format: `cargo fmt`
@@ -44,7 +51,7 @@ rules both apply in full because of this — there's no "private repo" fallback 
   version, so a pass under a different one guarantees nothing in CI. Both are bumped deliberately
   in `.github/workflows/` and here together (a `cargo-llvm-cov` bump re-measures the coverage
   baseline in the same change), never left to float. `shellcheck`/`shfmt` come from the CI runner
-  image's `apt` instead, unpinned: the `lint-scripts-and-docs` job prints both versions so a new
+  image's `apt` instead, unpinned: the `check` job prints both versions so a new
   finding on an untouched script can be traced to a tool upgrade from the log. Rust itself floats
   on purpose (see Rust conventions). `scripts/run-live-sway-tests` runs `cargo test --locked`, the
   same as the `check` job, so both test against the dependency set `Cargo.lock` records.
@@ -2911,11 +2918,16 @@ out-of-date workflow as a bug, the same way a stale doc would be. This applies t
 live-Sway case is exactly as much a bug as a missing lint step — see the coverage note under
 `tests/live_sway.rs` in the Architecture section and the matching Rust workflow bullet above.
 
-GitHub Actions is set up: `.github/workflows/check.yml` runs `cargo fmt --check`,
-`cargo clippy --all-targets --all-features` (see the Rust conventions above for why the feature flag
-is load-bearing),
-`cargo build`, `cargo test`, and a `cargo llvm-cov` (pinned — see "Tool versions" under Commands) coverage-regression gate (`--fail-under-lines
-68 --fail-under-regions 68 --fail-under-functions 77`) in its `check` job. The gate excludes
+GitHub Actions is set up: `.github/workflows/check.yml`'s `check` job installs the linters
+(`shellcheck`/`shfmt` from the image with their versions printed, `markdownlint-cli` and `uv`
+pinned), runs `scripts/run-checks` (see Commands above: fmt, clippy with `--all-features` — see the
+Rust conventions above for why the feature flag is load-bearing — build, test, shellcheck/shfmt on
+every shell script discovered by shebang at run time, so a newly added script is covered
+automatically and the one Python script in `scripts/` is excluded by the same mechanism rather than
+by name, markdownlint on every tracked Markdown file, black/ruff), then a `cargo llvm-cov` (pinned — see "Tool versions" under Commands) coverage-regression gate (`--fail-under-lines
+68 --fail-under-regions 68 --fail-under-functions 77`). The checks used to be spelled out step by
+step in both workflows, and had drifted between them; the shared script replaced both copies, and
+the separate `lint-scripts-and-docs` job folded into `check`. The gate excludes
 `main.rs`, the compositor-bound `ipc.rs`/`query.rs`, and the unit-test files themselves by filename
 (see the coverage bullet under Rust conventions above), and its thresholds sit a few points under
 the baseline measured on 2026-10-12, recorded in the comment above that step. They read lower than
@@ -2924,14 +2936,7 @@ inline test module's bodies as covered production code and averaged in the exemp
 untested new function in `tree.rs` or `values.rs` could land without moving them. Most of the
 remaining gap is the IPC-touching `run_*` drivers in `confirmation.rs` and `launch.rs`. Re-measure
 and adjust the thresholds as their own deliberate decision (with the comment updated) rather than
-as a side effect of an unrelated change; a separate `lint-scripts-and-docs` job that runs
-`shellcheck`/`shfmt` on every shell script under `scripts/`/`examples/scripts/` (discovered by
-shebang at run time, not a fixed list, so a newly added script is covered automatically — and the
-one Python script in `scripts/` is excluded by the same mechanism rather than by name),
-`markdownlint '**/*.md'` (every Markdown file in the repo, same reasoning, so a newly added one
-like `CHANGELOG.md` is covered automatically; `markdownlint-cli` pinned, `shellcheck`/`shfmt` taken
-from the image with their versions printed), and `black --check`/`ruff check` on that Python
-script; a separate
+as a side effect of an unrelated change. Alongside it: a separate
 `live-sway-tests` job that installs `sway`+`foot` and runs `scripts/run-live-sway-tests` (kept as
 its own job so a live-Sway hiccup doesn't block the fast unit-test feedback loop); and a `cargo
 audit` job via the `actions-rust-lang/audit` action (switched from `rustsec/audit-check`, which has
@@ -2970,8 +2975,8 @@ branch name. A new action added to either workflow gets the same SHA-plus-commen
 steps in jobs that hold more than a read token, or that build the release, set
 `persist-credentials: false`, so the token isn't left on disk where a build script could read it.
 
-`.github/workflows/release.yml` re-runs `check.yml`'s `check` and `lint-scripts-and-docs` checks
-combined into one job (not the coverage gate, not `live-sway-tests` or `audit` — a release build
+`.github/workflows/release.yml`'s `check` job installs the same tools and runs the same
+`scripts/run-checks` (not the coverage gate, not `live-sway-tests` or `audit` — a release build
 doesn't need a compositor or a coverage measurement, and the security audit runs independently on
 every push regardless) against the exact tagged commit, then builds and publishes a release archive
 when a `v*` tag is pushed. Its `check` job also fails unless the tag's version (`vX.Y.Z` minus the
@@ -2988,8 +2993,9 @@ script and proc-macro, none of which should ever share a job with the write toke
 auto-generated notes: an `awk` script extracts the section matching the tag's version (see the
 Changelog section above) and fails the release outright if that section is missing or empty — a
 release can't ship without the version-bump-and-changelog commit having actually finalized
-`CHANGELOG.md` first. Keep both workflow files in sync with this file's Rust/Shell/Python
-conventions above whenever the checks change.
+`CHANGELOG.md` first. Keep `scripts/run-checks` in sync with this file's Rust/Shell/Python
+conventions above whenever the checks change, and both workflow files with any tool it newly
+needs installed.
 
 ## Content
 
