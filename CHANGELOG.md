@@ -22,7 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   foot'`, a `( ... )` group) works. A command containing an unquoted `,` or `;` is rejected up
   front, since Sway would split it into separate commands before the shell sees it; so is a
   newline, carriage return or NUL anywhere in it, which Sway turns into a `;` even inside quotes.
-  (#2, #3, #4)
+  The same target rules apply on the command line, in a layout step and in a template binding: a
+  blank or whitespace-only command is rejected up front everywhere, instead of the command line
+  accepting one that then launched nothing and timed out. (#2, #3, #4, #20)
 - Follow-up actions applied to that window in one invocation: `--split`, `--floating`, `--sticky`,
   `--fullscreen`, `--focus`, `--mark`, `--new-column`, `--new-row`, `--workspace`, `--output`,
   `--height`, `--width`, `--position` and `--scratchpad`.

@@ -16,6 +16,7 @@ use super::outcome::{
     ActionOutcome, ActionRecord, ActionStatus, LaunchOwnership, RunError, RunOutcome,
 };
 use super::query::{current_move_skip_reason, find_existing_container_id};
+use super::target::Target;
 use super::tree::MoveDirection;
 use super::values::{Position, Size, Split};
 use std::io::Write;
@@ -41,22 +42,8 @@ pub(super) const DEBUG_EVENT_SUBSCRIPTIONS: [EventType; 10] = [
     EventType::Input,
 ];
 
-/// What `SwayLaunch::run()` should act on: launch a new window (the
-/// original, still-default behavior), a specific already-open window by
-/// container id, or an already-open window found by matching
-/// `app_id_match`/`class_match`/`mark_match` against currently open windows.
-pub enum Target<'a> {
-    Exec { command: &'a str },
-    ConId(i64),
-    Existing,
-}
-
 pub struct SwayLaunch<'a> {
     pub target: Target<'a>,
-
-    pub app_id_match: &'a str,
-    pub class_match: &'a str,
-    pub mark_match: &'a str,
 
     pub split: Option<Split>,
     pub floating: bool,
@@ -114,21 +101,18 @@ impl<'a> SwayLaunch<'a> {
     /// creates a window rather than picking an existing one out.
     fn resolve_container_id(&self) -> Result<(i64, Option<LaunchOwnership>), RunError> {
         match self.target {
-            Target::Exec { command } => ExecAction {
+            Target::Exec { command, filter } => ExecAction {
                 command,
-                app_id_match: self.app_id_match,
-                class_match: self.class_match,
+                filter,
                 verbose: self.verbose,
                 timeout: self.timeout,
             }
             .run()
             .map(|(container_id, ownership)| (container_id, Some(ownership))),
             Target::ConId(container_id) => Ok((container_id, None)),
-            Target::Existing => {
-                find_existing_container_id(self.app_id_match, self.class_match, self.mark_match)
-                    .map(|container_id| (container_id, None))
-                    .map_err(RunError::from)
-            }
+            Target::Existing(window_match) => find_existing_container_id(window_match)
+                .map(|container_id| (container_id, None))
+                .map_err(RunError::from),
         }
     }
 

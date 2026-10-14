@@ -26,9 +26,8 @@ use super::query::{
     container_state, container_state_on, ensure_container_exists, node_by_id, parent_node_layout,
     position_matches, recheck_launched_windows_now,
 };
-use super::tree::{
-    height_matches, width_matches, window_app_id_match, window_class_match, ContainerState,
-};
+use super::target::LaunchFilter;
+use super::tree::{height_matches, width_matches, ContainerState};
 use super::values::{escape_control_characters, Size, Split};
 use super::{MOVE_POLL_GRACE, WAIT_TIME_POLL_GRACE, WAIT_TIME_POLL_INTERVAL};
 use std::sync::mpsc;
@@ -958,8 +957,7 @@ impl ExecAction<'_> {
         let ExecAction {
             verbose,
             timeout,
-            app_id_match,
-            class_match,
+            filter,
             ..
         } = *self;
 
@@ -1032,8 +1030,7 @@ impl ExecAction<'_> {
                 return Err(RunError {
                     message: exec_timeout_message(
                         timeout,
-                        app_id_match,
-                        class_match,
+                        filter,
                         &unmatched_windows,
                         command_running,
                     ),
@@ -1199,9 +1196,10 @@ impl ExecAction<'_> {
         if connection.is_none() {
             *connection = new_connection().ok();
         }
-        let Some(rechecked) = connection.as_mut().and_then(|connection| {
-            recheck_launched_windows_now(connection, rechecks, self.app_id_match, self.class_match)
-        }) else {
+        let Some(rechecked) = connection
+            .as_mut()
+            .and_then(|connection| recheck_launched_windows_now(connection, rechecks, self.filter))
+        else {
             *connection = None;
             return None;
         };
@@ -1238,21 +1236,17 @@ impl ExecAction<'_> {
             return Err(WindowEventMatchError::EventChangeTypeMismatch);
         }
 
-        if !self.app_id_match.is_empty() {
-            return match window_app_id_match(&window.container, self.app_id_match) {
+        match self.filter {
+            None => Ok(WindowEventMatch::NewWindowMatchWithoutCheck),
+            Some(filter @ LaunchFilter::AppId(_)) => match filter.matches(&window.container) {
                 true => Ok(WindowEventMatch::WindowAppId),
                 false => Err(WindowEventMatchError::WindowAppIdMismatch),
-            };
-        }
-
-        if !self.class_match.is_empty() {
-            return match window_class_match(&window.container, self.class_match) {
+            },
+            Some(filter @ LaunchFilter::Class(_)) => match filter.matches(&window.container) {
                 true => Ok(WindowEventMatch::WindowClass),
                 false => Err(WindowEventMatchError::WindowClassMismatch),
-            };
+            },
         }
-
-        Ok(WindowEventMatch::NewWindowMatchWithoutCheck)
     }
 }
 
@@ -1293,18 +1287,13 @@ fn event_timeout_message(timeout: time::Duration) -> String {
 /// nothing.
 fn exec_timeout_message(
     timeout: time::Duration,
-    app_id_match: &str,
-    class_match: &str,
+    filter: Option<LaunchFilter>,
     unmatched_windows: &[UnmatchedWindow],
     command_running: Option<bool>,
 ) -> String {
-    let filter = if !app_id_match.is_empty() {
-        format!(" with app_id \"{}\"", app_id_match)
-    } else if !class_match.is_empty() {
-        format!(" with class \"{}\"", class_match)
-    } else {
-        String::new()
-    };
+    let filter = filter
+        .map(|filter| format!(" with {}", filter))
+        .unwrap_or_default();
     let base = format!(
         "no window{} appeared within {} sec",
         filter,

@@ -53,8 +53,8 @@ See the CI section below for how GitHub Actions runs these same checks.
 
 ## Architecture
 
-The crate is `main.rs`, two TOML-schema modules, the `sway_launch` module (itself nine files, see
-below) plus five integration test files:
+The crate is `main.rs`, two TOML-schema modules, the `sway_launch` module (itself ten files, see
+below) plus six integration test files:
 
 - `src/main.rs` — defines the `clap`-derived `Args` struct (CLI flags) and constructs a
   `sway_launch::SwayLaunch` (direct CLI mode) or dispatches to `run_layout()`/`layout.rs`
@@ -98,7 +98,7 @@ below) plus five integration test files:
   `validate_non_blank_argument` is the CLI-side check for `--app-id`/`--class`: those values are
   only ever compared against a window, never interpolated into a command, so it rejects nothing but
   a blank value. `pub fn require_non_blank` is its schema-side counterpart, the generic "this named field must not be empty or whitespace-only" check the layout/template
-  schemas apply to free-form identifiers (`id`, `target_id`, `slot`, a binding's `command`, a
+  schemas apply to free-form identifiers (`id`, `target_id`, `slot`, a
   template's `description`/`category`) that have no dedicated format of their own. A fifth pair,
   `validate_timeout_argument` (CLI text) / `validate_timeout_seconds` (a TOML step's `u64`), bounds
   `--timeout`/`timeout` to `1..=MAX_TIMEOUT_SECONDS` (`u32::MAX`): zero because every
@@ -112,12 +112,13 @@ below) plus five integration test files:
 - `src/sway_launch.rs` plus `src/sway_launch/` — all the core logic (see below), plus the shared
   validators above. The file itself is a roughly 100-line façade: module declarations, the public surface
   the three files above use, and the poll-timing constants shared between modules. Everything else
-  lives in one of nine submodules, layered so that what needs a live compositor is confined to two
+  lives in one of ten submodules, layered so that what needs a live compositor is confined to two
   of them:
 
   | Module | Holds |
   | --- | --- |
   | `values.rs` | `Split`/`Size`/`Position`, `parse_size`/`parse_position`, and the `validate_*` functions |
+  | `target.rs` | `Target`/`WindowMatch`/`LaunchFilter`, and `Target::from_fields()`, the one owner of the target-selection rules |
   | `ipc.rs` | connections, socket discovery, command dispatch, the event subscription, `kill_container` |
   | `tree.rs` | every pure `&Node` predicate — matching, geometry, `ContainerState::from_tree` |
   | `query.rs` | fetch-a-tree-then-delegate wrappers, and nothing else |
@@ -173,6 +174,13 @@ below) plus five integration test files:
   needing a live Sway session. Also covers `--template --dry-run` and `--template --validate`, the
   same cases as `tests/layout.rs`, plus `--show-template` (built-in name, file path, `--json`,
   unknown-name error, and its conflicts with a command/`--template`).
+- `tests/target_rules.rs` — one table of target-field combinations (command, `con_id`, `existing`,
+  each matcher, blank values, a command Sway would split) driven through all three front ends —
+  the CLI with `--dry-run`, a layout step with `--layout --validate`, a template binding with
+  `--template --bindings --validate` — requiring the same accept/reject answer from each. The rules
+  live once, in `Target::from_fields()`, but each front end reaches it differently (the CLI
+  through clap's own conflicts first), so this is what catches a rule that one path enforces and
+  another doesn't (#20).
 - `tests/live_sway.rs` — the odd one out: gated behind the `live-sway-tests` Cargo feature (so a
   plain `cargo test` skips it entirely) and needs a real, reachable Sway compositor, run via
   `scripts/run-live-sway-tests` rather than directly. **It refuses to run any other way**:
@@ -258,7 +266,7 @@ below) plus five integration test files:
   Every CLI flag is covered here against real Sway with one exception: `--class`/`-c` needs an
   XWayland/X11 client (a real window's `WM_CLASS`) to match against, and no such client (e.g.
   `xterm`) has been available in this project's dev/CI environments so far — `--class` stays
-  unit-test-only (`window_class_match`, `matches_window_event`'s class arm) until one is.
+  unit-test-only (`WindowMatch::Class`/`LaunchFilter::Class`, `matches_window_event`'s class arm) until one is.
   `--sticky` is covered by `sticky_floating_window_follows_a_workspace_switch`/
   `sticky_on_a_tiled_window_only_takes_effect_once_floated`/
   `sticky_confirms_via_poll_well_under_a_large_wait_time`.
@@ -320,7 +328,7 @@ below) plus five integration test files:
   stale screenshot drifting from the template it's supposed to depict (see "Screenshots" below): a
   bug to fix immediately, not a follow-up.
 
-All five integration test files need `CARGO_BIN_EXE_sway-launch` (to invoke the compiled binary as
+All six integration test files need `CARGO_BIN_EXE_sway-launch` (to invoke the compiled binary as
 a subprocess), which is only set for files under `tests/`, not for the bin crate's own unit test
 harness — that's why these live here instead of as `#[cfg(test)]` modules in `src/main.rs`.
 
@@ -342,8 +350,8 @@ library/binary split, which hasn't been done.
 
 ### Core model: `SwayAction`
 
-Two types, not one. **`ExecAction`** launches the window (`command`, `app_id_match`,
-`class_match`, `verbose`, `timeout`) and has no container yet. **`SwayAction`** acts on an
+Two types, not one. **`ExecAction`** launches the window (`command`, `filter:
+Option<LaunchFilter>`, `verbose`, `timeout`) and has no container yet. **`SwayAction`** acts on an
 already-resolved container: a struct holding what every such action shares — `container_id`,
 `verbose`, and `timing` — plus a `kind: ActionKind`, one variant per remaining CLI flag (`Split`,
 `Floating`, `Sticky`, `Fullscreen`, `Focus`, `NewColumn`, `NewRow`, `Workspace`, `Output`, `Mark`,
@@ -876,35 +884,42 @@ stated goal (safer internals, less repeated parsing) to actually land.
 ### Orchestration: `SwayLaunch::build_actions()`/`run()`
 
 `SwayLaunch` no longer always launches a new window — it has a `target: Target` field
-(`Target::Exec { command }`, `Target::ConId(i64)`, or `Target::Existing`), and
-`resolve_container_id()` turns whichever one is set into a `container_id`:
+(`target.rs`), and `resolve_container_id()` turns it into a `container_id`:
 
-- `Exec` — today's original behavior: build and run an `ExecAction`.
+- `Exec { command, filter: Option<LaunchFilter> }` — today's original behavior: build and run an
+  `ExecAction`, accepting a new window that passes `filter` (app_id or class), or any new window
+  without one.
 - `ConId(id)` — the id directly, no IPC call at all.
-- `Existing` — `get_tree()` + `matching_container_ids()` (a recursive walk over `Node::nodes`/
-  `Node::floating_nodes`, reusing `window_app_id_match`/`window_class_match` — refactored to take
-  `&Node` instead of `&WindowEvent`, since `WindowEvent.container` already *is* a `Node`) +
-  `resolve_matches()`, which errors on zero or more than one match rather than guessing. The walk
-  covers the entire tree returned by `get_tree()`, which includes the `__i3_scratch` scratchpad
-  workspace — a hidden scratchpad window matching the criteria is just as eligible as a visible
-  one (documented for the user in README.md's "Target an existing window" section).
-  `matching_container_ids()`/`find_existing_container_id()` take a third `mark_match: &str`
-  alongside `app_id_match`/`class_match` — an external review suggested this (`--mark-match
-  <MARK>`, matching a container's own `marks: Vec<String>` via a new `window_mark_match()`, the
-  same shape as `window_app_id_match`/`window_class_match`) as a way to retarget a previously-
-  `--mark`ed window without tracking its container id, the classic "dropdown terminal" pattern
-  (`sway-launch --existing --mark-match dropdown-term --scratchpad`). The three criteria are
-  mutually exclusive by construction (`--mark-match` sits in `--app-id`/`--class`'s
-  `conflicts_with_all` the same way those two already conflict with each other, and the matching
-  `LayoutStep`/`Binding` fields enforce the same three-way exclusivity `to_sway_launch()`/
-  `resolve()` already enforced for `app_id`/`class`), but `matching_container_ids()`'s own
-  precedence chain (app_id, then class, then mark) still needs a defined order regardless — the
-  same `if/else if/else` shape `window_app_id_match`/`window_class_match`'s existing precedence
-  already used, just extended by one arm. `SwayLaunch` gained a matching `mark_match: &'a str`
-  field alongside `app_id_match`/`class_match`, threaded through the same call sites; `--mark-match`
-  only ever applies to `Target::Existing` (a freshly launched `Target::Exec` window has no mark yet
-  to match against, since marks are applied *after* launch via `--mark`), so `ExecAction`'s own
-  content-matching is untouched.
+- `Existing(WindowMatch)` — `get_tree()` + `matching_container_ids()` (every node `descendants()`
+  yields that `WindowMatch::matches()` accepts) + `resolve_matches()`, which errors on zero or more
+  than one match rather than guessing. The walk covers the entire tree returned by `get_tree()`,
+  which includes the `__i3_scratch` scratchpad workspace — a hidden scratchpad window matching the
+  criteria is just as eligible as a visible one (documented for the user in README.md's "Target an
+  existing window" section). `WindowMatch::Mark` (`--mark-match`) retargets a previously-`--mark`ed
+  window without tracking its container id, the classic "dropdown terminal" pattern
+  (`sway-launch --existing --mark-match dropdown-term --scratchpad`).
+
+**A `Target` can only be built through `Target::from_fields()`** (#20), and the types make every
+combination it rejects unrepresentable: a launch's filter is a `LaunchFilter { AppId, Class }` (a
+window that has only just mapped has no marks, so `Mark` can't be one), `Existing` holds exactly
+one `WindowMatch { AppId, Class, Mark }`, and `ConId` holds none. `SwayLaunch`/`ExecAction` used
+to carry three loose `&str` matchers with `""` meaning "unset", so `ConId(42)` with an app_id, or
+`Existing` with no matcher, were valid values that every front end had to rule out by hand, and
+`matching_container_ids()`, `find_existing_container_id()` and `describe_target()` each carried an
+app_id-then-class-then-mark precedence chain only because two matchers set at once could be
+represented. The rules lived in three hand-written copies — clap's conflicts plus manual checks in
+`main.rs`, `to_sway_launch()`, and `template::resolve()`'s binding checks — and had already
+drifted: the CLI accepted a whitespace-only command a layout step rejected (launching `env` with
+nothing to run and timing out), and a binding with `con_id` plus `app_id` slipped past
+`resolve()` to be rejected later as a step of the template the user never wrote. Now all three
+build a `TargetFields` (a layout step resolves its `target_id` to a container id first) and call
+the one constructor, which also runs `validate_exec_command()` on a launch command. Its
+`TargetError` is rendered per front end by `message(FieldStyle)`: flag names and a clap usage
+error (exit 2) on the CLI, field names in a file, and a binding's error keeps its
+`binding for slot "<name>":` prefix and is reported against the bindings file. clap's
+`conflicts_with` declarations stay, for their parse-time usage errors; `tests/target_rules.rs`
+checks the front ends still agree. A new target kind (#13 run-or-raise, #14 title matching) is a
+new variant the compiler makes every `match` handle.
 
 `run()` used to conditionally build *and immediately run* the other actions inline, one `if
 self.foo { SwayAction::Foo { .. }.run()?; }` block per flag. An external review flagged that shape
