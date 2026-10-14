@@ -195,6 +195,8 @@ pub(super) fn resolve_matches(matches: Vec<i64>, criteria: &str) -> Result<i64, 
 pub(super) struct ContainerState {
     pub(super) workspace: Option<String>,
     pub(super) output: Option<String>,
+    /// Whether the container's workspace is the one its output is showing.
+    pub(super) workspace_visible: bool,
     pub(super) floating: bool,
     pub(super) fullscreen: bool,
     pub(super) focused: bool,
@@ -210,10 +212,21 @@ impl ContainerState {
         let node = *path.last()?;
         let workspace = name_of_nearest(&path, NodeType::Workspace);
 
+        let workspace_visible = match (
+            nearest_of_kind(&path, NodeType::Output),
+            nearest_of_kind(&path, NodeType::Workspace),
+        ) {
+            (Some(output), Some(workspace_node)) => {
+                output.focus.first() == Some(&workspace_node.id)
+            }
+            _ => false,
+        };
+
         Some(ContainerState {
             in_scratchpad: is_scratchpad_workspace(workspace.as_deref()),
             workspace,
             output: name_of_nearest(&path, NodeType::Output),
+            workspace_visible,
             floating: node_is_floating(node),
             fullscreen: node.fullscreen_mode.is_some_and(|mode| mode != 0),
             focused: node.focused,

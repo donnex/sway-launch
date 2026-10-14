@@ -848,6 +848,10 @@ Move the new window to a specific output (monitor).
 sway-launch --output HDMI-A-1 foot
 ```
 
+As with Sway's own `move container to output`, the window lands on the workspace that output is
+currently showing — including when it was already on a hidden workspace of the same output, which
+brings it into view.
+
 The value is the output's connector name as `swaymsg -t get_outputs` shows it (`HDMI-A-1`,
 `DP-2`), matched ignoring case. Sway also accepts an output's make, model and serial
 (`"Example Corp EX-27 0000001"`), but `sway-launch` confirms the move by connector name, so that

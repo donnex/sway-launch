@@ -334,10 +334,16 @@ impl SwayAction<'_> {
                 .workspace
                 .as_deref()
                 .is_some_and(|name| name.eq_ignore_ascii_case(workspace)),
-            ActionKind::Output(output) => state
-                .output
-                .as_deref()
-                .is_some_and(|name| name.eq_ignore_ascii_case(output)),
+            // Sway's `move container to output` lands on the output's
+            // visible workspace, so a window on a hidden workspace of the
+            // right output still has somewhere to go.
+            ActionKind::Output(output) => {
+                state.workspace_visible
+                    && state
+                        .output
+                        .as_deref()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(output))
+            }
             ActionKind::Floating => state.floating,
             ActionKind::Fullscreen => state.fullscreen,
             ActionKind::Focus => state.focused,
