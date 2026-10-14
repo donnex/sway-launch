@@ -6,6 +6,7 @@
 //! so every module's tests agree on what a "plain tiled window" looks like.
 
 use super::action::{ActionKind, ExecAction, SwayAction};
+pub(super) use super::target::LaunchFilter;
 use std::time;
 use swayipc::{Node, WindowEvent};
 
@@ -22,17 +23,24 @@ pub(super) fn targeted(kind: ActionKind<'_>) -> SwayAction<'_> {
     )
 }
 
-/// An `ExecAction` launching `command`, filtered on `app_id_match`/
-/// `class_match` (empty for no filter).
-pub(super) fn exec_action<'a>(
-    command: &'a str,
-    app_id_match: &'a str,
-    class_match: &'a str,
-) -> ExecAction<'a> {
+/// The launch filter an `app_id`/`class` string pair names in a test:
+/// app_id when non-empty, otherwise class, otherwise none.
+pub(super) fn filter<'a>(app_id: &'a str, class: &'a str) -> Option<LaunchFilter<'a>> {
+    if !app_id.is_empty() {
+        Some(LaunchFilter::AppId(app_id))
+    } else if !class.is_empty() {
+        Some(LaunchFilter::Class(class))
+    } else {
+        None
+    }
+}
+
+/// An `ExecAction` launching `command`, filtered on `app_id`/`class` (empty
+/// for no filter).
+pub(super) fn exec_action<'a>(command: &'a str, app_id: &'a str, class: &'a str) -> ExecAction<'a> {
     ExecAction {
         command,
-        app_id_match,
-        class_match,
+        filter: filter(app_id, class),
         verbose: false,
         timeout: time::Duration::from_secs(5),
     }

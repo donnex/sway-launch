@@ -110,7 +110,10 @@ fn to_sway_launch_exec_step_uses_command() {
     let sway_launch = convert(&step).expect("valid step should convert");
     assert!(matches!(
         sway_launch.target,
-        sway_launch::Target::Exec { command: "foot" }
+        sway_launch::Target::Exec {
+            command: "foot",
+            filter: None
+        }
     ));
 }
 
@@ -138,7 +141,10 @@ fn to_sway_launch_existing_step_with_app_id_succeeds() {
     step.existing = true;
     step.app_id = Some("foot".to_string());
     let sway_launch = convert(&step).expect("existing step with app_id should convert");
-    assert!(matches!(sway_launch.target, sway_launch::Target::Existing));
+    assert!(matches!(
+        sway_launch.target,
+        sway_launch::Target::Existing(_)
+    ));
 }
 
 #[test]
@@ -198,8 +204,10 @@ fn to_sway_launch_existing_step_with_mark_match_succeeds() {
     step.existing = true;
     step.mark_match = Some("dropdown-term".to_string());
     let sway_launch = convert(&step).expect("existing step with mark_match should convert");
-    assert!(matches!(sway_launch.target, sway_launch::Target::Existing));
-    assert_eq!(sway_launch.mark_match, "dropdown-term");
+    assert_eq!(
+        format!("{:?}", sway_launch.target),
+        "Existing(Mark(\"dropdown-term\"))"
+    );
 }
 
 #[test]

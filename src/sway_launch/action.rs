@@ -20,6 +20,7 @@
 
 use super::ipc::quote_sway_string;
 use super::process_marker::PID_MARKER_VAR;
+use super::target::LaunchFilter;
 use super::values::{Position, Size, Split};
 use std::{fmt, time};
 
@@ -27,8 +28,7 @@ use std::{fmt, time};
 #[derive(Copy, Clone, Debug)]
 pub(super) struct ExecAction<'a> {
     pub(super) command: &'a str,
-    pub(super) app_id_match: &'a str,
-    pub(super) class_match: &'a str,
+    pub(super) filter: Option<LaunchFilter<'a>>,
     pub(super) verbose: bool,
     pub(super) timeout: time::Duration,
 }
@@ -108,11 +108,11 @@ impl ActionKind<'_> {
 
 impl fmt::Display for ExecAction<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Exec \"{}\" (app_id_match: \"{}\") (class_match: \"{}\")",
-            self.command, self.app_id_match, self.class_match
-        )
+        write!(f, "Exec \"{}\"", self.command)?;
+        match self.filter {
+            Some(filter) => write!(f, " (filter: {})", filter),
+            None => Ok(()),
+        }
     }
 }
 

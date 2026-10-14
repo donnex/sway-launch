@@ -17,8 +17,7 @@ fn unmatched(container_id: i64, app_id: Option<&str>, class: Option<&str>) -> Un
 fn exec_timeout_message_names_a_window_the_filter_rejected() {
     let message = exec_timeout_message(
         time::Duration::from_secs(2),
-        "notfoot",
-        "",
+        filter("notfoot", ""),
         &[UnmatchedWindow {
             launched_by_this_run: true,
             ..unmatched(12, Some("foot"), None)
@@ -38,8 +37,7 @@ fn exec_timeout_message_names_a_window_the_filter_rejected() {
 fn exec_timeout_message_lists_several_rejected_windows() {
     let message = exec_timeout_message(
         time::Duration::from_secs(5),
-        "",
-        "Firefox",
+        filter("", "Firefox"),
         &[
             unmatched(12, Some("foot"), None),
             unmatched(13, None, Some("XTerm")),
@@ -60,8 +58,7 @@ fn exec_timeout_message_lists_several_rejected_windows() {
 fn exec_timeout_message_names_a_launched_window_that_never_set_its_class() {
     let message = exec_timeout_message(
         time::Duration::from_secs(5),
-        "",
-        "Spotify",
+        filter("", "Spotify"),
         &[UnmatchedWindow {
             launched_by_this_run: true,
             ..unmatched(12, None, None)
@@ -79,7 +76,12 @@ fn exec_timeout_message_names_a_launched_window_that_never_set_its_class() {
 
 #[test]
 fn exec_timeout_message_says_when_the_command_exited_without_a_window() {
-    let message = exec_timeout_message(time::Duration::from_secs(2), "", "", &[], Some(false));
+    let message = exec_timeout_message(
+        time::Duration::from_secs(2),
+        filter("", ""),
+        &[],
+        Some(false),
+    );
     assert_eq!(
         message,
         "no window appeared within 2 sec: the launched command exited without opening a \
@@ -89,7 +91,12 @@ fn exec_timeout_message_says_when_the_command_exited_without_a_window() {
 
 #[test]
 fn exec_timeout_message_suggests_slowness_only_while_the_command_still_runs() {
-    let message = exec_timeout_message(time::Duration::from_secs(2), "", "", &[], Some(true));
+    let message = exec_timeout_message(
+        time::Duration::from_secs(2),
+        filter("", ""),
+        &[],
+        Some(true),
+    );
     assert!(message.contains("still running"), "{message}");
     assert!(message.contains("--timeout"), "{message}");
 }
@@ -97,7 +104,7 @@ fn exec_timeout_message_suggests_slowness_only_while_the_command_still_runs() {
 #[test]
 fn exec_timeout_message_adds_nothing_when_the_command_s_state_is_unknown() {
     assert_eq!(
-        exec_timeout_message(time::Duration::from_secs(3), "foot", "", &[], None),
+        exec_timeout_message(time::Duration::from_secs(3), filter("foot", ""), &[], None),
         "no window with app_id \"foot\" appeared within 3 sec"
     );
 }
@@ -106,8 +113,7 @@ fn exec_timeout_message_adds_nothing_when_the_command_s_state_is_unknown() {
 fn exec_timeout_message_prefers_rejected_windows_over_the_command_s_state() {
     let message = exec_timeout_message(
         time::Duration::from_secs(2),
-        "notfoot",
-        "",
+        filter("notfoot", ""),
         &[unmatched(12, Some("foot"), None)],
         Some(false),
     );

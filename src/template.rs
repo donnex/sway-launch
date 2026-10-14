@@ -331,75 +331,25 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
                     ResolveError::Bindings(format!("no binding for slot {:?}", slot))
                 })?;
 
-                let target_fields_set = [
-                    binding.command.is_some(),
-                    binding.con_id.is_some(),
-                    binding.existing,
-                ]
-                .into_iter()
-                .filter(|&set| set)
-                .count();
-                if target_fields_set != 1 {
-                    return Err(ResolveError::Bindings(format!(
-                        "binding for slot {:?} must set exactly one of: command, con_id, existing",
-                        slot
-                    )));
-                }
-                if let Some(command) = binding.command.as_deref() {
-                    sway_launch::require_non_blank("command", command).map_err(|error| {
-                        ResolveError::Bindings(format!("binding for slot {:?}: {}", slot, error))
-                    })?;
-                }
-                for (field, value) in [
-                    ("app_id", binding.app_id.as_deref()),
-                    ("class", binding.class.as_deref()),
-                ] {
-                    if let Some(value) = value {
-                        sway_launch::require_non_blank(field, value).map_err(|error| {
-                            ResolveError::Bindings(format!(
-                                "binding for slot {:?}: {}",
-                                slot, error
-                            ))
-                        })?;
-                    }
-                }
-                let match_fields_set = [
-                    binding.app_id.is_some(),
-                    binding.class.is_some(),
-                    binding.mark_match.is_some(),
-                ]
-                .into_iter()
-                .filter(|&set| set)
-                .count();
-                if match_fields_set > 1 {
-                    return Err(ResolveError::Bindings(format!(
-                        "binding for slot {:?} must set only one of: app_id, class, mark_match",
-                        slot
-                    )));
-                }
-                if binding.mark_match.is_some() && !binding.existing {
-                    return Err(ResolveError::Bindings(format!(
-                        "binding for slot {:?}: mark_match requires existing = true",
-                        slot
-                    )));
-                }
-                // Caught here rather than left to to_sway_launch(): the
-                // resulting LayoutStep would fail there too, but as
-                // "step N: existing = true requires app_id, class, or
-                // mark_match" — naming a step the user never wrote, for a
-                // mistake they made in a bindings file. Same reasoning as
-                // the checks above it.
-                if binding.existing
-                    && binding.app_id.is_none()
-                    && binding.class.is_none()
-                    && binding.mark_match.is_none()
-                {
-                    return Err(ResolveError::Bindings(format!(
-                        "binding for slot {:?}: existing = true requires app_id, class, or \
-                         mark_match",
-                        slot
-                    )));
-                }
+                // The same rules a layout step and the CLI go through, checked
+                // here so a mistake is reported against the bindings file
+                // rather than as a step the user never wrote.
+                sway_launch::Target::from_fields(sway_launch::TargetFields {
+                    command: binding.command.as_deref(),
+                    con_id: binding.con_id,
+                    existing: binding.existing,
+                    target_id: None,
+                    app_id: binding.app_id.as_deref(),
+                    class: binding.class.as_deref(),
+                    mark_match: binding.mark_match.as_deref(),
+                })
+                .map_err(|error| {
+                    ResolveError::Bindings(format!(
+                        "binding for slot {:?}: {}",
+                        slot,
+                        error.message(sway_launch::FieldStyle::Binding)
+                    ))
+                })?;
 
                 used_slots.insert(slot);
                 (

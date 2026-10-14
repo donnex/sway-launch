@@ -92,96 +92,28 @@ impl LayoutStep {
         if let Some(target_id) = self.target_id.as_deref() {
             sway_launch::require_non_blank("target_id", target_id)?;
         }
-        // Checked before the emptiness-based target logic below, which reads a
-        // blank value as "set" (it isn't empty) while every later use reads it
-        // as a criterion that can only ever match nothing.
-        for (field, value) in [
-            ("app_id", self.app_id.as_deref()),
-            ("class", self.class.as_deref()),
-        ] {
-            if let Some(value) = value {
-                sway_launch::require_non_blank(field, value)?;
-            }
-        }
-
-        let app_id_match = self.app_id.as_deref().unwrap_or_default();
-        let class_match = self.class.as_deref().unwrap_or_default();
-        let mark_match = self.mark_match.as_deref().unwrap_or_default();
-        let match_fields_set = [
-            !app_id_match.is_empty(),
-            !class_match.is_empty(),
-            !mark_match.is_empty(),
-        ]
-        .into_iter()
-        .filter(|&set| set)
-        .count();
-        if match_fields_set > 1 {
-            return Err("step must set only one of: app_id, class, mark_match".to_string());
-        }
-        // Mirrors the CLI's `conflicts_with_all` on `--app-id`/`--class`/
-        // `--mark-match` against `--con-id`: a con_id target already names
-        // an exact container, so a match criteria alongside it can only be
-        // silently ignored, not honored — better to reject it than let a
-        // step look like it's matching on identity when it isn't.
-        //
-        // `target_id` is covered by the identical reasoning: it resolves to
-        // `Target::ConId` a few lines below, via an earlier step's already-
-        // resolved id, so a match criterion alongside it is discarded just
-        // as silently. It has no CLI equivalent to mirror a
-        // `conflicts_with_all` from, which is why it needs saying here.
-        if (self.con_id.is_some() || self.target_id.is_some())
-            && (!app_id_match.is_empty() || !class_match.is_empty() || !mark_match.is_empty())
-        {
-            return Err(
-                "step must not combine con_id/target_id with app_id/class/mark_match".to_string(),
-            );
-        }
-        if !mark_match.is_empty() && !self.existing {
-            return Err("mark_match requires existing = true".to_string());
-        }
-
-        let target_fields_set = [
-            self.command.is_some(),
-            self.con_id.is_some(),
-            self.existing,
-            self.target_id.is_some(),
-        ]
-        .into_iter()
-        .filter(|&set| set)
-        .count();
-        if target_fields_set > 1 {
-            return Err(
-                "step must set only one of: command, con_id, existing, target_id".to_string(),
-            );
-        }
-
-        let target = if let Some(con_id) = self.con_id {
-            sway_launch::Target::ConId(con_id)
-        } else if let Some(target_id) = self.target_id.as_deref() {
-            let con_id = resolved_ids.get(target_id).ok_or_else(|| {
-                format!(
-                    "target_id {:?} not found — must reference an earlier step's id",
-                    target_id
-                )
-            })?;
-            sway_launch::Target::ConId(*con_id)
-        } else if self.existing {
-            if app_id_match.is_empty() && class_match.is_empty() && mark_match.is_empty() {
-                return Err("existing = true requires app_id, class, or mark_match".to_string());
-            }
-            sway_launch::Target::Existing
-        } else {
-            let command = self
-                .command
-                .as_deref()
-                .filter(|command| !command.trim().is_empty())
-                .ok_or_else(|| {
-                    "step needs one of: command, con_id, existing, target_id".to_string()
-                })?;
-            sway_launch::validate_exec_command(command)
-                .map_err(|error| format!("command: {}", error))?;
-            sway_launch::Target::Exec { command }
-        };
+        let target_id = self
+            .target_id
+            .as_deref()
+            .map(|target_id| {
+                resolved_ids.get(target_id).copied().ok_or_else(|| {
+                    format!(
+                        "target_id {:?} not found — must reference an earlier step's id",
+                        target_id
+                    )
+                })
+            })
+            .transpose()?;
+        let target = sway_launch::Target::from_fields(sway_launch::TargetFields {
+            command: self.command.as_deref(),
+            con_id: self.con_id,
+            existing: self.existing,
+            target_id,
+            app_id: self.app_id.as_deref(),
+            class: self.class.as_deref(),
+            mark_match: self.mark_match.as_deref(),
+        })
+        .map_err(|error| error.message(sway_launch::FieldStyle::LayoutStep))?;
 
         // Every value below is interpolated into a Sway command as a quoted
         // string (or, for mark_match, compared against one that was) — see
@@ -241,9 +173,6 @@ impl LayoutStep {
 
         Ok(sway_launch::SwayLaunch {
             target,
-            app_id_match,
-            class_match,
-            mark_match,
             split: self.split,
             floating: self.floating,
             sticky: self.sticky,

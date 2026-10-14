@@ -11,6 +11,7 @@
 //! its question from a `&Node` alone.
 
 use super::ipc::{ipc_error, new_connection};
+use super::target::{LaunchFilter, WindowMatch};
 use super::tree::{
     expected_position, find_node, find_parent_layout, find_workspace_node, matching_container_ids,
     move_skip_reason, node_position, present_ids, recheck_launched_windows, resolve_matches,
@@ -19,32 +20,20 @@ use super::tree::{
 use super::values::Position;
 use swayipc::{Connection, Node, NodeLayout};
 
-/// Finds exactly one already-open window matching `app_id_match`/
-/// `class_match`/`mark_match` via `get_tree()`, for `Target::Existing`.
+/// Finds exactly one already-open window `window_match` accepts via
+/// `get_tree()`, for `Target::Existing`.
 /// Errors — rather than silently picking one — if zero or more than one
 /// window matches, since guessing which of several matches the caller meant
 /// would be a worse default than asking them to retarget with `--con-id`.
-pub(super) fn find_existing_container_id(
-    app_id_match: &str,
-    class_match: &str,
-    mark_match: &str,
-) -> Result<i64, String> {
+pub(super) fn find_existing_container_id(window_match: WindowMatch) -> Result<i64, String> {
     let tree = match new_connection()?.get_tree() {
         Ok(tree) => tree,
         Err(error) => return Err(ipc_error(error)),
     };
 
-    let criteria = if !app_id_match.is_empty() {
-        format!("app_id \"{}\"", app_id_match)
-    } else if !class_match.is_empty() {
-        format!("class \"{}\"", class_match)
-    } else {
-        format!("mark \"{}\"", mark_match)
-    };
-
     resolve_matches(
-        matching_container_ids(&tree, app_id_match, class_match, mark_match),
-        &criteria,
+        matching_container_ids(&tree, window_match),
+        &window_match.to_string(),
     )
 }
 
@@ -175,16 +164,10 @@ pub(super) fn parent_node_layout(
 pub(super) fn recheck_launched_windows_now(
     connection: &mut Connection,
     container_ids: &[i64],
-    app_id_match: &str,
-    class_match: &str,
+    filter: Option<LaunchFilter>,
 ) -> Option<Vec<RecheckedWindow>> {
     let tree = connection.get_tree().ok()?;
-    Some(recheck_launched_windows(
-        &tree,
-        container_ids,
-        app_id_match,
-        class_match,
-    ))
+    Some(recheck_launched_windows(&tree, container_ids, filter))
 }
 
 /// The tree node with id `container_id`, or `None` if it can't be read

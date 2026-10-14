@@ -1,42 +1,42 @@
 use super::super::test_support::*;
 use super::*;
 
-// window_app_id_match / window_class_match
+// WindowMatch::matches
 
 #[test]
 fn window_app_id_match_true_when_equal() {
     let event = window_event("new", 1, Some("foot"), None);
-    assert!(window_app_id_match(&event.container, "foot"));
+    assert!(WindowMatch::AppId("foot").matches(&event.container));
 }
 
 #[test]
 fn window_app_id_match_false_when_different() {
     let event = window_event("new", 1, Some("foot"), None);
-    assert!(!window_app_id_match(&event.container, "alacritty"));
+    assert!(!WindowMatch::AppId("alacritty").matches(&event.container));
 }
 
 #[test]
 fn window_app_id_match_false_when_absent() {
     let event = window_event("new", 1, None, None);
-    assert!(!window_app_id_match(&event.container, "foot"));
+    assert!(!WindowMatch::AppId("foot").matches(&event.container));
 }
 
 #[test]
 fn window_class_match_true_when_equal() {
     let event = window_event("new", 1, None, Some("Firefox"));
-    assert!(window_class_match(&event.container, "Firefox"));
+    assert!(WindowMatch::Class("Firefox").matches(&event.container));
 }
 
 #[test]
 fn window_class_match_false_when_different() {
     let event = window_event("new", 1, None, Some("Firefox"));
-    assert!(!window_class_match(&event.container, "Chromium"));
+    assert!(!WindowMatch::Class("Chromium").matches(&event.container));
 }
 
 #[test]
 fn window_class_match_false_when_window_properties_absent() {
     let event = window_event("new", 1, None, None);
-    assert!(!window_class_match(&event.container, "Firefox"));
+    assert!(!WindowMatch::Class("Firefox").matches(&event.container));
 }
 
 #[test]
@@ -44,7 +44,7 @@ fn window_class_match_false_when_class_absent_but_window_properties_present() {
     let mut value = leaf_node_value(1, None, None);
     value["window_properties"] = serde_json::json!({});
     let node: Node = serde_json::from_value(value).expect("valid Node test fixture");
-    assert!(!window_class_match(&node, "Firefox"));
+    assert!(!WindowMatch::Class("Firefox").matches(&node));
 }
 
 #[test]
@@ -52,7 +52,7 @@ fn window_mark_match_true_when_present() {
     let mut value = leaf_node_value(1, None, None);
     value["marks"] = serde_json::json!(["dropdown-term"]);
     let node: Node = serde_json::from_value(value).expect("valid Node test fixture");
-    assert!(window_mark_match(&node, "dropdown-term"));
+    assert!(WindowMatch::Mark("dropdown-term").matches(&node));
 }
 
 #[test]
@@ -60,13 +60,13 @@ fn window_mark_match_false_when_different() {
     let mut value = leaf_node_value(1, None, None);
     value["marks"] = serde_json::json!(["other-mark"]);
     let node: Node = serde_json::from_value(value).expect("valid Node test fixture");
-    assert!(!window_mark_match(&node, "dropdown-term"));
+    assert!(!WindowMatch::Mark("dropdown-term").matches(&node));
 }
 
 #[test]
 fn window_mark_match_false_when_absent() {
     let event = window_event("new", 1, None, None);
-    assert!(!window_mark_match(&event.container, "dropdown-term"));
+    assert!(!WindowMatch::Mark("dropdown-term").matches(&event.container));
 }
 
 // matching_container_ids
@@ -81,7 +81,7 @@ fn matching_container_ids_finds_tiling_and_floating_matches() {
         ],
         vec![leaf_node_value(20, Some("foot"), None)],
     );
-    let mut ids = matching_container_ids(&tree, "foot", "", "");
+    let mut ids = matching_container_ids(&tree, WindowMatch::AppId("foot"));
     ids.sort();
     assert_eq!(ids, vec![10, 20]);
 }
@@ -90,7 +90,7 @@ fn matching_container_ids_finds_tiling_and_floating_matches() {
 fn matching_container_ids_empty_when_no_match() {
     let tree = node_tree(1, vec![leaf_node_value(10, Some("foot"), None)], vec![]);
     assert_eq!(
-        matching_container_ids(&tree, "nonexistent", "", ""),
+        matching_container_ids(&tree, WindowMatch::AppId("nonexistent")),
         Vec::<i64>::new()
     );
 }
@@ -98,7 +98,10 @@ fn matching_container_ids_empty_when_no_match() {
 #[test]
 fn matching_container_ids_matches_by_class() {
     let tree = node_tree(1, vec![leaf_node_value(10, None, Some("Firefox"))], vec![]);
-    assert_eq!(matching_container_ids(&tree, "", "Firefox", ""), vec![10]);
+    assert_eq!(
+        matching_container_ids(&tree, WindowMatch::Class("Firefox")),
+        vec![10]
+    );
 }
 
 #[test]
@@ -107,7 +110,7 @@ fn matching_container_ids_matches_by_mark() {
     value["marks"] = serde_json::json!(["dropdown-term"]);
     let tree = node_tree(1, vec![value], vec![]);
     assert_eq!(
-        matching_container_ids(&tree, "", "", "dropdown-term"),
+        matching_container_ids(&tree, WindowMatch::Mark("dropdown-term")),
         vec![10]
     );
 }
@@ -116,29 +119,8 @@ fn matching_container_ids_matches_by_mark() {
 fn matching_container_ids_recurses_into_nested_containers() {
     let inner = container_node_value(2, vec![leaf_node_value(10, Some("foot"), None)], vec![]);
     let tree = node_tree(1, vec![inner], vec![]);
-    assert_eq!(matching_container_ids(&tree, "foot", "", ""), vec![10]);
-}
-
-#[test]
-fn matching_container_ids_prefers_app_id_over_class_when_both_set() {
-    let tree = node_tree(
-        1,
-        vec![leaf_node_value(10, Some("foot"), Some("NoMatch"))],
-        vec![],
-    );
     assert_eq!(
-        matching_container_ids(&tree, "foot", "NoMatch", ""),
-        vec![10]
-    );
-}
-
-#[test]
-fn matching_container_ids_prefers_class_over_mark_when_both_set() {
-    let mut value = leaf_node_value(10, None, Some("Firefox"));
-    value["marks"] = serde_json::json!(["no-match"]);
-    let tree = node_tree(1, vec![value], vec![]);
-    assert_eq!(
-        matching_container_ids(&tree, "", "Firefox", "no-match"),
+        matching_container_ids(&tree, WindowMatch::AppId("foot")),
         vec![10]
     );
 }
@@ -146,18 +128,24 @@ fn matching_container_ids_prefers_class_over_mark_when_both_set() {
 // launch_filter_match / recheck_launched_windows
 
 #[test]
-fn launch_filter_match_prefers_app_id_then_class_then_accepts_anything() {
+fn launch_filter_match_checks_its_one_filter_and_accepts_anything_without_one() {
     let tree = node_tree(
         1,
         vec![leaf_node_value(10, Some("foot"), Some("Foot"))],
         vec![],
     );
     let node = find_node(&tree, 10).unwrap();
-    assert!(launch_filter_match(node, "foot", "Other"));
-    assert!(!launch_filter_match(node, "other", "Foot"));
-    assert!(launch_filter_match(node, "", "Foot"));
-    assert!(!launch_filter_match(node, "", "Other"));
-    assert!(launch_filter_match(node, "", ""));
+    assert!(launch_filter_match(node, Some(LaunchFilter::AppId("foot"))));
+    assert!(!launch_filter_match(
+        node,
+        Some(LaunchFilter::AppId("other"))
+    ));
+    assert!(launch_filter_match(node, Some(LaunchFilter::Class("Foot"))));
+    assert!(!launch_filter_match(
+        node,
+        Some(LaunchFilter::Class("Other"))
+    ));
+    assert!(launch_filter_match(node, None));
 }
 
 #[test]
@@ -166,7 +154,7 @@ fn recheck_launched_windows_matches_a_class_set_after_mapping() {
     // now shows the class it set afterwards, with no event to say so.
     let tree = node_tree(1, vec![leaf_node_value(12, None, Some("Spotify"))], vec![]);
     assert_eq!(
-        recheck_launched_windows(&tree, &[12], "", "Spotify"),
+        recheck_launched_windows(&tree, &[12], filter("", "Spotify")),
         vec![RecheckedWindow {
             container_id: 12,
             app_id: None,
@@ -180,7 +168,7 @@ fn recheck_launched_windows_matches_a_class_set_after_mapping() {
 fn recheck_launched_windows_reports_a_still_unset_class_as_not_matching() {
     let tree = node_tree(1, vec![leaf_node_value(12, None, None)], vec![]);
     assert_eq!(
-        recheck_launched_windows(&tree, &[12], "", "Spotify"),
+        recheck_launched_windows(&tree, &[12], filter("", "Spotify")),
         vec![RecheckedWindow {
             container_id: 12,
             app_id: None,
@@ -200,7 +188,7 @@ fn recheck_launched_windows_drops_a_window_that_closed_and_keeps_the_order() {
         ],
         vec![],
     );
-    let rechecked = recheck_launched_windows(&tree, &[14, 13, 12], "late", "");
+    let rechecked = recheck_launched_windows(&tree, &[14, 13, 12], filter("late", ""));
     assert_eq!(
         rechecked
             .iter()

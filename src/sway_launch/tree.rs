@@ -12,6 +12,7 @@
 //! arguments and let the caller do the reading, rather than burying a
 //! comparison behind a `&mut Connection` where the coverage gate can't see it.
 
+use super::target::{LaunchFilter, WindowMatch};
 use super::values::Position;
 use swayipc::{Node, NodeLayout, NodeType};
 
@@ -63,32 +64,10 @@ fn name_of_nearest(path: &[&Node], kind: NodeType) -> Option<String> {
     nearest_of_kind(path, kind).and_then(|node| node.name.clone())
 }
 
-pub(super) fn window_app_id_match(node: &Node, app_id_match: &str) -> bool {
-    node.app_id.as_deref() == Some(app_id_match)
-}
-
-pub(super) fn window_class_match(node: &Node, class_match: &str) -> bool {
-    node.window_properties
-        .as_ref()
-        .and_then(|window_properties| window_properties.class.as_deref())
-        == Some(class_match)
-}
-
-pub(super) fn window_mark_match(node: &Node, mark_match: &str) -> bool {
-    node.marks.iter().any(|mark| mark == mark_match)
-}
-
-/// Whether `node` passes a launch's `--app-id`/`--class` filter: app_id when
-/// set, otherwise class, otherwise anything — the precedence
-/// `ExecAction::matches_window_event()` applies to a `New` event.
-pub(super) fn launch_filter_match(node: &Node, app_id_match: &str, class_match: &str) -> bool {
-    if !app_id_match.is_empty() {
-        window_app_id_match(node, app_id_match)
-    } else if !class_match.is_empty() {
-        window_class_match(node, class_match)
-    } else {
-        true
-    }
+/// Whether `node` passes a launch's `--app-id`/`--class` filter; with no
+/// filter, any window does.
+pub(super) fn launch_filter_match(node: &Node, filter: Option<LaunchFilter>) -> bool {
+    filter.is_none_or(|filter| filter.matches(node))
 }
 
 /// One window a launch is rechecking because it carried the launch's marker
@@ -109,8 +88,7 @@ pub(super) struct RecheckedWindow {
 pub(super) fn recheck_launched_windows(
     tree: &Node,
     container_ids: &[i64],
-    app_id_match: &str,
-    class_match: &str,
+    filter: Option<LaunchFilter>,
 ) -> Vec<RecheckedWindow> {
     container_ids
         .iter()
@@ -122,39 +100,17 @@ pub(super) fn recheck_launched_windows(
                 .window_properties
                 .as_ref()
                 .and_then(|properties| properties.class.clone()),
-            matches: launch_filter_match(node, app_id_match, class_match),
+            matches: launch_filter_match(node, filter),
         })
         .collect()
 }
 
-/// Collects the container ids of every node in `tree` (tiling
-/// and floating children at every level) whose app_id/class/mark matches,
-/// used to target an already-open window instead of launching a new one.
-/// The three criteria are mutually exclusive by construction (enforced at
-/// the CLI/layout/template level, mirroring `--app-id`/`--class`/
-/// `--mark-match`'s own `conflicts_with_all`), but the precedence order
-/// here — app_id, then class, then mark — still needs to be defined
-/// regardless, matching `matches_window_event`'s Exec-matching precedence.
-pub(super) fn matching_container_ids(
-    tree: &Node,
-    app_id_match: &str,
-    class_match: &str,
-    mark_match: &str,
-) -> Vec<i64> {
-    let matches = |node: &Node| {
-        if !app_id_match.is_empty() {
-            window_app_id_match(node, app_id_match)
-        } else if !class_match.is_empty() {
-            window_class_match(node, class_match)
-        } else if !mark_match.is_empty() {
-            window_mark_match(node, mark_match)
-        } else {
-            false
-        }
-    };
-
+/// Collects the container ids of every node in `tree` (tiling and floating
+/// children at every level) that `window_match` accepts, used to target an
+/// already-open window instead of launching a new one.
+pub(super) fn matching_container_ids(tree: &Node, window_match: WindowMatch) -> Vec<i64> {
     descendants(tree)
-        .filter(|node| matches(node))
+        .filter(|node| window_match.matches(node))
         .map(|node| node.id)
         .collect()
 }
