@@ -3049,6 +3049,61 @@ fn rollback_on_error_still_kills_a_window_matched_after_its_launcher_exited() {
 }
 
 #[test]
+fn a_hand_off_whose_launcher_exits_after_the_window_maps_is_launched_promptly() {
+    fresh_workspace();
+    // The single-instance hand-off where the forwarding process outlives the
+    // window's arrival: the window maps without our marker while the marked
+    // launcher is still running, and the launcher exits 0.6s later. The
+    // marker is re-scanned on a timer, not only when another window event
+    // arrives, so the run ends once the launcher is gone -- well before the
+    // 2s fallback grace -- and the window counts as this run's own, which
+    // --rollback-on-error proves by closing it.
+    let mut connection = connect();
+    let path = TempToml::write(
+        "handoff-launcher-outlives-window",
+        "[[step]]\ncommand = 'sh -c \"env -u SWAY_LAUNCH_PID_MARKER foot \
+         --app-id=handoff-probe & sleep 0.6\"'\napp_id = \"handoff-probe\"\ntimeout = 20\n\n\
+         [[step]]\ncon_id = 999999999\nmark = \"x\"\n",
+    );
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--rollback-on-error",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let elapsed = started.elapsed();
+
+    assert!(
+        !output.status.success(),
+        "sway-launch should fail on the bad second step"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        stderr.contains("\"rolled_back\":[") && !stderr.contains("\"rolled_back\":[]"),
+        "the handed-off window should count as launched and be rolled back: {stderr:?}"
+    );
+    assert!(
+        elapsed < Duration::from_millis(1800),
+        "took {elapsed:?} -- should have ended once the launcher exited (0.6s), not after \
+         the 2s fallback grace"
+    );
+
+    std::thread::sleep(Duration::from_millis(300));
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let survivor = first_app_id_window(&tree, "handoff-probe");
+    let _guard = survivor.map(KillOnDrop);
+    assert_eq!(
+        survivor, None,
+        "the window should have been closed by --rollback-on-error"
+    );
+}
+
+#[test]
 fn rollback_on_error_leaves_a_window_opened_while_an_env_dropping_wrapper_waits() {
     fresh_workspace();
     // A launcher that drops the environment (systemd-run, an app launcher, a

@@ -1428,7 +1428,12 @@ is still running: `tests/live_sway.rs`'s `rollback_on_error_leaves_a_window_it_o
 launched → killed). Keep them together — either assertion alone reads as the whole rule and isn't.
 A third, `rollback_on_error_leaves_a_window_opened_while_an_env_dropping_wrapper_waits`, covers a
 marker that was never seen at all (adopted → survives), the case that exposed "absent" and "gone"
-as different facts — see "`Exec`" above.
+as different facts — see "`Exec`" above. A fourth,
+`a_hand_off_whose_launcher_exits_after_the_window_maps_is_launched_promptly`, covers the window
+arriving *before* the launcher exits (launched, under 1.8s rather than after the 2s grace): it's
+the timed marker re-scan, not a later window event, that notices the launcher is gone. A
+client/server launcher (`footclient`, `emacsclient -c`) never takes that path, since the client
+lives as long as its window — README.md says so, and #114 tracks detecting it.
 
 `ExecAction::run()` returns `(container_id, LaunchOwnership)` to carry this — it's the only action
 that creates a window rather than acting on one already resolved, so `SwayAction::run()` has no
