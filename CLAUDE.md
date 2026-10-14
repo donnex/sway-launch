@@ -82,7 +82,10 @@ below) plus five integration test files:
   and most upper-case workspace keywords (`NEXT`, `PREV`, `CURRENT`, `NEXT_ON_OUTPUT`, but not
   `BACK_AND_FORTH`) crash the compositor (`workspace_create: NULL name`). Sway matches workspace and
   output names ignoring case too, so `state_satisfies()` compares them with
-  `eq_ignore_ascii_case` (#5). An output's make/model/serial identifier, which Sway also accepts, is
+  `eq_ignore_ascii_case` (#5). `Output` additionally requires `ContainerState.workspace_visible`
+  (the output node's `focus[0]` is the container's workspace): Sway's `move container to output`
+  lands on the output's visible workspace, so a window on a hidden workspace of the right output
+  isn't there yet, and short-circuiting it as `AlreadySatisfied` left it hidden (#91). An output's make/model/serial identifier, which Sway also accepts, is
   documented as unsupported rather than resolved. `validate_exec_command` covers the launch command (the
   positional CLI command and a step's/binding's `command`, checked in `to_sway_launch()`), which is
   sent to Sway raw rather than quoted (see "`Exec`" below), so it goes through Sway's own command

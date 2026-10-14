@@ -611,11 +611,20 @@ fn state_satisfies_workspace_and_output_ignore_case_as_sway_does() {
     let state = state_with(|state| {
         state.workspace = Some("Web".to_string());
         state.output = Some("HEADLESS-1".to_string());
+        state.workspace_visible = true;
     });
 
     assert!(workspace_action("web").state_satisfies(Some(&state)));
     assert!(output_action("headless-1").state_satisfies(Some(&state)));
     assert!(!workspace_action("Webs").state_satisfies(Some(&state)));
+}
+
+#[test]
+fn state_satisfies_output_only_on_the_output_s_visible_workspace() {
+    // Sway's `move container to output` brings a window on a hidden
+    // workspace of that output onto the visible one, so it isn't there yet.
+    let state = state_with(|state| state.output = Some("HEADLESS-1".to_string()));
+    assert!(!output_action("HEADLESS-1").state_satisfies(Some(&state)));
 }
 
 #[test]
@@ -626,7 +635,10 @@ fn state_satisfies_workspace_false_when_the_workspace_is_unknown() {
 
 #[test]
 fn state_satisfies_output_only_for_the_requested_output() {
-    let state = state_with(|state| state.output = Some("HEADLESS-1".to_string()));
+    let state = state_with(|state| {
+        state.output = Some("HEADLESS-1".to_string());
+        state.workspace_visible = true;
+    });
 
     assert!(output_action("HEADLESS-1").state_satisfies(Some(&state)));
     assert!(!output_action("HEADLESS-2").state_satisfies(Some(&state)));
@@ -678,6 +690,7 @@ fn every_event_confirmed_kind_can_recognise_its_own_end_state() {
     let state = ContainerState {
         workspace: Some("web".to_string()),
         output: Some("HDMI-A-1".to_string()),
+        workspace_visible: true,
         floating: true,
         fullscreen: true,
         focused: true,

@@ -507,6 +507,36 @@ fn container_state_from_tree_reads_the_containing_workspace_and_output() {
 }
 
 #[test]
+fn container_state_from_tree_reports_whether_the_workspace_is_the_visible_one() {
+    let visible = ContainerState::from_tree(
+        &state_tree("3", leaf_node_value(10, Some("foot"), None)),
+        10,
+    )
+    .expect("the container is in the tree");
+    assert!(visible.workspace_visible);
+
+    let hidden_workspace = named_node_value(
+        2,
+        "workspace",
+        "3",
+        vec![leaf_node_value(10, Some("foot"), None)],
+    );
+    let shown_workspace = named_node_value(3, "workspace", "4", vec![]);
+    let mut output = named_node_value(
+        1,
+        "output",
+        "HEADLESS-1",
+        vec![hidden_workspace, shown_workspace],
+    );
+    output["focus"] = serde_json::json!([3, 2]);
+    let tree: Node = serde_json::from_value(named_node_value(0, "root", "root", vec![output]))
+        .expect("valid Node test fixture");
+    let hidden = ContainerState::from_tree(&tree, 10).expect("the container is in the tree");
+    assert_eq!(hidden.output.as_deref(), Some("HEADLESS-1"));
+    assert!(!hidden.workspace_visible);
+}
+
+#[test]
 fn container_state_from_tree_is_none_for_a_container_not_in_the_tree() {
     let tree = state_tree("3", leaf_node_value(10, Some("foot"), None));
     assert_eq!(ContainerState::from_tree(&tree, 99), None);
