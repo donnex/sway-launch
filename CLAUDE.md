@@ -301,7 +301,7 @@ below) plus six integration test files:
   rollback — `rollback()`'s own `kill_container()` call against that already-gone container is
   confirmed to log-and-skip rather than hang or panic. Deterministic, not racy: step 2 retargets
   step 1's window with a `NewColumn`/large-`wait_time` action, and `run_wait_time()`'s *second*
-  `container_exists()` check runs after the sleep, so the window is reliably already gone by the
+  `ensure_container_exists()` check runs after the sleep, so the window is reliably already gone by the
   time that check runs, without needing an external process to race a kill against it. (Step 2's
   own window is still alive for the *first*, fast-fail check — see `run_wait_time()`'s own section
   below for why there are two.)
@@ -517,7 +517,7 @@ stated goal (safer internals, less repeated parsing) to actually land.
   subscription, and no instant belongs to neither. The cost is one Sway IPC connection opened and
   immediately dropped whenever the short-circuit does fire.
 
-  The `container_exists()` check stays *ahead* of the subscription, though. That ordering used to
+  The `ensure_container_exists()` check stays *ahead* of the subscription, though. That ordering used to
   be load-bearing for a second reason, found by moving it: `subscribe()` is itself a
   request/response handshake, and while it ran on an unbounded socket, a wedged compositor hung
   there forever unless a bounded read came first. The launch path had no such read, so
@@ -580,6 +580,19 @@ stated goal (safer internals, less repeated parsing) to actually land.
   `floating_is_a_no_op_when_already_floating`, `fullscreen_is_a_no_op_when_already_fullscreen`,
   `focus_is_a_no_op_when_already_focused`, and
   `scratchpad_is_a_no_op_when_already_in_the_scratchpad`.
+
+  **A split container is refused by `Workspace`/`Output`/`Focus` before anything is sent** (#93).
+  Sway sends window events only for views, so on a marked split container (`--mark-match` and
+  `--con-id` both accept one) those three applied their command, waited out `--timeout` for an
+  event that never came, and failed, aborting a layout over a move that worked. Confirmed live on
+  Sway 1.11; `Floating`, `Fullscreen`, `Scratchpad` and `Mark` were confirmed to work on a container
+  and are left alone. `run_wait_matching_events()`'s existence check reads the node through
+  `query.rs`'s `existing_container()`, and when `ActionKind::needs_a_window()` holds, the pure
+  `tree::is_window()` (a `con`/`floating_con` with no children — Sway destroys an empty split
+  container) decides. Checked at action time rather than when resolving `--con-id`, which is
+  #107's question. Supporting containers on purpose would need confirmation by polling and a
+  rule for Sway dissolving the container mid-move (its id and mark gone); declined for now. Pinned
+  by `workspace_refuses_a_marked_split_container_instead_of_timing_out`.
 
   **`state_satisfied()` fetches; `state_satisfies()` decides.** The first reads one `get_tree()`
   into a `ContainerState` (`workspace`/`output`/`floating`/`fullscreen`/`focused`/`in_scratchpad`/
@@ -715,7 +728,7 @@ stated goal (safer internals, less repeated parsing) to actually land.
   semantics can instead escalate and relocate the whole workspace to the next output in that
   direction. `SwayLaunch::run()` guards against this (see below) rather than silently moving the
   window to a different monitor. Before actually running its command, `run_wait_time()` also calls
-  `container_exists()` (a `get_tree()` lookup) and errors clearly if the container is gone —
+  `ensure_container_exists()` (a `get_tree()` lookup) and errors clearly if the container is gone —
   without this, a `[con_id=N]` criteria matching zero containers is treated by Sway as success
   rather than a failure, so a container that closed between an earlier action resolving it and this
   one running used to silently no-op instead of erroring; confirmed by `tests/live_sway.rs`'s
@@ -723,7 +736,7 @@ stated goal (safer internals, less repeated parsing) to actually land.
   `[con_id=N]` as success" behavior is itself Sway-version-dependent, the same kind of split
   `node_is_floating()` (below) documents for a different field: confirmed live, Sway 1.9 (still
   what `apt` installs on Ubuntu 24.04/CI) silently no-ops, while Sway 1.11 already errors clearly
-  with `"No matching node."` on its own. `container_exists()` is therefore redundant on 1.11 but
+  with `"No matching node."` on its own. `ensure_container_exists()` is therefore redundant on 1.11 but
   still required for 1.9 — don't remove it on the strength of testing against a newer Sway alone.
 
   It's called **twice**, on either side of the pre-command sleep, and both calls earn their keep.

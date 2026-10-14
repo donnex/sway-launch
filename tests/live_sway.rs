@@ -1451,6 +1451,74 @@ fn workspace_and_output_together_put_the_window_on_that_workspace_on_that_output
 }
 
 #[test]
+fn workspace_refuses_a_marked_split_container_instead_of_timing_out() {
+    let home = fresh_workspace();
+    // Sway sends window events only for views, so --workspace on a marked
+    // split container applied the move, waited out --timeout for an event
+    // that never came, and failed. It's now refused before anything is sent.
+    let mut connection = connect();
+    // Splitting a window that has a sibling wraps it in a new container,
+    // which the next window then joins.
+    let (_beside, _beside_guard) = launch_foot(&[]);
+    let (first, _first_guard) = launch_foot(&["--split", "v"]);
+    let (_second, _second_guard) = launch_foot(&[]);
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    fn parent_of(node: &Node, child: i64) -> Option<i64> {
+        if node.nodes.iter().any(|candidate| candidate.id == child) {
+            return Some(node.id);
+        }
+        node.nodes
+            .iter()
+            .chain(&node.floating_nodes)
+            .find_map(|candidate| parent_of(candidate, child))
+    }
+    let split = parent_of(&tree, first).expect("the window should have a parent");
+    assert_ne!(
+        find_node(&tree, split).map(|node| node.node_type),
+        Some(NodeType::Workspace),
+        "the two windows should share a split container below the workspace"
+    );
+    run_command_ok(
+        &mut connection,
+        &format!("[con_id={split}] mark live-split-group"),
+    );
+
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--existing",
+            "--mark-match",
+            "live-split-group",
+            "--workspace",
+            "live-split-target",
+            "--timeout",
+            "5",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        !output.status.success(),
+        "the container target should be refused"
+    );
+    assert!(
+        stderr.contains("is a split container, not a window"),
+        "{stderr}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "took {:?} -- should be refused up front, not at --timeout",
+        started.elapsed()
+    );
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        workspace_containing(&tree, first, None),
+        Some(home.as_str()),
+        "nothing should have been moved"
+    );
+}
+
+#[test]
 fn output_moves_window_to_named_output() {
     fresh_workspace();
     // Proves the WindowChange::Move assumption documented for --output:
