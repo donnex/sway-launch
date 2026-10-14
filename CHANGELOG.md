@@ -173,6 +173,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   application's `app_id` or `class` (`swaymsg -t get_tree`, or `--debug-events` while it opens),
   which can differ between XWayland and native Wayland, distro packages and Flatpaks. (#11, #29,
   #40, #46)
+- Supported Sway versions stated up front: 1.9 and newer. Every change is tested against both Sway
+  1.9 and the newest Sway release. (#98)
 - A declared minimum Rust version for building from source: 1.85. An older compiler — common with
   distribution-packaged Rust — gets a clear message naming `sway-launch` and the version it needs,
   instead of a dependency error about `clap`. The README's Installation section says so up front,

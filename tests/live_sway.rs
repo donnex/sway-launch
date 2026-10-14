@@ -246,8 +246,7 @@ fn get_settled_node(connection: &mut Connection, con_id: i64) -> Node {
     }
 }
 
-/// Mirrors `tree.rs`'s private `node_is_floating()`. Sway 1.9 (still
-/// what `apt` installs on the `ubuntu-latest` CI runner) never populates a
+/// Mirrors `tree.rs`'s private `node_is_floating()`. Sway 1.9 never populates a
 /// floating container's own `floating` field — confirmed live against a
 /// headless compositor, `floating enable` correctly changes `node_type` to
 /// `FloatingCon` but leaves `floating` at `None` — while Sway 1.11
@@ -263,8 +262,8 @@ fn node_is_floating(node: &Node) -> bool {
 /// The name of the nearest `NodeType::Workspace` ancestor of `con_id` —
 /// mirrors `tree.rs`'s `ContainerState::from_tree()` workspace lookup. Also used to
 /// detect Sway's scratchpad (the fixed internal workspace named
-/// `__i3_scratch`) in a way that's reliable on both Sway 1.9 (still what
-/// `apt` installs on Ubuntu 24.04/CI) and 1.11, unlike the node's own
+/// `__i3_scratch`) in a way that's reliable on both Sway 1.9 and
+/// 1.11, unlike the node's own
 /// `scratchpad_state` field — that field stays `none` on Sway 1.9 even for a
 /// genuinely scratchpadded window, and stays `fresh`/`changed` on 1.11 for
 /// one merely shown via `scratchpad show` (see `tree.rs`'s
@@ -4345,7 +4344,7 @@ fn event_confirmed_action_errors_clearly_when_its_container_already_closed() {
     // reached" instead of naming the closed window. On Sway 1.11
     // run_sway_command() already errors on its own, so the assertion below
     // is on the *message* rather than just a non-zero exit -- that is what
-    // makes this meaningful on Sway 1.9 (what CI installs), where the
+    // makes this meaningful on Sway 1.9, where the
     // command would otherwise be reported as a success.
     let mut connection = connect();
     let (container_id, guard) = launch_foot(&[]);
@@ -5159,8 +5158,7 @@ fn retarget_by_id_layout_floats_the_first_step_by_name() {
     // already been tiled with a sibling for a while before being floated
     // and resized can come out short by 2*current_border_width on
     // rect.width alone (confirmed live on Sway 1.11) — but confirmed live
-    // on Sway 1.9 (still what `apt` installs on the `ubuntu-latest` CI
-    // runner) that the exact rect.width match applies instead in this same
+    // on Sway 1.9 that the exact rect.width match applies instead in this same
     // scenario, so — same as width_matches() itself — accept either rather
     // than hardcoding one specific formula.
     assert!(

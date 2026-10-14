@@ -2,8 +2,9 @@ name: Check
 
 # Runs on every push and pull request: scripts/run-checks (formatting, lint,
 # build and the full headless test suite), the coverage gate, the minimum
-# Rust version build, the live-Sway tests and a dependency security audit
-# must all pass before a change is considered clean.
+# Rust version build, the live-Sway tests (on Sway 1.9 and on the newest
+# release) and a dependency security audit must all pass before a change is
+# considered clean.
 on:
   push:
   pull_request:
@@ -119,8 +120,13 @@ jobs:
       - name: Build with the declared minimum Rust version
         run: cargo +${{ steps.msrv.outputs.version }} build --locked
 
-  live-sway-tests:
-    runs-on: ubuntu-latest
+  # The oldest Sway this project supports: Ubuntu 24.04's archive ships 1.9.
+  # Pinned to that image rather than ubuntu-latest, so a runner image update
+  # can't silently move this job to a newer Sway and leave the 1.9
+  # workarounds untested. Kept apart from check so a live-Sway hiccup doesn't
+  # block the fast unit-test feedback loop.
+  live-sway-1-9:
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -134,6 +140,31 @@ jobs:
 
       - name: Install sway and foot
         run: sudo apt-get update && sudo apt-get install -y sway foot
+
+      - name: Run live-Sway tests
+        run: ./scripts/run-live-sway-tests
+
+  # The newest Sway: Arch Linux is a rolling distribution, so this tests
+  # whatever Sway release is current. Unpinned on purpose;
+  # run-live-sway-tests prints the version, so a failure after a Sway
+  # release can be told from a code regression. Rust comes from Arch's own
+  # package, which tracks the latest stable release. foot needs a font to
+  # start, which the base image lacks. Arch's sway binary carries the
+  # cap_sys_nice file capability, and a container without that capability
+  # can't exec it at all ("Operation not permitted"), so it's granted here.
+  live-sway-latest:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --cap-add=SYS_NICE
+    steps:
+      - name: Install sway, foot and Rust
+        run: pacman -Syu --noconfirm --needed sway foot ttf-dejavu rust gcc
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Run live-Sway tests
         run: ./scripts/run-live-sway-tests

@@ -98,8 +98,7 @@ pub(super) fn current_move_skip_reason(
 /// Errors with the one message every action driver reports for a container
 /// that closed since it was resolved, so the three call sites in
 /// `confirmation.rs` can't drift into different wording for the same
-/// condition. Needed on Sway 1.9 (still what `apt` installs on Ubuntu
-/// 24.04/CI), which treats a `[con_id=N]` criteria matching zero containers
+/// condition. Needed on Sway 1.9, which treats a `[con_id=N]` criteria matching zero containers
 /// as success rather than an error; Sway 1.11 already errors clearly ("No
 /// matching node."), confirmed live, which makes this redundant there but
 /// still required for 1.9 — see `node_is_floating()`'s doc comment for the
