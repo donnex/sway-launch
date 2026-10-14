@@ -381,51 +381,38 @@ fn main() {
             .exit();
     }
 
-    let command = args.command.unwrap_or_default();
-    let app_id_match = args.app_id.unwrap_or_default();
-    let class_match = args.class.unwrap_or_default();
-    let mark_match = args.mark_match.unwrap_or_default();
-
-    if command.is_empty() && args.con_id.is_none() && !args.existing {
-        Args::command()
-            .error(
-                ErrorKind::MissingRequiredArgument,
-                "Missing COMMAND, or one of --con-id/--existing",
-            )
-            .exit();
-    }
-
-    if args.existing && app_id_match.is_empty() && class_match.is_empty() && mark_match.is_empty() {
-        Args::command()
-            .error(
-                ErrorKind::MissingRequiredArgument,
-                "--existing requires --app-id, --class, or --mark-match",
-            )
-            .exit();
-    }
-
-    if !mark_match.is_empty() && !args.existing {
-        Args::command()
-            .error(
-                ErrorKind::MissingRequiredArgument,
-                "--mark-match requires --existing",
-            )
-            .exit();
-    }
-
-    let target = if let Some(con_id) = args.con_id {
-        sway_launch::Target::ConId(con_id)
-    } else if args.existing {
-        sway_launch::Target::Existing
-    } else {
-        sway_launch::Target::Exec { command: &command }
+    let target = match sway_launch::Target::from_fields(sway_launch::TargetFields {
+        command: args.command.as_deref(),
+        con_id: args.con_id,
+        existing: args.existing,
+        target_id: None,
+        app_id: args.app_id.as_deref(),
+        class: args.class.as_deref(),
+        mark_match: args.mark_match.as_deref(),
+    }) {
+        Ok(target) => target,
+        Err(error) => {
+            let kind = match error {
+                sway_launch::TargetError::NoTarget
+                | sway_launch::TargetError::ExistingWithoutMatcher
+                | sway_launch::TargetError::MarkMatchWithoutExisting => {
+                    ErrorKind::MissingRequiredArgument
+                }
+                sway_launch::TargetError::SeveralTargets
+                | sway_launch::TargetError::SeveralMatchers
+                | sway_launch::TargetError::MatcherWithContainerId => ErrorKind::ArgumentConflict,
+                sway_launch::TargetError::Blank(_) | sway_launch::TargetError::Command(_) => {
+                    ErrorKind::InvalidValue
+                }
+            };
+            Args::command()
+                .error(kind, error.message(sway_launch::FieldStyle::Cli))
+                .exit();
+        }
     };
 
     let sway_launch = sway_launch::SwayLaunch {
         target,
-        app_id_match: &app_id_match,
-        class_match: &class_match,
-        mark_match: &mark_match,
         split: args.split,
         floating: args.floating,
         sticky: args.sticky,
@@ -821,35 +808,21 @@ struct DryRunAction {
 /// every action line below stays id-free (see
 /// `SwayAction::sway_command_verb()`) would be an inconsistent preview
 /// format for one target mode only.
-fn describe_target(
-    target: &sway_launch::Target,
-    app_id_match: &str,
-    class_match: &str,
-    mark_match: &str,
-) -> String {
+fn describe_target(target: &sway_launch::Target) -> String {
     match target {
-        sway_launch::Target::Exec { command } => format!("launch {}", command),
+        sway_launch::Target::Exec { command, .. } => format!("launch {}", command),
         sway_launch::Target::ConId(_) => "target existing container".to_string(),
-        sway_launch::Target::Existing if !app_id_match.is_empty() => {
-            format!("target existing window (app_id={:?})", app_id_match)
-        }
-        sway_launch::Target::Existing if !class_match.is_empty() => {
-            format!("target existing window (class={:?})", class_match)
-        }
-        sway_launch::Target::Existing => {
-            format!("target existing window (mark_match={:?})", mark_match)
-        }
+        sway_launch::Target::Existing(window_match) => format!(
+            "target existing window ({}={:?})",
+            window_match.field_name(),
+            window_match.value()
+        ),
     }
 }
 
 fn dry_run_step(sway_launch: &sway_launch::SwayLaunch) -> DryRunStep {
     DryRunStep {
-        target: describe_target(
-            &sway_launch.target,
-            sway_launch.app_id_match,
-            sway_launch.class_match,
-            sway_launch.mark_match,
-        ),
+        target: describe_target(&sway_launch.target),
         actions: sway_launch
             .build_actions_for_preview()
             .iter()

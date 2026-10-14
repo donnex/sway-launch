@@ -170,8 +170,9 @@ fn sway_command_verb_omits_the_con_id_prefix() {
 fn display_exec() {
     assert_eq!(
         exec_action("foot", "foot", "").to_string(),
-        "Exec \"foot\" (app_id_match: \"foot\") (class_match: \"\")"
+        "Exec \"foot\" (filter: app_id \"foot\")"
     );
+    assert_eq!(exec_action("foot", "", "").to_string(), "Exec \"foot\"");
 }
 
 #[test]

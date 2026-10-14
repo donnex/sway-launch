@@ -3,6 +3,7 @@
 //! The work is layered, and each layer is a module:
 //!
 //! - `values` — the validated types the CLI and TOML layers hand in.
+//! - `target` — which window an invocation acts on, and the rules for choosing it.
 //! - `ipc` — reaching the compositor: connections, commands, events.
 //! - `tree` — reading answers out of a tree, purely.
 //! - `query` — fetching a tree so `tree` can read it.
@@ -29,15 +30,17 @@ mod launch;
 mod outcome;
 mod process_marker;
 mod query;
+mod target;
 #[cfg(test)]
 mod test_support;
 mod tree;
 mod values;
 
 pub use ipc::{kill_container, KillError};
-pub use launch::{debug_events, SwayLaunch, Target};
+pub use launch::{debug_events, SwayLaunch};
 pub use outcome::{ActionRecord, ActionStatus, LaunchOwnership, RunError, UnmatchedWindow};
 pub use query::containers_still_present;
+pub use target::{FieldStyle, Target, TargetError, TargetFields};
 pub use values::{
     escape_control_characters, parse_position, parse_size, require_non_blank,
     validate_exec_command, validate_non_blank_argument, validate_output_argument,

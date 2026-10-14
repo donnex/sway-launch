@@ -1166,6 +1166,11 @@ fn template_validate_rejects_a_binding_command_sway_would_split() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
-    assert!(stderr.contains("step 1"), "{stderr}");
-    assert!(stderr.contains("command:"), "{stderr}");
+    // Reported against the bindings file that holds the mistake, not as a
+    // step of the template.
+    assert!(
+        stderr.contains("split-binding-bindings.toml: binding for slot \"editor\": command:"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("step 1"), "{stderr}");
 }
