@@ -105,7 +105,7 @@ Options:
   -r, --new-row                       Move window to new row (move down)
       --workspace <WORKSPACE>         Move the window to workspace
       --output <OUTPUT>               Move the window to output (monitor)
-      --position <POSITION>           Set position on the window. Either "center" or "<x>,<y>" in pixels (x/y may be negative)
+      --position <POSITION>           Set position on the window. Either "center" or "<x>,<y>" in pixels, relative to its workspace (x/y may be negative)
       --scratchpad                    Move window to the scratchpad
       --dry-run                       Print the planned sequence of Sway commands instead of running them — works with a direct command or --layout/--template. Never touches Sway IPC or launches anything
       --validate                      Validate a --layout/--template file (and, for --template, --bindings/--apps resolution) without launching anything or touching Sway IPC. Requires --layout or --template
@@ -895,14 +895,17 @@ sway-launch --floating --width 1200px --height 80ppt foot
 Set the position of the new window. Only makes sense for a floating window — a tiled window's
 position is determined by the layout, not by coordinates, and Sway rejects the command outright
 (rather than silently ignoring it) if the window isn't floating, so pair this with `--floating`.
-Either `center`, or `<x>,<y>` in pixels. Coordinates are in Sway's global space, spanning every
-output — `<x>`/`<y>` may be negative, which is a real, valid position on a multi-monitor setup
-where an output sits left of or above the primary one.
+Either `center`, or `<x>,<y>` in pixels. Both are relative to the window's workspace, the same as
+Sway's own `move position`: the workspace starts below or beside a bar and inside any outer gaps,
+so `0,0` is its top-left corner, not the output's, and `center` centers the window on the
+workspace. `<x>`/`<y>` may be negative, which places the window partly past the workspace's left
+or top edge. To place a window on another monitor, combine `--output` with `--position`; the
+coordinates are then relative to the workspace it lands on there.
 
 ```shell
 sway-launch --floating --position center foot
 sway-launch --floating --position 100,200 foot
-sway-launch --floating --position -1000,100 foot
+sway-launch --floating --output HDMI-A-1 --position 100,200 foot
 ```
 
 ### Split
