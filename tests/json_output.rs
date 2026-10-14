@@ -106,7 +106,7 @@ fn con_id_plain_error_names_the_resolved_container_on_stderr_only() {
             .lines()
             .next_back()
             .unwrap_or_default()
-            .starts_with("error: floating enable: "),
+            .starts_with("error: cannot reach Sway IPC"),
         "the error message should still be the last line: {stderr:?}"
     );
 }
@@ -156,21 +156,17 @@ fn json_error_omits_container_id_when_nothing_was_resolved() {
 }
 
 #[test]
-fn a_failing_action_names_itself_in_the_error() {
-    // An invocation with several actions used to report a bare failure that
-    // couldn't be traced to any one of them; every action's error now leads
-    // with its own Sway command verb. Made to fail on the socket, so it runs
-    // with or without a compositor.
-    for (flags, prefix) in [
-        (&["--floating"][..], "error: floating enable: "),
-        (
-            &["--workspace", "web"][..],
-            "error: move workspace \"web\": ",
-        ),
-        (
-            &["--mark", "m", "--floating"][..],
-            "error: floating enable: ",
-        ),
+fn con_id_with_actions_is_looked_up_before_the_first_action() {
+    // With actions to apply, --con-id is checked against the tree first, so
+    // a wrong id fails with a clear reason rather than inside an action (#107).
+    // Here that lookup is what fails on the socket; no action runs, including
+    // NewColumn/NewRow's relocation check (execute_plan's own unit tests cover
+    // that check failing). Each action's own error prefix is pinned live, by
+    // position_errors_clearly_for_a_tiled_window.
+    for flags in [
+        &["--floating"][..],
+        &["--workspace", "web"],
+        &["--new-column"],
     ] {
         let output = sway_launch_without_a_compositor()
             .args(["--con-id", "42"])
@@ -182,40 +178,23 @@ fn a_failing_action_names_itself_in_the_error() {
         let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
         let last_line = stderr.lines().next_back().unwrap_or_default();
         assert!(
-            last_line.starts_with(prefix),
-            "expected {flags:?}'s error to start with {prefix:?}, got {stderr:?}"
+            last_line.starts_with("error: cannot reach Sway IPC"),
+            "expected {flags:?} to fail on the lookup, got {stderr:?}"
         );
     }
 }
 
 #[test]
-fn new_column_and_new_row_report_the_relocation_checks_error() {
-    // run() consults current_move_skip_reason() right before sending
-    // NewColumn/NewRow, which needs a live get_outputs()/get_tree() call.
-    // When that read fails, the error has to surface rather than the guard
-    // being silently skipped and the move silently sent.
-    //
-    // This replaces two unit tests that asserted the same propagation by
-    // assuming the machine running them had no reachable Sway socket at all —
-    // true on a CI runner, false in a Sway session, where both failed
-    // outright. Pointing the binary at a socket that cannot exist states the
-    // precondition instead of inheriting it.
-    for flag in ["--new-column", "--new-row"] {
-        let output = sway_launch_without_a_compositor()
-            .args(["--con-id", "42", flag])
-            .output()
-            .expect("failed to run sway-launch binary");
+fn bare_con_id_is_not_looked_up() {
+    // Documented: with no actions, nothing needs the socket, so the id is
+    // printed back unchecked and this works outside a Sway session.
+    let output = sway_launch_without_a_compositor()
+        .args(["--con-id", "42"])
+        .output()
+        .expect("failed to run sway-launch binary");
 
-        assert!(
-            !output.status.success(),
-            "{flag} should fail when the relocation check can't read the tree"
-        );
-        let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
-        assert!(
-            stderr.contains("cannot reach Sway IPC"),
-            "{flag}'s error should name the failed connection: {stderr:?}"
-        );
-    }
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "42\n");
 }
 
 #[test]

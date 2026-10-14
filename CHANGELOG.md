@@ -84,6 +84,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   launching a new one. `--existing` errors rather than guessing when its criteria match zero or
   more than one window, and with `--mark-match <MARK>` it can find a window by a mark set earlier
   (`sway-launch --existing --mark-match dropdown-term --scratchpad`) instead of by `app_id`/`class`.
+  With actions to apply, a `--con-id` is looked up before the first one, so a mistyped id fails
+  as `no window with container id N`, and a workspace's or output's id as `container N is a
+  workspace, not a window`, rather than as a window that "may have closed". A bare `--con-id N`
+  with no actions is still printed back unchecked. (#107)
 - Input checks that catch values Sway would quietly misread. `--app-id`, `--class` and
   `--mark-match` reject a blank value, and `--mark-match` requires `--existing`. `--mark`,
   `--mark-match`, `--workspace` and `--output` also reject a double quote, a backslash, a `$` and

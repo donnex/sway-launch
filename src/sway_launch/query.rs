@@ -13,9 +13,10 @@
 use super::ipc::{ipc_error, new_connection};
 use super::target::{LaunchFilter, WindowMatch};
 use super::tree::{
-    expected_position, find_node, find_parent_layout, find_workspace_node, focused_workspace,
-    matching_container_ids, move_skip_reason, node_position, present_ids, recheck_launched_windows,
-    resolve_matches, tiled_window_count, ContainerState, MoveDirection, RecheckedWindow,
+    con_id_target_problem, expected_position, find_node, find_parent_layout, find_workspace_node,
+    focused_workspace, matching_container_ids, move_skip_reason, node_position, present_ids,
+    recheck_launched_windows, resolve_matches, tiled_window_count, ContainerState, MoveDirection,
+    RecheckedWindow,
 };
 use super::values::Position;
 use swayipc::{Connection, Node, NodeLayout};
@@ -105,6 +106,16 @@ pub(super) fn current_move_skip_reason(
 /// same version split.
 pub(super) fn ensure_container_exists(container_id: i64) -> Result<(), String> {
     existing_container(container_id).map(|_| ())
+}
+
+/// Fails unless `container_id` names a window or split container, for a
+/// `Target::ConId` run with actions to apply (see `con_id_target_problem()`).
+pub(super) fn ensure_con_id_target(container_id: i64) -> Result<(), String> {
+    let tree = match new_connection()?.get_tree() {
+        Ok(tree) => tree,
+        Err(error) => return Err(ipc_error(error)),
+    };
+    con_id_target_problem(&tree, container_id).map_or(Ok(()), Err)
 }
 
 /// `ensure_container_exists()`, handing back the container's node for a
