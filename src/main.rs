@@ -181,7 +181,7 @@ struct Args {
     #[clap(long, value_parser = sway_launch::validate_output_argument)]
     output: Option<String>,
 
-    /// Set position on the window. Either "center" or "<x>,<y>" in pixels (x/y may be negative)
+    /// Set position on the window. Either "center" or "<x>,<y>" in pixels, relative to its workspace (x/y may be negative)
     #[clap(long, value_parser = sway_launch::parse_position, allow_hyphen_values = true)]
     position: Option<sway_launch::Position>,
 

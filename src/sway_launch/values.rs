@@ -139,11 +139,10 @@ pub fn parse_size(value: &str) -> Result<Size, String> {
 
 /// Parses a `--position` value, or a `LayoutStep`'s `position` field — both
 /// take the same `center`/`<x>,<y>` format. `<x>`/`<y>` each allow a leading
-/// `-`: Sway's coordinate space is global across every output, and an output
-/// positioned left of or above the primary one legitimately has a negative
-/// origin, so rejecting a user-supplied negative coordinate here would make
-/// the tool unable to target a real position. Each must fit in an `i32`, the
-/// same bound as `parse_size()`.
+/// `-`: the coordinates are relative to the window's workspace (Sway's
+/// `move position` without `absolute`), and a negative one is a real
+/// position partly past the workspace's left or top edge. Each must fit in an
+/// `i32`, the same bound as `parse_size()`.
 pub fn parse_position(value: &str) -> Result<Position, String> {
     if value == "center" {
         return Ok(Position::Center);
