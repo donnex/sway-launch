@@ -1,0 +1,99 @@
+#!/bin/sh
+#
+# Run every check a change must pass before it's clean: the ones CI runs too.
+#
+set -eu
+
+readonly PYTHON_SCRIPT='scripts/generate-layout-screenshots'
+readonly SHELL_SCRIPT_DIRECTORIES='scripts examples/scripts'
+
+print_usage() {
+  printf 'Usage: %s\n' "$(basename "$0")"
+  printf 'Run the checks a change must pass before it is committed, the same ones\n'
+  printf 'CI runs, stopping at the first failure:\n'
+  printf '\n'
+  printf '  cargo fmt --check, cargo clippy (all targets and features, warnings\n'
+  printf '  denied), cargo build, cargo test, shellcheck and shfmt on every shell\n'
+  printf '  script (found by shebang), markdownlint on every tracked Markdown file,\n'
+  printf '  and black and ruff on %s.\n' "$PYTHON_SCRIPT"
+  printf '\n'
+  printf 'Not run here: the coverage gate, the live-Sway tests\n'
+  printf '(scripts/run-live-sway-tests) and the dependency audit.\n'
+  printf '\n'
+  printf 'Requires cargo, shellcheck, shfmt, markdownlint, uv and git on PATH.\n'
+}
+
+die() {
+  printf '✗ %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  if [ "${1:-0}" -ne 0 ]; then
+    print_usage >&2
+  else
+    print_usage
+  fi
+  exit "${1:-0}"
+}
+
+run_check() {
+  check_name="$1"
+  shift
+  printf '\n==> %s\n' "$check_name"
+  "$@" || die "$check_name failed."
+  printf '✓ %s\n' "$check_name"
+}
+
+case "${1:-}" in
+-h | --help)
+  usage 0
+  ;;
+'') ;;
+*)
+  usage 1
+  ;;
+esac
+
+for required_command in cargo shellcheck shfmt markdownlint uv; do
+  command -v "$required_command" >/dev/null 2>&1 ||
+    die "$required_command not found on PATH."
+done
+
+cd "$(dirname "$0")/.."
+
+# shellcheck disable=SC2086 # the directory list is split deliberately
+shell_scripts="$(grep -rlE '^#!.*[ /](sh|bash|dash)$' $SHELL_SCRIPT_DIRECTORIES | sort)" ||
+  die "No shell scripts found under $SHELL_SCRIPT_DIRECTORIES."
+# Tracked files only, so an untracked signal file (REVIEW.md, new-issues.md)
+# isn't linted; a new file is checked once it's staged.
+markdown_files="$(git ls-files -- '*.md')" || die 'Could not list tracked Markdown files.'
+[ -n "$markdown_files" ] || die 'No tracked Markdown files found.'
+
+# Neither list can contain a space or a newline inside a name (every path in
+# both is this repository's own), so splitting on newlines is safe.
+newline='
+'
+old_field_separator="$IFS"
+IFS="$newline"
+# shellcheck disable=SC2086 # split into one argument per line, deliberately
+set -- $shell_scripts
+IFS="$old_field_separator"
+
+run_check 'cargo fmt --check' cargo fmt -- --check
+run_check 'cargo clippy' cargo clippy --locked --all-targets --all-features -- -D warnings
+run_check 'cargo build' cargo build --locked
+run_check 'cargo test' cargo test --locked
+run_check 'shellcheck' shellcheck --shell=sh "$@"
+run_check 'shfmt' shfmt -i 2 -d "$@"
+
+IFS="$newline"
+# shellcheck disable=SC2086 # split into one argument per line, deliberately
+set -- $markdown_files
+IFS="$old_field_separator"
+run_check 'markdownlint' markdownlint "$@"
+
+run_check 'black --check' uv run --group dev black --check "$PYTHON_SCRIPT"
+run_check 'ruff check' uv run --group dev ruff check "$PYTHON_SCRIPT"
+
+printf '\n✓ All checks passed.\n'
