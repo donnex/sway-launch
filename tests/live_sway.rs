@@ -1330,6 +1330,61 @@ fn workspace_moves_window_to_named_workspace() {
 }
 
 #[test]
+fn workspace_and_output_names_match_regardless_of_case() {
+    let home = fresh_workspace();
+    // Sway matches workspace and output names case-insensitively, so
+    // `--workspace live-case-target` lands on an existing `Live-Case-Target`.
+    // The confirmation used to wait for the exact spelling, which never
+    // appeared, and failed at --timeout after a move that worked.
+    let mut connection = connect();
+    run_command_ok(&mut connection, "workspace Live-Case-Target");
+    let (_occupant, _occupant_guard) = launch_foot(&[]);
+    run_command_ok(&mut connection, &format!("workspace \"{home}\""));
+
+    let started = Instant::now();
+    let (container_id, _guard) = launch_foot(&["--workspace", "live-case-target"]);
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "took {:?} -- the case-mismatched name should confirm at once, not at --timeout",
+        started.elapsed()
+    );
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        workspace_containing(&tree, container_id, None),
+        Some("Live-Case-Target")
+    );
+
+    let output = output_containing(&tree, container_id, None)
+        .expect("the window should be on an output")
+        .to_lowercase();
+    run_command_ok(&mut connection, "workspace Live-Case-Target");
+    let started = Instant::now();
+    let result = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--output",
+            &output,
+            "--timeout",
+            "3",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        result.status.success(),
+        "a lower-cased output name should be accepted: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(
+        String::from_utf8_lossy(&result.stdout).contains("\"status\":\"already_satisfied\""),
+        "the window is already on that output under another spelling: {}",
+        String::from_utf8_lossy(&result.stdout)
+    );
+}
+
+#[test]
 fn output_moves_window_to_named_output() {
     fresh_workspace();
     // Proves the WindowChange::Move assumption documented for --output:

@@ -680,3 +680,15 @@ fn a_quoted_separator_in_a_command_is_accepted() {
     let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
     assert_eq!(stdout.trim(), "1. launch foot -T 'a,b; c'");
 }
+
+#[test]
+fn cli_rejects_a_sway_keyword_as_a_workspace_name_before_running() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--con-id", "42", "--workspace", "NEXT"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("is a Sway keyword"), "{stderr}");
+}

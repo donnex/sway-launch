@@ -229,14 +229,13 @@ pub fn parse(contents: &str) -> Result<Template, String> {
     let template: Template = toml::from_str(contents).map_err(|error| error.to_string())?;
     sway_launch::require_non_blank("template.description", &template.template.description)?;
     sway_launch::require_non_blank("template.category", &template.template.category)?;
-    for (field, value) in [
-        ("workspace", template.layout.workspace.as_deref()),
-        ("output", template.layout.output.as_deref()),
-    ] {
-        if let Some(value) = value {
-            sway_launch::validate_sway_string_argument(value)
-                .map_err(|error| format!("[layout] {}: {}", field, error))?;
-        }
+    if let Some(workspace) = template.layout.workspace.as_deref() {
+        sway_launch::validate_workspace_argument(workspace)
+            .map_err(|error| format!("[layout] workspace: {}", error))?;
+    }
+    if let Some(output) = template.layout.output.as_deref() {
+        sway_launch::validate_output_argument(output)
+            .map_err(|error| format!("[layout] output: {}", error))?;
     }
     let mut seen_slots = HashSet::new();
     for slot in slot_names(&template) {

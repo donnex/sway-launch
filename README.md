@@ -829,12 +829,11 @@ Move the new window to a workspace.
 sway-launch --workspace 2 foot
 ```
 
-The value is always a literal workspace name. Sway's own `move container to workspace` also accepts
-`next`, `prev`, `current`, `back_and_forth` and `number <n>`, but `sway-launch` quotes the value
-before sending it — which is what stops a name containing `,` or `;` from being read back as extra
-Sway commands — so those keywords would be taken as names rather than acted on. `--workspace next`
-creates a workspace literally called `next`. For the keyword forms, capture the container id and
-run `swaymsg` directly:
+The value is a workspace name, matched the way Sway matches it: ignoring case, so `--workspace
+web` joins an existing `Web`. Sway's own keywords — `next`, `prev`, `next_on_output`,
+`prev_on_output`, `current`, `back_and_forth` (in any case), plus `number` and `to` on their own —
+are rejected, because Sway acts on them even when quoted, so they can't be used as names. For the
+keyword forms, capture the container id and run `swaymsg` directly:
 
 ```shell
 container_id="$(sway-launch foot)"
@@ -849,9 +848,12 @@ Move the new window to a specific output (monitor).
 sway-launch --output HDMI-A-1 foot
 ```
 
-As with [Workspace](#workspace) above, the value is always a literal output name — Sway's
-directional keywords (`left`, `right`, `up`, `down`, `current`) are not supported here, and will
-fail as an unknown output. Use `swaymsg` with a captured container id for those.
+The value is the output's connector name as `swaymsg -t get_outputs` shows it (`HDMI-A-1`,
+`DP-2`), matched ignoring case. Sway also accepts an output's make, model and serial
+(`"Example Corp EX-27 0000001"`), but `sway-launch` confirms the move by connector name, so that
+form isn't supported. As with [Workspace](#workspace) above, Sway's directional keywords (`left`,
+`right`, `up`, `down`, `current`, in any case) are rejected; use `swaymsg` with a captured container
+id for those.
 
 ### Height and width
 

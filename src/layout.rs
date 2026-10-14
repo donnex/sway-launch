@@ -188,15 +188,31 @@ impl LayoutStep {
         // validate_sway_string_argument()'s doc comment for why `"`/`\`/`$`,
         // a control character other than tab and a blank value are rejected rather than silently
         // mangled.
-        for (field, value) in [
-            ("mark", self.mark.as_deref()),
-            ("mark_match", self.mark_match.as_deref()),
-            ("workspace", self.workspace.as_deref()),
-            ("output", self.output.as_deref()),
+        type Validator = fn(&str) -> Result<String, String>;
+        for (field, value, validate) in [
+            (
+                "mark",
+                self.mark.as_deref(),
+                sway_launch::validate_sway_string_argument as Validator,
+            ),
+            (
+                "mark_match",
+                self.mark_match.as_deref(),
+                sway_launch::validate_sway_string_argument,
+            ),
+            (
+                "workspace",
+                self.workspace.as_deref(),
+                sway_launch::validate_workspace_argument,
+            ),
+            (
+                "output",
+                self.output.as_deref(),
+                sway_launch::validate_output_argument,
+            ),
         ] {
             if let Some(value) = value {
-                sway_launch::validate_sway_string_argument(value)
-                    .map_err(|error| format!("{}: {}", field, error))?;
+                validate(value).map_err(|error| format!("{}: {}", field, error))?;
             }
         }
 

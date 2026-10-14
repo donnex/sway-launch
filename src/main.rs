@@ -171,11 +171,11 @@ struct Args {
     new_row: bool,
 
     /// Move the window to workspace
-    #[clap(long, value_parser = sway_launch::validate_sway_string_argument)]
+    #[clap(long, value_parser = sway_launch::validate_workspace_argument)]
     workspace: Option<String>,
 
     /// Move the window to output (monitor)
-    #[clap(long, value_parser = sway_launch::validate_sway_string_argument)]
+    #[clap(long, value_parser = sway_launch::validate_output_argument)]
     output: Option<String>,
 
     /// Set position on the window. Either "center" or "<x>,<y>" in pixels (x/y may be negative)
