@@ -40,9 +40,16 @@ rules both apply in full because of this — there's no "private repo" fallback 
   `tests/live_sway.rs` (gated behind the `live-sway-tests` Cargo feature) against it, then tears it
   down. This is what actually exercises the IPC-touching functions `cargo test` exempts (see the
   Testing bullet under Rust conventions), plus anything else worth confirming against real Sway
-  behavior rather than assuming it. Requires `sway`, `swaymsg`, and `foot` on `PATH`; runs in its
-  own CI job (`live-sway-tests` in `.github/workflows/check.yml`) separate from the main `check`
-  job, so a live-Sway hiccup doesn't block the fast unit-test feedback loop. Running the scripts in
+  behavior rather than assuming it. Requires `sway`, `swaymsg`, and `foot` on `PATH`, and prints
+  `sway --version` first. **Supported Sway: 1.9 and newer** (README.md says the same), so CI runs it
+  in two jobs of `.github/workflows/check.yml`, both separate from the main `check` job so a
+  live-Sway hiccup doesn't block the fast unit-test feedback loop: `live-sway-1-9`, pinned to
+  `ubuntu-24.04` (whose archive ships Sway 1.9 and foot 1.16.2) so the oldest version stays tested
+  on purpose rather than until a runner image update, and `live-sway-latest`, in a rolling
+  `archlinux` container (Sway, foot and Rust from Arch's own packages), so a new Sway release is
+  tested as soon as Arch ships it; the printed version tells a Sway change from a code regression
+  in its log (#98). Code that exists for one version names the version ("Sway 1.9"), never "what
+  CI installs". Running the scripts in
   `examples/scripts/` against a live Sway session is still useful for eyeballing real layouts, but
   is no longer the only way these code paths get exercised.
 - Tool versions: CI pins `markdownlint-cli@0.49.1` (`npm install -g markdownlint-cli@0.49.1`) and
@@ -249,7 +256,7 @@ below) plus six integration test files:
   previously made `--existing` match two windows and fail. The five
   "advanced" scripts (`browser-comparison`,
   `dev-workspace`, `editor-with-floating-terminal`, `floating-file-manager`, `quad-mixed-apps`) are
-  scoped out — none of Firefox/Chromium/Thunar/VS Code are installed in the `live-sway-tests` CI
+  scoped out — none of Firefox/Chromium/Thunar/VS Code are installed in either live-Sway CI
   job. Several tests
   sleep briefly after their `sway-launch` invocation completes before asserting on tree state, on
   top of `--wait-time`: the last window's geometry can still be settling for a short while after
@@ -327,7 +334,7 @@ below) plus six integration test files:
 
   **This file's coverage must stay complete, not just present.** It's the one place anything
   IPC-touching actually gets exercised against real Sway, and — same as `.github/workflows/`'s
-  live-sway-tests job, which just runs it — it isn't something that self-maintains: nothing forces
+  live-Sway jobs, which just run it — it isn't something that self-maintains: nothing forces
   it to keep tracking the application as flags, actions, and shipped examples are added. Whenever a
   change adds or changes a CLI flag/action, an example script, a `--layout` file, or a
   `--template` file, add or update a `tests/live_sway.rs` case for it in the *same* change — driving
@@ -551,8 +558,7 @@ stated goal (safer internals, less repeated parsing) to actually land.
   already in that state hung the full `--timeout` and then errored, before this was added (checked
   via the container node's own `floating`/`fullscreen_mode`/`focused` fields). `Floating`'s own
   check is `node_is_floating()`, not `node.floating` alone: a CI-failure investigation found Sway
-  1.9 (still what `apt` installs on Ubuntu 24.04/`ubuntu-latest`, confirmed live against a headless
-  compositor) never populates a floating container's own `floating` field — it stays `null` even
+  1.9 (confirmed live against a headless compositor) never populates a floating container's own `floating` field — it stays `null` even
   though `floating enable` correctly changes the node's `type` to `floating_con` — while Sway 1.11
   populates both, so `node_is_floating()` checks `node_type == FloatingCon` first and falls back to
   the `floating` field. Without this, `already_at_target()` never short-circuited on Sway 1.9,
@@ -679,7 +685,7 @@ stated goal (safer internals, less repeated parsing) to actually land.
   the first to match is returned as `Launched`, a closed one stops being rechecked, and a timeout
   reports each one's latest app_id/class, with a note that it was rechecked. Covered live by
   `launch_matches_a_window_that_sets_its_app_id_after_mapping`, which skips itself (with a note on
-  stderr) when foot ignores OSC 176: Ubuntu 24.04's foot 1.16.2, which the CI live job installs,
+  stderr) when foot ignores OSC 176: Ubuntu 24.04's foot 1.16.2, in the `live-sway-1-9` job,
   does, and the window's app_id never changes. The skip is decided from the tree, not a foot
   version, so a window whose app_id did change and still wasn't matched always fails.
   Which of the two ends the wait is reported back as a `LaunchOwnership` (`Launched` for the
@@ -743,8 +749,8 @@ stated goal (safer internals, less repeated parsing) to actually land.
   one running used to silently no-op instead of erroring; confirmed by `tests/live_sway.rs`'s
   `wait_time_action_errors_clearly_when_its_container_already_closed`. That "Sway treats a missing
   `[con_id=N]` as success" behavior is itself Sway-version-dependent, the same kind of split
-  `node_is_floating()` (below) documents for a different field: confirmed live, Sway 1.9 (still
-  what `apt` installs on Ubuntu 24.04/CI) silently no-ops, while Sway 1.11 already errors clearly
+  `node_is_floating()` (below) documents for a different field: confirmed live, Sway 1.9 silently
+  no-ops, while Sway 1.11 already errors clearly
   with `"No matching node."` on its own. `ensure_container_exists()` is therefore redundant on 1.11 but
   still required for 1.9 — don't remove it on the strength of testing against a newer Sway alone.
 
@@ -2913,7 +2919,7 @@ mode as any other duplicated logic applies: whenever the project's tools or chec
 linter, a new required check, a build step added or removed), the workflow file(s) must change
 with it, in the same change that changed the tooling. Don't let this slip to a follow-up — treat an
 out-of-date workflow as a bug, the same way a stale doc would be. This applies to what the
-`live-sway-tests` job actually *runs*, not just its own YAML: that job is only as good as
+live-Sway jobs actually *run*, not just their YAML: those jobs are only as good as
 `tests/live_sway.rs`'s coverage, so an application feature, flag, or shipped example with no
 live-Sway case is exactly as much a bug as a missing lint step — see the coverage note under
 `tests/live_sway.rs` in the Architecture section and the matching Rust workflow bullet above.
@@ -2936,9 +2942,9 @@ inline test module's bodies as covered production code and averaged in the exemp
 untested new function in `tree.rs` or `values.rs` could land without moving them. Most of the
 remaining gap is the IPC-touching `run_*` drivers in `confirmation.rs` and `launch.rs`. Re-measure
 and adjust the thresholds as their own deliberate decision (with the comment updated) rather than
-as a side effect of an unrelated change. Alongside it: a separate
-`live-sway-tests` job that installs `sway`+`foot` and runs `scripts/run-live-sway-tests` (kept as
-its own job so a live-Sway hiccup doesn't block the fast unit-test feedback loop); and a `cargo
+as a side effect of an unrelated change. Alongside it: two live-Sway jobs, `live-sway-1-9`
+(`ubuntu-24.04`, apt's `sway`+`foot`) and `live-sway-latest` (an `archlinux` container), each
+running `scripts/run-live-sway-tests` (see Commands above for why there are two); and a `cargo
 audit` job via the `actions-rust-lang/audit` action (switched from `rustsec/audit-check`, which has
 had no release since September 2024 and still declares the now-deprecated `node20` runtime with
 nothing newer to bump to; `actions-rust-lang/audit` is a composite action with no Node runtime of
@@ -2976,7 +2982,7 @@ steps in jobs that hold more than a read token, or that build the release, set
 `persist-credentials: false`, so the token isn't left on disk where a build script could read it.
 
 `.github/workflows/release.yml`'s `check` job installs the same tools and runs the same
-`scripts/run-checks` (not the coverage gate, not `live-sway-tests` or `audit` — a release build
+`scripts/run-checks` (not the coverage gate, not the live-Sway jobs or `audit` — a release build
 doesn't need a compositor or a coverage measurement, and the security audit runs independently on
 every push regardless) against the exact tagged commit, then builds and publishes a release archive
 when a `v*` tag is pushed. Its `check` job also fails unless the tag's version (`vX.Y.Z` minus the

@@ -27,9 +27,10 @@ workspace/output, splitting, marking, and more (see [Actions reference](#actions
 - **Works on existing windows too** — not just newly launched ones, via
   `--con-id`/`--existing` (see [Target an existing window](#target-an-existing-window)).
 
-Requires a running Sway session — `sway-launch` talks to Sway over its IPC socket (the same one
-`swaymsg` uses, found the same way: `SWAYSOCK`, then `I3SOCK`), so it won't do anything useful
-outside of one.
+Requires a running Sway session, Sway 1.9 or newer — `sway-launch` talks to Sway over its IPC
+socket (the same one `swaymsg` uses, found the same way: `SWAYSOCK`, then `I3SOCK`), so it won't do
+anything useful outside of one. CI tests every change against Sway 1.9 and against the newest Sway
+release.
 
 ## Table of contents
 
