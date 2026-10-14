@@ -143,12 +143,23 @@ impl<'a> SwayLaunch<'a> {
     /// consulted here but by `execute_plan()`, immediately before each move
     /// is sent. Deciding it while planning meant judging `--new-row` against
     /// a tree its own `--new-column` was about to change.
+    /// `--output` alone moves the container to the output's visible
+    /// workspace. With `--workspace` too, that would undo the workspace move,
+    /// so the workspace itself is moved to the output instead.
+    fn output_action(&self) -> Option<ActionKind<'a>> {
+        let output = self.output?;
+        Some(match self.workspace {
+            Some(workspace) => ActionKind::WorkspaceToOutput { workspace, output },
+            None => ActionKind::Output(output),
+        })
+    }
+
     fn build_actions(&self, container_id: i64) -> Vec<SwayAction<'a>> {
         let requested = [
             self.new_column.then_some(ActionKind::NewColumn),
             self.new_row.then_some(ActionKind::NewRow),
             self.workspace.map(ActionKind::Workspace),
-            self.output.map(ActionKind::Output),
+            self.output_action(),
             self.split.map(ActionKind::Split),
             self.floating.then_some(ActionKind::Floating),
             self.sticky.then_some(ActionKind::Sticky),

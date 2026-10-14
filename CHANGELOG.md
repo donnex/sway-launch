@@ -46,6 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `--output` puts the window on the output's visible workspace, as Sway's own command does. A
     window on a hidden workspace of that output used to be reported `already_satisfied` and left
     out of view. (#91)
+  - `--workspace` and `--output` together put the window on that workspace on that output, by moving
+    the workspace to the output. The output move used to land on whatever workspace the output was
+    showing, silently dropping `--workspace` while both reported `changed`. (#6)
   - On a multi-monitor setup, a `--new-column`/`--new-row` that Sway would carry onto another
     output — a window at the edge of its workspace, including the only window inside a container
     there, or a window that's already fullscreen — is skipped rather than run. On a floating

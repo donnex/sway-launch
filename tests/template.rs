@@ -165,7 +165,7 @@ fn template_layout_context_applies_workspace_and_output_to_a_step_without_its_ow
     let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
     assert_eq!(
         stdout,
-        "1. launch code\n2. move workspace \"3\"\n3. move container to output \"HDMI-A-1\"\n"
+        "1. launch code\n2. move workspace \"3\"\n3. move workspace to output \"HDMI-A-1\"\n"
     );
 }
 
@@ -193,7 +193,7 @@ fn template_layout_context_does_not_override_a_step_s_own_workspace_and_output()
     let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
     assert_eq!(
         stdout,
-        "1. launch code\n2. move workspace \"5\"\n3. move container to output \"HDMI-A-1\"\n"
+        "1. launch code\n2. move workspace \"5\"\n3. move workspace to output \"HDMI-A-1\"\n"
     );
 }
 

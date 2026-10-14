@@ -60,6 +60,15 @@ pub(super) enum ActionKind<'a> {
     NewRow,
     Workspace(&'a str),
     Output(&'a str),
+    /// `--workspace` and `--output` together: after the window moved to the
+    /// workspace, move that whole workspace to the output, so the window
+    /// ends up on the named workspace *and* the named output. A plain
+    /// container move to an output would land on whatever workspace that
+    /// output is showing, undoing the workspace move.
+    WorkspaceToOutput {
+        workspace: &'a str,
+        output: &'a str,
+    },
     Mark(&'a str),
     Height(Size),
     Width(Size),
@@ -87,7 +96,7 @@ impl ActionKind<'_> {
             ActionKind::NewColumn => "new_column",
             ActionKind::NewRow => "new_row",
             ActionKind::Workspace(_) => "workspace",
-            ActionKind::Output(_) => "output",
+            ActionKind::Output(_) | ActionKind::WorkspaceToOutput { .. } => "output",
             ActionKind::Mark(_) => "mark",
             ActionKind::Height(_) => "height",
             ActionKind::Width(_) => "width",
@@ -119,6 +128,7 @@ impl fmt::Display for SwayAction<'_> {
             ActionKind::NewRow => "New row",
             ActionKind::Workspace(_) => "Workspace",
             ActionKind::Output(_) => "Output",
+            ActionKind::WorkspaceToOutput { .. } => "Workspace to output",
             ActionKind::Mark(_) => "Mark",
             ActionKind::Height(_) => "Height",
             ActionKind::Width(_) => "Width",
@@ -130,6 +140,9 @@ impl fmt::Display for SwayAction<'_> {
             ActionKind::Split(split) => write!(f, " (split: {})", split),
             ActionKind::Workspace(workspace) => write!(f, " (workspace: {})", workspace),
             ActionKind::Output(output) => write!(f, " (output: {})", output),
+            ActionKind::WorkspaceToOutput { workspace, output } => {
+                write!(f, " (workspace: {}) (output: {})", workspace, output)
+            }
             ActionKind::Mark(mark) => write!(f, " (mark: {})", mark),
             ActionKind::Height(height) => write!(f, " (height: {})", height),
             ActionKind::Width(width) => write!(f, " (width: {})", width),
@@ -244,6 +257,9 @@ impl<'a> SwayAction<'a> {
             }
             ActionKind::Output(output) => {
                 format!("move container to output {}", quote_sway_string(output))
+            }
+            ActionKind::WorkspaceToOutput { output, .. } => {
+                format!("move workspace to output {}", quote_sway_string(output))
             }
             ActionKind::Height(height) => format!("resize set height {}", height),
             ActionKind::Width(width) => format!("resize set width {}", width),
