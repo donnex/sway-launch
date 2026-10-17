@@ -5,12 +5,13 @@
 //! it, whether a node is floating, whether a rect is the size that was asked
 //! for. Nothing in this module names a `Connection`, which is exactly the
 //! point — it keeps the *interpretation* of Sway's state unit-testable
-//! headlessly, and leaves only the fetching (see `query.rs`) needing a live
-//! compositor.
+//! headlessly, and leaves only the fetching (see `query.rs`) needing a
+//! compositor to talk to.
 //!
 //! Prefer this shape for any new predicate: take the resolved values as
 //! arguments and let the caller do the reading, rather than burying a
-//! comparison behind a `&mut Connection` where the coverage gate can't see it.
+//! comparison behind a `&mut Connection`, where only a scripted compositor can
+//! reach each case.
 
 use super::target::{LaunchFilter, WindowMatch};
 use super::values::Position;

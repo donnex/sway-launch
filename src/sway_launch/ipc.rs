@@ -3,11 +3,11 @@
 //! This is the transport layer and nothing above it. It knows how to reach the
 //! compositor, how long to wait for it, how to phrase a command safely and how
 //! to report a failure — but nothing about what any particular command means.
-//! Everything here needs a live compositor, which is why it is exempt from the
-//! coverage target (see CLAUDE.md's Rust conventions); the exceptions are the
-//! pure helpers `preferred_socket_path()`, `ipc_error()`,
-//! `connect_error_at()`, `undiscovered_socket_error()`,
-//! `first_outcome_error()` and `quote_sway_string()`, which are unit-tested.
+//! Everything here but the pure helpers (`preferred_socket_path()`,
+//! `ipc_error()`, `connect_error_at()`, `undiscovered_socket_error()`,
+//! `first_outcome_error()` and `quote_sway_string()`, which are unit-tested)
+//! needs a compositor to talk to: `tests/fake_sway.rs` provides a fake one,
+//! and `tests/live_sway.rs` a real one.
 
 use std::sync::mpsc;
 use std::{fmt, thread, time};

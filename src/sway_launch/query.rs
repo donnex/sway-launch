@@ -2,13 +2,11 @@
 //!
 //! Every function here is the same shape: open or take a `Connection`, read
 //! the tree or the outputs, and delegate the actual decision to a pure
-//! predicate. That is deliberately all they do — the thinner this layer is,
-//! the less logic sits where `cargo test` cannot reach it.
-//!
-//! This whole module is exempt from the coverage target for that reason (see
-//! CLAUDE.md's Rust conventions); `tests/live_sway.rs` is what exercises it,
-//! against a real compositor. A new query belongs here only if it can't answer
-//! its question from a `&Node` alone.
+//! predicate. That is deliberately all they do: a decision here can only be
+//! tested by scripting a compositor (`tests/fake_sway.rs`, or a real one in
+//! `tests/live_sway.rs`), while one in `tree.rs` is a one-line unit test. A
+//! new query belongs here only if it can't answer its question from a `&Node`
+//! alone.
 
 use super::ipc::{ipc_error, new_connection};
 use super::target::{LaunchFilter, WindowMatch};
