@@ -100,6 +100,18 @@ fn per_window_and(extras: &[&'static str]) -> Vec<&'static str> {
     PER_WINDOW_ARGS.iter().chain(extras).copied().collect()
 }
 
+/// The per-window flags `--list-windows` accepts: they narrow the listing to
+/// what `--existing` would choose between, rather than being discarded.
+const LIST_WINDOWS_FILTERS: &[&str] = &["app_id", "class", "mark_match"];
+
+/// `per_window_and()` for `--list-windows`, which keeps its filters.
+fn per_window_but_filters_and(extras: &[&'static str]) -> Vec<&'static str> {
+    per_window_and(extras)
+        .into_iter()
+        .filter(|name| !LIST_WINDOWS_FILTERS.contains(name))
+        .collect()
+}
+
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
@@ -116,7 +128,7 @@ struct Args {
     class: Option<String>,
 
     /// Find the window to act on by this mark (exact and case-sensitive).
-    /// Requires --existing
+    /// Requires --existing or --list-windows
     #[clap(long, conflicts_with_all = ["class", "con_id"],
         value_parser = sway_launch::validate_sway_string_argument)]
     mark_match: Option<String>,
@@ -284,6 +296,15 @@ struct Args {
     ]))]
     list_templates: bool,
 
+    /// List every open window (container id, app_id, class, workspace,
+    /// marks, title) and exit. --app-id/--class/--mark-match narrow it to the
+    /// windows --existing would choose between
+    #[clap(long, conflicts_with_all = per_window_but_filters_and(&[
+        "debug_events", "layout", "template", "completions", "list_templates", "show_template",
+        "bindings", "apps", "rollback_on_error", "on_workspace", "no_lock", "dry_run", "validate",
+    ]))]
+    list_windows: bool,
+
     /// Print a --template's raw TOML and exit, without running it. Same
     /// NAME_OR_PATH resolution as --template: a built-in name (see
     /// --list-templates), or a path ending in .toml. With --json, prints
@@ -369,6 +390,11 @@ fn main() {
 
     if let Some(show_template_arg) = &args.show_template {
         print_template_contents(show_template_arg, args.json);
+        process::exit(0);
+    }
+
+    if args.list_windows {
+        print_window_listing(&args);
         process::exit(0);
     }
 
@@ -1142,6 +1168,150 @@ fn print_builtin_templates(json: bool) {
             template.slot_names.join(", ")
         ));
     }
+}
+
+/// The `--list-windows` standalone mode: one row per open window, narrowed by
+/// whichever of `--app-id`/`--class`/`--mark-match` was given (clap allows at
+/// most one).
+fn print_window_listing(args: &Args) {
+    let filter = args
+        .app_id
+        .as_deref()
+        .map(sway_launch::WindowMatch::AppId)
+        .or(args.class.as_deref().map(sway_launch::WindowMatch::Class))
+        .or(args
+            .mark_match
+            .as_deref()
+            .map(sway_launch::WindowMatch::Mark));
+    let windows = match sway_launch::list_windows(filter) {
+        Ok(windows) => windows,
+        Err(error) => fail(args.json, &error),
+    };
+
+    if args.json {
+        print_line(&window_listing_json(&windows).to_string());
+        return;
+    }
+    if windows.is_empty() {
+        match filter {
+            Some(filter) => diagnostic!("no open window matches {}", filter),
+            None => diagnostic!("no open windows"),
+        }
+        return;
+    }
+    for line in window_listing_table(&windows) {
+        print_line(&line);
+    }
+}
+
+fn window_listing_json(windows: &[sway_launch::ListedWindow]) -> serde_json::Value {
+    let windows: Vec<_> = windows
+        .iter()
+        .map(|window| {
+            serde_json::json!({
+                "container_id": window.container_id,
+                "app_id": window.app_id,
+                "class": window.class,
+                "title": window.title,
+                "marks": window.marks,
+                "workspace": window.workspace,
+                "output": window.output,
+                "scratchpad": window.scratchpad,
+                "floating": window.floating,
+                "focused": window.focused,
+                "split_container": window.split_container,
+            })
+        })
+        .collect();
+    serde_json::json!({ "windows": windows })
+}
+
+/// Titles past this many characters are cut short in the table (never in
+/// `--json`), so one long browser title doesn't wrap every row.
+const LISTED_TITLE_LIMIT: usize = 50;
+
+/// `--list-windows`' aligned table, header first. Every value a client chose
+/// (app_id, class, title, marks, workspace name) is passed through
+/// `escape_control_characters()`, since a title can hold anything.
+fn window_listing_table(windows: &[sway_launch::ListedWindow]) -> Vec<String> {
+    let text = |value: Option<&str>| {
+        value.map_or("-".to_string(), |value| {
+            sway_launch::escape_control_characters(value, false)
+        })
+    };
+    let mut rows = vec![[
+        "ID",
+        "APP_ID",
+        "CLASS",
+        "WORKSPACE",
+        "FLAGS",
+        "MARKS",
+        "TITLE",
+    ]
+    .map(String::from)];
+    for window in windows {
+        let workspace = if window.scratchpad {
+            "(scratchpad)".to_string()
+        } else {
+            text(window.workspace.as_deref())
+        };
+        let flags: Vec<&str> = [
+            (window.focused, "focused"),
+            (window.floating, "floating"),
+            (window.split_container, "split"),
+        ]
+        .into_iter()
+        .filter_map(|(set, name)| set.then_some(name))
+        .collect();
+        let marks = if window.marks.is_empty() {
+            "-".to_string()
+        } else {
+            sway_launch::escape_control_characters(&window.marks.join(","), false)
+        };
+        let mut title = text(window.title.as_deref());
+        if title.chars().count() > LISTED_TITLE_LIMIT {
+            title = title
+                .chars()
+                .take(LISTED_TITLE_LIMIT - 1)
+                .collect::<String>()
+                + "…";
+        }
+        rows.push([
+            window.container_id.to_string(),
+            text(window.app_id.as_deref()),
+            text(window.class.as_deref()),
+            workspace,
+            if flags.is_empty() {
+                "-".to_string()
+            } else {
+                flags.join(",")
+            },
+            marks,
+            title,
+        ]);
+    }
+
+    let mut widths = [0; 7];
+    for row in &rows {
+        for (width, cell) in widths.iter_mut().zip(row) {
+            *width = (*width).max(cell.chars().count());
+        }
+    }
+    rows.iter()
+        .map(|row| {
+            let mut line = String::new();
+            for (index, cell) in row.iter().enumerate() {
+                if index + 1 == row.len() {
+                    line.push_str(cell);
+                } else {
+                    let padding = widths[index] - cell.chars().count();
+                    line.push_str(cell);
+                    line.push_str(&" ".repeat(padding + 2));
+                }
+            }
+            line
+        })
+        .collect()
 }
 
 /// The `--show-template` standalone mode: resolves its argument the exact
@@ -2115,6 +2285,7 @@ mod tests {
         "layout",
         "template",
         "list_templates",
+        "list_windows",
         "show_template",
         "bindings",
         "apps",
@@ -2283,6 +2454,7 @@ mod tests {
         "layout",
         "template",
         "list_templates",
+        "list_windows",
         "show_template",
     ];
 
@@ -2327,12 +2499,77 @@ mod tests {
                 .map(|argument| argument.get_id().to_string())
                 .collect();
             for per_window in PER_WINDOW_ARGS {
-                assert!(
+                let is_a_filter =
+                    *mode == "list_windows" && LIST_WINDOWS_FILTERS.contains(per_window);
+                assert_eq!(
                     conflicts.iter().any(|name| name == per_window),
-                    "--{mode} should conflict with {per_window}"
+                    !is_a_filter,
+                    "--{mode} should conflict with {per_window} unless it narrows the listing"
                 );
             }
         }
+    }
+
+    fn listed_window(container_id: i64) -> sway_launch::ListedWindow {
+        sway_launch::ListedWindow {
+            container_id,
+            app_id: None,
+            class: None,
+            title: None,
+            marks: vec![],
+            workspace: Some("1".to_string()),
+            output: Some("HEADLESS-1".to_string()),
+            scratchpad: false,
+            floating: false,
+            focused: false,
+            split_container: false,
+        }
+    }
+
+    #[test]
+    fn window_listing_table_aligns_columns_and_fills_gaps_with_a_dash() {
+        let mut foot = listed_window(7);
+        foot.app_id = Some("foot".to_string());
+        foot.title = Some("shell".to_string());
+        foot.focused = true;
+        foot.floating = true;
+        let mut code = listed_window(1234);
+        code.class = Some("Code".to_string());
+        code.marks = vec!["editor".to_string(), "main".to_string()];
+        code.workspace = None;
+        code.scratchpad = true;
+        assert_eq!(
+            window_listing_table(&[foot, code]),
+            vec![
+                "ID    APP_ID  CLASS  WORKSPACE     FLAGS             MARKS        TITLE",
+                "7     foot    -      1             focused,floating  -            shell",
+                "1234  -       Code   (scratchpad)  -                 editor,main  -",
+            ]
+        );
+    }
+
+    #[test]
+    fn window_listing_table_shortens_long_titles_and_escapes_control_characters() {
+        let mut window = listed_window(1);
+        window.title = Some(format!("a\tb{}", "x".repeat(60)));
+        let table = window_listing_table(&[window]);
+        let title = table[1].rsplit("  ").next().unwrap();
+        assert!(title.starts_with("a\\tb"), "{title}");
+        assert_eq!(title.chars().count(), LISTED_TITLE_LIMIT);
+        assert!(title.ends_with('…'));
+    }
+
+    #[test]
+    fn window_listing_json_keeps_every_field_and_the_full_title() {
+        let mut window = listed_window(5);
+        window.title = Some("t".repeat(80));
+        window.split_container = true;
+        let json = window_listing_json(&[window]);
+        assert_eq!(json["windows"][0]["container_id"], 5);
+        assert_eq!(json["windows"][0]["app_id"], serde_json::Value::Null);
+        assert_eq!(json["windows"][0]["title"].as_str().unwrap().len(), 80);
+        assert_eq!(json["windows"][0]["output"], "HEADLESS-1");
+        assert_eq!(json["windows"][0]["split_container"], true);
     }
 
     fn layout_steps(toml_text: &str) -> Vec<layout::LayoutStep> {

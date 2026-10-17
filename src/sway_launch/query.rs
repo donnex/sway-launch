@@ -13,8 +13,8 @@ use super::target::{LaunchFilter, WindowMatch};
 use super::tree::{
     con_id_target_problem, expected_position, find_node, find_parent_layout, find_workspace_node,
     focused_workspace, matching_container_ids, move_skip_reason, node_position, present_ids,
-    recheck_launched_windows, resolve_matches, tiled_window_count, ContainerState, MoveDirection,
-    RecheckedWindow,
+    recheck_launched_windows, resolve_matches, tiled_window_count, window_listing, ContainerState,
+    ListedWindow, MoveDirection, RecheckedWindow,
 };
 use super::values::Position;
 use swayipc::{Connection, Node, NodeLayout};
@@ -34,6 +34,16 @@ pub(super) fn find_existing_container_id(window_match: WindowMatch) -> Result<i6
         matching_container_ids(&tree, window_match),
         &window_match.to_string(),
     )
+}
+
+/// Every open window `filter` accepts, for `--list-windows` (see
+/// `window_listing()`).
+pub fn list_windows(filter: Option<WindowMatch>) -> Result<Vec<ListedWindow>, String> {
+    let tree = match new_connection()?.get_tree() {
+        Ok(tree) => tree,
+        Err(error) => return Err(ipc_error(error)),
+    };
+    Ok(window_listing(&tree, filter))
 }
 
 /// Reads `container_id`'s `ContainerState`, or `None` if it isn't in the tree.

@@ -199,6 +199,77 @@ fn a_scratchpad_window_is_already_in_the_scratchpad_on_every_version() {
 }
 
 #[test]
+fn list_windows_shows_each_window_where_it_is_on_every_version() {
+    // Sway 1.9 leaves a floating window's own `floating` field unset, and the
+    // scratchpad is a workspace like any other in the tree.
+    for version in SwayVersion::ALL {
+        let fake = FakeSway::accepting_everything(version);
+        let run = run(&fake, &["--list-windows"]);
+        assert!(run.succeeded(), "{version:?}: {}", run.stderr());
+        let windows = run.json["windows"].as_array().expect("a windows array");
+        let row = |id: i64| {
+            windows
+                .iter()
+                .find(|window| window["container_id"] == id)
+                .unwrap_or_else(|| panic!("{version:?}: no row for {id} in {}", run.json))
+        };
+        assert_eq!(windows.len(), 3, "{version:?}: {}", run.json);
+        assert_eq!(row(TILED)["app_id"], "fixture-tiled");
+        assert_eq!(row(TILED)["workspace"], "1");
+        assert_eq!(row(TILED)["floating"], false);
+        assert_eq!(row(FLOATING)["floating"], true, "{version:?}");
+        assert_eq!(row(FLOATING)["focused"], true, "{version:?}");
+        assert_eq!(row(SCRATCHPAD)["scratchpad"], true, "{version:?}");
+        assert_eq!(row(SCRATCHPAD)["workspace"], Value::Null, "{version:?}");
+        assert!(fake.commands().is_empty());
+    }
+}
+
+#[test]
+fn list_windows_with_a_filter_lists_what_existing_would_choose_between() {
+    let fake = FakeSway::accepting_everything(SwayVersion::V1_11);
+    let run = run(&fake, &["--list-windows", "-a", "fixture-floating"]);
+    assert!(run.succeeded(), "{}", run.stderr());
+    let ids: Vec<&Value> = run.json["windows"]
+        .as_array()
+        .expect("a windows array")
+        .iter()
+        .map(|window| &window["container_id"])
+        .collect();
+    assert_eq!(ids, [FLOATING]);
+}
+
+#[test]
+fn list_windows_table_has_a_header_and_a_row_per_window() {
+    let fake = FakeSway::accepting_everything(SwayVersion::V1_11);
+    let output = fake
+        .sway_launch()
+        .arg("--list-windows")
+        .output()
+        .expect("failed to run sway-launch");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert!(lines[0].starts_with("ID  APP_ID"), "{stdout}");
+    assert_eq!(lines.len(), 4, "{stdout}");
+    assert!(stdout.contains("(scratchpad)"), "{stdout}");
+}
+
+#[test]
+fn list_windows_with_no_match_says_so_on_stderr_only() {
+    let fake = FakeSway::accepting_everything(SwayVersion::V1_11);
+    let output = fake
+        .sway_launch()
+        .args(["--list-windows", "-c", "Nothing"])
+        .output()
+        .expect("failed to run sway-launch");
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("no open window matches class \"Nothing\""));
+}
+
+#[test]
 fn a_split_is_confirmed_once_the_parent_layout_changes() {
     let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {
         if command == format!("[con_id={TILED}] splitv") {
