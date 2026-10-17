@@ -150,6 +150,7 @@ Options:
       --on-workspace-number <N>       --on-workspace by number, the way Sway's "workspace number N" finds it: 2 matches a workspace named "2: web". Requires --layout or --template
       --on-output <OUTPUT>            Build a --layout/--template run on this output: focus it once before the first step, so a new workspace is created there. Overrides a template's own [layout] output. Requires --layout or --template
       --no-lock                       Run a --layout/--template even if another run of the same file or template on the same workspace is still in progress. Requires --layout or --template
+      --concurrent                    Start every --layout/--template step's application at once, on a workspace of its own, then arrange the windows in step order, so the run takes about as long as its slowest application rather than all of them together. Fails if two steps' launches end up with the same window, as single-instance applications can. Requires --layout or --template
   -h, --help                          Print help
   -V, --version                       Print version
 ```
@@ -636,6 +637,18 @@ warning on stderr, and `--json` lists them under `timed_out_steps` (`step`, `err
 only for each step that has one, so match steps to windows with `--json`'s `containers` when steps
 may be missing. Only a missing window counts: a step that fails any other way still stops the run,
 and with `--rollback-on-error`, still rolls it back.
+
+A layout normally starts each application only once the previous step's window is in place, so it
+takes as long as all of its applications' startups added together. `--concurrent` starts them all
+at once instead, on a workspace of their own (`sway-launch-staging-<pid>`), then moves each window to
+the build workspace in step order and applies its step's actions there, so it lands exactly where
+it would have opened. Every built-in template builds the same shape either way; a four-window grid
+of applications taking about a second each to start drops from about 5 seconds to under 2. The
+whole file is checked before anything starts, and a failure never leaves a window on the staging
+workspace: whatever was staged is moved to the build workspace, reported, and with
+`--rollback-on-error`, rolled back. Focus visibly jumps to the staging workspace while the
+applications start. A single-instance application can't be told apart this way: when two steps'
+launches end up with the same window, the run fails, so run such layouts without `--concurrent`.
 
 This is **window-launch rollback**, not transactional rollback: it undoes *launches*, not
 *actions*. A `move`/`resize`/`mark`/etc. an earlier step applied to a `con_id`/`existing`/
@@ -1296,7 +1309,7 @@ is unset; `--json` error objects are never labelled or colored.
 ```shell
 $ sway-launch --split h -v foot
 Sway action: Exec "foot" (app_id_match: "") (class_match: "")
-Sway command: exec export SWAY_LAUNCH_PID_MARKER=<pid>-<nanos> && ( foot )
+Sway command: exec export SWAY_LAUNCH_PID_MARKER=<pid>-<nanos>-<n> && ( foot )
 Event match: New container id 437 (PID-marker-confirmed)
 Target container id: 437
 Sway action: Split (container id: 437) (split: Horizontal)

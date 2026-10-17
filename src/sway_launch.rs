@@ -39,8 +39,11 @@ mod tree;
 mod values;
 
 pub use ipc::{kill_container, KillError};
-pub use launch::{debug_events, BuildLocation, SwayLaunch};
-pub use outcome::{ActionRecord, ActionStatus, LaunchOwnership, RunError, UnmatchedWindow};
+pub use launch::{debug_events, BuildLocation, Staging, SwayLaunch};
+pub use outcome::{
+    ActionRecord, ActionStatus, LaunchOwnership, RunError, RunOutcome, UnmatchedWindow,
+};
+pub use process_marker::ConcurrentLaunches;
 pub use query::{containers_still_present, focused_workspace_occupancy, list_windows};
 pub use target::{FieldStyle, Target, TargetError, TargetFields, WindowCriteria, WindowMatch};
 pub use tree::ListedWindow;

@@ -132,6 +132,83 @@ impl BuildLocation<'_> {
     }
 }
 
+/// Where `--concurrent` (#73) launches a run's windows: a workspace of its
+/// own, so they open out of sight of the build workspace and are then moved
+/// there one at a time, in step order, each landing where it would have
+/// opened. Sway puts a window on the workspace its `exec` ran on, whatever
+/// has focus by the time it maps, so the staging workspace holds them even
+/// if focus moves meanwhile.
+pub struct Staging {
+    build_workspace: String,
+    staging_workspace: String,
+}
+
+impl Staging {
+    /// Remembers the focused workspace as the build workspace and switches
+    /// to a staging workspace unique to this process.
+    pub fn enter(verbose: bool) -> Result<Staging, String> {
+        let build_workspace = focused_workspace_name()?
+            .ok_or_else(|| "no workspace is focused to build on".to_string())?;
+        let staging = Staging {
+            build_workspace,
+            staging_workspace: format!("sway-launch-staging-{}", std::process::id()),
+        };
+        staging.send(
+            &format!(
+                "workspace {}",
+                WorkspaceTarget::Name(&staging.staging_workspace).sway_argument()
+            ),
+            verbose,
+        )?;
+        Ok(staging)
+    }
+
+    /// Focuses the build workspace again.
+    pub fn leave(&self, verbose: bool) -> Result<(), String> {
+        self.send(
+            &format!(
+                "workspace {}",
+                WorkspaceTarget::Name(&self.build_workspace).sway_argument()
+            ),
+            verbose,
+        )
+    }
+
+    /// Moves a staged window to the build workspace, and focuses it when
+    /// `focus` is set, as a newly opened window would be, so the next one
+    /// moved there lands after it. A window moved there lands next to the
+    /// workspace's focused one, where it would have opened (every built-in
+    /// template builds its recorded shape this way, checked live).
+    pub fn bring(&self, container_id: i64, focus: bool, verbose: bool) -> Result<(), String> {
+        self.send(
+            &format!(
+                "[con_id={}] move container to workspace {}",
+                container_id,
+                WorkspaceTarget::Name(&self.build_workspace).sway_argument()
+            ),
+            verbose,
+        )?;
+        if focus {
+            self.send(&format!("[con_id={}] focus", container_id), verbose)?;
+        }
+        Ok(())
+    }
+
+    pub fn staging_workspace(&self) -> &str {
+        &self.staging_workspace
+    }
+
+    fn send(&self, command: &str, verbose: bool) -> Result<(), String> {
+        if verbose {
+            diagnostic!(
+                "Sway command: {}",
+                super::values::escape_control_characters(command, false)
+            );
+        }
+        run_sway_command(command).map_err(|error| format!("{}: {}", command, error))
+    }
+}
+
 /// `--debug-events`: subscribes to every event type and prints each event
 /// until interrupted. A free function rather than a `SwayLaunch` method
 /// because it acts on no window and reads none of an invocation's settings,
