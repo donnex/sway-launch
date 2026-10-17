@@ -73,6 +73,11 @@ pub struct SwayLaunch<'a> {
     /// are built where focus is, and every step launched after such a switch
     /// would open on the other workspace, splitting the shape in two.
     pub require_launch_on_focused_workspace: bool,
+
+    /// `cd`/`export` run before a launched command, from `--cwd`/`--env`
+    /// (#113), already rendered by `render_launch_setup()`. Only meaningful
+    /// with `Target::Exec`; the front ends refuse it otherwise.
+    pub launch_setup: Option<String>,
 }
 
 /// Where a `--layout`/`--template` run builds: a workspace and/or output
@@ -183,6 +188,7 @@ impl<'a> SwayLaunch<'a> {
         match self.target {
             Target::Exec { command, filter } => ExecAction {
                 command,
+                setup: self.launch_setup.as_deref(),
                 filter,
                 verbose: self.verbose,
                 timeout: self.timeout,

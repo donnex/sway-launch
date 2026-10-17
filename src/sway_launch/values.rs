@@ -12,6 +12,7 @@
 
 use clap::ValueEnum;
 use std::fmt;
+use std::path::{Path, PathBuf};
 
 // Serialize is test-only, so main.rs's schema-parity test can serialize a
 // LayoutStep/TemplateStep to read its field names back — see
@@ -401,36 +402,139 @@ pub fn render_argv(words: &[String]) -> Result<String, String> {
         }
         Some(_) => {}
     }
-    let mut rendered = Vec::with_capacity(words.len());
-    for word in words {
-        if let Some(character) = word
-            .chars()
-            .find(|&c| matches!(c, '$' | '\n' | '\r' | '\0'))
-        {
-            return Err(format!(
-                "{:?} in {:?}: Sway would read it before the program does ({}), so it can't be \
-                 passed through. Use the string form with a script if it's needed",
-                character,
-                word,
-                if character == '$' {
-                    "as a config variable"
-                } else {
-                    "as a command separator"
-                }
-            ));
-        }
-        let mut quoted = String::from("'");
-        for character in word.chars() {
-            match character {
-                '\'' => quoted.push_str("'\\''"),
-                '\\' => quoted.push_str("'\\\\'"),
-                other => quoted.push(other),
-            }
-        }
-        quoted.push('\'');
-        rendered.push(quoted);
-    }
+    let rendered = words
+        .iter()
+        .map(|word| quote_shell_word(word))
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(rendered.join(" "))
+}
+
+/// One word quoted so it passes through Sway's parser and `sh` unchanged;
+/// see `render_argv()` for why each special case is handled as it is.
+fn quote_shell_word(word: &str) -> Result<String, String> {
+    if let Some(character) = word
+        .chars()
+        .find(|&c| matches!(c, '$' | '\n' | '\r' | '\0'))
+    {
+        return Err(format!(
+            "{:?} in {:?}: Sway would read it before the program does ({}), so it can't be \
+             passed through. Use the string form with a script if it's needed",
+            character,
+            word,
+            if character == '$' {
+                "as a config variable"
+            } else {
+                "as a command separator"
+            }
+        ));
+    }
+    let mut quoted = String::from("'");
+    for character in word.chars() {
+        match character {
+            '\'' => quoted.push_str("'\\''"),
+            '\\' => quoted.push_str("'\\\\'"),
+            other => quoted.push(other),
+        }
+    }
+    quoted.push('\'');
+    Ok(quoted)
+}
+
+/// Checks an environment variable name for `--env`/`env`: a shell name
+/// (`[A-Za-z_][A-Za-z0-9_]*`), since it's written as `export NAME=...`.
+fn validate_env_name(name: &str) -> Result<(), String> {
+    let mut characters = name.chars();
+    let valid = characters
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && characters.all(|character| character.is_ascii_alphanumeric() || character == '_');
+    if valid {
+        Ok(())
+    } else {
+        Err(format!(
+            "{:?} isn't a valid variable name: use letters, digits and _, not starting with a \
+             digit",
+            name
+        ))
+    }
+}
+
+/// Parses `--env KEY=VALUE` (#113).
+pub fn parse_env_assignment(value: &str) -> Result<(String, String), String> {
+    let (name, assigned) = value
+        .split_once('=')
+        .ok_or_else(|| "Must be KEY=VALUE, e.g. GDK_BACKEND=x11".to_string())?;
+    validate_env_name(name)?;
+    quote_shell_word(assigned)?;
+    Ok((name.to_string(), assigned.to_string()))
+}
+
+/// The directory a launched command starts in (`--cwd`/`cwd`, #113): a
+/// leading `~` is the home directory, a relative path is relative to the
+/// caller's working directory, and it must be an existing directory, checked
+/// here so `--validate` catches a typo before anything launches.
+fn resolve_launch_directory(value: &str) -> Result<PathBuf, String> {
+    let expanded = match value.strip_prefix('~') {
+        Some(rest) if rest.is_empty() || rest.starts_with('/') => {
+            let home = std::env::var_os("HOME")
+                .ok_or_else(|| "~ needs $HOME, which isn't set".to_string())?;
+            PathBuf::from(home).join(rest.trim_start_matches('/'))
+        }
+        _ => PathBuf::from(value),
+    };
+    let absolute = if expanded.is_absolute() {
+        expanded
+    } else {
+        std::env::current_dir()
+            .map_err(|error| format!("can't read the current directory: {}", error))?
+            .join(expanded)
+    };
+    if !absolute.is_dir() {
+        return Err(format!("{} is not a directory", absolute.display()));
+    }
+    Ok(absolute)
+}
+
+/// `--cwd`/`--env` (or a step's `cwd`/`env`) checked and rendered for a
+/// launch: the directory resolved by `resolve_launch_directory()`, then
+/// `render_launch_setup()`. Both only apply to a launched command, so either
+/// one without a command is an error.
+pub fn launch_setup(
+    launches: bool,
+    cwd: Option<&str>,
+    env: &[(String, String)],
+) -> Result<Option<String>, String> {
+    if !launches && (cwd.is_some() || !env.is_empty()) {
+        return Err("cwd and env only apply to a launched command".to_string());
+    }
+    let directory = cwd
+        .map(resolve_launch_directory)
+        .transpose()
+        .map_err(|error| format!("cwd: {}", error))?;
+    render_launch_setup(directory.as_deref(), env)
+}
+
+/// What runs in the launch shell before the command itself (#113):
+/// `cd '<dir>'` and one `export NAME='value'` per variable, joined with
+/// `&&` so a failed `cd` launches nothing. `None` when there's nothing to set.
+fn render_launch_setup(
+    cwd: Option<&Path>,
+    env: &[(String, String)],
+) -> Result<Option<String>, String> {
+    let mut parts = Vec::new();
+    if let Some(directory) = cwd {
+        let directory = directory
+            .to_str()
+            .ok_or_else(|| format!("cwd: {} is not valid UTF-8", directory.display()))?;
+        let quoted = quote_shell_word(directory).map_err(|error| format!("cwd: {}", error))?;
+        parts.push(format!("cd {}", quoted));
+    }
+    for (name, value) in env {
+        validate_env_name(name).map_err(|error| format!("env: {}", error))?;
+        let quoted = quote_shell_word(value).map_err(|error| format!("env {}: {}", name, error))?;
+        parts.push(format!("export {}={}", name, quoted));
+    }
+    Ok((!parts.is_empty()).then(|| parts.join(" && ")))
 }
 
 /// `require_non_blank()` in the shape clap's `value_parser` wants, for a flag

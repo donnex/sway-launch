@@ -142,6 +142,11 @@ what it rejects and why:
   Sway reads a backslash inside single quotes as an escape; `$` is refused because Sway substitutes
   its variables even there (both confirmed live). Files only: on the CLI, `--` keeps meaning "the
   command string", by decision.
+- `launch_setup()` — `--cwd`/`--env` and a step's or binding's `cwd`/`env` (#113): the directory is
+  resolved (`~`, relative to the caller's directory, must exist), then both are rendered as a
+  `cd '…' && export NAME='…'` prefix with `render_argv()`'s quoting, carried as
+  `SwayLaunch.launch_setup` and put between the PID marker and the command by
+  `ExecAction::sway_command()`. Only for a launch; `--dry-run` shows the prefix.
 - `validate_non_blank_argument()`/`require_non_blank()` — free-form identifiers.
 - `validate_timeout_argument()`/`validate_timeout_seconds()` — `1..=MAX_TIMEOUT_SECONDS`; the
   deadline is computed (`deadline_after()`) before any command is sent.

@@ -72,6 +72,8 @@ fn stderr_label(severity: Severity) -> String {
 /// that was actually passed.
 const PER_WINDOW_ARGS: &[&str] = &[
     "command",
+    "cwd",
+    "env",
     "con_id",
     "existing",
     "app_id",
@@ -128,6 +130,16 @@ struct Args {
     /// instead of launching a new one
     #[clap(long, conflicts_with_all = ["command", "con_id"])]
     existing: bool,
+
+    /// Start the launched command in this directory instead of Sway's. A
+    /// relative path is relative to the current directory
+    #[clap(long, value_name = "DIR", conflicts_with_all = ["con_id", "existing"])]
+    cwd: Option<String>,
+
+    /// Set this variable for the launched command (repeatable)
+    #[clap(long, value_name = "KEY=VALUE", value_parser = sway_launch::parse_env_assignment,
+        conflicts_with_all = ["con_id", "existing"])]
+    env: Vec<(String, String)>,
 
     /// Change split for the window
     #[clap(value_enum, short, long)]
@@ -468,8 +480,17 @@ fn main() {
         }
     };
 
+    let launch_setup =
+        match sway_launch::launch_setup(args.command.is_some(), args.cwd.as_deref(), &args.env) {
+            Ok(launch_setup) => launch_setup,
+            Err(error) => Args::command()
+                .error(ErrorKind::InvalidValue, format!("--cwd/--env: {}", error))
+                .exit(),
+        };
+
     let sway_launch = sway_launch::SwayLaunch {
         target,
+        launch_setup,
         split: args.split,
         floating: args.floating,
         sticky: args.sticky,
@@ -866,9 +887,12 @@ struct DryRunAction {
 /// every action line below stays id-free (see
 /// `SwayAction::sway_command_verb()`) would be an inconsistent preview
 /// format for one target mode only.
-fn describe_target(target: &sway_launch::Target) -> String {
-    match target {
-        sway_launch::Target::Exec { command, .. } => format!("launch {}", command),
+fn describe_target(sway_launch: &sway_launch::SwayLaunch) -> String {
+    match &sway_launch.target {
+        sway_launch::Target::Exec { command, .. } => match &sway_launch.launch_setup {
+            Some(setup) => format!("launch {} && {}", setup, command),
+            None => format!("launch {}", command),
+        },
         sway_launch::Target::ConId(_) => "target existing container".to_string(),
         sway_launch::Target::Existing(window_match) => format!(
             "target existing window ({}={:?})",
@@ -880,7 +904,7 @@ fn describe_target(target: &sway_launch::Target) -> String {
 
 fn dry_run_step(sway_launch: &sway_launch::SwayLaunch) -> DryRunStep {
     DryRunStep {
-        target: describe_target(&sway_launch.target),
+        target: describe_target(sway_launch),
         actions: sway_launch
             .build_actions_for_preview()
             .iter()
@@ -1249,6 +1273,8 @@ fn bindings_from_apps(
             app_id: None,
             class: None,
             mark_match: None,
+            cwd: None,
+            env: Default::default(),
         })
         .collect();
 
@@ -2118,6 +2144,8 @@ mod tests {
     /// fills from the slot name rather than from the binding.
     const BINDING_SUPPLIED_FIELDS: &[&str] = &[
         "command",
+        "cwd",
+        "env",
         "con_id",
         "existing",
         "app_id",

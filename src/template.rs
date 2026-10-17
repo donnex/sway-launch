@@ -192,6 +192,10 @@ pub struct Binding {
     pub slot: String,
     #[serde(default, deserialize_with = "crate::layout::deserialize_command")]
     pub command: Option<String>,
+    /// The directory `command` starts in, and variables set for it (#113).
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
     pub con_id: Option<i64>,
     #[serde(default)]
     pub existing: bool,
@@ -322,7 +326,7 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
             sway_launch::require_non_blank("target_id", target_id).map_err(step_error)?;
         }
 
-        let (id, target_id, command, con_id, existing, app_id, class, mark_match) =
+        let (id, target_id, command, con_id, existing, app_id, class, mark_match, cwd, env) =
             if let Some(slot) = step.slot.as_deref() {
                 let binding = bindings_by_slot.get(slot).ok_or_else(|| {
                     ResolveError::Bindings(format!("no binding for slot {:?}", slot))
@@ -348,6 +352,13 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
                     ))
                 })?;
 
+                if binding.command.is_none() && (binding.cwd.is_some() || !binding.env.is_empty()) {
+                    return Err(ResolveError::Bindings(format!(
+                        "binding for slot {:?}: cwd and env only apply to a launched command",
+                        slot
+                    )));
+                }
+
                 used_slots.insert(slot);
                 (
                     Some(slot.to_string()),
@@ -358,6 +369,8 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
                     binding.app_id.clone(),
                     binding.class.clone(),
                     binding.mark_match.clone(),
+                    binding.cwd.clone(),
+                    binding.env.clone(),
                 )
             } else {
                 (
@@ -369,11 +382,15 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
                     None,
                     None,
                     None,
+                    None,
+                    Default::default(),
                 )
             };
 
         steps.push(LayoutStep {
             command,
+            cwd,
+            env,
             con_id,
             existing,
             target_id,

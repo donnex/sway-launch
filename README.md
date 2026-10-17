@@ -106,6 +106,8 @@ Options:
       --mark-match <MARK_MATCH>       Find the window to act on by this mark (exact and case-sensitive). Requires --existing
       --con-id <CON_ID>               Act on an already-open window with this container id, instead of launching a new one
       --existing                      Act on an already-open window found via --app-id/--class/--mark-match, instead of launching a new one
+      --cwd <DIR>                     Start the launched command in this directory instead of Sway's. A relative path is relative to the current directory
+      --env <KEY=VALUE>               Set this variable for the launched command (repeatable)
   -s, --split <SPLIT>                 Change split for the window [possible values: v, h]
   -f, --floating                      Make the window floating
       --sticky                        Make the window sticky (once floating, shows on every workspace)
@@ -205,11 +207,22 @@ not those of the shell or script that ran `sway-launch`. In practice:
 
 - A relative path resolves against Sway's directory, not the current one — including in a layout or
   bindings file's `command`, where it isn't relative to the file either. `cd ~/project &&
-  sway-launch 'code .'` opens Sway's directory; use `'cd ~/project && code .'` or an absolute path
-  instead.
+  sway-launch 'code .'` opens Sway's directory; use `--cwd ~/project`, `'cd ~/project && code .'`
+  or an absolute path instead.
 - A variable you export before running `sway-launch` (an activated virtualenv's `PATH`,
   `GDK_BACKEND`, anything set only in a shell rc file Sway never read) doesn't reach the program.
-  Set it inside the command instead: `'GDK_BACKEND=x11 app'`, or `'export NAME=value && app'`.
+  Pass it with `--env GDK_BACKEND=x11` (repeatable), or set it inside the command:
+  `'GDK_BACKEND=x11 app'`.
+- `--cwd <DIR>` starts the command in that directory (`~` is your home directory; a relative path is
+  relative to the directory you run `sway-launch` from, and it must exist), and `--env KEY=VALUE`
+  sets a variable for it. A layout step or binding takes the same as `cwd = "~/project"` and
+  `env = { GDK_BACKEND = "x11" }`. Both only apply to a launched command, and a value can't
+  contain a `$`, which Sway would replace with one of its config variables.
+
+```shell
+sway-launch --cwd ~/projects/website --env GDK_BACKEND=x11 -c Code 'code .'
+```
+
 - The program's own stdout/stderr go wherever Sway's own output goes (its log), not your terminal.
   A command that works in your shell but can't start this way usually shows up as a timeout waiting
   for its window, with any error message of its own in Sway's log.
@@ -459,7 +472,7 @@ with one of its config variables before the shell runs, even inside quotes; so i
 plain string form, or a script, for anything that needs the shell. A binding's `command` takes the
 same two forms. Like the CLI's, it runs in Sway's working directory and
 environment, not the layout file's directory or the caller's (see [Basic usage](#basic-usage)). A
-step's other keys mirror the CLI flags of the same name (`app_id`, `class`, `mark_match`, `con_id`,
+step's other keys mirror the CLI flags of the same name (`cwd`, `env`, `app_id`, `class`, `mark_match`, `con_id`,
 `existing`, `split`, `floating`, `sticky`, `fullscreen`, `focus`, `mark`, `new_column`, `new_row`,
 `workspace`, `output`, `height`, `width`, `position`, `scratchpad`, `timeout`, `wait_time`) —
 `app_id`/`class`/`mark_match` match exactly and case-sensitively, like their CLI equivalents,
@@ -608,7 +621,7 @@ sway-launch --template template.toml --bindings bindings.toml
 ```
 
 A `Binding`'s keys are the same target-selection subset a layout step has (`command`, `con_id`,
-`existing`, `app_id`, `class`, `mark_match`) — exactly one of `command`/`con_id`/`existing = true` is
+`existing`, `app_id`, `class`, `mark_match`), plus the launched command's `cwd` and `env` — exactly one of `command`/`con_id`/`existing = true` is
 required, same rule as `--layout`, and `app_id`/`class`/`mark_match` can set only one of the three,
 same rule too (each an exact, case-sensitive match, as on the CLI). A binding's `command` runs in Sway's working directory and environment, the same as
 a layout step's (see [Basic usage](#basic-usage)). A template step's

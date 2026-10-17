@@ -28,6 +28,8 @@ use std::{fmt, time};
 #[derive(Copy, Clone, Debug)]
 pub(super) struct ExecAction<'a> {
     pub(super) command: &'a str,
+    /// `cd`/`export` run before `command`, from `--cwd`/`--env` (#113).
+    pub(super) setup: Option<&'a str>,
     pub(super) filter: Option<LaunchFilter<'a>>,
     pub(super) verbose: bool,
     pub(super) timeout: time::Duration,
@@ -189,10 +191,16 @@ impl ExecAction<'_> {
     /// inline at the call site: when the two were apart, a separate rendering
     /// of `exec <command>` drifted into something nothing ever sent.
     pub(super) fn sway_command(&self, token: &str) -> String {
-        format!(
-            "exec export {}={} && {}",
-            PID_MARKER_VAR, token, self.command
-        )
+        match self.setup {
+            Some(setup) => format!(
+                "exec export {}={} && {} && {}",
+                PID_MARKER_VAR, token, setup, self.command
+            ),
+            None => format!(
+                "exec export {}={} && {}",
+                PID_MARKER_VAR, token, self.command
+            ),
+        }
     }
 }
 
