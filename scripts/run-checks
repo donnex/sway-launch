@@ -13,7 +13,8 @@ print_usage() {
   printf 'CI runs, stopping at the first failure:\n'
   printf '\n'
   printf '  cargo fmt --check, cargo clippy (all targets and features, warnings\n'
-  printf '  denied), cargo build, cargo test, shellcheck and shfmt on every shell\n'
+  printf '  denied), cargo build, cargo test (plus the man page test, built with the\n'
+  printf '  generate-man feature), shellcheck and shfmt on every shell\n'
   printf '  script (found by shebang), markdownlint on every tracked Markdown file,\n'
   printf '  and black and ruff on %s.\n' "$PYTHON_SCRIPT"
   printf '\n'
@@ -84,6 +85,7 @@ run_check 'cargo fmt --check' cargo fmt -- --check
 run_check 'cargo clippy' cargo clippy --locked --all-targets --all-features -- -D warnings
 run_check 'cargo build' cargo build --locked
 run_check 'cargo test' cargo test --locked
+run_check 'man page' cargo test --locked --features generate-man --bin sway-launch man_page
 run_check 'shellcheck' shellcheck --shell=sh "$@"
 run_check 'shfmt' shfmt -i 2 -d "$@"
 

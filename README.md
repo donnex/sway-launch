@@ -67,7 +67,19 @@ and install it to `~/.cargo/bin` in one step with `cargo install --path . --lock
 
 Prebuilt Linux x86_64 binaries for tagged releases are also available from the
 [Releases page](https://github.com/donnex/sway-launch/releases). They're statically linked against
-musl, so they run on any x86_64 Linux distribution regardless of its glibc version.
+musl, so they run on any x86_64 Linux distribution regardless of its glibc version. The archive
+also holds the man page and ready-made shell completions; install them where your system looks:
+
+```shell
+# User-local:
+install -Dm644 sway-launch.1 ~/.local/share/man/man1/sway-launch.1
+install -Dm644 completions/sway-launch.bash ~/.local/share/bash-completion/completions/sway-launch
+install -Dm644 completions/_sway-launch ~/.local/share/zsh/site-functions/_sway-launch  # on $fpath
+install -Dm644 completions/sway-launch.fish ~/.config/fish/completions/sway-launch.fish
+```
+
+A build from source can produce the same man page with `cargo run --features generate-man --
+--generate-man > sway-launch.1`.
 
 Shell completions (bash, zsh, fish, elvish, PowerShell) can be generated with `--completions
 <SHELL>`, e.g.:
