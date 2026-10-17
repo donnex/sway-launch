@@ -629,6 +629,7 @@ fn main() {
         wait_time: time::Duration::from_millis(args.wait_time),
         verbose: args.verbose,
         require_launch_on_focused_workspace: false,
+        catch_late_window: false,
     };
 
     if args.dry_run {
@@ -959,7 +960,9 @@ fn fail_with_rollback(
             );
         }
     }
-    process::exit(1);
+    // An interrupted run ends the way the signal itself would have ended it,
+    // so a calling shell sees the interruption.
+    process::exit(sway_launch::interrupt::exit_status().unwrap_or(1));
 }
 
 fn unmatched_windows_json(windows: &[sway_launch::UnmatchedWindow]) -> serde_json::Value {
@@ -1649,7 +1652,29 @@ fn run_steps(steps: &[layout::LayoutStep], build: sway_launch::BuildLocation, ar
     let mut missing_ids = HashSet::new();
     let mut skipped_steps = Vec::new();
 
+    // From here on windows get launched, so a SIGINT/SIGTERM fails the run
+    // through fail_step(), with rollback and partial progress, rather than
+    // killing it outright (#15).
+    if let Err(error) = sway_launch::interrupt::install() {
+        diagnostic!(
+            "{}couldn't catch SIGINT/SIGTERM ({}); an interrupted run won't roll back",
+            stderr_label(Severity::Warning),
+            error
+        );
+    }
+
     for (index, step) in steps.iter().enumerate() {
+        if let Err(message) = sway_launch::interrupt::check() {
+            fail_step(
+                args,
+                &launched_container_ids,
+                &container_ids,
+                &resolved_ids,
+                index,
+                format!("{} before it started", message).into(),
+            );
+        }
+
         if let Some(target_id) = step
             .target_id
             .as_deref()
@@ -1680,6 +1705,9 @@ fn run_steps(steps: &[layout::LayoutStep], build: sway_launch::BuildLocation, ar
         let sway_launch = match plan_step(step, args, &resolved_ids) {
             Ok(sway_launch) => sway_launch::SwayLaunch {
                 require_launch_on_focused_workspace: true,
+                // A timeout that --continue-on-timeout carries on past isn't
+                // rolled back, so a late window would only be left open.
+                catch_late_window: args.rollback_on_error && !args.continue_on_timeout,
                 ..sway_launch
             },
             Err(error) => fail_step(

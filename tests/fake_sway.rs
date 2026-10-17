@@ -931,6 +931,144 @@ fn continue_on_timeout_still_stops_on_any_other_failure() {
     assert!(run.error().contains("step 1:"), "{}", run.error());
 }
 
+/// A handler that opens a `fake-app` window for each launch, `delays[n]`
+/// after the nth launch's process exists, and closes a window on `kill`.
+fn opens_windows_after(
+    delays: Vec<Duration>,
+) -> impl FnMut(&mut Sway, &str) -> Result<(), String> + Send + 'static {
+    let mut launches = 0;
+    move |sway, command| {
+        if let Some(id) = command
+            .strip_prefix("[con_id=")
+            .and_then(|rest| rest.strip_suffix("] kill"))
+        {
+            sway.remove(id.parse().expect("a kill names a container id"));
+        } else if command.starts_with("exec ") {
+            let delay = delays[launches];
+            launches += 1;
+            let token = sway.launch(command);
+            sway.when_marked(token, move |sway, pid| {
+                sway.after(delay, move |sway| {
+                    let id = sway.open_window(Some("fake-app"), Some(pid));
+                    sway.emit("new", id);
+                });
+            });
+        }
+        Ok(())
+    }
+}
+
+/// The error object a failed `--json` run printed last on stderr.
+fn stderr_error_json(output: &Output) -> Value {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    serde_json::from_str(stderr.lines().next_back().unwrap_or_default())
+        .unwrap_or_else(|error| panic!("no JSON error on stderr ({error}): {stderr}"))
+}
+
+#[test]
+fn a_signal_during_a_layout_fails_it_with_rollback_and_the_signal_s_status() {
+    for (signal, status) in [("INT", 130), ("TERM", 143)] {
+        let fake = FakeSway::start(
+            SwayVersion::V1_11,
+            opens_windows_after(vec![Duration::ZERO, Duration::from_secs(60)]),
+        );
+        let layout = TempToml::write(
+            "interrupted",
+            "[[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n\n\
+             [[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\ntimeout = 30\n",
+        );
+        let child = fake
+            .sway_launch()
+            .args([
+                "--layout",
+                layout.to_str().unwrap(),
+                "--rollback-on-error",
+                "--json",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to start sway-launch");
+        // Signalled once the second step is waiting for its window.
+        let waiting_since = std::time::Instant::now();
+        while fake
+            .commands()
+            .iter()
+            .filter(|command| command.starts_with("exec "))
+            .count()
+            < 2
+        {
+            assert!(waiting_since.elapsed() < Duration::from_secs(10));
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        std::thread::sleep(Duration::from_millis(200));
+        let killed = std::process::Command::new("kill")
+            .args([format!("-{signal}"), child.id().to_string()])
+            .status()
+            .expect("failed to run kill");
+        assert!(killed.success());
+
+        let output = child.wait_with_output().expect("sway-launch should exit");
+        assert_eq!(output.status.code(), Some(status), "{output:?}");
+        let error = stderr_error_json(&output);
+        assert!(
+            error["error"].as_str().unwrap().contains(&format!(
+                "step 2: launch \"sleep 30\": interrupted by SIG{signal}"
+            )),
+            "{error}"
+        );
+        assert_eq!(error["rolled_back"], serde_json::json!([100]), "{error}");
+    }
+}
+
+#[test]
+fn rollback_closes_a_window_that_opens_just_after_its_launch_timed_out() {
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        opens_windows_after(vec![Duration::ZERO, Duration::from_millis(1500)]),
+    );
+    let layout = TempToml::write(
+        "late-window",
+        "[[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n\n\
+         [[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\ntimeout = 1\n",
+    );
+    let run = run(
+        &fake,
+        &["--layout", layout.to_str().unwrap(), "--rollback-on-error"],
+    );
+    assert!(!run.succeeded());
+    assert!(
+        run.error()
+            .contains("its window (con_id 101) opened within 2 sec after that"),
+        "{}",
+        run.error()
+    );
+    assert_eq!(
+        run.json["rolled_back"],
+        serde_json::json!([101, 100]),
+        "{}",
+        run.json
+    );
+    assert!(!fake.sway().contains(101));
+}
+
+#[test]
+fn without_rollback_a_timed_out_launch_doesn_t_wait_for_a_late_window() {
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        opens_windows_after(vec![Duration::from_millis(1500)]),
+    );
+    let layout = TempToml::write(
+        "late-window-no-rollback",
+        "[[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\ntimeout = 1\n",
+    );
+    let started = std::time::Instant::now();
+    let run = run(&fake, &["--layout", layout.to_str().unwrap()]);
+    assert!(!run.succeeded());
+    assert!(started.elapsed() < Duration::from_millis(1500));
+    assert!(run.json["container_id"].is_null(), "{}", run.json);
+}
+
 /// A handler that runs every `exec` and, once the launched process exists,
 /// opens one window per title for it, in order, all with `app_id`.
 fn opens_titled_windows_for_each_launch(

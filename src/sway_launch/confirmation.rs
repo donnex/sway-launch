@@ -14,6 +14,7 @@
 //! already exists are confirmed in different ways.
 
 use super::action::{ActionKind, ExecAction, SwayAction};
+use super::interrupt::{self, WaitEnd};
 use super::ipc::{
     event_loop, new_connection, run_single_sway_command, run_sway_command, spawn_event_forwarder,
 };
@@ -611,7 +612,8 @@ impl SwayAction<'_> {
                 self.container_id
             );
         }
-        thread::sleep(wait_time.saturating_sub(poll_started.elapsed()));
+        // A signal cuts this short; run_wait_time() reports it.
+        let _ = interrupt::sleep(wait_time.saturating_sub(poll_started.elapsed()));
         false
     }
 
@@ -651,7 +653,7 @@ impl SwayAction<'_> {
         // Wait before and after running the Sway command: before, to let
         // other running IPC clients finish their own commands; after, to
         // let this command finish before the next action runs.
-        thread::sleep(wait_time);
+        interrupt::sleep(wait_time)?;
 
         // On Sway 1.9 (see node_is_floating()'s doc comment for the same
         // version split), a
@@ -692,11 +694,13 @@ impl SwayAction<'_> {
 
         if self.polls(baseline) {
             if let Some(connection) = poll_connection.as_mut() {
-                return Ok(self.run_poll_then_fallback(connection, baseline));
+                let confirmed = self.run_poll_then_fallback(connection, baseline);
+                interrupt::check()?;
+                return Ok(confirmed);
             }
         }
 
-        thread::sleep(wait_time);
+        interrupt::sleep(wait_time)?;
 
         // Nothing was polled for, so nothing was observed. Honest rather than
         // optimistic: this is the ppt-size case, and the no-connection case.
@@ -805,14 +809,15 @@ impl SwayAction<'_> {
                 return Err(event_timeout_message(self.timing));
             }
 
-            let event = match event_receiver.recv_timeout(remaining) {
+            let event = match interrupt::recv(&event_receiver, remaining) {
                 Ok(event) => event,
-                Err(mpsc::RecvTimeoutError::Timeout) => {
+                Err(WaitEnd::Timeout) => {
                     return Err(event_timeout_message(self.timing));
                 }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err(WaitEnd::Disconnected) => {
                     return Err("Event stream closed unexpectedly".to_string());
                 }
+                Err(WaitEnd::Interrupted(message)) => return Err(message),
             };
 
             let event = match event {
@@ -1062,17 +1067,30 @@ impl ExecAction<'_> {
                 } else {
                     None
                 };
+                let mut message = exec_timeout_message(
+                    timeout,
+                    filter,
+                    title,
+                    &unmatched_windows,
+                    command_running,
+                );
+                let late_window = if self.catch_late_window {
+                    late_marked_window(&event_receiver, &token)
+                } else {
+                    None
+                };
+                if let Some(container_id) = late_window {
+                    message.push_str(&format!(
+                        "; its window (con_id {}) opened within {} sec after that",
+                        container_id,
+                        LATE_WINDOW_GRACE.as_secs()
+                    ));
+                }
                 return Err(RunError {
-                    message: exec_timeout_message(
-                        timeout,
-                        filter,
-                        title,
-                        &unmatched_windows,
-                        command_running,
-                    ),
+                    message,
                     unmatched_windows,
-                    container_id: None,
-                    launch_ownership: None,
+                    container_id: late_window,
+                    launch_ownership: late_window.map(|_| LaunchOwnership::Launched),
                     window_timed_out: true,
                 });
             }
@@ -1126,11 +1144,18 @@ impl ExecAction<'_> {
                 wait = wait.min(next_recheck.saturating_duration_since(time::Instant::now()));
             }
 
-            let event = match event_receiver.recv_timeout(wait) {
+            let event = match interrupt::recv(&event_receiver, wait) {
                 Ok(event) => event,
-                Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err(WaitEnd::Timeout) => continue,
+                Err(WaitEnd::Disconnected) => {
                     return Err("Event stream closed unexpectedly".to_string().into());
+                }
+                Err(WaitEnd::Interrupted(message)) => {
+                    return Err(format!(
+                        "{} while waiting for its window — the launched command may still open one",
+                        message
+                    )
+                    .into());
                 }
             };
 
@@ -1329,6 +1354,38 @@ impl ExecAction<'_> {
     }
 }
 
+/// How long a timed-out launch keeps watching for its window when
+/// `catch_late_window` is set: long enough for an application that was only
+/// just too slow, short enough not to drag out a run that has already failed.
+const LATE_WINDOW_GRACE: time::Duration = time::Duration::from_secs(2);
+
+/// The first window to open within `LATE_WINDOW_GRACE` whose process carries
+/// this launch's marker, whatever its app_id/class: carrying the marker is
+/// what makes it this launch's, and it's only being found so it can be
+/// closed. `None` when none does, or a signal cuts the watch short.
+fn late_marked_window(
+    events: &mpsc::Receiver<swayipc::Fallible<Event>>,
+    token: &str,
+) -> Option<i64> {
+    let end = time::Instant::now() + LATE_WINDOW_GRACE;
+    loop {
+        let left = end.saturating_duration_since(time::Instant::now());
+        match interrupt::recv(events, left) {
+            Ok(Ok(Event::Window(window)))
+                if window.change == WindowChange::New
+                    && window
+                        .container
+                        .pid
+                        .is_some_and(|pid| process_has_env_var(pid, PID_MARKER_VAR, token)) =>
+            {
+                return Some(window.container.id);
+            }
+            Ok(_) => {}
+            Err(_) => return None,
+        }
+    }
+}
+
 /// The instant a timeout-bounded action gives up, computed *before* its
 /// command is sent rather than after. `checked_add` rather than `+`, so an
 /// unrepresentable deadline errors instead of panicking — and doing it first
@@ -1499,12 +1556,13 @@ pub(super) fn run_wait_for_existing_window(
                 ..existing_wait_timeout_message(criteria, timeout).into()
             });
         }
-        match events.recv_timeout(remaining.min(LATE_PROPERTY_RECHECK_INTERVAL)) {
-            Ok(Ok(_)) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+        match interrupt::recv(&events, remaining.min(LATE_PROPERTY_RECHECK_INTERVAL)) {
+            Ok(Ok(_)) | Err(WaitEnd::Timeout) => {}
             Ok(Err(error)) => return Err(error.to_string().into()),
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err(WaitEnd::Disconnected) => {
                 return Err("Event stream closed unexpectedly".to_string().into());
             }
+            Err(WaitEnd::Interrupted(message)) => return Err(message.into()),
         }
         // One read covers every event that arrived meanwhile.
         while let Ok(Ok(_)) = events.try_recv() {}
