@@ -8,13 +8,14 @@
 //! new query belongs here only if it can't answer its question from a `&Node`
 //! alone.
 
+use super::capture::capture;
 use super::ipc::{ipc_error, new_connection};
 use super::target::{LaunchFilter, WindowCriteria};
 use super::tree::{
     con_id_target_problem, expected_position, find_node, find_parent_layout, find_workspace_node,
     focused_workspace, matching_container_ids, move_skip_reason, node_position, present_ids,
     recheck_launched_windows, resolve_awaited_matches, resolve_matches, tiled_window_count,
-    window_listing, ContainerState, ListedWindow, MoveDirection, RecheckedWindow,
+    window_listing, workspace_named, ContainerState, ListedWindow, MoveDirection, RecheckedWindow,
 };
 use super::values::{Position, TitlePattern};
 use swayipc::{Connection, Node, NodeLayout};
@@ -44,6 +45,18 @@ pub fn list_windows(criteria: WindowCriteria) -> Result<Vec<ListedWindow>, Strin
         Err(error) => return Err(ipc_error(error)),
     };
     Ok(window_listing(&tree, criteria))
+}
+
+/// `--capture` (#31): the `--layout` file rebuilding the workspace named
+/// `name`, or the focused one.
+pub fn capture_workspace(name: Option<&str>) -> Result<String, String> {
+    let tree = new_connection()?.get_tree().map_err(ipc_error)?;
+    let workspace = match name {
+        Some(name) => workspace_named(&tree, name)
+            .ok_or_else(|| format!("no workspace is named {:?}", name))?,
+        None => focused_workspace(&tree).ok_or_else(|| "no workspace is focused".to_string())?,
+    };
+    capture(workspace)
 }
 
 /// The one window `criteria` accepts right now, `None` while there is

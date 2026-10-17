@@ -5340,6 +5340,189 @@ fn assert_every_shipped_template_builds_its_recorded_shape(extra_args: &[&str]) 
     );
 }
 
+/// Every window on `workspace` (tiled and floating) labelled "window", for
+/// comparing two shapes whose windows have different names.
+fn anonymous_shape(connection: &mut Connection, workspace: &str) -> String {
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let mut workspaces = Vec::new();
+    collect_workspaces(&tree, &mut workspaces);
+    let node = workspaces
+        .into_iter()
+        .find(|node| node.name.as_deref() == Some(workspace))
+        .unwrap_or_else(|| panic!("no workspace {workspace:?}"));
+    let windows = node
+        .nodes
+        .iter()
+        .chain(node.floating_nodes.iter())
+        .flat_map(|child| {
+            let mut ids = Vec::new();
+            collect_window_ids(child, &mut ids);
+            ids
+        })
+        .map(|id| (id, "window".to_string()))
+        .collect();
+    render_template_shape(&tree, &windows).replace(&format!("workspace {workspace}"), "workspace")
+}
+
+fn collect_window_ids(node: &Node, ids: &mut Vec<i64>) {
+    if node.nodes.is_empty() && node.floating_nodes.is_empty() {
+        ids.push(node.id);
+    }
+    for child in node.nodes.iter().chain(node.floating_nodes.iter()) {
+        collect_window_ids(child, ids);
+    }
+}
+
+/// Runs `sway-launch --capture <workspace>` and writes what it printed to a
+/// temporary layout file.
+fn capture_to_file(workspace: &str, name: &str) -> TempToml {
+    let output = sway_launch_command()
+        .args(["--capture", workspace])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "--capture {workspace} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    TempToml::write(name, &String::from_utf8_lossy(&output.stdout))
+}
+
+#[test]
+fn every_shipped_template_round_trips_through_capture() {
+    fresh_workspace();
+    // #31: capturing what a template built and replaying the capture on a
+    // fresh workspace must build the same shape: layouts, child order and
+    // sizes. dual-output and workspace-spread span outputs or workspaces,
+    // which a one-workspace capture can't hold.
+    let mut connection = connect();
+    let original_workspace = focused_workspace_name(&mut connection);
+    let slot_names = builtin_slot_names();
+    let mut paths: Vec<_> = std::fs::read_dir(templates_dir())
+        .expect("templates/ should be readable")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            !matches!(
+                path.file_stem().and_then(|stem| stem.to_str()),
+                Some("dual-output" | "workspace-spread")
+            )
+        })
+        .collect();
+    paths.sort();
+    let mut mismatches = Vec::new();
+    for path in &paths {
+        let name = path.file_stem().unwrap().to_str().unwrap().to_string();
+        let slot_count = slot_names[&name].len();
+        connection
+            .run_command("[app_id=foot] kill")
+            .expect("kill should succeed");
+        let built = format!("capture-built-{name}");
+        connection
+            .run_command(format!("workspace {built}"))
+            .expect("workspace switch should succeed");
+        let output = sway_launch_command()
+            .args([
+                "--template",
+                path.to_str().unwrap(),
+                "--apps",
+                &vec!["foot"; slot_count].join(","),
+                "--timeout",
+                "10",
+            ])
+            .output()
+            .expect("failed to run sway-launch binary");
+        assert!(output.status.success(), "{name} failed to build");
+        let shape = anonymous_shape(&mut connection, &built);
+        let file = capture_to_file(&built, &format!("capture-{name}"));
+
+        connection
+            .run_command("[app_id=foot] kill")
+            .expect("kill should succeed");
+        let replayed = format!("capture-replayed-{name}");
+        connection
+            .run_command(format!("workspace {replayed}"))
+            .expect("workspace switch should succeed");
+        let output = sway_launch_command()
+            .args(["--layout", file.to_str().unwrap(), "--timeout", "10"])
+            .output()
+            .expect("failed to run sway-launch binary");
+        assert!(
+            output.status.success(),
+            "{name}'s capture failed to replay: {}\n{}",
+            String::from_utf8_lossy(&output.stderr),
+            std::fs::read_to_string(file.to_str().unwrap()).unwrap_or_default()
+        );
+        let replayed_shape = anonymous_shape(&mut connection, &replayed);
+        if replayed_shape != shape {
+            mismatches.push(format!(
+                "{name}: built\n{shape}replayed\n{replayed_shape}capture:\n{}",
+                std::fs::read_to_string(file.to_str().unwrap()).unwrap_or_default()
+            ));
+        }
+    }
+    connection
+        .run_command("[app_id=foot] kill")
+        .expect("kill should succeed");
+    connection
+        .run_command(format!("workspace {original_workspace}"))
+        .expect("workspace switch should succeed");
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn capture_keeps_a_floating_windows_geometry_and_mark() {
+    fresh_workspace();
+    let mut connection = connect();
+    let built = focused_workspace_name(&mut connection);
+    let (original, original_guard) = launch_foot(&[
+        "--floating",
+        "--width",
+        "500px",
+        "--height",
+        "300px",
+        "--position",
+        "40,50",
+        "--mark",
+        "captured-float",
+    ]);
+    let before = get_settled_node(&mut connection, original);
+    let file = capture_to_file(&built, "capture-floating");
+    drop(original_guard);
+
+    fresh_workspace();
+    let output = sway_launch_command()
+        .args(["--layout", file.to_str().unwrap(), "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout is the --json result");
+    let replayed = result["container_ids"][0].as_i64().expect("one window");
+    let _guard = KillOnDrop(replayed);
+    let after = get_settled_node(&mut connection, replayed);
+    assert!(node_is_floating(&after));
+    assert_eq!(after.marks, vec!["captured-float".to_string()]);
+    assert_eq!(
+        (
+            after.rect.width,
+            after.rect.height,
+            after.deco_rect.x,
+            after.deco_rect.y
+        ),
+        (
+            before.rect.width,
+            before.rect.height,
+            before.deco_rect.x,
+            before.deco_rect.y
+        )
+    );
+}
+
 #[test]
 fn template_params_build_the_shapes_of_the_ratio_variants_they_replaced() {
     fresh_workspace();

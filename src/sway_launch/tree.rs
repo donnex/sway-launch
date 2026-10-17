@@ -283,6 +283,17 @@ pub(super) fn focused_workspace(tree: &Node) -> Option<&Node> {
     nearest_of_kind(&path, NodeType::Workspace)
 }
 
+/// The workspace named `name`, compared ignoring case as Sway does.
+pub(super) fn workspace_named<'a>(tree: &'a Node, name: &str) -> Option<&'a Node> {
+    descendants(tree).find(|node| {
+        node.node_type == NodeType::Workspace
+            && node
+                .name
+                .as_deref()
+                .is_some_and(|candidate| candidate.eq_ignore_ascii_case(name))
+    })
+}
+
 /// How many tiled windows `workspace` holds, at any depth. Floating windows
 /// don't count: they don't take part in the tiled shape a run builds.
 pub(super) fn tiled_window_count(workspace: &Node) -> usize {

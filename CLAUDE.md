@@ -101,6 +101,7 @@ instruction set: where it disagrees with this file or the code, it's stale.
   | `confirmation.rs` | how an action's effect is established: event matching, state checks, polling, the `run_*` drivers |
   | `outcome.rs` | `RunOutcome`/`RunError`/`UnmatchedWindow`/`ActionRecord`/`ActionStatus`/`LaunchOwnership` |
   | `interrupt.rs` | SIGINT/SIGTERM as a flag (`install()`, `check()`), and the interruptible `sleep()`/`recv()` every long wait uses |
+  | `capture.rs` | `--capture` (#31): `capture()`, a workspace `Node` to the `--layout` file rebuilding it, pure |
   | `launch.rs` | `SwayLaunch`, `BuildLocation`, `build_actions()`/`execute_plan()`/`run()`, `debug_events()` |
 
 **Layering rules:**
@@ -273,7 +274,7 @@ way. A poll cycle and the move guard each share one connection across their read
 
 - stdout carries exactly one value: the container id, or the `--json` object. The exceptions are
   modes whose output *is* the job (`--debug-events`, `--dry-run`, `--validate`, `--list-templates`,
-  `--list-windows`, `--show-template`, `--completions`).
+  `--list-windows`, `--show-template`, `--completions`, `--capture`).
 - Every stdout write goes through `print_line()`/`print_str()`, so a closed pipe is a clean exit
   (`exit_on_write_failure()`), never a panic. `run_steps()`'s per-step ids use
   `print_line_deferring_failure()`, so a closed stdout never stops a layout halfway.
@@ -291,8 +292,13 @@ way. A poll cycle and the move guard each share one connection across their read
 
 ### Standalone modes
 
-`--completions`, `--list-templates`, `--show-template`, `--list-windows` and `--debug-events` are
-dispatched first in `main()`, before any target is resolved. Every standalone mode, `--layout` and
+`--completions`, `--list-templates`, `--show-template`, `--list-windows`, `--capture` and
+`--debug-events` are dispatched first in `main()`, before any target is resolved. `--capture`'s
+`capture()` builds each split level by level, since splitting a container's only child changes its
+layout instead of nesting one: every child's first window opens beside its siblings first, then each
+nested child's is split and focused. Sizes come last, through each child's first window, in the
+order its module doc explains (`every_shipped_template_round_trips_through_capture` holds it to
+every template's shape). It's the one recursion over a tree outside `tree.rs`. Every standalone mode, `--layout` and
 `--template` build their `conflicts_with_all` with `per_window_and()` from `PER_WINDOW_ARGS`, so a
 per-window flag is never silently discarded. `--list-windows` alone keeps `LIST_WINDOWS_FILTERS`
 (`-a`/`-c`/`--mark-match`/`--title`, via `per_window_but_filters_and()`): they narrow its listing
