@@ -5081,28 +5081,28 @@ fn every_basic_example_script_launches_successfully() {
 #[test]
 fn dual_output_template_moves_windows_to_separate_outputs() {
     fresh_workspace();
-    // dual-output.toml ships with HDMI-A-1/DP-1 as placeholder output names
-    // (documented in the file's own header comment) — a real user swaps
-    // those for their own setup's names, so this test does the equivalent:
-    // create a second headless output and substitute its real name in.
+    // The built-in dual-output ships with HDMI-A-1/DP-1 as placeholder
+    // output names; a bindings file supplies the real ones per slot, the way
+    // the file's own header comment tells a user to (#30).
     let mut connection = connect();
     let created_output = CreatedOutput::new(&mut connection);
     let new_output = created_output.name().to_string();
     let first_output = original_output().to_string();
 
-    let contents = std::fs::read_to_string(templates_dir().join("dual-output.toml"))
-        .expect("dual-output.toml should be readable");
-    let contents = contents
-        .replace("HDMI-A-1", &first_output)
-        .replace("DP-1", &new_output);
-    let path = TempToml::write("dual-output", &contents);
+    let bindings = TempToml::write(
+        "dual-output-bindings",
+        &format!(
+            "[[binding]]\nslot = \"first\"\ncommand = \"foot\"\noutput = \"{first_output}\"\n\n\
+             [[binding]]\nslot = \"second\"\ncommand = \"foot\"\noutput = \"{new_output}\"\n"
+        ),
+    );
 
     let output = sway_launch_command()
         .args([
             "--template",
-            path.to_str().unwrap(),
-            "--apps",
-            "foot,foot",
+            "dual-output",
+            "--bindings",
+            bindings.to_str().unwrap(),
             "--timeout",
             "10",
         ])
@@ -5110,7 +5110,7 @@ fn dual_output_template_moves_windows_to_separate_outputs() {
         .expect("failed to run sway-launch binary");
     assert!(
         output.status.success(),
-        "dual-output.toml failed: {}",
+        "dual-output failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
@@ -6878,6 +6878,45 @@ fn workspace_number_finds_a_numbered_and_labelled_workspace() {
         .expect("failed to run sway-launch binary");
     assert!(output.status.success());
     assert_eq!(single_action_status(&output.stdout), "already_satisfied");
+}
+
+#[test]
+fn on_output_builds_a_layout_on_that_output() {
+    fresh_workspace();
+    let mut connection = connect();
+    let created_output = CreatedOutput::new(&mut connection);
+    let new_output = created_output.name().to_string();
+    let path = TempToml::write(
+        "on-output",
+        "[[step]]\ncommand = \"foot\"\napp_id = \"foot\"\n",
+    );
+
+    let output = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--on-output",
+            &new_output,
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("--json output should be valid JSON");
+    let container_id = json["container_ids"][0]
+        .as_i64()
+        .unwrap_or_else(|| panic!("no container id in {json}"));
+    let _guard = KillOnDrop(container_id);
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        output_containing(&tree, container_id, None),
+        Some(new_output.as_str())
+    );
 }
 
 #[test]

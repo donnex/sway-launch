@@ -156,6 +156,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   TOML without running it. A value ending in `.toml` is always read as a file, so writing a
   built-in's name with that extension fails — but the error names the built-in and the bare name
   to use instead. (#88)
+- A bindings file can place each slot's window, with the same `workspace`, `workspace_number` and
+  `output` keys a step has, replacing the template's own. The built-in `dual-output`, which ships
+  with placeholder output names, now works as a built-in: give each slot your own outputs in the
+  bindings instead of copying the template out and editing it. `--on-output <OUTPUT>` builds a
+  `--layout` or `--template` run on an output of your choice, overriding a template's `[layout]`
+  output the way `--on-workspace` overrides its workspace. (#30)
 - Layouts and templates are built on one workspace, and say when that can't work. They assume an
   empty workspace that keeps focus: run from a terminal, the Quickstart grid used to be built around
   that terminal, and switching workspace while an application started split the layout across two
