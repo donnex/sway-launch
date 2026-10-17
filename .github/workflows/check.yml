@@ -79,17 +79,17 @@ jobs:
           tool: cargo-llvm-cov@0.9.1
 
       # Excluded by filename: main.rs (CLI wiring, covered by the tests/
-      # integration suites), ipc.rs and query.rs (compositor-bound, covered by
-      # tests/live_sway.rs instead -- see CLAUDE.md's Rust conventions), and
-      # the unit-test files themselves (test_support.rs and every */tests.rs),
-      # so tests can't count as covered production code. Thresholds sit a few
-      # points under the baseline measured 2026-10-12 (72.16% regions, 71.56%
-      # lines, 80.95% functions, 28 of 147 uncovered); most of the gap is the
-      # IPC-touching run_* drivers in confirmation.rs and launch.rs.
+      # integration suites) and the unit-test files themselves
+      # (test_support.rs and every */tests.rs), so tests can't count as
+      # covered production code. The IPC layers (ipc.rs, query.rs) are
+      # measured: tests/fake_sway.rs drives them against a fake compositor
+      # (#103). Thresholds sit a few points under the baseline measured
+      # 2026-10-17 (90.58% regions, 92.20% lines, 91.81% functions); most of
+      # the gap is IPC-error branches and launch.rs's debug-events loop.
       - name: cargo llvm-cov (coverage regression gate)
         run: |
-          cargo llvm-cov --locked --ignore-filename-regex '(^|/)(main|ipc|query|test_support|tests)\.rs$' \
-            --fail-under-lines 68 --fail-under-regions 68 --fail-under-functions 77
+          cargo llvm-cov --locked --ignore-filename-regex '(^|/)(main|test_support|tests)\.rs$' \
+            --fail-under-lines 88 --fail-under-regions 86 --fail-under-functions 87
 
   # Builds the shipped binary with the toolchain Cargo.toml's rust-version
   # declares, so that floor can't silently drift past what a dependency bump
