@@ -64,7 +64,10 @@ fn flag_name_is_the_snake_case_cli_flag_and_ignores_the_value() {
         (ActionKind::Focus, "focus"),
         (ActionKind::NewColumn, "new_column"),
         (ActionKind::NewRow, "new_row"),
-        (ActionKind::Workspace("3"), "workspace"),
+        (
+            ActionKind::Workspace(WorkspaceTarget::Name("3")),
+            "workspace",
+        ),
         (ActionKind::Output("HDMI-A-1"), "output"),
         (ActionKind::Mark("pinned"), "mark"),
         (ActionKind::Height(Size::Pixels(300)), "height"),
@@ -129,8 +132,19 @@ fn sway_command_mark_quotes_the_mark() {
 #[test]
 fn sway_command_workspace_quotes_the_workspace() {
     assert_eq!(
-        targeted(ActionKind::Workspace("web, exec evil")).sway_command(),
+        targeted(ActionKind::Workspace(WorkspaceTarget::Name(
+            "web, exec evil"
+        )))
+        .sway_command(),
         "[con_id=42] move workspace \"web, exec evil\""
+    );
+}
+
+#[test]
+fn sway_command_workspace_number_uses_sway_s_number_keyword() {
+    assert_eq!(
+        targeted(ActionKind::Workspace(WorkspaceTarget::Number(2))).sway_command(),
+        "[con_id=42] move workspace number 2"
     );
 }
 
@@ -189,7 +203,7 @@ fn display_names_every_kind_with_the_same_container_id_wording() {
         (ActionKind::NewColumn, "New column (container id: 42)"),
         (ActionKind::NewRow, "New row (container id: 42)"),
         (
-            ActionKind::Workspace("web"),
+            ActionKind::Workspace(WorkspaceTarget::Name("web")),
             "Workspace (container id: 42) (workspace: web)",
         ),
         (

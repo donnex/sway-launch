@@ -210,6 +210,8 @@ pub(super) fn resolve_matches(matches: Vec<i64>, criteria: &str) -> Result<i64, 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(super) struct ContainerState {
     pub(super) workspace: Option<String>,
+    /// The workspace's `num`: the number its name starts with, or -1.
+    pub(super) workspace_number: Option<i32>,
     pub(super) output: Option<String>,
     /// Whether the container's workspace is the one its output is showing.
     pub(super) workspace_visible: bool,
@@ -241,6 +243,7 @@ impl ContainerState {
         Some(ContainerState {
             in_scratchpad: is_scratchpad_workspace(workspace.as_deref()),
             workspace,
+            workspace_number: nearest_of_kind(&path, NodeType::Workspace).and_then(|node| node.num),
             output: name_of_nearest(&path, NodeType::Output),
             workspace_visible,
             floating: node_is_floating(node),

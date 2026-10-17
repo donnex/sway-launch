@@ -6819,3 +6819,102 @@ fn list_windows_includes_a_marked_split_container() {
     assert_eq!(rows[0]["split_container"], true);
     assert_ne!(rows[0]["container_id"], first);
 }
+
+/// Every workspace name Sway currently has.
+fn workspace_names(connection: &mut Connection) -> Vec<String> {
+    connection
+        .get_workspaces()
+        .expect("get_workspaces should succeed")
+        .into_iter()
+        .map(|workspace| workspace.name)
+        .collect()
+}
+
+#[test]
+fn workspace_number_finds_a_numbered_and_labelled_workspace() {
+    let home = fresh_workspace();
+    let mut connection = connect();
+    // A workspace exists only while it holds a window (or has focus), so the
+    // labelled one gets a window of its own first.
+    let (_occupant, _occupant_guard) = launch_foot(&["--workspace", "47: live-web"]);
+    let (container_id, _guard) = launch_foot(&[]);
+
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--workspace-number",
+            "47",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(single_action_status(&output.stdout), "changed");
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        workspace_containing(&tree, container_id, None),
+        Some("47: live-web")
+    );
+    assert!(
+        !workspace_names(&mut connection).contains(&"47".to_string()),
+        "no workspace literally named 47 should have been created"
+    );
+    assert_ne!(home, "47: live-web");
+
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--workspace-number",
+            "47",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(output.status.success());
+    assert_eq!(single_action_status(&output.stdout), "already_satisfied");
+}
+
+#[test]
+fn on_workspace_number_builds_a_layout_on_the_numbered_workspace() {
+    fresh_workspace();
+    let mut connection = connect();
+    let (_occupant, _occupant_guard) = launch_foot(&["--workspace", "48: live-build"]);
+    let path = TempToml::write(
+        "on-workspace-number",
+        "[[step]]\ncommand = \"foot\"\napp_id = \"foot\"\n",
+    );
+
+    let output = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--on-workspace-number",
+            "48",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("--json output should be valid JSON");
+    let container_id = json["container_ids"][0]
+        .as_i64()
+        .unwrap_or_else(|| panic!("no container id in {json}"));
+    let _guard = KillOnDrop(container_id);
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        workspace_containing(&tree, container_id, None),
+        Some("48: live-build")
+    );
+    assert!(!workspace_names(&mut connection).contains(&"48".to_string()));
+}

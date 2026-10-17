@@ -88,6 +88,7 @@ const PER_WINDOW_ARGS: &[&str] = &[
     "new_column",
     "new_row",
     "workspace",
+    "workspace_number",
     "output",
     "height",
     "width",
@@ -182,7 +183,7 @@ struct Args {
     // the workspace the window opened on, and the workspace move then drops
     // it into the target as an ordinary sibling (#45).
     /// Move window to new column (move right)
-    #[clap(short, long, conflicts_with = "workspace")]
+    #[clap(short, long, conflicts_with_all = ["workspace", "workspace_number"])]
     new_column: bool,
 
     /// Set height on the window
@@ -194,12 +195,18 @@ struct Args {
     width: Option<sway_launch::Size>,
 
     /// Move window to new row (move down)
-    #[clap(long, short = 'r', conflicts_with = "workspace")]
+    #[clap(long, short = 'r', conflicts_with_all = ["workspace", "workspace_number"])]
     new_row: bool,
 
     /// Move the window to workspace
     #[clap(long, value_parser = sway_launch::validate_workspace_argument)]
     workspace: Option<String>,
+
+    /// Move the window to the workspace with this number, the way Sway's
+    /// "workspace number N" finds it: 2 matches a workspace named "2: web"
+    #[clap(long, value_name = "N", conflicts_with = "workspace",
+        value_parser = sway_launch::parse_workspace_number)]
+    workspace_number: Option<i32>,
 
     /// Move the window to output (monitor)
     #[clap(long, value_parser = sway_launch::validate_output_argument)]
@@ -248,7 +255,7 @@ struct Args {
     /// Print every Sway IPC event until interrupted, one JSON object per line
     /// with --json. Can't be combined with a command or per-window flags
     #[clap(short, long, conflicts_with_all = per_window_and(&[
-        "bindings", "apps", "rollback_on_error", "on_workspace", "no_lock",
+        "bindings", "apps", "rollback_on_error", "on_workspace", "on_workspace_number", "no_lock",
     ]))]
     debug_events: bool,
 
@@ -259,7 +266,7 @@ struct Args {
     /// Generate a shell completion script and print it to stdout
     #[clap(long, value_enum, conflicts_with_all = per_window_and(&[
         "debug_events", "layout", "template", "list_templates", "bindings", "apps",
-        "rollback_on_error", "on_workspace", "no_lock", "dry_run", "validate", "show_template", "json",
+        "rollback_on_error", "on_workspace", "on_workspace_number", "no_lock", "dry_run", "validate", "show_template", "json",
     ]))]
     completions: Option<clap_complete::Shell>,
 
@@ -292,7 +299,7 @@ struct Args {
     /// List built-in --template names and exit
     #[clap(long, conflicts_with_all = per_window_and(&[
         "debug_events", "layout", "template", "completions", "bindings", "apps",
-        "rollback_on_error", "on_workspace", "no_lock", "dry_run", "validate", "show_template",
+        "rollback_on_error", "on_workspace", "on_workspace_number", "no_lock", "dry_run", "validate", "show_template",
     ]))]
     list_templates: bool,
 
@@ -301,7 +308,7 @@ struct Args {
     /// windows --existing would choose between
     #[clap(long, conflicts_with_all = per_window_but_filters_and(&[
         "debug_events", "layout", "template", "completions", "list_templates", "show_template",
-        "bindings", "apps", "rollback_on_error", "on_workspace", "no_lock", "dry_run", "validate",
+        "bindings", "apps", "rollback_on_error", "on_workspace", "on_workspace_number", "no_lock", "dry_run", "validate",
     ]))]
     list_windows: bool,
 
@@ -311,7 +318,7 @@ struct Args {
     /// {"name": ..., "contents": "..."}
     #[clap(long, value_name = "NAME_OR_PATH", conflicts_with_all = per_window_and(&[
         "debug_events", "layout", "template", "completions", "bindings", "apps",
-        "rollback_on_error", "on_workspace", "no_lock", "dry_run", "validate",
+        "rollback_on_error", "on_workspace", "on_workspace_number", "no_lock", "dry_run", "validate",
     ]))]
     show_template: Option<PathBuf>,
 
@@ -340,6 +347,13 @@ struct Args {
     #[clap(long, value_name = "WORKSPACE",
         value_parser = sway_launch::validate_workspace_argument)]
     on_workspace: Option<String>,
+
+    /// --on-workspace by number, the way Sway's "workspace number N" finds
+    /// it: 2 matches a workspace named "2: web". Requires --layout or
+    /// --template
+    #[clap(long, value_name = "N", conflicts_with = "on_workspace",
+        value_parser = sway_launch::parse_workspace_number)]
+    on_workspace_number: Option<i32>,
 
     /// Run a --layout/--template even if another run of the same file or
     /// template on the same workspace is still in progress. Requires
@@ -458,6 +472,15 @@ fn main() {
             .exit();
     }
 
+    if args.on_workspace_number.is_some() && args.layout.is_none() && args.template.is_none() {
+        Args::command()
+            .error(
+                ErrorKind::MissingRequiredArgument,
+                "--on-workspace-number requires --layout or --template",
+            )
+            .exit();
+    }
+
     if args.no_lock && args.layout.is_none() && args.template.is_none() {
         Args::command()
             .error(
@@ -525,7 +548,13 @@ fn main() {
         mark: args.mark.as_deref(),
         new_column: args.new_column,
         new_row: args.new_row,
-        workspace: args.workspace.as_deref(),
+        workspace: args
+            .workspace
+            .as_deref()
+            .map(sway_launch::WorkspaceTarget::Name)
+            .or(args
+                .workspace_number
+                .map(sway_launch::WorkspaceTarget::Number)),
         output: args.output.as_deref(),
         height: args.height,
         width: args.width,
@@ -1041,7 +1070,7 @@ fn run_layout(path: &Path, args: &Args) -> ! {
     };
 
     let build = sway_launch::BuildLocation {
-        workspace: args.on_workspace.as_deref(),
+        workspace: on_workspace(args),
         output: None,
     };
     run_steps(&parsed_layout.step, build, args);
@@ -1394,13 +1423,20 @@ fn run_template(path: &Path, bindings_source: BindingsSource, args: &Args) -> ! 
     // --on-workspace wins over the template's own [layout] workspace; the
     // template's output still applies, so a new workspace is created there.
     let build = sway_launch::BuildLocation {
-        workspace: args
-            .on_workspace
-            .as_deref()
-            .or(parsed_template.layout.workspace.as_deref()),
+        workspace: on_workspace(args).or(parsed_template.layout.workspace_target()),
         output: parsed_template.layout.output.as_deref(),
     };
     run_steps(&resolved_steps, build, args);
+}
+
+/// `--on-workspace`/`--on-workspace-number` (clap allows at most one).
+fn on_workspace(args: &Args) -> Option<sway_launch::WorkspaceTarget<'_>> {
+    args.on_workspace
+        .as_deref()
+        .map(sway_launch::WorkspaceTarget::Name)
+        .or(args
+            .on_workspace_number
+            .map(sway_launch::WorkspaceTarget::Number))
 }
 
 /// Builds `Bindings` from `--apps`' comma-separated command list, mapping
@@ -2295,6 +2331,7 @@ mod tests {
         "validate",
         "rollback_on_error",
         "on_workspace",
+        "on_workspace_number",
         "no_lock",
         "json",
         "verbose",

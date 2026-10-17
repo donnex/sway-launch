@@ -21,7 +21,7 @@
 use super::ipc::quote_sway_string;
 use super::process_marker::PID_MARKER_VAR;
 use super::target::LaunchFilter;
-use super::values::{Position, Size, Split};
+use super::values::{Position, Size, Split, WorkspaceTarget};
 use std::{fmt, time};
 
 /// Launches `command` and waits for the window it opens.
@@ -60,7 +60,7 @@ pub(super) enum ActionKind<'a> {
     Focus,
     NewColumn,
     NewRow,
-    Workspace(&'a str),
+    Workspace(WorkspaceTarget<'a>),
     Output(&'a str),
     /// `--workspace` and `--output` together: after the window moved to the
     /// workspace, move that whole workspace to the output, so the window
@@ -68,7 +68,7 @@ pub(super) enum ActionKind<'a> {
     /// container move to an output would land on whatever workspace that
     /// output is showing, undoing the workspace move.
     WorkspaceToOutput {
-        workspace: &'a str,
+        workspace: WorkspaceTarget<'a>,
         output: &'a str,
     },
     Mark(&'a str),
@@ -261,7 +261,7 @@ impl<'a> SwayAction<'a> {
             ActionKind::NewColumn => "move right".to_string(),
             ActionKind::NewRow => "move down".to_string(),
             ActionKind::Workspace(workspace) => {
-                format!("move workspace {}", quote_sway_string(workspace))
+                format!("move workspace {}", workspace.sway_argument())
             }
             ActionKind::Output(output) => {
                 format!("move container to output {}", quote_sway_string(output))

@@ -660,3 +660,42 @@ fn resolve_launch_directory_expands_home_and_keeps_absolute_paths() {
         std::path::PathBuf::from("/")
     );
 }
+
+#[test]
+fn parse_workspace_number_accepts_a_whole_number_from_zero() {
+    assert_eq!(parse_workspace_number("2"), Ok(2));
+    assert_eq!(parse_workspace_number("0"), Ok(0));
+    assert_eq!(parse_workspace_number("2147483647"), Ok(i32::MAX));
+}
+
+#[test]
+fn parse_workspace_number_rejects_anything_else() {
+    // -1 is the number Sway gives every workspace whose name doesn't start
+    // with a digit, so it would match all of them.
+    for value in ["-1", "2147483648", "two", "2: web", "", "1.5"] {
+        assert!(
+            parse_workspace_number(value).is_err(),
+            "{value:?} should be rejected"
+        );
+    }
+}
+
+#[test]
+fn workspace_target_matches_a_name_ignoring_case_and_a_number_by_num() {
+    assert!(WorkspaceTarget::Name("web").matches(Some("Web"), Some(-1)));
+    assert!(!WorkspaceTarget::Name("2").matches(Some("2: web"), Some(2)));
+    assert!(WorkspaceTarget::Number(2).matches(Some("2: web"), Some(2)));
+    assert!(!WorkspaceTarget::Number(2).matches(Some("12"), Some(12)));
+    assert!(!WorkspaceTarget::Number(2).matches(None, None));
+}
+
+#[test]
+fn workspace_target_quotes_a_name_but_not_a_number() {
+    assert_eq!(
+        WorkspaceTarget::Name("2: web").sway_argument(),
+        "\"2: web\""
+    );
+    assert_eq!(WorkspaceTarget::Number(2).sway_argument(), "number 2");
+    assert_eq!(WorkspaceTarget::Number(2).to_string(), "number 2");
+    assert_eq!(WorkspaceTarget::Name("web").to_string(), "web");
+}

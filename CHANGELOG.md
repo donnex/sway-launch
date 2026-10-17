@@ -90,6 +90,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as `no window with container id N`, and a workspace's or output's id as `container N is a
   workspace, not a window`, rather than as a window that "may have closed". A bare `--con-id N`
   with no actions is still printed back unchecked. (#107)
+- `--workspace-number <N>`, and `workspace_number` in a layout or template step, move a window to a
+  workspace by number the way Sway's own `workspace number N` keybindings do, so `2` finds a
+  workspace named `2: web`. `--workspace 2` used to be the only option there, and it silently
+  created a second workspace literally named `2` next to `2: web` while reporting success.
+  `--on-workspace-number <N>` and a template's `[layout]` `workspace_number` build a whole layout on
+  the numbered workspace the same way. (#43)
 - `--list-windows`: a table of every open window, scratchpad included, with the container id,
   app_id, class, workspace, marks and title a matcher or `--con-id` needs, so finding them no
   longer means reading `swaymsg -t get_tree`. `--json` prints the same as `{"windows": [...]}`,
