@@ -417,6 +417,29 @@ fn validate_exec_command_rejects_an_unquoted_semicolon() {
 }
 
 #[test]
+fn validate_exec_command_rejects_a_shell_comment() {
+    // The command runs inside ( ... ), whose ) a comment would swallow.
+    for command in ["foot # terminal", "#foot", "foot&#x", "foot;#x"] {
+        assert!(validate_exec_command(command).is_err(), "{command:?}");
+    }
+    let error = validate_exec_command("foot # terminal").expect_err("a comment must fail");
+    assert!(error.contains("comment"), "{error:?}");
+}
+
+#[test]
+fn validate_exec_command_accepts_a_hash_that_starts_no_comment() {
+    for command in [
+        "foot -T a#b",
+        "foot -T '#1'",
+        "foot -T \"# x\"",
+        "foot -T \\#1",
+        "xdg-open https://example.com/#top",
+    ] {
+        assert!(validate_exec_command(command).is_ok(), "{command:?}");
+    }
+}
+
+#[test]
 fn validate_exec_command_accepts_separators_inside_quotes() {
     assert!(validate_exec_command("foot -T \"a,b; c\"").is_ok());
     assert!(validate_exec_command("foot -T 'a,b; c'").is_ok());

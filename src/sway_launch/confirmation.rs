@@ -21,8 +21,8 @@ use super::ipc::{
 };
 use super::outcome::{ActionOutcome, LaunchOwnership, RunError, UnmatchedWindow};
 use super::process_marker::{
-    generate_pid_marker_token, process_has_env_var, scan_marker_presence, MarkerPresence,
-    MarkerTracker, MARKER_SCAN_INTERVAL, PID_MARKER_FALLBACK_GRACE, PID_MARKER_VAR,
+    generate_pid_marker_token, launch_evidence, scan_marker_presence, LaunchEvidence,
+    MarkerPresence, MarkerTracker, MARKER_SCAN_INTERVAL, PID_MARKER_FALLBACK_GRACE, PID_MARKER_VAR,
 };
 use super::query::{
     awaited_existing_container_id, container_state, container_state_on, ensure_container_exists,
@@ -1435,10 +1435,11 @@ impl ExecAction<'_> {
     /// process, or any other coincidentally-timed window — since Sway
     /// broadcasts window events to every IPC connection. To disambiguate,
     /// the launched command's environment is tagged with a random,
-    /// per-invocation marker (`env <PID_MARKER_VAR>=<token> <command>`,
-    /// prepended without otherwise touching the user's command), and a
-    /// content-matching event is only accepted outright once
-    /// `/proc/<event pid>/environ` confirms that marker.
+    /// per-invocation marker (`export <PID_MARKER_VAR>=<token> && ( <command> )`,
+    /// see `ExecAction::sway_command()`), and a content-matching event is only
+    /// accepted outright once `launch_evidence()` confirms it: the marker in
+    /// `/proc/<event pid>/environ`, or an ancestor of that process that is
+    /// this launch's own (#96).
     ///
     /// A content-matching event whose marker doesn't confirm isn't rejected
     /// outright, though: some applications (browsers, editors) are
@@ -1719,7 +1720,7 @@ impl ExecAction<'_> {
                         launched_by_this_run: window
                             .container
                             .pid
-                            .is_some_and(|pid| process_has_env_var(pid, PID_MARKER_VAR, &token)),
+                            .is_some_and(|pid| launch_evidence(pid, &token).is_some()),
                     };
                     if verbose {
                         diagnostic!(
@@ -1747,17 +1748,23 @@ impl ExecAction<'_> {
             // is no longer one to report.
             unmatched_windows.retain(|unmatched| unmatched.container_id != container_id);
 
-            let pid_confirmed = window
+            let evidence = window
                 .container
                 .pid
-                .is_some_and(|pid| process_has_env_var(pid, PID_MARKER_VAR, &token));
+                .and_then(|pid| launch_evidence(pid, &token));
 
-            if pid_confirmed {
+            if let Some(evidence) = evidence {
                 if verbose {
                     diagnostic!(
-                        "Event match: {:?} container id {} (PID-marker-confirmed)",
+                        "Event match: {:?} container id {} (PID-marker-confirmed{})",
                         window.change,
-                        window.container.id
+                        window.container.id,
+                        match evidence {
+                            LaunchEvidence::OwnEnvironment => String::new(),
+                            LaunchEvidence::Ancestor(ancestor) => {
+                                format!(" through its ancestor process {}", ancestor)
+                            }
+                        }
                     );
                 }
                 return Ok((window.container.id, LaunchOwnership::Launched));
@@ -1886,7 +1893,7 @@ fn late_marked_window(
                     && window
                         .container
                         .pid
-                        .is_some_and(|pid| process_has_env_var(pid, PID_MARKER_VAR, token)) =>
+                        .is_some_and(|pid| launch_evidence(pid, token).is_some()) =>
             {
                 return Some(window.container.id);
             }

@@ -989,6 +989,73 @@ fn a_launched_window_carrying_the_marker_is_ours() {
     );
 }
 
+/// The pid of `parent`'s child whose command line starts with `program`,
+/// waiting up to a second for it to start.
+fn child_running(parent: u32, program: &str) -> Option<u32> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while std::time::Instant::now() < deadline {
+        let child = std::fs::read_dir("/proc")
+            .ok()?
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+            .find(|pid| {
+                let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+                let parent_field = stat
+                    .rfind(')')
+                    .and_then(|end| stat[end + 1..].split_whitespace().nth(1).map(str::to_owned));
+                parent_field == Some(parent.to_string())
+                    && std::fs::read(format!("/proc/{pid}/cmdline"))
+                        .is_ok_and(|cmdline| cmdline.starts_with(format!("{program}\0").as_bytes()))
+            });
+        if child.is_some() {
+            return child;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    None
+}
+
+#[test]
+fn a_window_whose_program_dropped_the_marker_is_ours_through_its_ancestry() {
+    // #96: a wrapper unsets the marker before starting the program, so the
+    // window's own process doesn't carry it, but its parent does. Taken at
+    // once, as launched, rather than adopted after the grace period.
+    let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {
+        if command.starts_with("exec ") {
+            let token = sway.launch(command);
+            sway.when_marked(token, |sway, wrapper| {
+                let program = child_running(wrapper, "sleep").expect("the program starts");
+                let id = sway.open_window(Some("fake-app"), Some(program));
+                sway.emit("new", id);
+            });
+        }
+        Ok(())
+    });
+    let started = std::time::Instant::now();
+    let run = run(
+        &fake,
+        &[
+            "-a",
+            "fake-app",
+            "--verbose",
+            "sh -c 'env -u SWAY_LAUNCH_PID_MARKER sleep 30 & wait'",
+        ],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert_eq!(run.json["container_id"], 100);
+    assert!(
+        run.stderr()
+            .contains("(PID-marker-confirmed through its ancestor process"),
+        "{}",
+        run.stderr()
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(1500),
+        "waited {:?}, as if for the fallback grace",
+        started.elapsed()
+    );
+}
+
 #[test]
 fn a_matching_window_from_another_process_is_adopted_after_the_grace_period() {
     // The single-instance case: the launched process hands off to one that

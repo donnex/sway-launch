@@ -201,17 +201,26 @@ impl ExecAction<'_> {
     /// would split it on an unquoted `,`/`;` or a newline, which is why every
     /// command is checked by `validate_exec_command()` before it gets here.
     ///
+    /// The command runs in a `( ... )` subshell so that the shell Sway starts,
+    /// whose command line carries the token, stays alive as an ancestor of
+    /// everything the command starts: `launch_evidence()` walks up to it to
+    /// recognise a window whose program never saw the marker (#96). Without
+    /// the parentheses that held only where `sh` is dash; bash execs the last
+    /// command of an `&&` list in place of the shell (confirmed live). A
+    /// command can't end the group early: an unquoted `#` that would comment
+    /// out the `)` is refused by `validate_exec_command()`.
+    ///
     /// Lives here, alongside every other action's command text, rather than
     /// inline at the call site: when the two were apart, a separate rendering
     /// of `exec <command>` drifted into something nothing ever sent.
     pub(super) fn sway_command(&self, token: &str) -> String {
         match self.setup {
             Some(setup) => format!(
-                "exec export {}={} && {} && {}",
+                "exec export {}={} && {} && ( {} )",
                 PID_MARKER_VAR, token, setup, self.command
             ),
             None => format!(
-                "exec export {}={} && {}",
+                "exec export {}={} && ( {} )",
                 PID_MARKER_VAR, token, self.command
             ),
         }
