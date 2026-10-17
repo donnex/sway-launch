@@ -52,6 +52,47 @@ fn layout_dry_run_prints_a_continuously_numbered_plan() {
 }
 
 #[test]
+fn layout_dry_run_sends_sway_commands_with_the_other_actions() {
+    let path = TempToml::write(
+        "dry-run-sway-commands",
+        "[[step]]\ncon_id = 91\nmark = \"m\"\nscratchpad = true\n\
+         sway_commands = [\"border none\", \"opacity 0.9\"]\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap(), "--dry-run"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(
+        output.status.success(),
+        "sway-launch --layout --dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(
+        stdout,
+        "1. target existing container\n2. mark \"m\", border none, opacity 0.9\n3. move scratchpad\n"
+    );
+}
+
+#[test]
+fn a_sway_command_acting_on_the_session_is_refused_on_the_command_line() {
+    let output = sway_launch_without_a_compositor()
+        .args(["--con-id", "42", "--sway-command", "exec foot"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--sway-command"), "{stderr}");
+    assert!(
+        stderr.contains("isn't a command that acts on one window"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn layout_dry_run_escapes_control_characters_in_a_command() {
     // A TOML escape can put a terminal escape sequence in a command; printed
     // raw, `\u001b[2K` plus a carriage-return-style cursor move would let a

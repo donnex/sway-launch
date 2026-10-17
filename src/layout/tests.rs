@@ -62,6 +62,20 @@ fn parse_rejects_misspelled_step_field() {
 }
 
 #[test]
+fn parse_reads_sway_commands_and_rejects_one_acting_on_the_session() {
+    let layout =
+        parse("[[step]]\ncon_id = 42\nsway_commands = [\" border none\", \"opacity 0.9\"]\n")
+            .expect("window commands should parse");
+    assert_eq!(layout.step[0].sway_commands, ["border none", "opacity 0.9"]);
+
+    let error = parse("[[step]]\ncon_id = 42\nsway_commands = [\"border none\", \"exit\"]\n")
+        .err()
+        .expect("exit must be refused");
+    assert!(error.contains("\"exit\""), "{error}");
+    assert!(error.contains("acts on one window"), "{error}");
+}
+
+#[test]
 fn parse_rejects_wrong_table_name() {
     // Regression test: a prior version silently parsed [[steps]]
     // (plural, wrong) as a completely empty, successfully-parsed
@@ -104,6 +118,7 @@ fn minimal_step() -> LayoutStep {
         width: None,
         position: None,
         scratchpad: false,
+        sway_commands: Vec::new(),
         timeout: None,
         wait_time: None,
         settle: None,

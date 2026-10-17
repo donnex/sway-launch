@@ -246,6 +246,31 @@ fn get_settled_node(connection: &mut Connection, con_id: i64) -> Node {
     }
 }
 
+/// `get_node()` once `con_id`'s applied border is `border` with `width`:
+/// Sway reports the border it last applied, which lags a command until the
+/// client acks the configure (see `get_settled_node()`).
+fn get_node_with_border(
+    connection: &mut Connection,
+    con_id: i64,
+    border: swayipc::NodeBorder,
+    width: i32,
+) -> Node {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let node = get_node(connection, con_id);
+        if node.border == border && node.current_border_width == width {
+            return node;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "container id {con_id} never showed border {border:?} {width}: it has {:?} {}",
+            node.border,
+            node.current_border_width
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 /// Mirrors `tree.rs`'s private `node_is_floating()`. Sway 1.9 never populates a
 /// floating container's own `floating` field — confirmed live against a
 /// headless compositor, `floating enable` correctly changes `node_type` to
@@ -1264,6 +1289,108 @@ fn follow_up_actions_reach_sway_as_one_command_and_are_each_confirmed() {
     assert_eq!(node.rect.width, 400);
     assert_eq!(node.rect.height + node.deco_rect.height, 300);
     assert_eq!(node.marks, vec!["batched".to_string()]);
+}
+
+#[test]
+fn sway_commands_are_sent_with_the_batch_and_take_effect() {
+    // #90: each --sway-command joins the batch after the mark, as given, and
+    // is reported unconfirmed, since nothing can say what it was meant to do.
+    fresh_workspace();
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&[]);
+
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--mark",
+            "raw",
+            "--sway-command",
+            "border pixel 3",
+            "--sway-command",
+            "title_format \"%title, raw\"",
+            "--json",
+            "--verbose",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "sway-launch failed: {stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "Sway command: [con_id={container_id}] mark \"raw\", border pixel 3, title_format \
+             \"%title, raw\""
+        )),
+        "{stderr}"
+    );
+
+    let result: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout is the --json result");
+    let statuses: Vec<(&str, &str)> = result["actions"]
+        .as_array()
+        .expect("actions is an array")
+        .iter()
+        .map(|action| {
+            (
+                action["kind"].as_str().unwrap(),
+                action["status"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        statuses,
+        vec![
+            ("mark", "changed"),
+            ("sway_command", "unconfirmed"),
+            ("sway_command", "unconfirmed"),
+        ]
+    );
+
+    let node = get_node_with_border(&mut connection, container_id, swayipc::NodeBorder::Pixel, 3);
+    assert_eq!(node.marks, vec!["raw".to_string()]);
+}
+
+#[test]
+fn a_layout_steps_sway_commands_take_effect_and_session_commands_are_refused() {
+    fresh_workspace();
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&[]);
+
+    let path = TempToml::write(
+        "sway-commands",
+        &format!("[[step]]\ncon_id = {container_id}\nsway_commands = [\"border pixel 4\"]\n"),
+    );
+    let output = sway_launch_command()
+        .args(["--layout", path.to_str().unwrap()])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    get_node_with_border(&mut connection, container_id, swayipc::NodeBorder::Pixel, 4);
+
+    // Refused before anything is sent, so the compositor stays up and the
+    // window keeps its border.
+    let refused = TempToml::write(
+        "sway-commands-refused",
+        &format!(
+            "[[step]]\ncon_id = {container_id}\nsway_commands = [\"border normal\", \"exit\"]\n"
+        ),
+    );
+    let output = sway_launch_command()
+        .args(["--layout", refused.to_str().unwrap()])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("acts on one window"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::thread::sleep(Duration::from_millis(200));
+    get_node_with_border(&mut connection, container_id, swayipc::NodeBorder::Pixel, 4);
 }
 
 #[test]

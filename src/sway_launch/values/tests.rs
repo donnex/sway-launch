@@ -759,3 +759,59 @@ fn settle_duration_needs_pixel_geometry_or_a_position() {
     assert_eq!(settle_duration(Some(300), percent, percent, None), missing);
     assert!(settle_duration(Some(0), pixels, None, None).is_err());
 }
+
+// validate_sway_command
+
+#[test]
+fn validate_sway_command_accepts_a_window_command_and_trims_it() {
+    assert_eq!(
+        validate_sway_command("  border none "),
+        Ok("border none".to_string())
+    );
+    assert!(validate_sway_command("opacity 0.9").is_ok());
+    assert!(validate_sway_command("title_format \"%title, %app_id\"").is_ok());
+    assert!(validate_sway_command("BORDER pixel 2").is_ok());
+}
+
+#[test]
+fn validate_sway_command_rejects_a_command_that_acts_on_the_session() {
+    // Each of these ran behind [con_id=N] and took effect, `exit` ending
+    // the session (confirmed live on Sway 1.11).
+    for command in [
+        "exit",
+        "exec foot",
+        "reload",
+        "bindsym Mod4+q kill",
+        "output * bg #000000 solid_color",
+        "workspace 2",
+        "kill",
+    ] {
+        let error = validate_sway_command(command).expect_err(command);
+        assert!(error.contains("acts on one window"), "{command}: {error:?}");
+    }
+}
+
+#[test]
+fn validate_sway_command_rejects_a_second_command_in_one_entry() {
+    assert!(validate_sway_command("border none, exec foot").is_err());
+    assert!(validate_sway_command("border none; exit").is_err());
+    assert!(validate_sway_command("border none\nexit").is_err());
+    assert!(validate_sway_command("border none\0exit").is_err());
+}
+
+#[test]
+fn validate_sway_command_rejects_criteria_variables_and_blank() {
+    let criteria = validate_sway_command("[app_id=foot] border none").expect_err("criteria");
+    assert!(criteria.contains("criteria"), "{criteria:?}");
+    let variable = validate_sway_command("opacity $alpha").expect_err("variable");
+    assert!(variable.contains("config variables"), "{variable:?}");
+    assert!(validate_sway_command("   ").is_err());
+}
+
+#[test]
+fn sway_window_commands_is_sorted_and_unique() {
+    let mut sorted = SWAY_WINDOW_COMMANDS.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(sorted, SWAY_WINDOW_COMMANDS);
+}

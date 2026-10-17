@@ -511,6 +511,23 @@ pub fn validate_exec_command(value: &str) -> Result<String, String> {
         ));
     }
 
+    if let Some(character) = unquoted_command_separator(value) {
+        return Err(format!(
+            "Must not contain an unquoted {:?} — Sway splits its commands on it, so the rest \
+             would run as a separate Sway command. Wrap the part containing it in quotes, or \
+             move the command into a script",
+            character
+        ));
+    }
+
+    Ok(value.to_string())
+}
+
+/// The first `,` or `;` in `value` that Sway's parser would split a command
+/// on, scanned with the rules Sway's `argsep()` uses: `"`/`'` quote, a
+/// backslash escapes the next character, and only a separator outside both
+/// counts.
+fn unquoted_command_separator(value: &str) -> Option<char> {
     let mut in_double_quotes = false;
     let mut in_single_quotes = false;
     let mut escaped = false;
@@ -523,19 +540,110 @@ pub fn validate_exec_command(value: &str) -> Result<String, String> {
                 continue;
             }
             ',' | ';' if !in_double_quotes && !in_single_quotes && !escaped => {
-                return Err(format!(
-                    "Must not contain an unquoted {:?} — Sway splits its commands on it, so the \
-                     rest would run as a separate Sway command. Wrap the part containing it in \
-                     quotes, or move the command into a script",
-                    character
-                ));
+                return Some(character)
             }
             _ => {}
         }
         escaped = false;
     }
+    None
+}
 
-    Ok(value.to_string())
+/// The Sway commands `--sway-command`/`sway_commands` may start with: the
+/// ones that act on the container their criteria select. Sway runs any
+/// command behind `[con_id=N]`, criteria or not, and most of the rest act
+/// on the whole session: `exec`, `reload`, `bindsym`, `output`, `input`,
+/// `set` and `exit` were all accepted that way and took effect, `exit`
+/// ending the session (confirmed live on Sway 1.11). A layout or template
+/// file is meant to be shared, so a step may only change its own window.
+/// `kill` is left out too: a step that closes its own window has no
+/// layout left to build. Every entry was checked live on Sway 1.9 but
+/// `allow_tearing`, which 1.9 doesn't have and refuses with its own error.
+pub const SWAY_WINDOW_COMMANDS: &[&str] = &[
+    "allow_tearing",
+    "border",
+    "floating",
+    "focus",
+    "fullscreen",
+    "inhibit_idle",
+    "layout",
+    "mark",
+    "max_render_time",
+    "move",
+    "opacity",
+    "resize",
+    "scratchpad",
+    "shortcuts_inhibitor",
+    "split",
+    "splith",
+    "splitt",
+    "splitv",
+    "sticky",
+    "swap",
+    "title_format",
+    "unmark",
+    "urgent",
+];
+
+/// Validates one `--sway-command`/`sway_commands` entry (#90): a Sway
+/// command sent as given behind `[con_id=N]`, for a window property no flag
+/// models (`border none`, `opacity 0.9`).
+///
+/// It must start with one of `SWAY_WINDOW_COMMANDS`, compared ignoring case
+/// as Sway looks commands up (`BORDER none` works, confirmed live). It can't hold an unquoted `,`/`;`, a newline,
+/// or any other control character but tab, any of which would let one entry
+/// become several Sway commands, the later ones free of the allowlist; nor
+/// `$`, which Sway replaces with a config variable from the user's own
+/// config. A leading `[` is refused with its own message, since the
+/// criteria are what this tool supplies.
+pub fn validate_sway_command(value: &str) -> Result<String, String> {
+    let command = value.trim();
+    if command.is_empty() {
+        return Err("Must not be empty or whitespace-only".to_string());
+    }
+    if command.starts_with('[') {
+        return Err(
+            "Must not start with criteria — sway-launch sends it as [con_id=N] <command> for the \
+             step's own window"
+                .to_string(),
+        );
+    }
+    if let Some(character) = command.chars().find(|&c| c.is_control() && c != '\t') {
+        return Err(format!(
+            "Must not contain a control character other than tab (found {:?}) — Sway turns a \
+             newline into a command separator",
+            character
+        ));
+    }
+    if let Some(character) = unquoted_command_separator(command) {
+        return Err(format!(
+            "Must not contain an unquoted {:?} — Sway would run the rest as a separate command. \
+             Give each command its own entry",
+            character
+        ));
+    }
+    if command.contains('$') {
+        return Err(
+            "Must not contain \"$\" — Sway substitutes its config variables ($name) in the \
+             command"
+                .to_string(),
+        );
+    }
+    let name = command
+        .split_whitespace()
+        .next()
+        .expect("a non-blank command has a first word");
+    if !SWAY_WINDOW_COMMANDS
+        .iter()
+        .any(|allowed| allowed.eq_ignore_ascii_case(name))
+    {
+        return Err(format!(
+            "{:?} isn't a command that acts on one window, so a step can't send it. Allowed: {}",
+            name,
+            SWAY_WINDOW_COMMANDS.join(", ")
+        ));
+    }
+    Ok(command.to_string())
 }
 
 /// Renders a launch command given as a list of words (#77) into the text

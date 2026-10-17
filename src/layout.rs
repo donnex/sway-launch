@@ -38,6 +38,23 @@ where
     deserializer.deserialize_any(CommandVisitor).map(Some)
 }
 
+/// A step's `sway_commands` (#90), each checked by `validate_sway_command()`
+/// as the file is parsed, so an entry Sway could run as more than one window
+/// command is reported against the file, not partway through a run.
+pub fn deserialize_sway_commands<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let commands: Vec<String> = serde::Deserialize::deserialize(deserializer)?;
+    commands
+        .iter()
+        .map(|command| {
+            sway_launch::validate_sway_command(command)
+                .map_err(|error| serde::de::Error::custom(format!("{:?}: {}", command, error)))
+        })
+        .collect()
+}
+
 /// A declarative layout file: a sequence of steps, each the moral
 /// equivalent of one `sway-launch` CLI invocation's flags. TOML's
 /// array-of-tables syntax (`[[step]]`) maps directly onto `step: Vec<...>`.
@@ -104,6 +121,8 @@ pub struct LayoutStep {
     pub position: Option<String>,
     #[serde(default)]
     pub scratchpad: bool,
+    #[serde(default, deserialize_with = "deserialize_sway_commands")]
+    pub sway_commands: Vec<String>,
 
     pub timeout: Option<u64>,
     pub wait_time: Option<u64>,
@@ -279,6 +298,7 @@ impl LayoutStep {
             width,
             position,
             scratchpad: self.scratchpad,
+            sway_commands: &self.sway_commands,
             timeout: self
                 .timeout
                 .map(time::Duration::from_secs)

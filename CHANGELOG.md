@@ -89,6 +89,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   if the application changes them. Browsers set their own size just after opening, so a Firefox or
   Chromium window used to end up a different size from one run to the next while `sway-launch`
   reported success. A binding's `settle` replaces the step's. (#17)
+- `--sway-command '<command>'` (repeatable, and `sway_commands = [...]` in a layout or template
+  step) sends a Sway command of your own to the window, for properties no flag covers, such as
+  `border none` or `opacity 0.9`, which used to need a separate `swaymsg` call with the captured id
+  and couldn't be written in a layout file at all. It's sent with the other actions and reported
+  `unconfirmed`. Only commands that act on one window are accepted, since Sway runs session-wide
+  ones like `exec`, `bindsym` or `exit` even when they're aimed at a window, and a shared template
+  shouldn't be able to. (#90)
 - `--app-id`/`--class` matching, so a call in a multi-window script matches the right window rather
   than whichever one happened to appear first. The value (like `--mark-match`'s) must match exactly,
   case included — unlike Sway's own regex criteria, `-a firefox` doesn't match

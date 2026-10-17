@@ -49,7 +49,7 @@ release.
     [Mark](#mark)
   - [Workspace](#workspace) · [Output](#output) · [Height and width](#height-and-width) ·
     [Position](#position) · [Settle](#settle) · [Split](#split) · [New column](#new-column) ·
-    [New row](#new-row) · [Scratchpad](#scratchpad)
+    [New row](#new-row) · [Scratchpad](#scratchpad) · [Sway command](#sway-command)
   - [Verbose](#verbose) · [JSON output](#json-output) · [Dry run](#dry-run) ·
     [Validate](#validate) · [Wait time](#wait-time) · [Debug events](#debug-events)
 
@@ -126,6 +126,7 @@ Options:
       --output <OUTPUT>               Move the window to output (monitor)
       --position <POSITION>           Set position on the window. Either "center" or "<x>,<y>" in pixels, relative to its workspace (x/y may be negative)
       --scratchpad                    Move window to the scratchpad
+      --sway-command <COMMAND>        Also send COMMAND to the window as "[con_id=N] COMMAND", for what no flag sets ("border none", "opacity 0.9"); repeatable. Only commands that act on one window are accepted, and their effect is reported as unconfirmed
       --settle <MS>                   Keep holding --height/--width (in px) and --position for MS ms after they are confirmed, applying them again if the application changes them, as browsers do just after opening
       --dry-run                       Print the planned sequence of Sway commands instead of running them — works with a direct command or --layout/--template. Never touches Sway IPC or launches anything
       --validate                      Validate a --layout/--template file (and, for --template, --bindings/--apps resolution) without launching anything or touching Sway IPC. Requires --layout or --template
@@ -530,7 +531,7 @@ environment, not the layout file's directory or the caller's (see [Basic usage](
 step's other keys mirror the CLI flags of the same name (`cwd`, `env`, `app_id`, `class`, `mark_match`, `title`, `con_id`,
 `existing`, `wait`, `split`, `floating`, `sticky`, `fullscreen`, `focus`, `mark`, `new_column`, `new_row`,
 `workspace`, `workspace_number`, `output`, `height`, `width`, `position`, `settle`, `scratchpad`,
-`timeout`, `wait_time`) —
+`timeout`, `wait_time`, and `sway_commands`, a list of what `--sway-command` takes, one per entry) —
 `app_id`/`class`/`mark_match` match exactly and case-sensitively, like their CLI equivalents,
 `height`/`width`/`position`/`settle`/`timeout` are validated the same way their CLI equivalents are, and a step
 without its own `timeout`/`wait_time` inherits the top-level `--timeout`/`--wait-time` values.
@@ -875,8 +876,8 @@ briefly polls Sway's tree to confirm the change (see [Wait time](#wait-time)).
 Multiple actions can be added to `sway-launch`. They run in a fixed order: the moves
 (`--new-column`, `--new-row`, `--workspace`, `--output`) first, one at a time, since each one
 changes where the window is before the next is judged; then `--split`, `--floating`, `--sticky`,
-`--fullscreen`, `--focus`, `--height`, `--width`, `--position` and `--mark`, sent to Sway together
-as one command (`[con_id=N] floating enable, resize set width 700px, ...`), so the window takes
+`--fullscreen`, `--focus`, `--height`, `--width`, `--position`, `--mark` and each
+`--sway-command`, sent to Sway together as one command (`[con_id=N] floating enable, resize set width 700px, ...`), so the window takes
 them all at once instead of visibly floating, then resizing, then jumping into place; and
 `--scratchpad` last. Each action in that one command is still confirmed and reported on its own,
 and an action whose state already holds is left out of it.
@@ -1246,6 +1247,32 @@ sway-launch --floating --width 500px --height 400px --mark dropdown-term --scrat
 
 Re-running `--scratchpad` on a window already in the scratchpad is a no-op, the same as
 [Floating](#floating)/[Fullscreen](#fullscreen)/[Focus](#focus) above.
+
+### Sway command
+
+Send a Sway command of your own to the window, for a property no flag sets: borders, opacity, a
+title format, a tabbed parent. Each `--sway-command` is sent as `[con_id=N] <command>` in the same
+command as the other actions, after `--mark` and before `--scratchpad`, in the order given. It's
+an escape hatch, not a replacement for the flags: `sway-launch` can't tell what an arbitrary
+command was meant to do, so its effect is reported `"unconfirmed"` under [`--json`](#json-output),
+and only Sway refusing it fails the run.
+
+```shell
+sway-launch --floating --width 900px --height 500px --sway-command 'border none' \
+  --sway-command 'opacity 0.9' foot
+```
+
+A layout or template step takes the same commands as a list:
+`sway_commands = ["border none", "opacity 0.9"]`.
+
+Sway runs any command given window criteria, including ones that act on the whole session
+(`exec`, `reload`, `bindsym`, even `exit`), and a layout or template file may come from someone
+else. So a command must start with one that acts on one window: `allow_tearing`, `border`,
+`floating`, `focus`, `fullscreen`, `inhibit_idle`, `layout`, `mark`, `max_render_time`, `move`,
+`opacity`, `resize`, `scratchpad`, `shortcuts_inhibitor`, `split`/`splith`/`splitv`/`splitt`,
+`sticky`, `swap`, `title_format`, `unmark` or `urgent`. Each entry is one command: an unquoted `,`
+or `;`, a newline, and a leading `[` (the criteria are `sway-launch`'s to add) are refused, and so
+is a `$`, which Sway would replace with a variable from your own config.
 
 ### Verbose
 

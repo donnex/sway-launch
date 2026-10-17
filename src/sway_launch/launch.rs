@@ -64,6 +64,9 @@ pub struct SwayLaunch<'a> {
     pub width: Option<Size>,
     pub position: Option<Position>,
     pub scratchpad: bool,
+    /// `--sway-command` (#90), each already checked by
+    /// `validate_sway_command()`.
+    pub sway_commands: &'a [String],
 
     pub verbose: bool,
     pub timeout: time::Duration,
@@ -264,11 +267,16 @@ impl<'a> SwayLaunch<'a> {
             self.width.map(ActionKind::Width),
             self.position.map(ActionKind::Position),
             self.mark.map(ActionKind::Mark),
-            self.scratchpad.then_some(ActionKind::Scratchpad),
         ];
+        let sway_commands = self
+            .sway_commands
+            .iter()
+            .map(|command| ActionKind::SwayCommand(command));
         requested
             .into_iter()
             .flatten()
+            .chain(sway_commands)
+            .chain(self.scratchpad.then_some(ActionKind::Scratchpad))
             .map(|kind| {
                 SwayAction::new(
                     container_id,
