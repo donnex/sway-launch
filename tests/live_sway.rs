@@ -6189,9 +6189,10 @@ fn bindings_file_resolves_existing_and_command_slots_to_real_windows() {
 /// thread is the same shape confirmation.rs's own event loop uses internally.
 /// Returns once the subscription has had time to establish, so an event the
 /// caller triggers next isn't sent before anything is listening.
-fn spawn_debug_events() -> (KillChildOnDrop, mpsc::Receiver<String>) {
+fn spawn_debug_events(extra_args: &[&str]) -> (KillChildOnDrop, mpsc::Receiver<String>) {
     let mut child = sway_launch_command()
         .arg("--debug-events")
+        .args(extra_args)
         .stdout(std::process::Stdio::piped())
         .spawn()
         .expect("failed to spawn sway-launch --debug-events");
@@ -6236,9 +6237,29 @@ fn debug_events_line_arrives(
 }
 
 #[test]
+fn debug_events_json_prints_a_real_window_event_as_one_json_line() {
+    fresh_workspace();
+    // --debug-events --json writes Sway's payload plus an `event` type per
+    // line (#85), so the lines parse and can be filtered like this.
+    let (_child_guard, lines) = spawn_debug_events(&["--json"]);
+    let (container_id, _guard) = launch_foot(&[]);
+
+    assert!(
+        debug_events_line_arrives(&lines, |line| {
+            serde_json::from_str::<serde_json::Value>(line).is_ok_and(|event| {
+                event["event"] == "window"
+                    && event["change"] == "new"
+                    && event["container"]["id"] == container_id
+            })
+        }),
+        "expected a JSON line for the new window within 10s"
+    );
+}
+
+#[test]
 fn debug_events_prints_a_real_window_event() {
     fresh_workspace();
-    let (_child_guard, lines) = spawn_debug_events();
+    let (_child_guard, lines) = spawn_debug_events(&[]);
     let (_container_id, _guard) = launch_foot(&[]);
 
     assert!(
@@ -6286,7 +6307,7 @@ fn debug_events_prints_a_real_output_event() {
         scale,
     };
 
-    let (_child_guard, lines) = spawn_debug_events();
+    let (_child_guard, lines) = spawn_debug_events(&[]);
     run_command_ok(
         &mut connection,
         &format!("output {output} scale {}", scale * 2.0),

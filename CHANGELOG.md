@@ -170,7 +170,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read as a fault in the shipped template. A real run reports its errors the same way. (#106)
 - `--completions <SHELL>` for bash, zsh, fish, elvish and PowerShell.
 - `--verbose`, and `--debug-events`: a raw dump of every window, workspace, output and other event
-  Sway sends, for diagnosing what the compositor actually does. (#47)
+  Sway sends, for diagnosing what the compositor actually does. With `--json` each event is one
+  line of JSON (Sway's own payload plus an `event` type), ready for `jq`. (#47, #85)
 - Example scripts and `--layout` files to copy from, plus a README section on finding an
   application's `app_id` or `class` (`swaymsg -t get_tree`, or `--debug-events` while it opens),
   which can differ between XWayland and native Wayland, distro packages and Flatpaks. (#11, #29,

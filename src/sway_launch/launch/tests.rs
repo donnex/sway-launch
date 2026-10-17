@@ -316,6 +316,17 @@ fn build_actions_for_preview_verbs_are_container_id_free() {
 // DEBUG_EVENT_SUBSCRIPTIONS
 
 #[test]
+fn debug_event_json_names_the_event_type_beside_sway_s_payload() {
+    let tick: swayipc::Event =
+        serde_json::from_value(serde_json::json!({"Tick": {"first": true, "payload": "x"}}))
+            .expect("a Tick event should deserialize");
+    assert_eq!(
+        debug_event_json(&tick),
+        serde_json::json!({"event": "tick", "first": true, "payload": "x"})
+    );
+}
+
+#[test]
 fn debug_event_subscriptions_cover_every_sway_ipc_event_type_once() {
     // Sway's own IPC event list (sway-ipc(7), "EVENTS"), by wire name. The
     // array's length is fixed by its type, so a duplicate entry would push a
