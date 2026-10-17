@@ -717,6 +717,56 @@ fn a_batch_explains_each_action_under_verbose() {
     );
 }
 
+#[test]
+fn sway_commands_join_the_batch_after_the_mark_and_are_unconfirmed() {
+    let fake = FakeSway::start(SwayVersion::V1_11, arranges_on_command);
+    let run = run(
+        &fake,
+        &[
+            "--con-id",
+            "5",
+            "--sway-command",
+            "opacity 0.9",
+            "--mark",
+            "m",
+            "--sway-command",
+            "title_format \"%title, x\"",
+        ],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert_eq!(
+        fake.commands(),
+        vec!["[con_id=5] mark \"m\", opacity 0.9, title_format \"%title, x\"".to_string()]
+    );
+    assert_eq!(
+        action_statuses(&run),
+        vec![
+            ("mark".to_string(), "changed".to_string()),
+            ("sway_command".to_string(), "unconfirmed".to_string()),
+            ("sway_command".to_string(), "unconfirmed".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn a_sway_command_sway_refuses_fails_naming_it() {
+    let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {
+        if command.ends_with("border sideways") {
+            return Err("Expected 'border <none|normal|pixel|csd|toggle>'".into());
+        }
+        arranges_on_command(sway, command)
+    });
+    let run = run(
+        &fake,
+        &["--con-id", "5", "--sway-command", "border sideways"],
+    );
+    assert!(!run.succeeded());
+    assert_eq!(
+        run.error(),
+        "border sideways: command failed with 'Expected 'border <none|normal|pixel|csd|toggle>''"
+    );
+}
+
 /// `arranges_on_command()`, plus a client that sets its own width
 /// `overwrites` times, 100 ms after each `resize set width`, the way a
 /// browser does just after mapping (#17).

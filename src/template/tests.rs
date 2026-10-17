@@ -19,6 +19,7 @@ fn minimal_step() -> TemplateStep {
         width: None,
         position: None,
         scratchpad: false,
+        sway_commands: Vec::new(),
         timeout: None,
         wait_time: None,
         settle: None,
@@ -258,6 +259,7 @@ fn resolve_fills_in_the_binding_and_sets_id_to_the_slot_name() {
     let mut step = minimal_step();
     step.floating = true;
     step.mark = Some("pinned".to_string());
+    step.sway_commands = vec!["border none".to_string()];
     let template = minimal_template(vec![step]);
     let bindings = Bindings {
         binding: vec![minimal_binding()],
@@ -270,6 +272,18 @@ fn resolve_fills_in_the_binding_and_sets_id_to_the_slot_name() {
     assert_eq!(resolved[0].command, Some("foot".to_string()));
     assert!(resolved[0].floating);
     assert_eq!(resolved[0].mark, Some("pinned".to_string()));
+    assert_eq!(resolved[0].sway_commands, ["border none"]);
+}
+
+#[test]
+fn parse_rejects_a_template_sway_command_acting_on_the_session() {
+    let error = parse(
+        "[template]\ndescription = \"A test template.\"\ncategory = \"Test\"\n\n\
+         [[step]]\nslot = \"editor\"\nsway_commands = [\"bindsym Mod4+q exec foot\"]\n",
+    )
+    .err()
+    .expect("bindsym must be refused");
+    assert!(error.contains("acts on one window"), "{error}");
 }
 
 #[test]

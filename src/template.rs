@@ -280,6 +280,8 @@ pub struct TemplateStep {
     pub position: Option<String>,
     #[serde(default)]
     pub scratchpad: bool,
+    #[serde(default, deserialize_with = "crate::layout::deserialize_sway_commands")]
+    pub sway_commands: Vec<String>,
 
     pub timeout: Option<u64>,
     pub wait_time: Option<u64>,
@@ -716,6 +718,7 @@ pub fn resolve(
             width: substitute(&step.width),
             position: substitute(&step.position),
             scratchpad: step.scratchpad,
+            sway_commands: step.sway_commands.clone(),
             timeout: binding.and_then(|binding| binding.timeout).or(step.timeout),
             wait_time: binding
                 .and_then(|binding| binding.wait_time)

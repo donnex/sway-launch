@@ -96,6 +96,7 @@ const PER_WINDOW_ARGS: &[&str] = &[
     "width",
     "position",
     "scratchpad",
+    "sway_commands",
     "settle",
 ];
 
@@ -235,6 +236,13 @@ struct Args {
     /// Move window to the scratchpad
     #[clap(long)]
     scratchpad: bool,
+
+    /// Also send COMMAND to the window as "[con_id=N] COMMAND", for what no flag sets
+    /// ("border none", "opacity 0.9"); repeatable. Only commands that act on one window are
+    /// accepted, and their effect is reported as unconfirmed
+    #[clap(long = "sway-command", value_name = "COMMAND",
+        value_parser = sway_launch::validate_sway_command)]
+    sway_commands: Vec<String>,
 
     /// Keep holding --height/--width (in px) and --position for MS ms after they are confirmed,
     /// applying them again if the application changes them, as browsers do just after opening
@@ -642,6 +650,7 @@ fn main() {
         width: args.width,
         position: args.position,
         scratchpad: args.scratchpad,
+        sway_commands: &args.sway_commands,
         timeout: time::Duration::from_secs(args.timeout),
         wait_time: time::Duration::from_millis(args.wait_time),
         settle,

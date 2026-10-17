@@ -543,7 +543,7 @@ fn a_polled_action_never_matches_a_window_event() {
 /// One instance of every `ActionKind`. The exhaustive match below has no
 /// purpose but to stop compiling when a variant is added, pointing here so the
 /// new kind is added to this list too.
-fn one_of_every_kind() -> [ActionKind<'static>; 15] {
+fn one_of_every_kind() -> [ActionKind<'static>; 16] {
     fn every_variant_is_listed(kind: ActionKind) {
         match kind {
             ActionKind::Split(_)
@@ -560,6 +560,7 @@ fn one_of_every_kind() -> [ActionKind<'static>; 15] {
             | ActionKind::Height(_)
             | ActionKind::Width(_)
             | ActionKind::Position(_)
+            | ActionKind::SwayCommand(_)
             | ActionKind::Scratchpad => {}
         }
     }
@@ -581,6 +582,7 @@ fn one_of_every_kind() -> [ActionKind<'static>; 15] {
         ActionKind::Height(Size::Pixels(300)),
         ActionKind::Width(Size::Pixels(300)),
         ActionKind::Position(Position::Center),
+        ActionKind::SwayCommand("border none"),
         ActionKind::Scratchpad,
     ];
     kinds.into_iter().for_each(every_variant_is_listed);
