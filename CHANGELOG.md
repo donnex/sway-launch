@@ -89,6 +89,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   if the application changes them. Browsers set their own size just after opening, so a Firefox or
   Chromium window used to end up a different size from one run to the next while `sway-launch`
   reported success. A binding's `settle` replaces the step's. (#17)
+- `--capture [WORKSPACE]` prints a `--layout` file that rebuilds a workspace arranged by hand:
+  its splits, child order and sizes, marks, and floating windows' size and position, so a layout no
+  longer has to be worked out step by step. Each window's command is a guess from its app_id or
+  class, marked as such in the file. Every built-in template rebuilds its exact shape from its own
+  capture; tabbed and stacked containers aren't supported yet. (#31)
 - `--concurrent` starts every application in a `--layout`/`--template` run at once, then arranges
   the windows in step order, so a layout takes about as long as its slowest application instead of
   all of them together: a four-window grid of applications taking about a second each to start

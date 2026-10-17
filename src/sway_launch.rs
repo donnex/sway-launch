@@ -25,6 +25,7 @@
 use std::time;
 
 mod action;
+mod capture;
 mod confirmation;
 pub mod interrupt;
 mod ipc;
@@ -44,7 +45,9 @@ pub use outcome::{
     ActionRecord, ActionStatus, LaunchOwnership, RunError, RunOutcome, UnmatchedWindow,
 };
 pub use process_marker::ConcurrentLaunches;
-pub use query::{containers_still_present, focused_workspace_occupancy, list_windows};
+pub use query::{
+    capture_workspace, containers_still_present, focused_workspace_occupancy, list_windows,
+};
 pub use target::{FieldStyle, Target, TargetError, TargetFields, WindowCriteria, WindowMatch};
 pub use tree::ListedWindow;
 pub use values::{

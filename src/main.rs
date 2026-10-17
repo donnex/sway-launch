@@ -341,6 +341,18 @@ struct Args {
     ]))]
     list_windows: bool,
 
+    /// Print a --layout file that rebuilds WORKSPACE (the focused one if not
+    /// given) and exit: its windows' splits, sizes, marks, and floating
+    /// windows' size and position. Each window's command is a guess from its
+    /// app_id or class. Tabbed and stacked containers can't be captured
+    #[clap(long, value_name = "WORKSPACE", num_args = 0..=1, conflicts_with_all = per_window_and(&[
+        "debug_events", "layout", "template", "completions", "list_templates", "list_windows",
+        "show_template", "bindings", "apps", "param", "rollback_on_error", "continue_on_timeout",
+        "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent", "dry_run",
+        "validate", "json",
+    ]))]
+    capture: Option<Option<String>>,
+
     /// Print a --template's raw TOML and exit, without running it. Same
     /// NAME_OR_PATH resolution as --template: a built-in name (see
     /// --list-templates), or a path ending in .toml. With --json, prints
@@ -467,6 +479,16 @@ fn main() {
     if args.list_windows {
         print_window_listing(&args);
         process::exit(0);
+    }
+
+    if let Some(workspace) = &args.capture {
+        match sway_launch::capture_workspace(workspace.as_deref()) {
+            Ok(layout) => {
+                print_str(&layout);
+                process::exit(0);
+            }
+            Err(error) => fail(false, &format!("--capture: {}", error)),
+        }
     }
 
     if args.debug_events {
@@ -2886,6 +2908,7 @@ mod tests {
         "list_templates",
         "list_windows",
         "show_template",
+        "capture",
         "bindings",
         "apps",
         "param",
@@ -3139,6 +3162,7 @@ mod tests {
         "list_templates",
         "list_windows",
         "show_template",
+        "capture",
     ];
 
     /// Flags a `LayoutStep` mirrors that still aren't per-window: they're
