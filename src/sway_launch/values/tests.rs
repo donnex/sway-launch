@@ -561,3 +561,49 @@ fn validate_output_argument_rejects_directions_and_current_in_any_case() {
     );
     assert!(validate_output_argument("a\"b").is_err());
 }
+
+// render_argv
+
+fn words(list: &[&str]) -> Vec<String> {
+    list.iter().map(|word| word.to_string()).collect()
+}
+
+#[test]
+fn render_argv_single_quotes_every_word() {
+    assert_eq!(
+        render_argv(&words(&["foot", "-T", "notes, todo; misc"])).unwrap(),
+        "'foot' '-T' 'notes, todo; misc'"
+    );
+    assert_eq!(render_argv(&words(&["app", ""])).unwrap(), "'app' ''");
+}
+
+#[test]
+fn render_argv_writes_quotes_and_backslashes_outside_the_quotes() {
+    assert_eq!(
+        render_argv(&words(&["printf", "it's", "a\\"])).unwrap(),
+        "'printf' 'it'\\''s' 'a'\\\\''"
+    );
+}
+
+#[test]
+fn render_argv_output_passes_the_sway_separator_check() {
+    let rendered = render_argv(&words(&["sh", "a\\", "b,c", "it's; ok"])).unwrap();
+    assert!(validate_exec_command(&rendered).is_ok(), "{rendered}");
+}
+
+#[test]
+fn render_argv_rejects_what_sway_reads_first_and_a_missing_program() {
+    for bad in [
+        &["echo", "$HOME"][..],
+        &["echo", "a\nb"],
+        &["echo", "a\rb"],
+        &["echo", "a\0b"],
+        &[],
+        &["  ", "x"],
+    ] {
+        assert!(
+            render_argv(&words(bad)).is_err(),
+            "{bad:?} should be rejected"
+        );
+    }
+}

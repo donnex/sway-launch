@@ -442,7 +442,22 @@ generate-my-bindings | sway-launch --template quad-grid --bindings -
 
 A step's `command` is checked against the same Sway-parsing rules as the CLI's positional command
 (see [Basic usage](#basic-usage)), so `--validate` catches an unquoted `,`/`;` or an embedded
-newline before anything launches. Like the CLI's, it runs in Sway's working directory and
+newline before anything launches.
+
+`command` can also be a list of words, the safest form for a generated file:
+
+```toml
+[[step]]
+command = ["foot", "-T", "notes, todo; misc"]
+app_id = "foot"
+```
+
+Each word reaches the program exactly as written: `sway-launch` quotes it for Sway and the shell, so
+commas, semicolons, quotes, spaces and backslashes inside a word need no escaping. The first word is
+the program, with no shell features (`&&`, `~`, `*`). A `$` is refused, since Sway replaces `$name`
+with one of its config variables before the shell runs, even inside quotes; so is a newline. Use the
+plain string form, or a script, for anything that needs the shell. A binding's `command` takes the
+same two forms. Like the CLI's, it runs in Sway's working directory and
 environment, not the layout file's directory or the caller's (see [Basic usage](#basic-usage)). A
 step's other keys mirror the CLI flags of the same name (`app_id`, `class`, `mark_match`, `con_id`,
 `existing`, `split`, `floating`, `sticky`, `fullscreen`, `focus`, `mark`, `new_column`, `new_row`,

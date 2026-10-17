@@ -1261,3 +1261,26 @@ fn template_and_bindings_each_read_stdin_for_dash() {
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     assert!(String::from_utf8_lossy(&output.stderr).contains("can't both read stdin"));
 }
+
+#[test]
+fn a_binding_command_given_as_words_is_quoted_too() {
+    let template_file = TempToml::write(
+        "words-template",
+        "[template]\ndescription = \"One slot.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"main\"\n",
+    );
+    let output = run_with_stdin(
+        &[
+            "--template",
+            template_file.to_str().unwrap(),
+            "--bindings",
+            "-",
+            "--dry-run",
+        ],
+        "[[binding]]\nslot = \"main\"\ncommand = [\"foot\", \"-T\", \"x,y\"]\n",
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("launch 'foot' '-T' 'x,y'"),
+        "{output:?}"
+    );
+}

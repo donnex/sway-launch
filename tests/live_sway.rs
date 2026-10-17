@@ -6294,6 +6294,40 @@ fn a_second_run_of_a_layout_on_the_same_workspace_is_refused_while_the_first_run
 }
 
 #[test]
+fn a_command_given_as_words_reaches_the_program_exactly() {
+    fresh_workspace();
+    // A word-list `command` (#77) is quoted by sway-launch, so a title full
+    // of Sway and shell syntax arrives as one argument, unchanged.
+    let title = "a, b; it's \\ \"q\"";
+    let toml = format!(
+        "[[step]]\nid = \"words\"\ncommand = [\"foot\", \"-T\", {}, \"sleep\", \"60\"]\n\
+         app_id = \"foot\"\n",
+        toml::Value::String(title.to_string())
+    );
+    let path = TempToml::write("words-command", &toml);
+    let output = sway_launch_command()
+        .args(["--layout", path.to_str().unwrap(), "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be JSON");
+    let container_id = json["containers"]["words"]
+        .as_i64()
+        .unwrap_or_else(|| panic!("expected the step's container id in {json}"));
+    let _guard = KillOnDrop(container_id);
+    let mut connection = connect();
+    assert_eq!(
+        get_node(&mut connection, container_id).name.as_deref(),
+        Some(title)
+    );
+}
+
+#[test]
 fn a_layout_piped_through_stdin_launches_its_steps() {
     fresh_workspace();
     // `--layout -` reads the layout from stdin (#50), so a script can pipe a
