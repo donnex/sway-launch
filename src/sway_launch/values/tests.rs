@@ -607,3 +607,56 @@ fn render_argv_rejects_what_sway_reads_first_and_a_missing_program() {
         );
     }
 }
+
+// parse_env_assignment / launch_setup
+
+#[test]
+fn parse_env_assignment_splits_at_the_first_equals_and_checks_the_name() {
+    assert_eq!(
+        parse_env_assignment("GDK_BACKEND=x11").unwrap(),
+        ("GDK_BACKEND".to_string(), "x11".to_string())
+    );
+    assert_eq!(
+        parse_env_assignment("A=b=c").unwrap(),
+        ("A".to_string(), "b=c".to_string())
+    );
+    for bad in ["NOEQUALS", "1A=x", "A-B=x", "=x", "A=$HOME"] {
+        assert!(
+            parse_env_assignment(bad).is_err(),
+            "{bad:?} should be rejected"
+        );
+    }
+}
+
+#[test]
+fn launch_setup_quotes_the_directory_and_each_variable() {
+    let setup = launch_setup(
+        true,
+        Some("/"),
+        &[("A".to_string(), "it's, ok".to_string())],
+    )
+    .unwrap();
+    assert_eq!(setup.as_deref(), Some("cd '/' && export A='it'\\''s, ok'"));
+    assert_eq!(launch_setup(true, None, &[]).unwrap(), None);
+}
+
+#[test]
+fn launch_setup_refuses_settings_without_a_launch_and_a_missing_directory() {
+    assert!(launch_setup(false, Some("/"), &[]).is_err());
+    assert!(launch_setup(false, None, &[("A".to_string(), "1".to_string())]).is_err());
+    let error = launch_setup(true, Some("/nonexistent/sway-launch-test"), &[]).unwrap_err();
+    assert!(error.contains("is not a directory"), "{error}");
+}
+
+#[test]
+fn resolve_launch_directory_expands_home_and_keeps_absolute_paths() {
+    let home = std::env::var("HOME").expect("HOME should be set for the tests");
+    assert_eq!(
+        resolve_launch_directory("~").unwrap(),
+        std::path::PathBuf::from(&home)
+    );
+    assert_eq!(
+        resolve_launch_directory("/").unwrap(),
+        std::path::PathBuf::from("/")
+    );
+}

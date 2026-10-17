@@ -78,6 +78,8 @@ fn parse_defaults_to_no_steps_when_step_key_is_absent() {
 fn minimal_step() -> LayoutStep {
     LayoutStep {
         command: Some("foot".to_string()),
+        cwd: None,
+        env: Default::default(),
         con_id: None,
         existing: false,
         target_id: None,

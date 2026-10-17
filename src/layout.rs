@@ -58,6 +58,10 @@ pub struct Layout {
 pub struct LayoutStep {
     #[serde(default, deserialize_with = "deserialize_command")]
     pub command: Option<String>,
+    /// The directory `command` starts in, and variables set for it (#113).
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
     pub con_id: Option<i64>,
     #[serde(default)]
     pub existing: bool,
@@ -218,9 +222,17 @@ impl LayoutStep {
             .map(sway_launch::parse_position)
             .transpose()
             .map_err(|error| format!("position: {}", error))?;
+        let env: Vec<(String, String)> = self
+            .env
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect();
+        let launch_setup =
+            sway_launch::launch_setup(self.command.is_some(), self.cwd.as_deref(), &env)?;
 
         Ok(sway_launch::SwayLaunch {
             target,
+            launch_setup,
             split: self.split,
             floating: self.floating,
             sticky: self.sticky,

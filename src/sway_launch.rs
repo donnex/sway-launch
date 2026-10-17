@@ -42,10 +42,10 @@ pub use outcome::{ActionRecord, ActionStatus, LaunchOwnership, RunError, Unmatch
 pub use query::{containers_still_present, focused_workspace_occupancy};
 pub use target::{FieldStyle, Target, TargetError, TargetFields};
 pub use values::{
-    escape_control_characters, parse_position, parse_size, render_argv, require_non_blank,
-    validate_exec_command, validate_non_blank_argument, validate_output_argument,
-    validate_sway_string_argument, validate_timeout_argument, validate_timeout_seconds,
-    validate_workspace_argument, Position, Size, Split,
+    escape_control_characters, launch_setup, parse_env_assignment, parse_position, parse_size,
+    render_argv, require_non_blank, validate_exec_command, validate_non_blank_argument,
+    validate_output_argument, validate_sway_string_argument, validate_timeout_argument,
+    validate_timeout_seconds, validate_workspace_argument, Position, Size, Split,
 };
 
 /// The upper bound `run_poll_then_fallback()` polls `get_tree()` for a
