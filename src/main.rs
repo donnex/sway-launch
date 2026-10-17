@@ -1709,6 +1709,16 @@ fn run_steps(steps: &[layout::LayoutStep], build: sway_launch::BuildLocation, ar
         );
     }
 
+    // SPIKE (#73, never merged): launch every command step at once on a
+    // staging workspace, then arrange them in order below.
+    let spike_started = time::Instant::now();
+    let staged: HashMap<usize, i64> = if std::env::var_os("SWAY_LAUNCH_SPIKE_CONCURRENT").is_some()
+    {
+        spike_stage(steps, args, &resolved_ids)
+    } else {
+        HashMap::new()
+    };
+
     for (index, step) in steps.iter().enumerate() {
         if let Err(message) = sway_launch::interrupt::check() {
             fail_step(
@@ -1764,6 +1774,19 @@ fn run_steps(steps: &[layout::LayoutStep], build: sway_launch::BuildLocation, ar
                 index,
                 error.into(),
             ),
+        };
+
+        let sway_launch = match staged.get(&index) {
+            Some(&container_id) => {
+                spike_move_in(container_id);
+                sway_launch::SwayLaunch {
+                    target: sway_launch::Target::ConId(container_id),
+                    launch_setup: None,
+                    require_launch_on_focused_workspace: false,
+                    ..sway_launch
+                }
+            }
+            None => sway_launch,
         };
 
         match sway_launch.run() {
@@ -1843,6 +1866,24 @@ fn run_steps(steps: &[layout::LayoutStep], build: sway_launch::BuildLocation, ar
                 )
             }
         }
+    }
+
+    if std::env::var_os("SWAY_LAUNCH_SPIKE_TIMING").is_some() {
+        diagnostic!("SPIKE total {} ms", spike_started.elapsed().as_millis());
+    }
+    if let Some(log) = std::env::var_os("SWAY_LAUNCH_SPIKE_LOG") {
+        use std::io::Write as _;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log)
+            .expect("spike: log");
+        let _ = writeln!(
+            file,
+            "{} total {} ms",
+            steps_source(args),
+            spike_started.elapsed().as_millis()
+        );
     }
 
     if args.json {
@@ -2077,6 +2118,113 @@ fn plan_step<'a>(
         args.verbose,
         resolved_ids,
     )
+}
+
+const SPIKE_STAGING_WORKSPACE: &str = "sway-launch-staging";
+
+/// SPIKE (#73): launches every command step's application at once on a
+/// staging workspace, with none of its actions, and returns each step's
+/// container id. Focus goes back to the build workspace afterwards.
+fn spike_stage(
+    steps: &[layout::LayoutStep],
+    args: &Args,
+    resolved_ids: &HashMap<String, i64>,
+) -> HashMap<usize, i64> {
+    let mut connection = swayipc::Connection::new().expect("spike: connect");
+    let target = sway_launch::focused_workspace_occupancy()
+        .expect("spike: focused workspace")
+        .expect("spike: a focused workspace")
+        .0;
+    connection
+        .run_command(format!("workspace {}", SPIKE_STAGING_WORKSPACE))
+        .expect("spike: staging workspace");
+    let started = time::Instant::now();
+    let staged: HashMap<usize, i64> = std::thread::scope(|scope| {
+        let handles: Vec<_> = steps
+            .iter()
+            .enumerate()
+            .filter(|(_, step)| step.command.is_some())
+            .map(|(index, step)| {
+                let launch = plan_step(step, args, resolved_ids).expect("spike: plan");
+                let launch = sway_launch::SwayLaunch {
+                    split: None,
+                    floating: false,
+                    sticky: false,
+                    fullscreen: false,
+                    focus: false,
+                    mark: None,
+                    new_column: false,
+                    new_row: false,
+                    workspace: None,
+                    output: None,
+                    height: None,
+                    width: None,
+                    position: None,
+                    scratchpad: false,
+                    sway_commands: &[],
+                    settle: None,
+                    require_launch_on_focused_workspace: false,
+                    catch_late_window: false,
+                    ..launch
+                };
+                scope.spawn(move || {
+                    let outcome = launch.run().expect("spike: launch");
+                    (index, outcome.container_id)
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("spike: thread"))
+            .collect()
+    });
+    if std::env::var_os("SWAY_LAUNCH_SPIKE_TIMING").is_some() {
+        diagnostic!(
+            "SPIKE staged {} windows in {} ms",
+            staged.len(),
+            started.elapsed().as_millis()
+        );
+    }
+    if let Some(log) = std::env::var_os("SWAY_LAUNCH_SPIKE_LOG") {
+        use std::io::Write as _;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log)
+            .expect("spike: log");
+        let _ = writeln!(
+            file,
+            "{} staged {} in {} ms",
+            steps_source(args),
+            staged.len(),
+            started.elapsed().as_millis()
+        );
+    }
+    connection
+        .run_command(format!("workspace {}", target))
+        .expect("spike: back to the build workspace");
+    staged
+}
+
+/// SPIKE (#73): moves a staged window to the focused workspace and focuses
+/// it, standing in for the window opening there.
+fn spike_move_in(container_id: i64) {
+    let mut connection = swayipc::Connection::new().expect("spike: connect");
+    let workspace = sway_launch::focused_workspace_occupancy()
+        .expect("spike: focused workspace")
+        .expect("spike: a focused workspace")
+        .0;
+    for command in [
+        format!(
+            "[con_id={}] move container to workspace {}",
+            container_id, workspace
+        ),
+        format!("[con_id={}] focus", container_id),
+    ] {
+        for outcome in connection.run_command(&command).expect("spike: command") {
+            outcome.unwrap_or_else(|error| panic!("spike: {}: {}", command, error));
+        }
+    }
 }
 
 /// `plan_step()` over every step without running any, for `--dry-run` and
