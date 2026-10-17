@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::{assert_conflict_error, sway_launch_without_a_compositor, TempToml};
+use common::{assert_conflict_error, run_with_stdin, sway_launch_without_a_compositor, TempToml};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -882,4 +882,26 @@ fn layout_exits_0_after_finishing_every_step_when_stdout_is_closed() {
         .expect("failed to run sway-launch binary");
 
     assert!(output.status.success(), "got {}", output.status);
+}
+
+#[test]
+fn layout_reads_stdin_for_dash_and_names_it_stdin() {
+    // A generated layout can be piped in instead of written to a temp file
+    // (#50); errors and --validate call the source <stdin>.
+    let output = run_with_stdin(&["--layout", "-", "--validate"], "[[step]]\ncon_id = 42\n");
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "valid: <stdin> (1 step(s))"
+    );
+
+    let output = run_with_stdin(
+        &["--layout", "-", "--validate"],
+        "[[step]]\ncon_id = 42\nheight = \"bad\"\n",
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("<stdin>: step 1: height"),
+        "{output:?}"
+    );
 }

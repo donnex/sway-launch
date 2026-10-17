@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::{assert_conflict_error, TempToml};
+use common::{assert_conflict_error, run_with_stdin, TempToml};
 use std::process::Command;
 
 #[test]
@@ -1228,4 +1228,36 @@ fn template_validate_rejects_a_step_combining_workspace_with_new_column() {
         stderr.contains("step 1: workspace can't be combined with new_column/new_row"),
         "{stderr}"
     );
+}
+
+#[test]
+fn template_and_bindings_each_read_stdin_for_dash() {
+    // Either input can come from a pipe (#50), but not both at once.
+    let bindings = "[[binding]]\nslot = \"main\"\ncon_id = 42\n";
+    let template_file = TempToml::write(
+        "stdin-template",
+        "[template]\ndescription = \"One slot.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"main\"\n",
+    );
+    let output = run_with_stdin(
+        &[
+            "--template",
+            template_file.to_str().unwrap(),
+            "--bindings",
+            "-",
+            "--validate",
+        ],
+        bindings,
+    );
+    assert!(output.status.success(), "{output:?}");
+
+    let output = run_with_stdin(
+        &["--template", "-", "--apps", "foot", "--dry-run"],
+        "[template]\ndescription = \"One slot.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"main\"\n",
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("launch foot"));
+
+    let output = run_with_stdin(&["--template", "-", "--bindings", "-"], bindings);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("can't both read stdin"));
 }

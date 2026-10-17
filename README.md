@@ -116,11 +116,11 @@ Options:
       --completions <COMPLETIONS>     Generate a shell completion script and print it to stdout [possible values: bash, elvish, fish, powershell, zsh]
   -v, --verbose                       Verbose output
       --json                          Print the result as a JSON object instead of a bare container id
-      --layout <LAYOUT>               Run a declarative TOML layout file instead of a single command; see README.md for the schema. Each step is the equivalent of one sway-launch invocation's flags, so this conflicts with every per-window flag, which would otherwise apply to no specific step
-      --template <TEMPLATE>           Run a reusable declarative TOML layout template instead of a single command; see README.md for the schema. Steps declare a slot instead of an application, resolved via --bindings or --apps. Either a path to a template file ending in .toml, or a built-in template name with no extension (see --list-templates). Conflicts with --layout and every per-window flag, same reasoning as --layout
+      --layout <LAYOUT>               Run a declarative TOML layout file instead of a single command (- reads it from stdin); see README.md for the schema. Each step is the equivalent of one sway-launch invocation's flags, so this conflicts with every per-window flag, which would otherwise apply to no specific step
+      --template <TEMPLATE>           Run a reusable declarative TOML layout template instead of a single command; see README.md for the schema. Steps declare a slot instead of an application, resolved via --bindings or --apps. Either a path to a template file ending in .toml, - to read it from stdin, or a built-in template name with no extension (see --list-templates). Conflicts with --layout and every per-window flag, same reasoning as --layout
       --list-templates                List built-in --template names and exit
       --show-template <NAME_OR_PATH>  Print a --template's raw TOML and exit, without running it. Same NAME_OR_PATH resolution as --template: a built-in name (see --list-templates), or a path ending in .toml. With --json, prints {"name": ..., "contents": "..."}
-      --bindings <BINDINGS>           Bindings file supplying each --template slot's application identity. Requires --template; conflicts with --apps
+      --bindings <BINDINGS>           Bindings file supplying each --template slot's application identity (- reads it from stdin). Requires --template; conflicts with --apps
       --apps <APPS>                   Comma-separated list of commands to launch into --template's slots, in the order the template's slot steps appear. Requires --template; conflicts with --bindings
       --rollback-on-error             If a --layout/--template step fails, kill every window this invocation itself launched, by an earlier step or by the failing step before it failed (not one it merely retargeted via con_id/existing/target_id), rather than leaving them open. Requires --layout or --template
       --on-workspace <WORKSPACE>      Build a --layout/--template run on this workspace: switch to it once before the first step, so every window opens there. Overrides a template's own [layout] workspace. Requires --layout or --template
@@ -410,6 +410,15 @@ app_id = "foot"
 
 ```shell
 sway-launch --layout layout.toml
+```
+
+`-` in place of a file name reads it from stdin, so a script that generates a layout can pipe it in
+instead of writing a temporary file. The same works for `--template` and `--bindings`, one of them
+per run; errors and `--validate` then name the source `<stdin>`.
+
+```shell
+generate-my-layout | sway-launch --layout -
+generate-my-bindings | sway-launch --template quad-grid --bindings -
 ```
 
 > [!WARNING]
