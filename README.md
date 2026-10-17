@@ -112,7 +112,7 @@ Options:
       --validate                      Validate a --layout/--template file (and, for --template, --bindings/--apps resolution) without launching anything or touching Sway IPC. Requires --layout or --template
   -t, --timeout <TIMEOUT>             Seconds to wait for the launched window, and for each event-confirmed action, to be confirmed [default: 5]
   -w, --wait-time <WAIT_TIME>         Wait time in ms. Used for actions that do not have a corresponding Sway IPC event [default: 20]
-  -d, --debug-events                  Print every Sway IPC event until interrupted. Can't be combined with a command, per-window flags or --json
+  -d, --debug-events                  Print every Sway IPC event until interrupted, one JSON object per line with --json. Can't be combined with a command or per-window flags
       --completions <COMPLETIONS>     Generate a shell completion script and print it to stdout [possible values: bash, elvish, fish, powershell, zsh]
   -v, --verbose                       Verbose output
       --json                          Print the result as a JSON object instead of a bare container id
@@ -1250,4 +1250,12 @@ behave as expected and you want to see the raw event stream Sway produces around
 
 ```shell
 sway-launch --debug-events
+```
+
+With `--json`, each event is one line of JSON instead: Sway's own payload, in the shape `swaymsg -t
+subscribe` shows, plus an `event` field naming its type (`window`, `workspace`, `output`, ...). That
+makes it easy to filter, for example to print the app_id of every window that opens:
+
+```shell
+sway-launch --debug-events --json | jq -r 'select(.event == "window" and .change == "new") | .container.app_id'
 ```
