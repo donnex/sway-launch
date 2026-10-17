@@ -3,10 +3,17 @@
 #   sway-launch --template sidebar-right --apps code,thunar
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
+#
+# Params, each overridable with --param NAME=VALUE or a bindings file's
+# [params] table:
+#   sidebar-width: the sidebar's width (default 25ppt)
 
 [template]
 description = "A wide main window on the left, a narrow sidebar on the right."
 category = "Sidebar"
+
+[params]
+sidebar-width = "25ppt"
 
 [[step]]
 slot = "main"
@@ -14,4 +21,4 @@ split = "h"
 
 [[step]]
 slot = "sidebar"
-width = "25ppt"
+width = "{sidebar-width}"

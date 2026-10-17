@@ -14,10 +14,19 @@
 # width, applied to height here). Width is set on main for the same
 # reason, one level up: it's the first window added to a second column, so
 # it's the "solo in its own axis" case again, same as sidebar-left.toml.
+#
+# Params, each overridable with --param NAME=VALUE or a bindings file's
+# [params] table:
+#   sidebar-bottom-height: the lower sidebar window's height (default 25ppt)
+#   main-width: the main window's width (default 75ppt)
 
 [template]
 description = "A sidebar on the left split into two stacked windows (75% height on top, 25% on the bottom)."
 category = "Sidebar"
+
+[params]
+sidebar-bottom-height = "25ppt"
+main-width = "75ppt"
 
 [[step]]
 slot = "sidebar-top"
@@ -25,9 +34,9 @@ split = "v"
 
 [[step]]
 slot = "sidebar-bottom"
-height = "25ppt"
+height = "{sidebar-bottom-height}"
 
 [[step]]
 slot = "main"
 new_column = true
-width = "75ppt"
+width = "{main-width}"

@@ -13,10 +13,17 @@
 #   sway-launch --template master-triple-stack-top --apps foot,foot,foot,code
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
+#
+# Params, each overridable with --param NAME=VALUE or a bindings file's
+# [params] table:
+#   main-height: the main window's height (default 70ppt)
 
 [template]
 description = "A 3-window stack on top, one large main window below it."
 category = "Master/stack"
+
+[params]
+main-height = "70ppt"
 
 [[step]]
 slot = "stack-left"
@@ -31,4 +38,4 @@ slot = "stack-right"
 [[step]]
 slot = "main"
 new_row = true
-height = "70ppt"
+height = "{main-height}"

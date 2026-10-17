@@ -3,10 +3,17 @@
 #   sway-launch --template master-dual-stack-bottom --apps code,foot,foot
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
+#
+# Params, each overridable with --param NAME=VALUE or a bindings file's
+# [params] table:
+#   stack-height: the stack's height (default 35ppt)
 
 [template]
 description = "One large main window on top, two smaller windows split side by side below it."
 category = "Master/stack"
+
+[params]
+stack-height = "35ppt"
 
 [[step]]
 slot = "main"
@@ -14,7 +21,7 @@ split = "v"
 
 [[step]]
 slot = "stack-left"
-height = "35ppt"
+height = "{stack-height}"
 split = "h"
 
 [[step]]

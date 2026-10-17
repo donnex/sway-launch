@@ -3,10 +3,17 @@
 #   sway-launch --template sidebar-top --apps foot,code
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
+#
+# Params, each overridable with --param NAME=VALUE or a bindings file's
+# [params] table:
+#   main-height: the main window's height (default 75ppt)
 
 [template]
 description = "A narrow bar across the top, a wide main window below it."
 category = "Sidebar"
+
+[params]
+main-height = "75ppt"
 
 [[step]]
 slot = "topbar"
@@ -14,4 +21,4 @@ split = "v"
 
 [[step]]
 slot = "main"
-height = "75ppt"
+height = "{main-height}"

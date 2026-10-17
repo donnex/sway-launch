@@ -9,10 +9,17 @@
 # rather than joining a single flat row, producing an uneven column split
 # instead of three equal columns (same reasoning as master-triple-stack.toml's
 # stack-top, rotated to top/bottom here; confirmed live).
+#
+# Params, each overridable with --param NAME=VALUE or a bindings file's
+# [params] table:
+#   stack-height: the stack's height (default 30ppt)
 
 [template]
 description = "One large main window on top, three smaller windows split side by side below it."
 category = "Master/stack"
+
+[params]
+stack-height = "30ppt"
 
 [[step]]
 slot = "main"
@@ -21,7 +28,7 @@ split = "v"
 [[step]]
 slot = "stack-left"
 split = "h"
-height = "30ppt"
+height = "{stack-height}"
 
 [[step]]
 slot = "stack-middle"

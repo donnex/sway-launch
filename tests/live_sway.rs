@@ -4700,7 +4700,8 @@ fn render_template_shape(
 }
 
 /// Runs a template (a built-in name or a `.toml` path) with one `foot` per
-/// slot on a fresh workspace of its own and returns the shape it built, per
+/// slot, plus `extra_args`, on a fresh workspace of its own and returns the
+/// shape it built, per
 /// `render_template_shape()`. Asserts the run succeeded and printed every
 /// step's container id, as the plain launch check this replaced did.
 fn launch_template_and_render_shape(
@@ -4709,6 +4710,7 @@ fn launch_template_and_render_shape(
     name: &str,
     slot_count: usize,
     step_count: usize,
+    extra_args: &[&str],
 ) -> String {
     connection
         .run_command("[app_id=foot] kill")
@@ -4728,6 +4730,7 @@ fn launch_template_and_render_shape(
             "10",
             "--json",
         ])
+        .args(extra_args)
         .output()
         .unwrap_or_else(|error| panic!("failed to run sway-launch for {template}: {error}"));
     assert!(
@@ -4909,6 +4912,7 @@ fn every_shipped_template_resolves_and_launches_successfully() {
             &name,
             slot_count,
             step_count,
+            &[],
         );
         if updating {
             std::fs::create_dir_all(template_shapes_dir())
@@ -4940,6 +4944,9 @@ fn every_shipped_template_resolves_and_launches_successfully() {
         .filter_map(Result::ok)
         .filter_map(|entry| {
             let path = entry.path();
+            if path.is_dir() {
+                return None;
+            }
             let stem = path.file_stem()?.to_str()?.to_string();
             (!checked_names.contains(&stem)).then_some(path)
         })
@@ -4957,6 +4964,50 @@ fn every_shipped_template_resolves_and_launches_successfully() {
 }
 
 #[test]
+fn template_params_build_the_shapes_of_the_ratio_variants_they_replaced() {
+    fresh_workspace();
+    // master-dual-stack-wide and dual-sidebars-wide were folded into a param
+    // of their base template (#92); each override has to build exactly the
+    // shape the deleted file did, recorded under tests/template-shapes/params/.
+    let mut connection = connect();
+    let original_workspace = focused_workspace_name(&mut connection);
+    let updating = std::env::var_os(UPDATE_TEMPLATE_SHAPES).is_some();
+    let shapes_dir = template_shapes_dir().join("params");
+    let mut mismatches = Vec::new();
+    for (template, param, slot_count, step_count) in [
+        ("master-dual-stack", "stack-width=40ppt", 3, 3),
+        ("dual-sidebars", "main-width=60ppt", 3, 4),
+    ] {
+        let name = format!("{template}--{}", param.replace('=', "-"));
+        let shape = launch_template_and_render_shape(
+            &mut connection,
+            template,
+            &name,
+            slot_count,
+            step_count,
+            &["--param", param],
+        );
+        let recorded_path = shapes_dir.join(format!("{name}.txt"));
+        if updating {
+            std::fs::write(&recorded_path, &shape)
+                .unwrap_or_else(|error| panic!("failed to record {name}'s shape: {error}"));
+        } else if std::fs::read_to_string(&recorded_path).ok().as_deref() != Some(shape.as_str()) {
+            mismatches.push(format!("{name} built:\n{shape}"));
+        }
+    }
+
+    connection
+        .run_command(format!("workspace {original_workspace}"))
+        .expect("workspace switch should succeed");
+    assert!(
+        mismatches.is_empty(),
+        "{}\nIf a change is intended, rerun with {UPDATE_TEMPLATE_SHAPES}=1 and review the \
+         diff to tests/template-shapes/params/.",
+        mismatches.join("\n")
+    );
+}
+
+#[test]
 fn builtin_template_name_resolves_and_launches_without_a_toml_extension() {
     fresh_workspace();
     // --template <name> (no .toml extension, no path) is a separate
@@ -4969,7 +5020,8 @@ fn builtin_template_name_resolves_and_launches_without_a_toml_extension() {
     let mut connection = connect();
     let original_workspace = focused_workspace_name(&mut connection);
 
-    let shape = launch_template_and_render_shape(&mut connection, "quad-grid", "quad-grid", 4, 4);
+    let shape =
+        launch_template_and_render_shape(&mut connection, "quad-grid", "quad-grid", 4, 4, &[]);
 
     connection
         .run_command(format!("workspace {original_workspace}"))

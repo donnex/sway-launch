@@ -1358,3 +1358,111 @@ fn a_binding_places_a_built_in_template_slot_on_its_own_output() {
         ]
     );
 }
+
+fn dry_run_width_commands(extra: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--template", "master-dual-stack", "--dry-run", "--json"])
+        .args(extra)
+        .output()
+        .expect("failed to run sway-launch binary")
+}
+
+fn resize_commands(output: &std::process::Output) -> Vec<String> {
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be a JSON object");
+    json["steps"]
+        .as_array()
+        .expect("steps should be an array")
+        .iter()
+        .flat_map(|step| step["actions"].as_array().unwrap().clone())
+        .filter(|action| action["kind"] == "width")
+        .map(|action| action["command"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn param_overrides_a_built_in_template_size_from_bindings_and_the_command_line() {
+    let default = dry_run_width_commands(&["--apps", "foot,foot,foot"]);
+    assert!(default.status.success(), "{default:?}");
+    assert_eq!(resize_commands(&default), ["resize set width 35ppt"]);
+
+    let bindings = TempToml::write(
+        "param-bindings",
+        "[params]\nstack-width = \"40ppt\"\n\n\
+         [[binding]]\nslot = \"main\"\ncommand = \"foot\"\n\n\
+         [[binding]]\nslot = \"stack-top\"\ncommand = \"foot\"\n\n\
+         [[binding]]\nslot = \"stack-bottom\"\ncommand = \"foot\"\n",
+    );
+    let from_file = dry_run_width_commands(&["--bindings", bindings.to_str().unwrap()]);
+    assert!(from_file.status.success(), "{from_file:?}");
+    assert_eq!(resize_commands(&from_file), ["resize set width 40ppt"]);
+
+    let from_flag = dry_run_width_commands(&[
+        "--bindings",
+        bindings.to_str().unwrap(),
+        "--param",
+        "stack-width=45ppt",
+    ]);
+    assert!(from_flag.status.success(), "{from_flag:?}");
+    assert_eq!(resize_commands(&from_flag), ["resize set width 45ppt"]);
+}
+
+#[test]
+fn a_bad_param_is_reported_against_the_flag_before_anything_runs() {
+    for (param, expected) in [
+        ("stack=40ppt", "--param: unknown param \"stack\""),
+        (
+            "stack-width=wide",
+            "--param: param \"stack-width\" (used as width)",
+        ),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+            .args([
+                "--template",
+                "master-dual-stack",
+                "--apps",
+                "foot,foot,foot",
+                "--param",
+                param,
+                "--validate",
+            ])
+            .output()
+            .expect("failed to run sway-launch binary");
+        assert!(!output.status.success());
+        let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+        assert!(stderr.contains(expected), "{stderr}");
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--param", "stack-width=40ppt", "foot"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(stderr.contains("--param requires --template"), "{stderr}");
+}
+
+#[test]
+fn list_templates_reports_each_template_s_params() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--list-templates", "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(output.status.success());
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be a JSON object");
+    let params_of = |name: &str| {
+        json["templates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|template| template["name"] == name)
+            .unwrap_or_else(|| panic!("{name} should be listed"))["params"]
+            .clone()
+    };
+    assert_eq!(
+        params_of("master-dual-stack"),
+        serde_json::json!({"stack-width": "35ppt"})
+    );
+    assert_eq!(params_of("quad-grid"), serde_json::json!({}));
+}
