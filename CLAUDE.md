@@ -35,17 +35,16 @@ rules both apply in full because of this — there's no "private repo" fallback 
 - Format: `cargo fmt`
 - Lint: `cargo clippy`
 - Test: `cargo test` — runs the unit tests in `src/sway_launch/`'s modules and `src/main.rs` (covering all
-  pure/logic functions; see the Testing bullet under Rust conventions for what's exempted and why)
-  plus the integration tests in `tests/` (driving the compiled binary directly, for the couple of
-  things that need a real subprocess — see Architecture below). This never touches a real Sway
-  compositor, so it runs headlessly in CI.
+  pure/logic functions; see the Testing bullet under Rust conventions) plus the integration tests
+  in `tests/` (driving the compiled binary directly, including against the fake Sway IPC server in
+  `tests/fake_sway.rs` — see Architecture below). This never touches a real Sway compositor, so it
+  runs headlessly in CI.
   - Run a single test: `cargo test <test_name>`
   - Run with debug output: `cargo test -- --nocapture`
 - Live-Sway test: `scripts/run-live-sway-tests` — starts a throwaway headless Sway compositor, runs
   `tests/live_sway.rs` (gated behind the `live-sway-tests` Cargo feature) against it, then tears it
-  down. This is what actually exercises the IPC-touching functions `cargo test` exempts (see the
-  Testing bullet under Rust conventions), plus anything else worth confirming against real Sway
-  behavior rather than assuming it. Requires `sway`, `swaymsg`, and `foot` on `PATH`, and prints
+  down. This is what checks the IPC-touching code against real Sway behavior rather than a
+  scripted fake's, plus anything else worth confirming live rather than assuming it. Requires `sway`, `swaymsg`, and `foot` on `PATH`, and prints
   `sway --version` first. **Supported Sway: 1.9 and newer** (README.md says the same), so CI runs it
   in two jobs of `.github/workflows/check.yml`, both separate from the main `check` job so a
   live-Sway hiccup doesn't block the fast unit-test feedback loop: `live-sway-1-9`, pinned to
@@ -108,8 +107,7 @@ instruction set: where it disagrees with this file or the code, it's stale.
 - Only `ipc.rs` and `query.rs` talk to the compositor (plus the `run_*` drivers in
   `confirmation.rs` and `SwayLaunch::run()`). A new predicate goes in `tree.rs`; if it can't answer
   from a `&Node`, the fetching half goes in `query.rs` and the deciding half still goes in
-  `tree.rs`. The coverage gate exempts `ipc.rs`/`query.rs` by name, so logic placed there is
-  unmeasured.
+  `tree.rs`, where a unit test can reach every case without scripting a compositor.
 - `tree.rs` walks the tree in exactly two places, `ancestors_of()` and `descendants()`. A new
   predicate is a lookup on one of those, never another recursion over `nodes`/`floating_nodes`.
 - `impl SwayAction`/`impl ExecAction` are split on purpose: what an action *is* in `action.rs`, how
@@ -642,44 +640,30 @@ comments, name things clearly instead" style). Two rule-specific overrides:
   note why in the project's issue tracker rather than forcing a brittle test.
   - This project's agreed target: cover every pure/logic function (command-string building, event
     dispatch tables, window-match logic, CLI argument validation/parsing) via `cargo test`.
-    Functions that open, read, or write the Sway IPC socket directly are exempt from the
-    `cargo llvm-cov` measurement — they need a live compositor, which `cargo test`/`cargo llvm-cov`
-    (headless) can't provide.
+    The IPC-touching code is measured too: `tests/fake_sway.rs` runs the instrumented binary
+    against a fake compositor (see Tests under Architecture), so the gate counts the `run_*`
+    drivers in `confirmation.rs`, `SwayLaunch::run()`, and `ipc.rs`/`query.rs` like any other
+    module (#103). Until then those were exempt by module name, since only the live tier could
+    reach them. The gate excludes only `main.rs` and the test code itself (`test_support.rs` and
+    every `tests.rs`, which is why unit tests live in sibling files rather than inline — an inline
+    test module's bodies would count as covered production code and pad the total):
+    `cargo llvm-cov --summary-only --ignore-filename-regex '(^|/)(main|test_support|tests)\.rs$'`
+    reproduces CI's figure. Measured that way (2026-10-17): 92.2% lines overall; `tree.rs` 98.9%,
+    `values.rs` 97.0%, `layout.rs` 97.4%, `template.rs` 96.7%, `ipc.rs` 94.3%, `confirmation.rs`
+    88.5%, `launch.rs` 80.1%, `query.rs` 74.8%. What's left uncovered is mostly IPC-error branches
+    (a `get_tree()` that fails mid-run) and `--debug-events`' event loop.
 
-    **Since the module split (2026-09-03) that exemption is a rule about modules, not a list of
-    function names:** `sway_launch/ipc.rs` and `sway_launch/query.rs` are the compositor-bound
-    layers and are exempt; everything else is measured. The layering is what makes that true —
-    `query.rs` fetches and immediately delegates to a pure predicate in `tree.rs`, so almost
-    nothing but the fetch itself sits where the gate can't see it. The gate excludes both files by
-    name, along with `main.rs` and the test code itself (`test_support.rs` and every `tests.rs`,
-    which is why unit tests live in sibling files rather than inline — an inline test module's
-    bodies would count as covered production code and pad the total):
-    `cargo llvm-cov --summary-only --ignore-filename-regex '(^|/)(main|ipc|query|test_support|tests)\.rs$'`
-    reproduces CI's figure. Measured that way (2026-10-12): `values.rs` 100%, `tree.rs` 99.2%,
-    `process_marker.rs` 96.5%, `layout.rs` 100%, `template.rs` 98.6% lines.
-    Two modules straddle the line, and both are deliberate: `confirmation.rs` holds the `run_*`
-    drivers and the `state_satisfied`/`poll_matches` fetching halves (exempt) *alongside* the pure
-    deciding halves — `state_satisfies`, `poll_grace`, `polls`, `matches_window_event` — that stay
-    measured, and
-    `launch.rs`'s `run`/`resolve_container_id`/`debug_events` are exempt while `build_actions()`
-    and `execute_plan()` (which takes its guard and action runner as closures) are not.
-    `SwayLaunch::resolve_container_id`'s `Target::ConId` branch never touches the socket and is
-    covered headlessly by `tests/json_output.rs` driving the binary with `--con-id`; the lookup
-    `run()` adds when there are actions is `query.rs`'s, with its decision in `tree.rs`.
-
-    **Adding IPC-touching code means putting it in the right module, not extending an exemption
-    list.** Keep the decision pure and let the IPC layer fetch — the shape `expected_position`/
+    **Keep the decision pure and let the IPC layer fetch** — the shape `expected_position`/
     `position_matches` and `state_satisfies`/`state_satisfied` already use — rather than burying a
-    comparison behind a `&mut Connection` where the coverage gate can't see it.
+    comparison behind a `&mut Connection`. A fake-Sway test can reach it there, but only by
+    scripting a whole compositor exchange for each case a unit test would cover in one line.
 
-    None of this is *unverifiable*: `tests/live_sway.rs` exercises it for real against a throwaway
-    headless Sway compositor via `scripts/run-live-sway-tests`, in CI and locally — a separate test
-    tier from `cargo test`'s coverage-measured suite, gated behind the `live-sway-tests` Cargo
+    `tests/live_sway.rs` is still what shows the IPC code agrees with real Sway, against a
+    throwaway headless compositor via `scripts/run-live-sway-tests`, in CI and locally — a separate
+    test tier from `cargo test`'s coverage-measured suite, gated behind the `live-sway-tests` Cargo
     feature so it stays opt-in. No mocking layer has been introduced on the judgment that a
     trait-based abstraction purely to unit-test thin IPC wiring isn't worth the indirection for a
-    tool this size. The drivers are tested headlessly instead from the other side of the socket,
-    by `tests/fake_sway.rs` (see Tests under Architecture), which `cargo llvm-cov` measures like any
-    other integration test: it runs the instrumented binary.
+    tool this size; the fake sits on the other side of the socket instead.
 - Measure coverage with `cargo llvm-cov` (requires the `cargo-llvm-cov` subcommand and the
   `llvm-tools-preview` rustup component):
   - `cargo llvm-cov --summary-only --ignore-filename-regex 'main\.rs'` — summary
@@ -1500,16 +1484,14 @@ Rust conventions above for why the feature flag is load-bearing — build, test,
 every shell script discovered by shebang at run time, so a newly added script is covered
 automatically and the one Python script in `scripts/` is excluded by the same mechanism rather than
 by name, markdownlint on every tracked Markdown file, black/ruff), then a `cargo llvm-cov` (pinned — see "Tool versions" under Commands) coverage-regression gate (`--fail-under-lines
-68 --fail-under-regions 68 --fail-under-functions 77`). The checks used to be spelled out step by
+88 --fail-under-regions 86 --fail-under-functions 87`). The checks used to be spelled out step by
 step in both workflows, and had drifted between them; the shared script replaced both copies, and
 the separate `lint-scripts-and-docs` job folded into `check`. The gate excludes
-`main.rs`, the compositor-bound `ipc.rs`/`query.rs`, and the unit-test files themselves by filename
-(see the coverage bullet under Rust conventions above), and its thresholds sit a few points under
-the baseline measured on 2026-10-12, recorded in the comment above that step. They read lower than
-the 82/80/88 the gate used before that change, but measure more: the old figures counted every
-inline test module's bodies as covered production code and averaged in the exempt modules, so an
-untested new function in `tree.rs` or `values.rs` could land without moving them. Most of the
-remaining gap is the IPC-touching `run_*` drivers in `confirmation.rs` and `launch.rs`. Re-measure
+`main.rs` and the unit-test files themselves by filename (see the coverage bullet under Rust
+conventions above), and its thresholds sit a few points under the baseline measured on 2026-10-17,
+recorded in the comment above that step. Until #103 it also excluded the compositor-bound
+`ipc.rs`/`query.rs`, and the `run_*` drivers were most of the gap; the fake-Sway suite reaches
+both. Re-measure
 and adjust the thresholds as their own deliberate decision (with the comment updated) rather than
 as a side effect of an unrelated change. Alongside it: two live-Sway jobs, `live-sway-1-9`
 (`ubuntu-24.04`, apt's `sway`+`foot`) and `live-sway-latest` (an `archlinux` container), each
