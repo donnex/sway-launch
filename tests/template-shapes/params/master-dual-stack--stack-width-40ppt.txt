@@ -1,4 +1,4 @@
-workspace template-shape-master-dual-stack-wide
+workspace template-shape-master-dual-stack--stack-width-40ppt
   splith
     60% main
     40% splitv

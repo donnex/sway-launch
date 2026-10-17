@@ -295,6 +295,12 @@ checks those by hand, because the derive macro doesn't enforce `requires` reliab
   retargeted or `Adopted` ones — most recent first (`rollback()`, `send_rollback_kills()`), waits
   `ROLLBACK_CLOSE_GRACE` for each to actually close, and stops at the first unanswered kill. It
   undoes launches, not mutations to existing windows.
+- A template's `[params]` (#92) names values a step's `height`/`width`/`position` takes by
+  writing `"{name}"` as the whole value: plain substitution, no expressions. `parse()` checks every
+  reference, every default against each field using it (`Template::check_param()`) and that each
+  param is used; `resolve()` applies a bindings file's `[params]`, then `--param`, each checked the
+  same way and reported against its own source (`ResolveError::Bindings`/`Param`). A ratio-only
+  variant of a built-in is a param, not another file.
 - `template::parse()` rejects a repeated slot; `resolve()` reports a `ResolveError` against the
   file that holds the mistake (bindings or template). A template file requires a `[template]` table
   (`description` as a full sentence, `category`).

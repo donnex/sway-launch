@@ -17,10 +17,19 @@
 # itself ran — sway re-flows a flat row's proportions when a new sibling
 # joins it, discarding an earlier sibling's explicit resize. Resizing main
 # only after every sibling already exists avoids this.
+#
+# Params, each overridable with --param NAME=VALUE or a bindings file's
+# [params] table:
+#   main-width: the main window's width (default 50ppt)
+# A wider main window keeps the sidebars narrow and secondary, e.g.:
+#   sway-launch --template dual-sidebars --apps foot,code,foot --param main-width=60ppt
 
 [template]
 description = "A wide main window flanked by one narrow sidebar on each side (50%/25%/25% width)."
 category = "Master/stack"
+
+[params]
+main-width = "50ppt"
 
 [[step]]
 slot = "sidebar-left"
@@ -34,4 +43,4 @@ slot = "sidebar-right"
 
 [[step]]
 target_id = "main"
-width = "50ppt"
+width = "{main-width}"

@@ -270,7 +270,7 @@ struct Args {
     /// Print every Sway IPC event until interrupted, one JSON object per line
     /// with --json. Can't be combined with a command or per-window flags
     #[clap(short, long, conflicts_with_all = per_window_and(&[
-        "bindings", "apps", "rollback_on_error", "on_workspace", "on_workspace_number", "on_output", "no_lock",
+        "bindings", "apps", "param", "rollback_on_error", "on_workspace", "on_workspace_number", "on_output", "no_lock",
     ]))]
     debug_events: bool,
 
@@ -280,7 +280,7 @@ struct Args {
     // --show-template both do have one, which is why they don't conflict.
     /// Generate a shell completion script and print it to stdout
     #[clap(long, value_enum, conflicts_with_all = per_window_and(&[
-        "debug_events", "layout", "template", "list_templates", "bindings", "apps",
+        "debug_events", "layout", "template", "list_templates", "bindings", "apps", "param",
         "rollback_on_error", "on_workspace", "on_workspace_number", "on_output", "no_lock", "dry_run", "validate", "show_template", "json",
     ]))]
     completions: Option<clap_complete::Shell>,
@@ -298,7 +298,7 @@ struct Args {
     /// equivalent of one sway-launch invocation's flags, so this conflicts
     /// with every per-window flag, which would otherwise apply to no specific
     /// step
-    #[clap(long, conflicts_with_all = per_window_and(&["debug_events", "bindings", "apps"]))]
+    #[clap(long, conflicts_with_all = per_window_and(&["debug_events", "bindings", "apps", "param"]))]
     layout: Option<PathBuf>,
 
     /// Run a reusable declarative TOML layout template instead of a single
@@ -313,7 +313,7 @@ struct Args {
 
     /// List built-in --template names and exit
     #[clap(long, conflicts_with_all = per_window_and(&[
-        "debug_events", "layout", "template", "completions", "bindings", "apps",
+        "debug_events", "layout", "template", "completions", "bindings", "apps", "param",
         "rollback_on_error", "on_workspace", "on_workspace_number", "on_output", "no_lock", "dry_run", "validate", "show_template",
     ]))]
     list_templates: bool,
@@ -323,7 +323,7 @@ struct Args {
     /// windows --existing would choose between
     #[clap(long, conflicts_with_all = per_window_but_filters_and(&[
         "debug_events", "layout", "template", "completions", "list_templates", "show_template",
-        "bindings", "apps", "rollback_on_error", "on_workspace", "on_workspace_number", "on_output", "no_lock", "dry_run", "validate",
+        "bindings", "apps", "param", "rollback_on_error", "on_workspace", "on_workspace_number", "on_output", "no_lock", "dry_run", "validate",
     ]))]
     list_windows: bool,
 
@@ -332,7 +332,7 @@ struct Args {
     /// --list-templates), or a path ending in .toml. With --json, prints
     /// {"name": ..., "contents": "..."}
     #[clap(long, value_name = "NAME_OR_PATH", conflicts_with_all = per_window_and(&[
-        "debug_events", "layout", "template", "completions", "bindings", "apps",
+        "debug_events", "layout", "template", "completions", "bindings", "apps", "param",
         "rollback_on_error", "on_workspace", "on_workspace_number", "on_output", "no_lock", "dry_run", "validate",
     ]))]
     show_template: Option<PathBuf>,
@@ -347,6 +347,12 @@ struct Args {
     /// conflicts with --bindings
     #[clap(long)]
     apps: Option<String>,
+
+    /// Set one of --template's params (see --list-templates), overriding its
+    /// default and a --bindings file's [params]. Repeatable. Requires
+    /// --template
+    #[clap(long, value_name = "NAME=VALUE", value_parser = template::parse_param_override)]
+    param: Vec<(String, String)>,
 
     /// If a --layout/--template step fails, kill every window this
     /// invocation itself launched, by an earlier step or by the failing step
@@ -450,6 +456,15 @@ fn main() {
             .error(
                 ErrorKind::MissingRequiredArgument,
                 "--bindings/--apps require --template",
+            )
+            .exit();
+    }
+
+    if args.template.is_none() && !args.param.is_empty() {
+        Args::command()
+            .error(
+                ErrorKind::MissingRequiredArgument,
+                "--param requires --template",
             )
             .exit();
     }
@@ -1204,6 +1219,7 @@ fn print_builtin_templates(json: bool) {
                     "description": template.description,
                     "slots": template.slots,
                     "slot_names": template.slot_names,
+                    "params": template.params,
                 })
             })
             .collect();
@@ -1222,14 +1238,25 @@ fn print_builtin_templates(json: bool) {
         .max()
         .unwrap_or(0);
     for template in &templates {
+        let params = if template.params.is_empty() {
+            String::new()
+        } else {
+            let params: Vec<String> = template
+                .params
+                .iter()
+                .map(|(name, default)| format!("{}={}", name, default))
+                .collect();
+            format!("; params: {}", params.join(", "))
+        };
         print_line(&format!(
-            "{:<name_width$}  {:<category_width$}  {} ({} slot{}: {})",
+            "{:<name_width$}  {:<category_width$}  {} ({} slot{}: {}{})",
             template.name,
             template.category,
             template.description,
             template.slots,
             if template.slots == 1 { "" } else { "s" },
-            template.slot_names.join(", ")
+            template.slot_names.join(", "),
+            params
         ));
     }
 }
@@ -1445,7 +1472,7 @@ fn run_template(path: &Path, bindings_source: BindingsSource, args: &Args) -> ! 
     // A binding mistake is named after the file it's in (or --apps), not the
     // template: with a built-in, the template's name would read as a fault
     // in the shipped file rather than in the user's bindings.
-    let resolved_steps = match template::resolve(&parsed_template, &bindings) {
+    let resolved_steps = match template::resolve(&parsed_template, &bindings, &args.param) {
         Ok(resolved_steps) => resolved_steps,
         Err(error @ template::ResolveError::Bindings(_)) => {
             let bindings_label = match bindings_source {
@@ -1453,6 +1480,9 @@ fn run_template(path: &Path, bindings_source: BindingsSource, args: &Args) -> ! 
                 BindingsSource::Apps(_) => "--apps".to_string(),
             };
             fail(args.json, &format!("{}: {}", bindings_label, error))
+        }
+        Err(template::ResolveError::Param(error)) => {
+            fail(args.json, &format!("--param: {}", error))
         }
         Err(error @ template::ResolveError::Step { .. }) => {
             fail(args.json, &format!("{}: {}", input_label(path), error))
@@ -1531,7 +1561,10 @@ fn bindings_from_apps(
         })
         .collect();
 
-    Ok(template::Bindings { binding })
+    Ok(template::Bindings {
+        binding,
+        ..Default::default()
+    })
 }
 
 /// Runs every step sequentially, in the order they appear, stopping at the
@@ -2372,6 +2405,7 @@ mod tests {
         "show_template",
         "bindings",
         "apps",
+        "param",
         "completions",
         "debug_events",
         "dry_run",

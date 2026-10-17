@@ -35,6 +35,7 @@ fn minimal_template(step: Vec<TemplateStep>) -> Template {
     Template {
         template: minimal_metadata(),
         layout: TemplateLayoutContext::default(),
+        params: Default::default(),
         step,
     }
 }
@@ -63,8 +64,11 @@ fn resolve_rejects_step_without_slot_or_target_id() {
     let mut step = minimal_step();
     step.slot = None;
     let template = minimal_template(vec![step]);
-    let bindings = Bindings { binding: vec![] };
-    assert!(resolve(&template, &bindings).is_err());
+    let bindings = Bindings {
+        binding: vec![],
+        ..Default::default()
+    };
+    assert!(resolve(&template, &bindings, &[]).is_err());
 }
 
 #[test]
@@ -74,8 +78,9 @@ fn resolve_reports_a_template_step_error_with_its_1_based_step_number() {
     let template = minimal_template(vec![minimal_step(), second]);
     let bindings = Bindings {
         binding: vec![minimal_binding()],
+        ..Default::default()
     };
-    let error = resolve(&template, &bindings)
+    let error = resolve(&template, &bindings, &[])
         .err()
         .expect("a step with neither slot nor target_id should be rejected");
     assert_eq!(
@@ -97,9 +102,12 @@ fn resolve_reports_a_blank_target_id_as_a_step_error() {
     step.slot = None;
     step.target_id = Some("  ".to_string());
     let template = minimal_template(vec![step]);
-    let bindings = Bindings { binding: vec![] };
+    let bindings = Bindings {
+        binding: vec![],
+        ..Default::default()
+    };
     assert!(matches!(
-        resolve(&template, &bindings),
+        resolve(&template, &bindings, &[]),
         Err(ResolveError::Step { index: 0, .. })
     ));
 }
@@ -118,9 +126,16 @@ fn resolve_reports_binding_mistakes_as_bindings_errors_without_a_step_number() {
         vec![minimal_binding(), minimal_binding()],
         vec![minimal_binding(), unused],
     ] {
-        let error = resolve(&template, &Bindings { binding: bindings })
-            .err()
-            .expect("a binding mistake should be rejected");
+        let error = resolve(
+            &template,
+            &Bindings {
+                binding: bindings,
+                ..Default::default()
+            },
+            &[],
+        )
+        .err()
+        .expect("a binding mistake should be rejected");
         assert!(
             matches!(error, ResolveError::Bindings(_)),
             "a binding mistake belongs to the bindings, not a template step: {error:?}"
@@ -136,8 +151,9 @@ fn resolve_rejects_slot_and_target_id_together() {
     let template = minimal_template(vec![step]);
     let bindings = Bindings {
         binding: vec![minimal_binding()],
+        ..Default::default()
     };
-    assert!(resolve(&template, &bindings).is_err());
+    assert!(resolve(&template, &bindings, &[]).is_err());
 }
 
 #[test]
@@ -145,8 +161,11 @@ fn resolve_rejects_blank_slot() {
     let mut step = minimal_step();
     step.slot = Some("   ".to_string());
     let template = minimal_template(vec![step]);
-    let bindings = Bindings { binding: vec![] };
-    let error = resolve(&template, &bindings)
+    let bindings = Bindings {
+        binding: vec![],
+        ..Default::default()
+    };
+    let error = resolve(&template, &bindings, &[])
         .map_err(|error| error.to_string())
         .err()
         .expect("blank slot should be rejected");
@@ -162,8 +181,11 @@ fn resolve_rejects_blank_target_id() {
     step.slot = None;
     step.target_id = Some("  ".to_string());
     let template = minimal_template(vec![step]);
-    let bindings = Bindings { binding: vec![] };
-    let error = resolve(&template, &bindings)
+    let bindings = Bindings {
+        binding: vec![],
+        ..Default::default()
+    };
+    let error = resolve(&template, &bindings, &[])
         .map_err(|error| error.to_string())
         .err()
         .expect("blank target_id should be rejected");
@@ -180,8 +202,9 @@ fn resolve_rejects_blank_binding_slot() {
     binding.slot = "   ".to_string();
     let bindings = Bindings {
         binding: vec![binding],
+        ..Default::default()
     };
-    let error = resolve(&template, &bindings)
+    let error = resolve(&template, &bindings, &[])
         .map_err(|error| error.to_string())
         .err()
         .expect("blank binding slot should be rejected");
@@ -198,8 +221,9 @@ fn resolve_rejects_blank_binding_command_naming_the_slot() {
     binding.command = Some("   ".to_string());
     let bindings = Bindings {
         binding: vec![binding],
+        ..Default::default()
     };
-    let error = resolve(&template, &bindings)
+    let error = resolve(&template, &bindings, &[])
         .map_err(|error| error.to_string())
         .err()
         .expect("blank binding command should be rejected");
@@ -233,9 +257,10 @@ fn resolve_fills_in_the_binding_and_sets_id_to_the_slot_name() {
     let template = minimal_template(vec![step]);
     let bindings = Bindings {
         binding: vec![minimal_binding()],
+        ..Default::default()
     };
 
-    let resolved = resolve(&template, &bindings).expect("valid template should resolve");
+    let resolved = resolve(&template, &bindings, &[]).expect("valid template should resolve");
     assert_eq!(resolved.len(), 1);
     assert_eq!(resolved[0].id, Some("editor".to_string()));
     assert_eq!(resolved[0].command, Some("foot".to_string()));
@@ -253,9 +278,10 @@ fn resolve_leaves_the_template_layout_context_to_the_run_rather_than_each_step()
     template.layout.output = Some("HDMI-A-1".to_string());
     let bindings = Bindings {
         binding: vec![minimal_binding()],
+        ..Default::default()
     };
 
-    let resolved = resolve(&template, &bindings).expect("valid template should resolve");
+    let resolved = resolve(&template, &bindings, &[]).expect("valid template should resolve");
     assert_eq!(resolved[0].workspace, None);
     assert_eq!(resolved[0].output, None);
 }
@@ -270,9 +296,10 @@ fn resolve_keeps_a_step_s_own_workspace_and_output_alongside_a_layout_context() 
     template.layout.output = Some("HDMI-A-1".to_string());
     let bindings = Bindings {
         binding: vec![minimal_binding()],
+        ..Default::default()
     };
 
-    let resolved = resolve(&template, &bindings).expect("valid template should resolve");
+    let resolved = resolve(&template, &bindings, &[]).expect("valid template should resolve");
     assert_eq!(resolved[0].workspace, Some("5".to_string()));
     assert_eq!(resolved[0].output, Some("DP-1".to_string()));
 }
@@ -282,9 +309,10 @@ fn resolve_leaves_workspace_and_output_unset_without_a_layout_context() {
     let template = minimal_template(vec![minimal_step()]);
     let bindings = Bindings {
         binding: vec![minimal_binding()],
+        ..Default::default()
     };
 
-    let resolved = resolve(&template, &bindings).expect("valid template should resolve");
+    let resolved = resolve(&template, &bindings, &[]).expect("valid template should resolve");
     assert_eq!(resolved[0].workspace, None);
     assert_eq!(resolved[0].output, None);
 }
@@ -292,8 +320,11 @@ fn resolve_leaves_workspace_and_output_unset_without_a_layout_context() {
 #[test]
 fn resolve_errors_on_missing_binding() {
     let template = minimal_template(vec![minimal_step()]);
-    let bindings = Bindings { binding: vec![] };
-    let error = resolve(&template, &bindings)
+    let bindings = Bindings {
+        binding: vec![],
+        ..Default::default()
+    };
+    let error = resolve(&template, &bindings, &[])
         .map_err(|error| error.to_string())
         .err()
         .expect("missing binding should error");
@@ -320,8 +351,9 @@ fn resolve_errors_on_binding_with_no_target_field_naming_the_slot() {
             workspace_number: None,
             output: None,
         }],
+        ..Default::default()
     };
-    let error = resolve(&template, &bindings)
+    let error = resolve(&template, &bindings, &[])
         .map_err(|error| error.to_string())
         .err()
         .expect("binding with no target field should error");
@@ -357,8 +389,9 @@ fn resolve_errors_on_binding_with_command_and_con_id_together() {
             workspace_number: None,
             output: None,
         }],
+        ..Default::default()
     };
-    let error = resolve(&template, &bindings)
+    let error = resolve(&template, &bindings, &[])
         .map_err(|error| error.to_string())
         .err()
         .expect("binding with command and con_id together should error");
@@ -385,8 +418,9 @@ fn resolve_errors_on_binding_with_app_id_and_class_together() {
             workspace_number: None,
             output: None,
         }],
+        ..Default::default()
     };
-    let error = resolve(&template, &bindings)
+    let error = resolve(&template, &bindings, &[])
         .map_err(|error| error.to_string())
         .err()
         .expect("binding with app_id and class together should error");
@@ -403,8 +437,9 @@ fn resolve_errors_on_binding_with_class_and_mark_match_together() {
     binding.mark_match = Some("dropdown-term".to_string());
     let bindings = Bindings {
         binding: vec![binding],
+        ..Default::default()
     };
-    let error = resolve(&template, &bindings)
+    let error = resolve(&template, &bindings, &[])
         .map_err(|error| error.to_string())
         .err()
         .expect("binding with class and mark_match together should error");
@@ -420,8 +455,9 @@ fn resolve_rejects_a_blank_binding_app_id_naming_the_slot() {
     binding.app_id = Some("   ".to_string());
     let bindings = Bindings {
         binding: vec![binding],
+        ..Default::default()
     };
-    let error = resolve(&template, &bindings)
+    let error = resolve(&template, &bindings, &[])
         .map_err(|error| error.to_string())
         .err()
         .expect("a blank binding app_id should be rejected");
@@ -440,8 +476,9 @@ fn resolve_rejects_a_blank_binding_class_naming_the_slot() {
     binding.class = Some("".to_string());
     let bindings = Bindings {
         binding: vec![binding],
+        ..Default::default()
     };
-    let error = resolve(&template, &bindings)
+    let error = resolve(&template, &bindings, &[])
         .map_err(|error| error.to_string())
         .err()
         .expect("a blank binding class should be rejected");
@@ -458,8 +495,9 @@ fn resolve_rejects_binding_mark_match_without_existing() {
     binding.mark_match = Some("dropdown-term".to_string());
     let bindings = Bindings {
         binding: vec![binding],
+        ..Default::default()
     };
-    let error = resolve(&template, &bindings)
+    let error = resolve(&template, &bindings, &[])
         .map_err(|error| error.to_string())
         .err()
         .expect("binding mark_match without existing should be rejected");
@@ -475,8 +513,9 @@ fn resolve_rejects_binding_existing_without_a_matcher_naming_the_slot() {
     binding.existing = true;
     let bindings = Bindings {
         binding: vec![binding],
+        ..Default::default()
     };
-    let error = resolve(&template, &bindings)
+    let error = resolve(&template, &bindings, &[])
         .map_err(|error| error.to_string())
         .err()
         .expect("existing without a matcher should be rejected");
@@ -496,8 +535,9 @@ fn resolve_fills_in_a_binding_s_mark_match() {
     binding.mark_match = Some("dropdown-term".to_string());
     let bindings = Bindings {
         binding: vec![binding],
+        ..Default::default()
     };
-    let resolved = resolve(&template, &bindings).expect("valid binding should resolve");
+    let resolved = resolve(&template, &bindings, &[]).expect("valid binding should resolve");
     assert_eq!(resolved[0].mark_match, Some("dropdown-term".to_string()));
 }
 
@@ -506,8 +546,9 @@ fn resolve_errors_on_unused_binding() {
     let template = minimal_template(vec![]);
     let bindings = Bindings {
         binding: vec![minimal_binding()],
+        ..Default::default()
     };
-    let error = resolve(&template, &bindings)
+    let error = resolve(&template, &bindings, &[])
         .map_err(|error| error.to_string())
         .err()
         .expect("unused binding should error");
@@ -519,8 +560,9 @@ fn resolve_errors_on_duplicate_slot_within_bindings() {
     let template = minimal_template(vec![minimal_step()]);
     let bindings = Bindings {
         binding: vec![minimal_binding(), minimal_binding()],
+        ..Default::default()
     };
-    let error = resolve(&template, &bindings)
+    let error = resolve(&template, &bindings, &[])
         .map_err(|error| error.to_string())
         .err()
         .expect("duplicate binding slot should error");
@@ -533,9 +575,12 @@ fn resolve_target_id_step_has_no_id_and_no_target_fields() {
     step.slot = None;
     step.target_id = Some("editor".to_string());
     let template = minimal_template(vec![step]);
-    let bindings = Bindings { binding: vec![] };
+    let bindings = Bindings {
+        binding: vec![],
+        ..Default::default()
+    };
 
-    let resolved = resolve(&template, &bindings).expect("valid template should resolve");
+    let resolved = resolve(&template, &bindings, &[]).expect("valid template should resolve");
     assert_eq!(resolved.len(), 1);
     assert_eq!(resolved[0].id, None);
     assert_eq!(resolved[0].target_id, Some("editor".to_string()));
@@ -912,7 +957,7 @@ fn builtin_templates_reports_slots_and_slot_names_matching_the_apps_ordering() {
 fn every_builtin_template_resolves_and_converts_without_a_compositor() {
     // parse() only checks TOML shape and the [template] table; the
     // height/width/position formats, sway-string fields, target rules
-    // and target_id references are checked by resolve() and
+    // and target_id references are checked by resolve(, &[]) and
     // to_sway_launch(). Running both here, the way --validate does,
     // means a broken built-in fails cargo test (and the release gate)
     // instead of only the separate live-Sway job.
@@ -929,8 +974,9 @@ fn every_builtin_template_resolves_and_converts_without_a_compositor() {
                     ..minimal_binding()
                 })
                 .collect(),
+            ..Default::default()
         };
-        let steps = resolve(&template, &bindings)
+        let steps = resolve(&template, &bindings, &[])
             .unwrap_or_else(|error| panic!("{name} failed to resolve: {error}"));
 
         let mut resolved_ids = HashMap::new();
@@ -1149,7 +1195,9 @@ fn resolve_lets_a_binding_replace_the_step_placement() {
         &template,
         &Bindings {
             binding: vec![minimal_binding()],
+            ..Default::default()
         },
+        &[],
     )
     .expect("a binding without placement should resolve");
     assert_eq!(resolved[0].workspace.as_deref(), Some("1"));
@@ -1163,7 +1211,9 @@ fn resolve_lets_a_binding_replace_the_step_placement() {
                 output: Some("DP-2".to_string()),
                 ..minimal_binding()
             }],
+            ..Default::default()
         },
+        &[],
     )
     .expect("a binding with placement should resolve");
     // The workspace pair is replaced as a whole, so the step's name doesn't
@@ -1218,7 +1268,9 @@ fn resolve_reports_a_bad_binding_placement_against_the_bindings() {
             &template,
             &Bindings {
                 binding: vec![binding],
+                ..Default::default()
             },
+            &[],
         )
         .err()
         .expect("a bad placement should be rejected");
@@ -1228,6 +1280,146 @@ fn resolve_reports_a_bad_binding_placement_against_the_bindings() {
                 assert!(message.contains(expected), "{message}");
             }
             other => panic!("expected a bindings error, got {other:?}"),
+        }
+    }
+}
+
+fn params_template(params: &str, width: &str) -> String {
+    format!(
+        "[template]\ndescription = \"A test template.\"\ncategory = \"Test\"\n\n\
+         [params]\n{params}\n\n[[step]]\nslot = \"main\"\n\n\
+         [[step]]\nslot = \"stack\"\nwidth = \"{width}\"\n"
+    )
+}
+
+#[test]
+fn parse_checks_every_param_and_reference() {
+    assert!(parse(&params_template("stack-width = \"35ppt\"", "{stack-width}")).is_ok());
+    let cases = [
+        (
+            "stack-width = \"35ppt\"",
+            "{other}",
+            "{other} names no param",
+        ),
+        (
+            "\"stack width\" = \"35ppt\"",
+            "{stack width}",
+            "isn't a valid param name",
+        ),
+        (
+            "stack-width = \"wide\"",
+            "{stack-width}",
+            "param \"stack-width\" (used as width)",
+        ),
+        (
+            "unused = \"35ppt\"",
+            "35ppt",
+            "\"unused\" isn't used by any step",
+        ),
+    ];
+    for (params, width, expected) in cases {
+        let error = parse(&params_template(params, width))
+            .err()
+            .unwrap_or_else(|| panic!("{params} / {width} should be rejected"));
+        assert!(error.contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn resolve_takes_param_overrides_in_order_of_precedence() {
+    let template = parse(&params_template("stack-width = \"35ppt\"", "{stack-width}"))
+        .expect("template should parse");
+    let bindings = |params: &[(&str, &str)]| Bindings {
+        binding: ["main", "stack"]
+            .into_iter()
+            .map(|slot| Binding {
+                slot: slot.to_string(),
+                ..minimal_binding()
+            })
+            .collect(),
+        params: params
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect(),
+    };
+    let width = |bindings: &Bindings, overrides: &[(String, String)]| {
+        resolve(&template, bindings, overrides).expect("should resolve")[1]
+            .width
+            .clone()
+    };
+    let override_with = |value: &str| vec![("stack-width".to_string(), value.to_string())];
+
+    assert_eq!(width(&bindings(&[]), &[]).as_deref(), Some("35ppt"));
+    let from_file = bindings(&[("stack-width", "40ppt")]);
+    assert_eq!(width(&from_file, &[]).as_deref(), Some("40ppt"));
+    assert_eq!(
+        width(
+            &from_file,
+            &[override_with("20ppt"), override_with("45ppt")].concat()
+        )
+        .as_deref(),
+        Some("45ppt")
+    );
+}
+
+#[test]
+fn resolve_reports_a_bad_param_override_against_its_source() {
+    let template = parse(&params_template("stack-width = \"35ppt\"", "{stack-width}"))
+        .expect("template should parse");
+    let bindings = Bindings {
+        binding: ["main", "stack"]
+            .into_iter()
+            .map(|slot| Binding {
+                slot: slot.to_string(),
+                ..minimal_binding()
+            })
+            .collect(),
+        params: [("stack-width".to_string(), "huge".to_string())].into(),
+    };
+    assert!(matches!(
+        resolve(&template, &bindings, &[]),
+        Err(ResolveError::Bindings(message)) if message.contains("[params]: param \"stack-width\"")
+    ));
+
+    let bindings = Bindings {
+        params: Default::default(),
+        ..bindings
+    };
+    let unknown = [("stack".to_string(), "40ppt".to_string())];
+    assert!(matches!(
+        resolve(&template, &bindings, &unknown),
+        Err(ResolveError::Param(message))
+            if message.contains("unknown param \"stack\" (this template's params: stack-width)")
+    ));
+}
+
+#[test]
+fn parse_param_override_splits_at_the_first_equals_sign() {
+    assert_eq!(
+        parse_param_override("overlay-position=100 200"),
+        Ok(("overlay-position".to_string(), "100 200".to_string()))
+    );
+    assert_eq!(
+        parse_param_override("a=b=c"),
+        Ok(("a".to_string(), "b=c".to_string()))
+    );
+    assert!(parse_param_override("stack-width").is_err());
+    assert!(parse_param_override("=40ppt").is_err());
+}
+
+#[test]
+fn every_builtin_param_is_described_in_its_header_comment() {
+    for file in BUILTIN_TEMPLATES.files() {
+        let contents = file.contents_utf8().expect("template should be UTF-8");
+        let template = parse(contents).expect("built-in should parse");
+        for (name, default) in &template.params {
+            let line = format!("#   {}: ", name);
+            assert!(
+                contents.lines().any(|text| text.starts_with(&line)
+                    && text.ends_with(&format!("(default {default})"))),
+                "{} should describe param {name} as `{line}... (default {default})`",
+                file.path().display()
+            );
         }
     }
 }

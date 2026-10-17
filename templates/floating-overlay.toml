@@ -8,10 +8,21 @@
 # deterministic every run — without it, overlay landed wherever Sway's own
 # default floating placement happened to put it, the one shape in this
 # library whose final geometry wasn't fully reproducible run to run.
+#
+# Params, each overridable with --param NAME=VALUE or a bindings file's
+# [params] table:
+#   overlay-width: the overlay's width (default 700px)
+#   overlay-height: the overlay's height (default 450px)
+#   overlay-position: where the overlay sits (default center)
 
 [template]
 description = "A tiled main window, with a small floating window on top of it."
 category = "Floating"
+
+[params]
+overlay-width = "700px"
+overlay-height = "450px"
+overlay-position = "center"
 
 [[step]]
 slot = "main"
@@ -19,6 +30,6 @@ slot = "main"
 [[step]]
 slot = "overlay"
 floating = true
-width = "700px"
-height = "450px"
-position = "center"
+width = "{overlay-width}"
+height = "{overlay-height}"
+position = "{overlay-position}"
