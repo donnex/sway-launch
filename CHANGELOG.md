@@ -76,6 +76,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is silently clamped by Sway, a move at the edge of a workspace is a no-op — they wait out
   `--wait-time` and report the action as unconfirmed rather than hang or fail. An action whose
   target window has already closed fails straight away, naming the container. (#65)
+- The follow-up actions after the window is found — `--split`, `--floating`, `--sticky`,
+  `--fullscreen`, `--focus`, `--height`, `--width`, `--position` and `--mark` — reach Sway as one
+  command, so the window takes its whole arrangement at once instead of floating, then resizing,
+  then jumping into place. This makes a typical call about twice as fast, and an application no
+  longer sees half-applied geometry it could react to. Each action is still confirmed and reported
+  on its own, and a part Sway refuses fails naming that action. Moves (`--new-column`,
+  `--new-row`, `--workspace`, `--output`) still run first, each on its own, and `--scratchpad`
+  last. `--dry-run` shows the actions sent together on one line. (#32)
 - `--app-id`/`--class` matching, so a call in a multi-window script matches the right window rather
   than whichever one happened to appear first. The value (like `--mark-match`'s) must match exactly,
   case included — unlike Sway's own regex criteria, `-a firefox` doesn't match

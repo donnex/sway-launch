@@ -252,6 +252,12 @@ impl<'a> SwayAction<'a> {
         self.kind.flag_name()
     }
 
+    /// Whether this action goes to Sway in one command with its neighbours
+    /// — see `ActionKind::joins_batch()`.
+    pub fn joins_batch(&self) -> bool {
+        self.kind.joins_batch()
+    }
+
     /// The `swaymsg` command *without* the `[con_id=N]` target prefix —
     /// `sway_command()`'s own building block, and also what `--dry-run`
     /// prints for a planned action whose container id isn't resolved yet

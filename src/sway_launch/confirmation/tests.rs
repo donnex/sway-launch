@@ -1,5 +1,5 @@
 use super::super::test_support::*;
-use super::super::values::{Position, WorkspaceTarget};
+use super::super::values::{Position, Size, Split, WorkspaceTarget};
 use super::*;
 
 // unfiltered_fallback_hint
@@ -910,5 +910,106 @@ fn exec_timeout_message_names_the_title_it_waited_for() {
         ),
         "no window with title matching \"project-a\" appeared within 3 sec; 1 other new window \
          did (con_id 12, app_id \"foot\", no title) — check --app-id/--class/--title"
+    );
+}
+
+// joins_batch / batch_command / batch_failure (#32)
+
+#[test]
+fn joins_batch_keeps_moves_and_the_scratchpad_out() {
+    let joining: Vec<&str> = [
+        ActionKind::Split(Split::V),
+        ActionKind::Floating,
+        ActionKind::Sticky,
+        ActionKind::Fullscreen,
+        ActionKind::Focus,
+        ActionKind::Mark("m"),
+        ActionKind::Height(Size::Pixels(1)),
+        ActionKind::Width(Size::Percent(1)),
+        ActionKind::Position(Position::Center),
+        ActionKind::NewColumn,
+        ActionKind::NewRow,
+        ActionKind::Workspace(WorkspaceTarget::Name("2")),
+        ActionKind::Output("HEADLESS-1"),
+        ActionKind::WorkspaceToOutput {
+            workspace: WorkspaceTarget::Name("2"),
+            output: "HEADLESS-1",
+        },
+        ActionKind::Scratchpad,
+    ]
+    .iter()
+    .filter(|kind| kind.joins_batch())
+    .map(|kind| kind.flag_name())
+    .collect();
+    assert_eq!(
+        joining,
+        vec![
+            "split",
+            "floating",
+            "sticky",
+            "fullscreen",
+            "focus",
+            "mark",
+            "height",
+            "width",
+            "position"
+        ]
+    );
+}
+
+#[test]
+fn batch_command_puts_every_verb_behind_one_criteria() {
+    let floating = targeted(ActionKind::Floating);
+    let mark = targeted(ActionKind::Mark("a, b"));
+    assert_eq!(
+        batch_command(42, &[&floating, &mark]),
+        "[con_id=42] floating enable, mark \"a, b\""
+    );
+}
+
+#[test]
+fn batch_failure_names_the_action_whose_part_failed() {
+    let floating = targeted(ActionKind::Floating);
+    let position = targeted(ActionKind::Position(Position::Coordinates { x: 1, y: 2 }));
+    let mark = targeted(ActionKind::Mark("m"));
+    let sent = [&floating, &position, &mark];
+    assert_eq!(batch_failure(&sent, &[Ok(()), Ok(()), Ok(())]), None);
+    assert_eq!(
+        batch_failure(&sent, &[Ok(()), Err("refused".to_string()), Ok(())]),
+        Some("move position 1 2: refused".to_string())
+    );
+}
+
+#[test]
+fn batch_failure_reports_a_reply_cut_short_without_an_error() {
+    let floating = targeted(ActionKind::Floating);
+    let mark = targeted(ActionKind::Mark("m"));
+    assert_eq!(
+        batch_failure(&[&floating, &mark], &[Ok(())]),
+        Some("Sway answered 1 of the 2 commands sent together; the rest never ran".to_string())
+    );
+}
+
+#[test]
+fn batch_progress_reports_anything_left_waiting_as_unconfirmed() {
+    let outcomes: Vec<ActionOutcome> = [
+        BatchProgress::AlreadySatisfied,
+        BatchProgress::Changed,
+        BatchProgress::Unconfirmed,
+        BatchProgress::Waiting,
+        BatchProgress::EventSeen,
+    ]
+    .iter()
+    .map(|progress| progress.outcome())
+    .collect();
+    assert_eq!(
+        outcomes,
+        vec![
+            ActionOutcome::AlreadySatisfied,
+            ActionOutcome::Changed,
+            ActionOutcome::Unconfirmed,
+            ActionOutcome::Unconfirmed,
+            ActionOutcome::Unconfirmed,
+        ]
     );
 }

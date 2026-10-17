@@ -316,7 +316,7 @@ fn dry_run_plain_output_is_a_numbered_list() {
     let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
     assert_eq!(
         stdout.trim(),
-        "1. target existing container\n2. floating enable\n3. mark \"pinned\""
+        "1. target existing container\n2. floating enable, mark \"pinned\""
     );
 }
 

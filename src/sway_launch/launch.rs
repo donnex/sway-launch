@@ -11,7 +11,7 @@
 //! incidental; see `build_actions()`.
 
 use super::action::{ActionKind, ExecAction, SwayAction};
-use super::confirmation::run_wait_for_existing_window;
+use super::confirmation::{run_batch, run_wait_for_existing_window};
 use super::ipc::event_loop;
 use super::ipc::{quote_sway_string, run_sway_command};
 use super::outcome::{
@@ -287,58 +287,66 @@ impl<'a> SwayLaunch<'a> {
     }
 
     /// Runs `plan` in order, stopping at the first failure, and records what
-    /// happened to each action. Before a `NewColumn`/`NewRow` is sent,
-    /// `move_skip_reason` is asked whether that move is safe *now* — after
-    /// every earlier action in the plan has run — and a `Some(reason)` skips
-    /// it with that reason instead (see `tree::move_skip_reason()`).
+    /// happened to each action. Consecutive actions that `joins_batch()` are
+    /// handed to `run_actions` together, to be sent as one command (#32);
+    /// every other action is handed over alone. Before a `NewColumn`/`NewRow`
+    /// is sent, `move_skip_reason` is asked whether that move is safe *now* —
+    /// after every earlier action in the plan has run — and a `Some(reason)`
+    /// skips it with that reason instead (see `tree::move_skip_reason()`).
     ///
     /// Both the guard and the action runner are parameters only so the order
     /// of checks and runs can be pinned headlessly; `run()` passes the real
-    /// `current_move_skip_reason()` and `SwayAction::run()`.
+    /// `current_move_skip_reason()` and `run_plan_group()`. `run_actions`
+    /// returns one outcome per action it was given.
     fn execute_plan(
         &self,
         plan: Vec<SwayAction<'a>>,
         mut move_skip_reason: impl FnMut(MoveDirection) -> Result<Option<&'static str>, String>,
-        mut run_action: impl FnMut(&SwayAction<'a>) -> Result<ActionOutcome, RunError>,
+        mut run_actions: impl FnMut(&[SwayAction<'a>]) -> Result<Vec<ActionOutcome>, RunError>,
     ) -> Result<Vec<ActionRecord>, RunError> {
         let mut records = Vec::new();
-        for action in plan {
-            let kind = action.kind_name();
-            let direction = match action.kind {
-                ActionKind::NewColumn => Some(MoveDirection::Right),
-                ActionKind::NewRow => Some(MoveDirection::Down),
-                _ => None,
-            };
-            if let Some(direction) = direction {
-                if let Some(reason) = move_skip_reason(direction)? {
-                    if self.verbose {
-                        diagnostic!(
-                            "Skipping {}: container id {} {}",
-                            kind,
-                            action.container_id,
-                            skip_explanation(reason, direction)
-                        );
+        for group in plan_groups(&plan) {
+            if let [action] = group {
+                let direction = match action.kind {
+                    ActionKind::NewColumn => Some(MoveDirection::Right),
+                    ActionKind::NewRow => Some(MoveDirection::Down),
+                    _ => None,
+                };
+                if let Some(direction) = direction {
+                    if let Some(reason) = move_skip_reason(direction)? {
+                        if self.verbose {
+                            diagnostic!(
+                                "Skipping {}: container id {} {}",
+                                action.kind_name(),
+                                action.container_id,
+                                skip_explanation(reason, direction)
+                            );
+                        }
+                        records.push(ActionRecord {
+                            kind: action.kind_name(),
+                            command: None,
+                            status: ActionStatus::Skipped { reason },
+                        });
+                        continue;
                     }
-                    records.push(ActionRecord {
-                        kind,
-                        command: None,
-                        status: ActionStatus::Skipped { reason },
-                    });
-                    continue;
                 }
             }
 
-            let command = action.sway_command_verb();
-            let outcome = run_action(&action)?;
-            records.push(ActionRecord {
-                kind,
-                command: Some(command),
-                status: match outcome {
-                    ActionOutcome::Changed => ActionStatus::Changed,
-                    ActionOutcome::AlreadySatisfied => ActionStatus::AlreadySatisfied,
-                    ActionOutcome::Unconfirmed => ActionStatus::Unconfirmed,
-                },
-            });
+            let outcomes = run_actions(group)?;
+            records.extend(
+                group
+                    .iter()
+                    .zip(outcomes)
+                    .map(|(action, outcome)| ActionRecord {
+                        kind: action.kind_name(),
+                        command: Some(action.sway_command_verb()),
+                        status: match outcome {
+                            ActionOutcome::Changed => ActionStatus::Changed,
+                            ActionOutcome::AlreadySatisfied => ActionStatus::AlreadySatisfied,
+                            ActionOutcome::Unconfirmed => ActionStatus::Unconfirmed,
+                        },
+                    }),
+            );
         }
         Ok(records)
     }
@@ -384,7 +392,7 @@ impl<'a> SwayLaunch<'a> {
             .execute_plan(
                 plan,
                 |direction| current_move_skip_reason(container_id, direction),
-                SwayAction::run,
+                run_plan_group,
             )
             .map_err(resolved)?;
 
@@ -393,6 +401,37 @@ impl<'a> SwayLaunch<'a> {
             actions,
             launch_ownership,
         })
+    }
+}
+
+/// `plan` split into what `execute_plan()` runs at once: each run of
+/// consecutive actions whose kind `joins_batch()`, and every other action on
+/// its own, in plan order.
+fn plan_groups<'p, 'a>(plan: &'p [SwayAction<'a>]) -> Vec<&'p [SwayAction<'a>]> {
+    let mut groups = Vec::new();
+    let mut start = 0;
+    while start < plan.len() {
+        let end = if plan[start].kind.joins_batch() {
+            start
+                + plan[start..]
+                    .iter()
+                    .take_while(|action| action.kind.joins_batch())
+                    .count()
+        } else {
+            start + 1
+        };
+        groups.push(&plan[start..end]);
+        start = end;
+    }
+    groups
+}
+
+/// Runs one of `plan_groups()`'s groups for real: a batch through
+/// `run_batch()`, a lone non-batching action through `SwayAction::run()`.
+fn run_plan_group(group: &[SwayAction<'_>]) -> Result<Vec<ActionOutcome>, RunError> {
+    match group {
+        [action] if !action.kind.joins_batch() => action.run().map(|outcome| vec![outcome]),
+        _ => run_batch(group),
     }
 }
 

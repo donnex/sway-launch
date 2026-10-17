@@ -241,6 +241,19 @@ pub(super) fn run_sway_command(command: &str) -> Result<(), String> {
     first_outcome_error(outcomes, command)
 }
 
+/// `run_sway_command()` for a command joining several with `,` (#32): each
+/// sub-command's own outcome, in order, so a failure can be pinned to the
+/// action that sent it. Sway runs every sub-command even after one fails, and
+/// stops only at one it can't parse, so the reply can be shorter than the
+/// command (both confirmed live on Sway 1.11).
+pub(super) fn run_sway_commands(command: &str) -> Result<Vec<Result<(), String>>, String> {
+    let outcomes = new_connection()?.run_command(command).map_err(ipc_error)?;
+    Ok(outcomes
+        .into_iter()
+        .map(|outcome| outcome.map_err(|error| error.to_string()))
+        .collect())
+}
+
 /// `run_sway_command()` for a command that must reach Sway as exactly one
 /// command — the launch's `exec`. `validate_exec_command()` already rejects
 /// anything Sway would split, so this is the backstop: if Sway's reply still
