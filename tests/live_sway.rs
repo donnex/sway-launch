@@ -5223,6 +5223,21 @@ fn focused_workspace_name(connection: &mut Connection) -> String {
 
 #[test]
 fn every_shipped_template_resolves_and_launches_successfully() {
+    assert_every_shipped_template_builds_its_recorded_shape(&[]);
+}
+
+#[test]
+fn every_shipped_template_builds_the_same_shape_with_concurrent() {
+    // #73: launched all at once on a staging workspace, then moved into
+    // place in step order, every template must build exactly the shape it
+    // builds one launch at a time. Never rewrites the recordings: the
+    // sequential run above owns them.
+    assert_every_shipped_template_builds_its_recorded_shape(&["--concurrent"]);
+}
+
+/// The body of every_shipped_template_resolves_and_launches_successfully,
+/// run with `extra_args` added to every template run.
+fn assert_every_shipped_template_builds_its_recorded_shape(extra_args: &[&str]) {
     fresh_workspace();
     // Unlike template_apps_resolve_to_real_windows above (a hand-written,
     // minimal template), this drives the actual files under templates/ and
@@ -5236,7 +5251,7 @@ fn every_shipped_template_resolves_and_launches_successfully() {
     // dual_output_template_moves_windows_to_separate_outputs.
     let mut connection = connect();
     let original_workspace = focused_workspace_name(&mut connection);
-    let updating = std::env::var_os(UPDATE_TEMPLATE_SHAPES).is_some();
+    let updating = extra_args.is_empty() && std::env::var_os(UPDATE_TEMPLATE_SHAPES).is_some();
     let mut paths: Vec<_> = std::fs::read_dir(templates_dir())
         .expect("templates/ should be readable")
         .filter_map(Result::ok)
@@ -5274,7 +5289,7 @@ fn every_shipped_template_resolves_and_launches_successfully() {
             &name,
             slot_count,
             step_count,
-            &[],
+            extra_args,
         );
         if updating {
             std::fs::create_dir_all(template_shapes_dir())
@@ -5681,6 +5696,173 @@ fn retarget_by_id_layout_floats_the_first_step_by_name() {
     );
 
     drop(guards);
+}
+
+fn no_staging_workspace_is_left(connection: &mut Connection) {
+    let workspaces: Vec<String> = connection
+        .get_workspaces()
+        .expect("get_workspaces should succeed")
+        .into_iter()
+        .map(|workspace| workspace.name)
+        .collect();
+    assert!(
+        !workspaces
+            .iter()
+            .any(|name| name.starts_with("sway-launch-staging-")),
+        "a staging workspace was left behind: {workspaces:?}"
+    );
+}
+
+fn workspace_of(connection: &mut Connection, con_id: i64) -> String {
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    workspace_containing(&tree, con_id, None)
+        .unwrap_or_else(|| panic!("container id {con_id} is on no workspace"))
+        .to_string()
+}
+
+#[test]
+fn concurrent_retarget_by_id_layout_resolves_a_staged_window_by_name() {
+    fresh_workspace();
+    // #73: the shipped retarget-by-id.toml with --concurrent. Its third step
+    // has no command of its own, so it runs as usual, against the id the
+    // first staged launch resolved to.
+    let mut connection = connect();
+    let build_workspace = focused_workspace_name(&mut connection);
+    let path = examples_dir("layouts").join("retarget-by-id.toml");
+    let output = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--concurrent",
+            "--wait-time",
+            "100",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "retarget-by-id.toml --concurrent failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let ids: Vec<i64> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| line.parse().expect("each line should be a container id"))
+        .collect();
+    let _guards: Vec<_> = [ids[0], ids[1]].iter().map(|&id| KillOnDrop(id)).collect();
+    assert_eq!(ids.len(), 3);
+    assert_eq!(ids[0], ids[2]);
+    assert_ne!(ids[0], ids[1]);
+    assert!(node_is_floating(&get_node(&mut connection, ids[0])));
+    for &id in &ids[..2] {
+        assert_eq!(workspace_of(&mut connection, id), build_workspace);
+    }
+    assert_eq!(focused_workspace_name(&mut connection), build_workspace);
+    no_staging_workspace_is_left(&mut connection);
+}
+
+#[test]
+fn concurrent_rollback_closes_every_staged_window_a_later_step_fails_after() {
+    fresh_workspace();
+    let mut connection = connect();
+    connection
+        .run_command("[app_id=foot] kill")
+        .expect("kill should succeed");
+    let path = TempToml::write(
+        "concurrent-rollback",
+        "[[step]]\ncommand = \"foot\"\napp_id = \"foot\"\n\n\
+         [[step]]\ncommand = \"foot\"\napp_id = \"foot\"\n\n\
+         [[step]]\ncon_id = 999999999\nmark = \"x\"\n",
+    );
+    let output = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--concurrent",
+            "--rollback-on-error",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(!output.status.success(), "the third step should fail");
+    let error: serde_json::Value =
+        serde_json::from_str(stderr.trim()).expect("stderr is the --json error");
+    assert_eq!(
+        error["rolled_back"].as_array().map(Vec::len),
+        Some(2),
+        "{stderr}"
+    );
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(count_app_id_windows(&tree, "foot"), 0, "{stderr}");
+    no_staging_workspace_is_left(&mut connection);
+}
+
+#[test]
+fn concurrent_launch_that_times_out_leaves_the_others_on_the_build_workspace() {
+    fresh_workspace();
+    // A staged launch failing must not strand the windows already staged
+    // out of sight: they're moved to the build workspace and reported.
+    let mut connection = connect();
+    let build_workspace = focused_workspace_name(&mut connection);
+    let path = TempToml::write(
+        "concurrent-timeout",
+        "[[step]]\ncommand = \"foot\"\napp_id = \"foot\"\n\n\
+         [[step]]\ncommand = \"sleep 30\"\napp_id = \"never-opens\"\ntimeout = 1\n",
+    );
+    let output = sway_launch_command()
+        .args(["--layout", path.to_str().unwrap(), "--concurrent", "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(!output.status.success(), "the second step should time out");
+    let error: serde_json::Value =
+        serde_json::from_str(stderr.trim()).expect("stderr is the --json error");
+    assert!(
+        error["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("step 2"),
+        "{stderr}"
+    );
+    let foot = error["container_ids"][0]
+        .as_i64()
+        .unwrap_or_else(|| panic!("the staged foot should be reported: {stderr}"));
+    let _guard = KillOnDrop(foot);
+    assert_eq!(workspace_of(&mut connection, foot), build_workspace);
+    no_staging_workspace_is_left(&mut connection);
+}
+
+#[test]
+fn concurrent_continue_on_timeout_arranges_the_windows_that_did_open() {
+    fresh_workspace();
+    let mut connection = connect();
+    let build_workspace = focused_workspace_name(&mut connection);
+    let path = TempToml::write(
+        "concurrent-continue",
+        "[[step]]\ncommand = \"sleep 30\"\napp_id = \"never-opens\"\ntimeout = 1\n\n\
+         [[step]]\ncommand = \"foot\"\napp_id = \"foot\"\nfloating = true\n",
+    );
+    let output = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--concurrent",
+            "--continue-on-timeout",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert_eq!(output.status.code(), Some(1));
+    let result: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout is the --json result");
+    let foot = result["container_ids"][0]
+        .as_i64()
+        .unwrap_or_else(|| panic!("foot should be arranged: {result}"));
+    let _guard = KillOnDrop(foot);
+    assert_eq!(result["timed_out_steps"][0]["step"], 1, "{result}");
+    assert!(node_is_floating(&get_node(&mut connection, foot)));
+    assert_eq!(workspace_of(&mut connection, foot), build_workspace);
+    no_staging_workspace_is_left(&mut connection);
 }
 
 #[test]
