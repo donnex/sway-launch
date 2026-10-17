@@ -1013,3 +1013,15 @@ fn batch_progress_reports_anything_left_waiting_as_unconfirmed() {
         ]
     );
 }
+
+// is_held_geometry (#17)
+
+#[test]
+fn is_held_geometry_is_pixel_sizes_and_positions_only() {
+    assert!(is_held_geometry(ActionKind::Height(Size::Pixels(1))));
+    assert!(is_held_geometry(ActionKind::Width(Size::Pixels(1))));
+    assert!(is_held_geometry(ActionKind::Position(Position::Center)));
+    assert!(!is_held_geometry(ActionKind::Height(Size::Percent(1))));
+    assert!(!is_held_geometry(ActionKind::Width(Size::Percent(1))));
+    assert!(!is_held_geometry(ActionKind::Floating));
+}

@@ -46,11 +46,11 @@ pub use target::{FieldStyle, Target, TargetError, TargetFields, WindowCriteria, 
 pub use tree::ListedWindow;
 pub use values::{
     escape_control_characters, launch_setup, parse_env_assignment, parse_position, parse_size,
-    parse_title_pattern, parse_workspace_number, render_argv, require_non_blank,
+    parse_title_pattern, parse_workspace_number, render_argv, require_non_blank, settle_duration,
     validate_exec_command, validate_non_blank_argument, validate_output_argument,
-    validate_sway_string_argument, validate_timeout_argument, validate_timeout_seconds,
-    validate_workspace_argument, validate_workspace_number, Position, Size, Split, TitlePattern,
-    WorkspaceTarget,
+    validate_settle_argument, validate_settle_milliseconds, validate_sway_string_argument,
+    validate_timeout_argument, validate_timeout_seconds, validate_workspace_argument,
+    validate_workspace_number, Position, Size, Split, TitlePattern, WorkspaceTarget,
 };
 
 /// The upper bound `run_poll_then_fallback()` polls `get_tree()` for a

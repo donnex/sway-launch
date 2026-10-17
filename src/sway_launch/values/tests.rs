@@ -720,3 +720,42 @@ fn parse_title_pattern_rejects_a_blank_or_invalid_pattern() {
         "{error}"
     );
 }
+
+// validate_settle_milliseconds / validate_settle_argument / settle_duration
+
+#[test]
+fn validate_settle_milliseconds_accepts_one_to_a_minute() {
+    assert_eq!(validate_settle_milliseconds(1), Ok(1));
+    assert_eq!(
+        validate_settle_milliseconds(MAX_SETTLE_MILLISECONDS),
+        Ok(MAX_SETTLE_MILLISECONDS)
+    );
+    assert!(validate_settle_milliseconds(0).is_err());
+    assert!(validate_settle_milliseconds(MAX_SETTLE_MILLISECONDS + 1).is_err());
+}
+
+#[test]
+fn validate_settle_argument_rejects_what_is_not_a_whole_number() {
+    assert_eq!(validate_settle_argument("300"), Ok(300));
+    assert_eq!(
+        validate_settle_argument("0.5"),
+        Err("Must be a whole number of ms between 1 and 60000".to_string())
+    );
+}
+
+#[test]
+fn settle_duration_needs_pixel_geometry_or_a_position() {
+    let pixels = Some(Size::Pixels(500));
+    let percent = Some(Size::Percent(50));
+    assert_eq!(settle_duration(None, None, None, None), Ok(None));
+    assert_eq!(
+        settle_duration(Some(300), pixels, None, None),
+        Ok(Some(std::time::Duration::from_millis(300)))
+    );
+    assert!(settle_duration(Some(300), None, pixels, None).is_ok());
+    assert!(settle_duration(Some(300), None, None, Some(Position::Center)).is_ok());
+    let missing = Err("needs a height or width in px, or a position, to hold".to_string());
+    assert_eq!(settle_duration(Some(300), None, None, None), missing);
+    assert_eq!(settle_duration(Some(300), percent, percent, None), missing);
+    assert!(settle_duration(Some(0), pixels, None, None).is_err());
+}

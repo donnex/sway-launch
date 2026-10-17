@@ -283,6 +283,7 @@ pub struct TemplateStep {
 
     pub timeout: Option<u64>,
     pub wait_time: Option<u64>,
+    pub settle: Option<u64>,
 }
 
 /// A named application binding: supplies the target identity a `slot` needs
@@ -323,6 +324,9 @@ pub struct Binding {
     /// wait longer without every other slot waiting as long.
     pub timeout: Option<u64>,
     pub wait_time: Option<u64>,
+    /// This slot's own `settle` (#17), overriding the template step's: the
+    /// binding is what knows the application is a browser.
+    pub settle: Option<u64>,
 }
 
 impl Binding {
@@ -338,6 +342,18 @@ impl Binding {
         if let Some(timeout) = self.timeout {
             sway_launch::validate_timeout_seconds(timeout)
                 .map_err(|error| format!("timeout: {}", error))?;
+        }
+        if let Some(settle) = self.settle {
+            sway_launch::validate_settle_milliseconds(settle)
+                .map_err(|error| format!("settle: {}", error))?;
+            // Whether a size is in px is only known once params are
+            // substituted, so that half is left to to_sway_launch().
+            if step.height.is_none() && step.width.is_none() && step.position.is_none() {
+                return Err(
+                    "settle: this slot's step sets no height, width or position to hold"
+                        .to_string(),
+                );
+            }
         }
         if self.workspace.is_some() && self.workspace_number.is_some() {
             return Err(
@@ -704,6 +720,7 @@ pub fn resolve(
             wait_time: binding
                 .and_then(|binding| binding.wait_time)
                 .or(step.wait_time),
+            settle: binding.and_then(|binding| binding.settle).or(step.settle),
         });
     }
 

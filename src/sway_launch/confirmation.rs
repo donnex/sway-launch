@@ -1008,7 +1008,16 @@ impl BatchProgress {
 /// reported `Unconfirmed` once the rest of `--wait-time` has passed. An
 /// event-confirmed action still unconfirmed at `--timeout` fails the batch,
 /// with its own verb in front, as it would alone.
-pub(super) fn run_batch(actions: &[SwayAction<'_>]) -> Result<Vec<ActionOutcome>, RunError> {
+///
+/// With `settle` (#17), the pixel sizes and the position confirmed this way
+/// are then held for that long: polled every `WAIT_TIME_POLL_INTERVAL`, and
+/// sent again together if the window stops showing them, as a browser does
+/// when it sets its own size just after mapping, which restarts the hold.
+/// See `hold_geometry()`.
+pub(super) fn run_batch(
+    actions: &[SwayAction<'_>],
+    settle: Option<time::Duration>,
+) -> Result<Vec<ActionOutcome>, RunError> {
     let Some(first) = actions.first() else {
         return Ok(Vec::new());
     };
@@ -1252,6 +1261,11 @@ pub(super) fn run_batch(actions: &[SwayAction<'_>]) -> Result<Vec<ActionOutcome>
         }
     }
 
+    if let (Some(settle), Some(connection)) = (settle, poll_connection.as_mut()) {
+        hold_geometry(actions, &mut progress, settle, connection)
+            .map_err(|error| fail(first, error))?;
+    }
+
     // As run_poll_then_fallback() does: what couldn't be confirmed is given
     // the rest of --wait-time to finish before the next action runs.
     if let Some(wait_time) = wait_time {
@@ -1265,6 +1279,121 @@ pub(super) fn run_batch(actions: &[SwayAction<'_>]) -> Result<Vec<ActionOutcome>
     }
 
     Ok(progress.iter().map(|progress| progress.outcome()).collect())
+}
+
+/// How many times `hold_geometry()` sends the geometry again before giving
+/// up on a client that keeps undoing it. A browser resizes itself once or
+/// twice while it starts; one that never stops is fighting the request, and
+/// sending it forever would only fight back.
+const MAX_GEOMETRY_REAPPLIES: usize = 3;
+
+/// Whether `kind` is geometry `hold_geometry()` can hold: a pixel size or a
+/// position, the kinds `poll_matches()` can check a figure for.
+fn is_held_geometry(kind: ActionKind<'_>) -> bool {
+    match kind {
+        ActionKind::Height(Size::Pixels(_))
+        | ActionKind::Width(Size::Pixels(_))
+        | ActionKind::Position(_) => true,
+        ActionKind::Height(Size::Percent(_))
+        | ActionKind::Width(Size::Percent(_))
+        | ActionKind::Split(_)
+        | ActionKind::Floating
+        | ActionKind::Sticky
+        | ActionKind::Fullscreen
+        | ActionKind::Focus
+        | ActionKind::NewColumn
+        | ActionKind::NewRow
+        | ActionKind::Workspace(_)
+        | ActionKind::Output(_)
+        | ActionKind::WorkspaceToOutput { .. }
+        | ActionKind::Mark(_)
+        | ActionKind::Scratchpad => false,
+    }
+}
+
+/// `--settle` (#17): holds every confirmed geometry action in `actions` for
+/// `settle`, re-sending all of them together whenever one stops showing in
+/// the tree, which restarts the hold. Browsers set their own window size in
+/// the first fraction of a second after mapping, often after the requested
+/// one was already applied and confirmed; measured with Firefox and
+/// Chromium, the size they settle on varies from run to run, while the same
+/// command sent again a moment later always stuck.
+///
+/// An action that was never confirmed (a clamped resize) isn't held, since
+/// nothing says it could ever show. After `MAX_GEOMETRY_REAPPLIES`, or once
+/// the tree can't be read, whatever still doesn't match is reported
+/// `Unconfirmed` rather than failing the run: the window exists and was
+/// sent what was asked, but the client has the last word.
+fn hold_geometry(
+    actions: &[SwayAction<'_>],
+    progress: &mut [BatchProgress],
+    settle: time::Duration,
+    connection: &mut Connection,
+) -> Result<(), String> {
+    let held: Vec<usize> = (0..actions.len())
+        .filter(|&index| {
+            progress[index] == BatchProgress::Changed && is_held_geometry(actions[index].kind)
+        })
+        .collect();
+    let Some(&first) = held.first() else {
+        return Ok(());
+    };
+    let container_id = actions[first].container_id;
+    let verbose = actions[first].verbose;
+    let held_actions: Vec<&SwayAction<'_>> = held.iter().map(|&index| &actions[index]).collect();
+    let command = batch_command(container_id, &held_actions);
+
+    let mut reapplies = 0;
+    let mut quiet_since = time::Instant::now();
+    while quiet_since.elapsed() < settle {
+        interrupt::sleep(
+            WAIT_TIME_POLL_INTERVAL.min(settle.saturating_sub(quiet_since.elapsed())),
+        )?;
+        let drifted: Vec<usize> = held
+            .iter()
+            .copied()
+            .filter(|&index| !actions[index].poll_matches(connection, None))
+            .collect();
+        if drifted.is_empty() {
+            continue;
+        }
+        if reapplies == MAX_GEOMETRY_REAPPLIES {
+            if verbose {
+                diagnostic!(
+                    "The window changed its geometry again after {} re-applies; leaving it \
+                     (container id: {})",
+                    reapplies,
+                    container_id
+                );
+            }
+            for index in drifted {
+                progress[index] = BatchProgress::Unconfirmed;
+            }
+            return Ok(());
+        }
+        reapplies += 1;
+        if verbose {
+            diagnostic!(
+                "The window changed its geometry; re-applying ({} of {}): {}",
+                reapplies,
+                MAX_GEOMETRY_REAPPLIES,
+                escape_control_characters(&command, false)
+            );
+        }
+        let outcomes = run_sway_commands(&command)?;
+        if let Some(error) = batch_failure(&held_actions, &outcomes) {
+            return Err(error);
+        }
+        quiet_since = time::Instant::now();
+    }
+    if verbose {
+        diagnostic!(
+            "Geometry held for {} ms (container id: {})",
+            settle.as_millis(),
+            container_id
+        );
+    }
+    Ok(())
 }
 
 impl ExecAction<'_> {
