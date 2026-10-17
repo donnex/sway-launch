@@ -22,7 +22,7 @@ use super::query::{
 };
 use super::target::Target;
 use super::tree::MoveDirection;
-use super::values::{Position, Size, Split};
+use super::values::{Position, Size, Split, WorkspaceTarget};
 use std::io::Write;
 use std::time;
 use swayipc::{Event, EventType};
@@ -57,7 +57,7 @@ pub struct SwayLaunch<'a> {
     pub mark: Option<&'a str>,
     pub new_column: bool,
     pub new_row: bool,
-    pub workspace: Option<&'a str>,
+    pub workspace: Option<WorkspaceTarget<'a>>,
     pub output: Option<&'a str>,
     pub height: Option<Size>,
     pub width: Option<Size>,
@@ -87,7 +87,7 @@ pub struct SwayLaunch<'a> {
 /// target workspace has focused.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct BuildLocation<'a> {
-    pub workspace: Option<&'a str>,
+    pub workspace: Option<WorkspaceTarget<'a>>,
     pub output: Option<&'a str>,
 }
 
@@ -100,7 +100,7 @@ impl BuildLocation<'_> {
             .map(|output| format!("focus output {}", quote_sway_string(output)));
         let workspace = self
             .workspace
-            .map(|workspace| format!("workspace {}", quote_sway_string(workspace)));
+            .map(|workspace| format!("workspace {}", workspace.sway_argument()));
         output.into_iter().chain(workspace).collect()
     }
 

@@ -1,5 +1,5 @@
 use super::super::test_support::*;
-use super::super::values::Position;
+use super::super::values::{Position, WorkspaceTarget};
 use super::*;
 
 // unfiltered_fallback_hint
@@ -183,7 +183,7 @@ fn focus_matches_focus_window_change() {
 
 #[test]
 fn workspace_matches_move_window_change() {
-    let action = targeted(ActionKind::Workspace("web"));
+    let action = targeted(ActionKind::Workspace(WorkspaceTarget::Name("web")));
     assert_eq!(
         action.kind.matching_window_change_event(),
         Some(WindowChange::Move)
@@ -465,7 +465,7 @@ fn non_exec_action_matches_on_container_id() {
 
 #[test]
 fn workspace_matches_on_container_id() {
-    let action = targeted(ActionKind::Workspace("web"));
+    let action = targeted(ActionKind::Workspace(WorkspaceTarget::Name("web")));
     let event = window_event("move", 42, None, None);
     assert!(matches!(
         action.matches_window_event(&event),
@@ -558,10 +558,10 @@ fn one_of_every_kind() -> [ActionKind<'static>; 15] {
         ActionKind::Focus,
         ActionKind::NewColumn,
         ActionKind::NewRow,
-        ActionKind::Workspace("web"),
+        ActionKind::Workspace(WorkspaceTarget::Name("web")),
         ActionKind::Output("HDMI-A-1"),
         ActionKind::WorkspaceToOutput {
-            workspace: "web",
+            workspace: WorkspaceTarget::Name("web"),
             output: "HDMI-A-1",
         },
         ActionKind::Mark("foo"),
@@ -586,7 +586,7 @@ fn is_event_confirmed_agrees_with_the_matching_events() {
             ActionKind::Floating,
             ActionKind::Fullscreen,
             ActionKind::Focus,
-            ActionKind::Workspace("web"),
+            ActionKind::Workspace(WorkspaceTarget::Name("web")),
             ActionKind::Output("HDMI-A-1"),
             ActionKind::Mark("foo"),
             ActionKind::Scratchpad,
@@ -603,7 +603,7 @@ fn state_with(mutate: impl FnOnce(&mut ContainerState)) -> ContainerState {
 }
 
 fn workspace_action(workspace: &str) -> SwayAction<'_> {
-    targeted(ActionKind::Workspace(workspace))
+    targeted(ActionKind::Workspace(WorkspaceTarget::Name(workspace)))
 }
 
 fn output_action(output: &str) -> SwayAction<'_> {
@@ -623,6 +623,19 @@ fn state_satisfies_workspace_only_for_the_requested_workspace() {
     let state = state_with(|state| state.workspace = Some("3".to_string()));
 
     assert!(workspace_action("3").state_satisfies(Some(&state)));
+    assert!(!workspace_action("2").state_satisfies(Some(&state)));
+}
+
+#[test]
+fn state_satisfies_workspace_number_on_any_workspace_with_that_number() {
+    let state = state_with(|state| {
+        state.workspace = Some("2: web".to_string());
+        state.workspace_number = Some(2);
+    });
+
+    let by_number = |number| targeted(ActionKind::Workspace(WorkspaceTarget::Number(number)));
+    assert!(by_number(2).state_satisfies(Some(&state)));
+    assert!(!by_number(3).state_satisfies(Some(&state)));
     assert!(!workspace_action("2").state_satisfies(Some(&state)));
 }
 
@@ -650,7 +663,7 @@ fn state_satisfies_output_only_on_the_output_s_visible_workspace() {
 #[test]
 fn state_satisfies_workspace_to_output_needs_both_names_but_not_visibility() {
     let action = targeted(ActionKind::WorkspaceToOutput {
-        workspace: "3",
+        workspace: WorkspaceTarget::Name("3"),
         output: "HDMI-A-1",
     });
     let state = state_with(|state| {
@@ -730,6 +743,7 @@ fn every_event_confirmed_kind_can_recognise_its_own_end_state() {
     // satisfy would time out after every successful command.
     let state = ContainerState {
         workspace: Some("web".to_string()),
+        workspace_number: None,
         output: Some("HDMI-A-1".to_string()),
         workspace_visible: true,
         floating: true,

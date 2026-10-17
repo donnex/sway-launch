@@ -1204,6 +1204,37 @@ fn on_workspace_overrides_the_template_layout_workspace_in_the_preview() {
 }
 
 #[test]
+fn workspace_number_reaches_the_preview_from_the_layout_table_and_the_flag() {
+    let template = TempToml::write(
+        "workspace-number-template",
+        "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n\
+         [layout]\nworkspace_number = 3\n\n[[step]]\nslot = \"editor\"\n",
+    );
+    let setup = |extra: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+            .args(["--template", template.to_str().unwrap(), "--apps", "code"])
+            .args(extra)
+            .args(["--dry-run", "--json"])
+            .output()
+            .expect("failed to run sway-launch binary");
+        assert!(output.status.success(), "{output:?}");
+        let json: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("stdout should be a JSON object");
+        json["setup"].clone()
+    };
+
+    assert_eq!(setup(&[]), serde_json::json!(["workspace number 3"]));
+    assert_eq!(
+        setup(&["--on-workspace-number", "9"]),
+        serde_json::json!(["workspace number 9"])
+    );
+    assert_eq!(
+        setup(&["--on-workspace", "9"]),
+        serde_json::json!(["workspace \"9\""])
+    );
+}
+
+#[test]
 fn template_validate_rejects_a_step_combining_workspace_with_new_column() {
     let template = TempToml::write(
         "workspace-new-column-template",

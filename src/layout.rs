@@ -91,6 +91,8 @@ pub struct LayoutStep {
     #[serde(default)]
     pub new_row: bool,
     pub workspace: Option<String>,
+    /// A workspace by number instead of by name (#43).
+    pub workspace_number: Option<i64>,
     pub output: Option<String>,
     pub height: Option<String>,
     pub width: Option<String>,
@@ -136,7 +138,16 @@ impl LayoutStep {
         // on; the workspace move after it then drops the window into the
         // target as an ordinary new sibling, so the new row/column never
         // takes effect there.
-        if self.workspace.is_some() && (self.new_column || self.new_row) {
+        if self.workspace.is_some() && self.workspace_number.is_some() {
+            return Err(
+                "workspace and workspace_number can't both be set — pick the workspace by name \
+                 or by number"
+                    .to_string(),
+            );
+        }
+        if (self.workspace.is_some() || self.workspace_number.is_some())
+            && (self.new_column || self.new_row)
+        {
             return Err(
                 "workspace can't be combined with new_column/new_row — the relative move would \
                  apply on the workspace the window opened on, not the target; build on the target \
@@ -200,6 +211,12 @@ impl LayoutStep {
             }
         }
 
+        let workspace_number = self
+            .workspace_number
+            .map(sway_launch::validate_workspace_number)
+            .transpose()
+            .map_err(|error| format!("workspace_number: {}", error))?;
+
         if let Some(timeout) = self.timeout {
             sway_launch::validate_timeout_seconds(timeout)
                 .map_err(|error| format!("timeout: {}", error))?;
@@ -241,7 +258,11 @@ impl LayoutStep {
             mark: self.mark.as_deref(),
             new_column: self.new_column,
             new_row: self.new_row,
-            workspace: self.workspace.as_deref(),
+            workspace: self
+                .workspace
+                .as_deref()
+                .map(sway_launch::WorkspaceTarget::Name)
+                .or(workspace_number.map(sway_launch::WorkspaceTarget::Number)),
             output: self.output.as_deref(),
             height,
             width,

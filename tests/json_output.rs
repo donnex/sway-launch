@@ -748,3 +748,74 @@ fn list_windows_conflicts_with_a_per_window_flag_but_not_a_filter() {
         .unwrap_or_default()
         .contains("Sway IPC"));
 }
+
+#[test]
+fn workspace_number_moves_by_number_in_the_plan() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--con-id", "42", "--workspace-number", "2", "--dry-run"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
+    assert_eq!(
+        stdout.trim(),
+        "1. target existing container\n2. move workspace number 2"
+    );
+}
+
+#[test]
+fn workspace_number_conflicts_with_workspace_and_relative_moves() {
+    for flag in ["--workspace", "--new-column", "--new-row"] {
+        let mut arguments = vec!["--con-id", "42", "--workspace-number", "2", flag];
+        if flag == "--workspace" {
+            arguments.push("web");
+        }
+        let output = sway_launch_without_a_compositor()
+            .args(&arguments)
+            .output()
+            .expect("failed to run sway-launch binary");
+        assert_eq!(output.status.code(), Some(2), "{flag}: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("cannot be used with") && stderr.contains("--workspace-number"),
+            "{flag}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn workspace_number_rejects_a_negative_or_non_numeric_value() {
+    for value in ["-1", "web"] {
+        let output = sway_launch_without_a_compositor()
+            .args(["--con-id", "42", "--workspace-number", value])
+            .output()
+            .expect("failed to run sway-launch binary");
+        assert_eq!(output.status.code(), Some(2), "{value}: {output:?}");
+    }
+}
+
+#[test]
+fn on_workspace_number_requires_layout_or_template_and_conflicts_with_on_workspace() {
+    let output = sway_launch_without_a_compositor()
+        .args(["--con-id", "42", "--on-workspace-number", "2"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("--on-workspace-number requires --layout or --template"));
+
+    let output = sway_launch_without_a_compositor()
+        .args([
+            "--template",
+            "quad-grid",
+            "--apps",
+            "a,b,c,d",
+            "--on-workspace",
+            "web",
+            "--on-workspace-number",
+            "2",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert_conflict_error(&output, "--on-workspace", "--on-workspace-number");
+}

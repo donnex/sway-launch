@@ -119,6 +119,7 @@ Options:
       --width <WIDTH>                 Set width on the window
   -r, --new-row                       Move window to new row (move down)
       --workspace <WORKSPACE>         Move the window to workspace
+      --workspace-number <N>          Move the window to the workspace with this number, the way Sway's "workspace number N" finds it: 2 matches a workspace named "2: web"
       --output <OUTPUT>               Move the window to output (monitor)
       --position <POSITION>           Set position on the window. Either "center" or "<x>,<y>" in pixels, relative to its workspace (x/y may be negative)
       --scratchpad                    Move window to the scratchpad
@@ -139,6 +140,7 @@ Options:
       --apps <APPS>                   Comma-separated list of commands to launch into --template's slots, in the order the template's slot steps appear. Requires --template; conflicts with --bindings
       --rollback-on-error             If a --layout/--template step fails, kill every window this invocation itself launched, by an earlier step or by the failing step before it failed (not one it merely retargeted via con_id/existing/target_id), rather than leaving them open. Requires --layout or --template
       --on-workspace <WORKSPACE>      Build a --layout/--template run on this workspace: switch to it once before the first step, so every window opens there. Overrides a template's own [layout] workspace. Requires --layout or --template
+      --on-workspace-number <N>       --on-workspace by number, the way Sway's "workspace number N" finds it: 2 matches a workspace named "2: web". Requires --layout or --template
       --no-lock                       Run a --layout/--template even if another run of the same file or template on the same workspace is still in progress. Requires --layout or --template
   -h, --help                          Print help
   -V, --version                       Print version
@@ -495,7 +497,8 @@ same two forms. Like the CLI's, it runs in Sway's working directory and
 environment, not the layout file's directory or the caller's (see [Basic usage](#basic-usage)). A
 step's other keys mirror the CLI flags of the same name (`cwd`, `env`, `app_id`, `class`, `mark_match`, `con_id`,
 `existing`, `split`, `floating`, `sticky`, `fullscreen`, `focus`, `mark`, `new_column`, `new_row`,
-`workspace`, `output`, `height`, `width`, `position`, `scratchpad`, `timeout`, `wait_time`) —
+`workspace`, `workspace_number`, `output`, `height`, `width`, `position`, `scratchpad`, `timeout`,
+`wait_time`) —
 `app_id`/`class`/`mark_match` match exactly and case-sensitively, like their CLI equivalents,
 `height`/`width`/`position`/`timeout` are validated the same way their CLI equivalents are, and a step
 without its own `timeout`/`wait_time` inherits the top-level `--timeout`/`--wait-time` values.
@@ -673,6 +676,8 @@ stays there afterwards. `--on-workspace <WORKSPACE>` does the same from the comm
 `--template` or a `--layout` file, and wins over a template's own `[layout]` workspace. A step's
 own `workspace`/`output` still moves that one window afterwards, as before. Both `[layout]` values
 are validated where they're declared, so a bad one is reported as `[layout] workspace: ...`.
+`workspace_number = 3` in place of `workspace` picks the workspace by number instead (see
+[Workspace](#workspace)), and so does `--on-workspace-number <N>` on the command line.
 
 A step whose application is still starting when focus moves to another workspace — a keybinding,
 a notification click, another script — fails, naming both workspaces: every later step would
@@ -946,8 +951,20 @@ sway-launch --workspace 2 foot
 The value is a workspace name, matched the way Sway matches it: ignoring case, so `--workspace
 web` joins an existing `Web`. Sway's own keywords — `next`, `prev`, `next_on_output`,
 `prev_on_output`, `current`, `back_and_forth` (in any case), plus `number` and `to` on their own —
-are rejected, because Sway acts on them even when quoted, so they can't be used as names. For the
-keyword forms, capture the container id and run `swaymsg` directly:
+are rejected, because Sway acts on them even when quoted, so they can't be used as names.
+
+If your workspaces are named `<number>: <label>` (`1: term`, `2: web`) and your keybindings switch
+with `workspace number N`, use `--workspace-number` (`workspace_number` in a layout or template
+step) instead. It finds the workspace the same way Sway does, by the number its name starts with,
+so `--workspace-number 2` joins `2: web`, where `--workspace 2` would create a separate workspace
+named `2`. With no workspace numbered 2 yet, Sway creates one named `2`. `--on-workspace-number`
+and a template's `[layout]` `workspace_number` build a whole layout there the same way.
+
+```shell
+sway-launch --workspace-number 2 firefox
+```
+
+For the other keyword forms, capture the container id and run `swaymsg` directly:
 
 ```shell
 container_id="$(sway-launch foot)"
@@ -1040,8 +1057,8 @@ leaves it in place, so nothing is skipped.
 A floating window is skipped on every setup (reason `floating`): Sway only nudges a floating
 window 10 px for `move right`, which is never a new column.
 
-`--new-column` and `--new-row` can't be combined with `--workspace` (or `workspace` in the same
-layout step): the move would apply on the workspace the window opened on, and the workspace move
+`--new-column` and `--new-row` can't be combined with `--workspace`/`--workspace-number` (or
+`workspace`/`workspace_number` in the same layout step): the move would apply on the workspace the window opened on, and the workspace move
 afterwards drops it into the target as an ordinary new window, so the new column or row never
 appears there. Build on the target workspace instead, with `--on-workspace` or a template's
 `[layout]` table.

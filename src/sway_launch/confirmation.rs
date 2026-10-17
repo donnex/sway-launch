@@ -357,10 +357,9 @@ impl SwayAction<'_> {
         match self.kind {
             // Sway matches both names case-insensitively, so `--workspace
             // web` lands on an existing `Web`.
-            ActionKind::Workspace(workspace) => state
-                .workspace
-                .as_deref()
-                .is_some_and(|name| name.eq_ignore_ascii_case(workspace)),
+            ActionKind::Workspace(workspace) => {
+                workspace.matches(state.workspace.as_deref(), state.workspace_number)
+            }
             // Sway's `move container to output` lands on the output's
             // visible workspace, so a window on a hidden workspace of the
             // right output still has somewhere to go.
@@ -379,10 +378,7 @@ impl SwayAction<'_> {
             // Both halves of the combined request at once; whether the
             // workspace is the one the output is showing doesn't matter here.
             ActionKind::WorkspaceToOutput { workspace, output } => {
-                state
-                    .workspace
-                    .as_deref()
-                    .is_some_and(|name| name.eq_ignore_ascii_case(workspace))
+                workspace.matches(state.workspace.as_deref(), state.workspace_number)
                     && state
                         .output
                         .as_deref()
