@@ -195,9 +195,9 @@ fn execute_plan_judges_new_row_only_after_new_column_has_run() {
                     MoveDirection::Down => Some("trailing_workspace_edge"),
                 })
             },
-            |action| {
-                log.borrow_mut().push(kind_label(action));
-                Ok(ActionOutcome::Changed)
+            |group| {
+                log.borrow_mut().extend(group.iter().map(kind_label));
+                Ok(vec![ActionOutcome::Changed; group.len()])
             },
         )
         .expect("neither closure fails");
@@ -240,12 +240,15 @@ fn execute_plan_maps_each_action_outcome_to_its_status() {
         .execute_plan(
             sway_launch.build_actions(42),
             |_| panic!("no move in the plan, so the guard is never asked"),
-            |action| {
-                Ok(match action.kind {
-                    ActionKind::Floating => ActionOutcome::Changed,
-                    ActionKind::Focus => ActionOutcome::AlreadySatisfied,
-                    _ => ActionOutcome::Unconfirmed,
-                })
+            |group| {
+                Ok(group
+                    .iter()
+                    .map(|action| match action.kind {
+                        ActionKind::Floating => ActionOutcome::Changed,
+                        ActionKind::Focus => ActionOutcome::AlreadySatisfied,
+                        _ => ActionOutcome::Unconfirmed,
+                    })
+                    .collect())
             },
         )
         .expect("neither closure fails");
@@ -269,7 +272,7 @@ fn execute_plan_stops_at_a_failed_guard_check_without_sending_the_move() {
         .execute_plan(
             sway_launch.build_actions(42),
             |_| Err("cannot reach Sway IPC".to_string()),
-            |action| panic!("nothing should run, but {:?} did", action.kind),
+            |group| panic!("nothing should run, but {:?} did", group[0].kind),
         )
         .expect_err("an unanswerable guard check stops the run");
     assert_eq!(error.message, "cannot reach Sway IPC");
@@ -278,21 +281,75 @@ fn execute_plan_stops_at_a_failed_guard_check_without_sending_the_move() {
 #[test]
 fn execute_plan_stops_at_the_first_failed_action() {
     let mut sway_launch = minimal_sway_launch();
+    sway_launch.workspace = Some(WorkspaceTarget::Name("2"));
     sway_launch.floating = true;
-    sway_launch.focus = true;
     let ran = std::cell::RefCell::new(Vec::new());
     let error = sway_launch
         .execute_plan(
             sway_launch.build_actions(42),
             |_| Ok(None),
-            |action| {
-                ran.borrow_mut().push(kind_label(action));
-                Err(RunError::from("floating failed".to_string()))
+            |group| {
+                ran.borrow_mut().extend(group.iter().map(kind_label));
+                Err(RunError::from("workspace failed".to_string()))
             },
         )
         .expect_err("the first action fails");
-    assert_eq!(error.message, "floating failed");
-    assert_eq!(ran.into_inner(), vec!["floating"]);
+    assert_eq!(error.message, "workspace failed");
+    assert_eq!(ran.into_inner(), vec!["workspace"]);
+}
+
+#[test]
+fn execute_plan_hands_consecutive_batching_actions_over_together() {
+    // #32: everything between the moves and the scratchpad goes to Sway as
+    // one command, so it reaches the runner as one group.
+    let mut sway_launch = minimal_sway_launch();
+    sway_launch.new_column = true;
+    sway_launch.workspace = Some(WorkspaceTarget::Name("2"));
+    sway_launch.split = Some(Split::V);
+    sway_launch.floating = true;
+    sway_launch.sticky = true;
+    sway_launch.fullscreen = true;
+    sway_launch.focus = true;
+    sway_launch.height = Some(Size::Pixels(500));
+    sway_launch.width = Some(Size::Pixels(700));
+    sway_launch.position = Some(Position::Center);
+    sway_launch.mark = Some("m");
+    sway_launch.scratchpad = true;
+    let groups = std::cell::RefCell::new(Vec::new());
+
+    let records = sway_launch
+        .execute_plan(
+            sway_launch.build_actions(42),
+            |_| Ok(None),
+            |group| {
+                groups
+                    .borrow_mut()
+                    .push(group.iter().map(kind_label).collect::<Vec<_>>());
+                Ok(vec![ActionOutcome::Changed; group.len()])
+            },
+        )
+        .expect("neither closure fails");
+
+    assert_eq!(
+        groups.into_inner(),
+        vec![
+            vec!["new_column"],
+            vec!["workspace"],
+            vec![
+                "split",
+                "floating",
+                "sticky",
+                "fullscreen",
+                "focus",
+                "height",
+                "width",
+                "position",
+                "mark"
+            ],
+            vec!["scratchpad"],
+        ]
+    );
+    assert_eq!(records.len(), 12, "one record per action, batched or not");
 }
 
 // SwayLaunch::build_actions_for_preview

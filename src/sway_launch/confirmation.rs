@@ -16,7 +16,8 @@
 use super::action::{ActionKind, ExecAction, SwayAction};
 use super::interrupt::{self, WaitEnd};
 use super::ipc::{
-    event_loop, new_connection, run_single_sway_command, run_sway_command, spawn_event_forwarder,
+    event_loop, new_connection, run_single_sway_command, run_sway_command, run_sway_commands,
+    spawn_event_forwarder,
 };
 use super::outcome::{ActionOutcome, LaunchOwnership, RunError, UnmatchedWindow};
 use super::process_marker::{
@@ -893,6 +894,377 @@ impl SwayAction<'_> {
 
         Err(WindowEventMatchError::NoMatchingEvent)
     }
+}
+
+impl ActionKind<'_> {
+    /// Whether this kind is sent in one command with its neighbours (#32)
+    /// rather than on its own. Sway runs a `,`-joined command's parts in
+    /// order and commits them together, so the window takes every one of
+    /// them at once instead of floating, then resizing, then jumping into
+    /// place, and a client sees no intermediate geometry to react to (#17).
+    ///
+    /// What stays out is whatever the next action can't be judged without:
+    /// `NewColumn`/`NewRow` need the move guard read against the tree the
+    /// previous action left, `Workspace`/`Output`/`WorkspaceToOutput` change
+    /// where the window is, which a later action's already-there check
+    /// depends on (a window already on output A before a `--workspace` move
+    /// to output B), and `Scratchpad` hides the window, so it goes last on
+    /// its own.
+    pub(super) fn joins_batch(&self) -> bool {
+        match self {
+            ActionKind::Split(_)
+            | ActionKind::Floating
+            | ActionKind::Sticky
+            | ActionKind::Fullscreen
+            | ActionKind::Focus
+            | ActionKind::Mark(_)
+            | ActionKind::Height(_)
+            | ActionKind::Width(_)
+            | ActionKind::Position(_) => true,
+            ActionKind::NewColumn
+            | ActionKind::NewRow
+            | ActionKind::Workspace(_)
+            | ActionKind::Output(_)
+            | ActionKind::WorkspaceToOutput { .. }
+            | ActionKind::Scratchpad => false,
+        }
+    }
+}
+
+/// The one command a batch sends: every action's verb behind a single
+/// `[con_id=N]`, which Sway applies to each `,`-separated part.
+pub(super) fn batch_command(container_id: i64, actions: &[&SwayAction<'_>]) -> String {
+    let verbs: Vec<String> = actions
+        .iter()
+        .map(|action| action.sway_command_verb())
+        .collect();
+    format!("[con_id={}] {}", container_id, verbs.join(", "))
+}
+
+/// The error for the first part of a batch Sway refused, prefixed with that
+/// action's verb as a lone action's error is, or `None` when every part
+/// succeeded. Sway stops at a part it can't parse, so a reply shorter than
+/// the batch with no failure in it still means something didn't run.
+fn batch_failure(sent: &[&SwayAction<'_>], outcomes: &[Result<(), String>]) -> Option<String> {
+    if let Some((action, error)) = sent
+        .iter()
+        .zip(outcomes)
+        .find_map(|(action, outcome)| outcome.as_ref().err().map(|error| (action, error)))
+    {
+        return Some(format!("{}: {}", action.sway_command_verb(), error));
+    }
+    if outcomes.len() != sent.len() {
+        return Some(format!(
+            "Sway answered {} of the {} commands sent together; the rest never ran",
+            outcomes.len(),
+            sent.len()
+        ));
+    }
+    None
+}
+
+/// How far one action of a batch has got while `run_batch()` waits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BatchProgress {
+    /// Its state held before anything was sent, so it wasn't.
+    AlreadySatisfied,
+    /// Sent; waiting on its event (event-confirmed) or a poll (polled).
+    Waiting,
+    /// Sent, and its event plus a state read confirmed it.
+    EventSeen,
+    Changed,
+    Unconfirmed,
+}
+
+impl BatchProgress {
+    fn outcome(self) -> ActionOutcome {
+        match self {
+            BatchProgress::AlreadySatisfied => ActionOutcome::AlreadySatisfied,
+            BatchProgress::Changed => ActionOutcome::Changed,
+            BatchProgress::Waiting | BatchProgress::EventSeen | BatchProgress::Unconfirmed => {
+                ActionOutcome::Unconfirmed
+            }
+        }
+    }
+}
+
+/// Runs `actions` (all against one container, every kind `joins_batch()`) as
+/// one Sway command, and confirms each the same way it would be confirmed
+/// alone: an event-confirmed kind needs its own event and then the requested
+/// state, a polled kind is polled for, and a kind that can't be confirmed is
+/// `Unconfirmed`. Returns one outcome per action, in order.
+///
+/// The order is `run_wait_matching_events()`'s and `run_wait_time()`'s
+/// merged, for the same reasons: the existence check, then the subscription,
+/// then the already-there check (one state read for every event-confirmed
+/// kind but `Mark`, see `already_at_target()`), then, if anything polled is
+/// in the batch, `--wait-time` with the existence check on both sides of it,
+/// then the command. An action already in its state is left out of the
+/// command, and a batch left with nothing to send sends nothing.
+///
+/// Every event wakes one state read that settles every action whose event
+/// has arrived; polled actions are polled every `WAIT_TIME_POLL_INTERVAL` in
+/// the same loop, up to `poll_grace()` capped at `--wait-time`, and then
+/// reported `Unconfirmed` once the rest of `--wait-time` has passed. An
+/// event-confirmed action still unconfirmed at `--timeout` fails the batch,
+/// with its own verb in front, as it would alone.
+pub(super) fn run_batch(actions: &[SwayAction<'_>]) -> Result<Vec<ActionOutcome>, RunError> {
+    let Some(first) = actions.first() else {
+        return Ok(Vec::new());
+    };
+    let container_id = first.container_id;
+    let verbose = first.verbose;
+    let fail = |action: &SwayAction<'_>, error: String| -> RunError {
+        format!("{}: {}", action.sway_command_verb(), error).into()
+    };
+
+    if verbose {
+        for action in actions {
+            diagnostic!(
+                "Sway action: {}",
+                escape_control_characters(&action.to_string(), false)
+            );
+        }
+    }
+
+    let container = existing_container(container_id).map_err(|error| fail(first, error))?;
+    if let Some(action) = actions
+        .iter()
+        .find(|action| action.kind.needs_a_window() && !is_window(&container))
+    {
+        return Err(fail(action, split_container_error(container_id)));
+    }
+
+    let event_timeout = actions
+        .iter()
+        .find(|action| action.kind.is_event_confirmed())
+        .map(|action| action.timing);
+    let wait_time = actions
+        .iter()
+        .find(|action| !action.kind.is_event_confirmed())
+        .map(|action| action.timing);
+
+    let event_stream = match event_timeout {
+        Some(_) => Some(event_loop(&[EventType::Window]).map_err(|error| fail(first, error))?),
+        None => None,
+    };
+
+    let mut progress = vec![BatchProgress::Waiting; actions.len()];
+    if event_timeout.is_some() {
+        let state = container_state(container_id).map_err(|error| fail(first, error))?;
+        for (action, progress) in actions.iter().zip(progress.iter_mut()) {
+            if action.kind.is_event_confirmed()
+                && !matches!(action.kind, ActionKind::Mark(_))
+                && action.state_satisfies(state.as_ref())
+            {
+                if verbose {
+                    diagnostic!(
+                        "Already in effect, not sent: {} (container id: {})",
+                        action.sway_command_verb(),
+                        container_id
+                    );
+                }
+                *progress = BatchProgress::AlreadySatisfied;
+            }
+        }
+    }
+
+    let sent: Vec<usize> = (0..actions.len())
+        .filter(|&index| progress[index] == BatchProgress::Waiting)
+        .collect();
+    if sent.is_empty() {
+        return Ok(progress.iter().map(|progress| progress.outcome()).collect());
+    }
+    let sent_actions: Vec<&SwayAction<'_>> = sent.iter().map(|&index| &actions[index]).collect();
+    let sends_polled = sent_actions
+        .iter()
+        .any(|action| !action.kind.is_event_confirmed());
+
+    let deadline = event_timeout
+        .map(deadline_after)
+        .transpose()
+        .map_err(|error| fail(first, error))?;
+
+    // See run_wait_time() for why the existence check sits on both sides of
+    // the --wait-time sleep (fast failure, and Sway 1.9 treating a missing
+    // [con_id=N] as success).
+    let mut poll_connection = None;
+    if let (true, Some(wait_time)) = (sends_polled, wait_time) {
+        if verbose {
+            diagnostic!(
+                "Some actions have no matching event type. Will wait {} ms, then run the Sway \
+                 command.",
+                wait_time.as_millis()
+            );
+        }
+        interrupt::sleep(wait_time).map_err(|error| fail(first, error))?;
+        ensure_container_exists(container_id).map_err(|error| fail(first, error))?;
+        poll_connection = new_connection().ok();
+    }
+
+    let command = batch_command(container_id, &sent_actions);
+    if verbose {
+        diagnostic!(
+            "Sway command: {}",
+            escape_control_characters(&command, false)
+        );
+    }
+    let outcomes = run_sway_commands(&command).map_err(|error| fail(first, error))?;
+    let sent_at = time::Instant::now();
+    if let Some(error) = batch_failure(&sent_actions, &outcomes) {
+        return Err(error.into());
+    }
+
+    for &index in &sent {
+        let action = &actions[index];
+        if !action.kind.is_event_confirmed() && !action.polls(None) {
+            progress[index] = BatchProgress::Unconfirmed;
+        }
+    }
+    if poll_connection.is_none() {
+        for &index in &sent {
+            if !actions[index].kind.is_event_confirmed() {
+                progress[index] = BatchProgress::Unconfirmed;
+            }
+        }
+    }
+
+    let event_receiver = event_stream.map(spawn_event_forwarder);
+    loop {
+        if let Some(connection) = poll_connection.as_mut() {
+            for &index in &sent {
+                let action = &actions[index];
+                if action.kind.is_event_confirmed() || progress[index] != BatchProgress::Waiting {
+                    continue;
+                }
+                if action.poll_matches(connection, None) {
+                    if verbose {
+                        diagnostic!(
+                            "Confirmed via poll: {} (container id: {})",
+                            action.sway_command_verb(),
+                            container_id
+                        );
+                    }
+                    progress[index] = BatchProgress::Changed;
+                } else if sent_at.elapsed() >= action.poll_grace().min(action.timing) {
+                    if verbose {
+                        diagnostic!(
+                            "Poll grace period elapsed without confirmation: {} (container id: \
+                             {})",
+                            action.sway_command_verb(),
+                            container_id
+                        );
+                    }
+                    progress[index] = BatchProgress::Unconfirmed;
+                }
+            }
+        }
+
+        let polling = sent.iter().any(|&index| {
+            !actions[index].kind.is_event_confirmed() && progress[index] == BatchProgress::Waiting
+        });
+        let awaiting_event = sent.iter().find(|&&index| {
+            actions[index].kind.is_event_confirmed() && progress[index] != BatchProgress::Changed
+        });
+
+        let (Some(&waiting_index), Some(receiver), Some(deadline)) =
+            (awaiting_event, event_receiver.as_ref(), deadline)
+        else {
+            if !polling {
+                break;
+            }
+            interrupt::sleep(WAIT_TIME_POLL_INTERVAL).map_err(|error| fail(first, error))?;
+            continue;
+        };
+
+        let remaining = deadline.saturating_duration_since(time::Instant::now());
+        let waiting = &actions[waiting_index];
+        if remaining.is_zero() {
+            return Err(fail(waiting, event_timeout_message(waiting.timing)));
+        }
+        let window = match interrupt::recv(
+            receiver,
+            if polling {
+                remaining.min(WAIT_TIME_POLL_INTERVAL)
+            } else {
+                remaining
+            },
+        ) {
+            Ok(Ok(Event::Window(window))) => window,
+            Ok(Ok(_)) => continue,
+            Ok(Err(error)) => return Err(fail(waiting, error.to_string())),
+            Err(WaitEnd::Timeout) if polling => continue,
+            Err(WaitEnd::Timeout) => {
+                return Err(fail(waiting, event_timeout_message(waiting.timing)))
+            }
+            Err(WaitEnd::Disconnected) => {
+                return Err(fail(
+                    waiting,
+                    "Event stream closed unexpectedly".to_string(),
+                ))
+            }
+            Err(WaitEnd::Interrupted(message)) => return Err(fail(waiting, message)),
+        };
+
+        let mut woken = false;
+        for &index in &sent {
+            if progress[index] == BatchProgress::Waiting
+                && actions[index].matches_window_event(&window).is_ok()
+            {
+                progress[index] = BatchProgress::EventSeen;
+                woken = true;
+            }
+        }
+        if !woken {
+            continue;
+        }
+        // The event is a wake-up, not the confirmation: see
+        // state_satisfied()'s doc comment.
+        let state = container_state(container_id).map_err(|error| fail(waiting, error))?;
+        for &index in &sent {
+            let action = &actions[index];
+            if progress[index] != BatchProgress::EventSeen {
+                continue;
+            }
+            if action.state_satisfies(state.as_ref()) {
+                if verbose {
+                    diagnostic!(
+                        "Event match: {:?} container id {} ({})",
+                        window.change,
+                        container_id,
+                        action.sway_command_verb()
+                    );
+                }
+                progress[index] = BatchProgress::Changed;
+            } else {
+                if verbose {
+                    diagnostic!(
+                        "Event match: {:?} container id {} ({}), but the requested state is not \
+                         in effect — another client may be driving this window; waiting for the \
+                         next event",
+                        window.change,
+                        container_id,
+                        action.sway_command_verb()
+                    );
+                }
+                progress[index] = BatchProgress::Waiting;
+            }
+        }
+    }
+
+    // As run_poll_then_fallback() does: what couldn't be confirmed is given
+    // the rest of --wait-time to finish before the next action runs.
+    if let Some(wait_time) = wait_time {
+        if sent
+            .iter()
+            .any(|&index| progress[index] == BatchProgress::Unconfirmed)
+        {
+            interrupt::sleep(wait_time.saturating_sub(sent_at.elapsed()))
+                .map_err(|error| fail(first, error))?;
+        }
+    }
+
+    Ok(progress.iter().map(|progress| progress.outcome()).collect())
 }
 
 impl ExecAction<'_> {
