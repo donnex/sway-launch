@@ -108,7 +108,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so a later step's `target_id` can retarget that specific window — the one way to single out one of
   several windows sharing an `app_id`. A file with no steps is an error. A step's or binding's
   `command` can be a list of words, `["foot", "-T", "a, b"]`, which `sway-launch` quotes so each
-  word reaches the program exactly, commas, semicolons and quotes included. (#77) `--layout -` reads the
+  word reaches the program exactly, commas, semicolons and quotes included. (#77)
+- `--cwd <DIR>` and `--env KEY=VALUE` (and `cwd`/`env` in a layout step or binding) for a launched
+  command, which otherwise starts in Sway's own directory and environment rather than yours.
+  (#34, #113) `--layout -` reads the
   file from stdin, as do `--template -` and `--bindings -` (one per run), so a generated layout can
   be piped in. (#50)
 - `--template <FILE|NAME>` with `--apps`/`--bindings`: the same shape decoupled from the

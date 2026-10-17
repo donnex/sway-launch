@@ -40,6 +40,7 @@ pub(super) fn filter<'a>(app_id: &'a str, class: &'a str) -> Option<LaunchFilter
 pub(super) fn exec_action<'a>(command: &'a str, app_id: &'a str, class: &'a str) -> ExecAction<'a> {
     ExecAction {
         command,
+        setup: None,
         filter: filter(app_id, class),
         verbose: false,
         timeout: time::Duration::from_secs(5),

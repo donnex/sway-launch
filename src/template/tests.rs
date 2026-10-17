@@ -42,6 +42,8 @@ fn minimal_binding() -> Binding {
     Binding {
         slot: "editor".to_string(),
         command: Some("foot".to_string()),
+        cwd: None,
+        env: Default::default(),
         con_id: None,
         existing: false,
         app_id: None,
@@ -299,6 +301,8 @@ fn resolve_errors_on_binding_with_no_target_field_naming_the_slot() {
         binding: vec![Binding {
             slot: "editor".to_string(),
             command: None,
+            cwd: None,
+            env: Default::default(),
             con_id: None,
             existing: false,
             app_id: None,
@@ -329,6 +333,8 @@ fn resolve_errors_on_binding_with_command_and_con_id_together() {
         binding: vec![Binding {
             slot: "editor".to_string(),
             command: Some("foot".to_string()),
+            cwd: None,
+            env: Default::default(),
             con_id: Some(42),
             existing: false,
             app_id: None,
@@ -350,6 +356,8 @@ fn resolve_errors_on_binding_with_app_id_and_class_together() {
         binding: vec![Binding {
             slot: "editor".to_string(),
             command: Some("foot".to_string()),
+            cwd: None,
+            env: Default::default(),
             con_id: None,
             existing: false,
             app_id: Some("foot".to_string()),

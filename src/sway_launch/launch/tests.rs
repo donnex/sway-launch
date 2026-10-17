@@ -5,6 +5,7 @@ use super::*;
 fn minimal_sway_launch() -> SwayLaunch<'static> {
     SwayLaunch {
         target: Target::ConId(42),
+        launch_setup: None,
         split: None,
         floating: false,
         sticky: false,

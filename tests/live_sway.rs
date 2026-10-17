@@ -968,6 +968,65 @@ fn exec_runs_a_command_that_starts_with_a_shell_builtin() {
 }
 
 #[test]
+fn cwd_and_env_reach_the_launched_command() {
+    fresh_workspace();
+    // --cwd/--env (#113) set what Sway's exec otherwise leaves as Sway's own:
+    // the command starts in the given directory with the given variables. A
+    // relative --cwd is relative to the caller's directory.
+    let temp_dir = TestTempDir::new();
+    let caller_directory = temp_dir.join("caller");
+    let project_directory = caller_directory.join("project");
+    std::fs::create_dir_all(&project_directory).expect("failed to create the directories");
+    let working_directory_file = temp_dir.join("cwd-working-directory");
+    let environment_file = temp_dir.join("cwd-environment");
+
+    let output = sway_launch_command()
+        .current_dir(&caller_directory)
+        .args([
+            "--app-id",
+            "foot",
+            "--timeout",
+            "10",
+            "--cwd",
+            "project",
+            "--env",
+            "SWAY_LAUNCH_LIVE_TEST_ENV=a value, with; syntax",
+            &format!(
+                "pwd > '{}' && env > '{}' && exec foot",
+                working_directory_file.display(),
+                environment_file.display()
+            ),
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let container_id: i64 = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .expect("stdout should be a container id");
+    let _guard = KillOnDrop(container_id);
+
+    let working_directory = std::fs::read_to_string(&working_directory_file)
+        .expect("the launched command should have recorded its working directory");
+    let environment = std::fs::read_to_string(&environment_file)
+        .expect("the launched command should have recorded its environment");
+    assert_eq!(
+        std::path::Path::new(working_directory.trim()),
+        project_directory.canonicalize().unwrap()
+    );
+    assert!(
+        environment
+            .lines()
+            .any(|line| line == "SWAY_LAUNCH_LIVE_TEST_ENV=a value, with; syntax"),
+        "the variable should reach the command unchanged: {environment}"
+    );
+}
+
+#[test]
 fn exec_runs_in_sway_s_directory_and_environment_not_the_caller_s() {
     fresh_workspace();
     // Sway's own `exec` forks the command from the compositor, so it inherits

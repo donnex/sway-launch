@@ -972,3 +972,29 @@ fn a_step_command_given_as_words_is_quoted_for_sway_and_the_shell() {
         "{output:?}"
     );
 }
+
+#[test]
+fn a_step_s_cwd_and_env_appear_in_the_preview_and_need_a_command() {
+    // #113: cwd/env become a cd/export prefix on the launched command, and
+    // only make sense for a step that launches one.
+    let output = run_with_stdin(
+        &["--layout", "-", "--dry-run"],
+        "[[step]]\ncommand = \"foot\"\ncwd = \"/\"\nenv = { GDK_BACKEND = \"x11\" }\n",
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains("launch cd '/' && export GDK_BACKEND='x11' && foot"),
+        "{output:?}"
+    );
+
+    let output = run_with_stdin(
+        &["--layout", "-", "--validate"],
+        "[[step]]\ncon_id = 42\nenv = { A = \"1\" }\n",
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("only apply to a launched command"),
+        "{output:?}"
+    );
+}
