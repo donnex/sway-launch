@@ -156,6 +156,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   TOML without running it. A value ending in `.toml` is always read as a file, so writing a
   built-in's name with that extension fails — but the error names the built-in and the bare name
   to use instead. (#88)
+- Template parameters: a template's `[params]` table names sizes a step uses as `"{name}"`, and
+  `--param NAME=VALUE` (or a `[params]` table in a bindings file) changes them for one run, so
+  `--template master-dual-stack --param stack-width=40ppt` gives a wider stack without copying
+  the template. Every built-in with a size has params, listed with their defaults by
+  `--list-templates`. A wrong name or a value the field can't take is an error before anything
+  runs. (#92)
 - A bindings file can place each slot's window, with the same `workspace`, `workspace_number` and
   `output` keys a step has, replacing the template's own. The built-in `dual-output`, which ships
   with placeholder output names, now works as a built-in: give each slot your own outputs in the

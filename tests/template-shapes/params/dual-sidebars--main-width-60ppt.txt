@@ -1,4 +1,4 @@
-workspace template-shape-dual-sidebars-wide
+workspace template-shape-dual-sidebars--main-width-60ppt
   splith
     20% sidebar-left
     60% main

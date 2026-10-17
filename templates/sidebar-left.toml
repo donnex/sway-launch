@@ -8,10 +8,17 @@
 # no-op while it's still the workspace's only window, so the first-launched
 # slot (sidebar) can't be resized directly — sizing the second slot instead
 # reshapes both, since sway redistributes the space between them.
+#
+# Params, each overridable with --param NAME=VALUE or a bindings file's
+# [params] table:
+#   main-width: the main window's width (default 75ppt)
 
 [template]
 description = "A narrow sidebar on the left, a wide main window on the right."
 category = "Sidebar"
+
+[params]
+main-width = "75ppt"
 
 [[step]]
 slot = "sidebar"
@@ -19,4 +26,4 @@ split = "h"
 
 [[step]]
 slot = "main"
-width = "75ppt"
+width = "{main-width}"

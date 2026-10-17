@@ -2,7 +2,7 @@ use crate::layout::LayoutStep;
 use crate::sway_launch::{self, Split};
 use include_dir::{include_dir, Dir};
 use serde::Deserialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// The contents of `templates/` at compile time — the single source of
 /// truth for both the shipped example files and the built-in templates
@@ -20,6 +20,8 @@ pub struct BuiltinTemplate {
     pub category: String,
     pub slots: usize,
     pub slot_names: Vec<String>,
+    /// Each `[params]` name with its default (#92).
+    pub params: BTreeMap<String, String>,
 }
 
 /// Looks up a built-in template's raw TOML contents by name (no `.toml`
@@ -87,6 +89,7 @@ pub fn builtin_templates() -> Vec<BuiltinTemplate> {
                 category: template.template.category,
                 slots: slot_names.len(),
                 slot_names,
+                params: template.params,
             })
         })
         .collect();
@@ -105,8 +108,92 @@ pub struct Template {
     pub template: TemplateMetadata,
     #[serde(default)]
     pub layout: TemplateLayoutContext,
+    /// Named values a step's `height`/`width`/`position` can be set to by
+    /// writing `"{name}"` (#92), each with the default given here, which a
+    /// bindings file's `[params]` and `--param` override. So one template
+    /// covers every ratio of its shape instead of a file per ratio.
+    #[serde(default)]
+    pub params: BTreeMap<String, String>,
     #[serde(default)]
     pub step: Vec<TemplateStep>,
+}
+
+impl Template {
+    /// Every step field written as a param reference, with the param it
+    /// names, in step order.
+    fn param_uses(&self) -> impl Iterator<Item = (usize, &'static str, &str)> {
+        self.step.iter().enumerate().flat_map(|(index, step)| {
+            [
+                ("height", step.height.as_deref()),
+                ("width", step.width.as_deref()),
+                ("position", step.position.as_deref()),
+            ]
+            .into_iter()
+            .filter_map(move |(field, value)| Some((index, field, param_reference(value?)?)))
+        })
+    }
+
+    /// Checks `value` for param `name` against every field that uses it, so
+    /// an override that one of them can't take fails before anything runs,
+    /// reported against whoever supplied it rather than the step.
+    pub fn check_param(&self, name: &str, value: &str) -> Result<(), String> {
+        if !self.params.contains_key(name) {
+            let known: Vec<&str> = self.params.keys().map(String::as_str).collect();
+            return Err(format!(
+                "unknown param {:?} (this template's params: {})",
+                name,
+                if known.is_empty() {
+                    "none".to_string()
+                } else {
+                    known.join(", ")
+                }
+            ));
+        }
+        for (_, field, used) in self.param_uses() {
+            if used == name {
+                check_field_value(field, value)
+                    .map_err(|error| format!("param {:?} (used as {}): {}", name, field, error))?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The param a field's value refers to: its whole value written as
+/// `{name}`. Anything else is a literal, left for the field's own check.
+fn param_reference(value: &str) -> Option<&str> {
+    value.strip_prefix('{')?.strip_suffix('}')
+}
+
+fn check_field_value(field: &str, value: &str) -> Result<(), String> {
+    if field == "position" {
+        sway_launch::parse_position(value).map(|_| ())
+    } else {
+        sway_launch::parse_size(value).map(|_| ())
+    }
+}
+
+/// `--param NAME=VALUE`, split at the first `=`. Whether the template has
+/// that param, and whether the value suits it, is `resolve()`'s to check,
+/// since only it has the template.
+pub fn parse_param_override(argument: &str) -> Result<(String, String), String> {
+    let (name, value) = argument
+        .split_once('=')
+        .ok_or_else(|| "expected NAME=VALUE, e.g. stack-width=40ppt".to_string())?;
+    if !is_valid_param_name(name) {
+        return Err(format!(
+            "{:?} isn't a valid param name — use letters, digits, - and _",
+            name
+        ));
+    }
+    Ok((name.to_string(), value.to_string()))
+}
+
+fn is_valid_param_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '-' || character == '_'
+        })
 }
 
 /// A template file's optional `[layout]` table: the workspace and/or output
@@ -274,11 +361,14 @@ impl Binding {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Bindings {
     #[serde(default)]
     pub binding: Vec<Binding>,
+    /// Overrides for the template's `[params]` defaults (#92).
+    #[serde(default)]
+    pub params: BTreeMap<String, String>,
 }
 
 /// Parses a template file's contents. Kept separate from reading the file
@@ -319,6 +409,32 @@ pub fn parse(contents: &str) -> Result<Template, String> {
         sway_launch::validate_output_argument(output)
             .map_err(|error| format!("[layout] output: {}", error))?;
     }
+    for name in template.params.keys() {
+        if !is_valid_param_name(name) {
+            return Err(format!(
+                "[params]: {:?} isn't a valid param name — use letters, digits, - and _",
+                name
+            ));
+        }
+    }
+    for (index, field, name) in template.param_uses() {
+        if !template.params.contains_key(name) {
+            return Err(format!(
+                "step {}: {}: {{{}}} names no param declared in [params]",
+                index + 1,
+                field,
+                name
+            ));
+        }
+    }
+    for (name, default) in &template.params {
+        if !template.param_uses().any(|(_, _, used)| used == name) {
+            return Err(format!("[params]: {:?} isn't used by any step", name));
+        }
+        template
+            .check_param(name, default)
+            .map_err(|error| format!("[params]: {}", error))?;
+    }
     let mut seen_slots = HashSet::new();
     for slot in slot_names(&template) {
         if !seen_slots.insert(slot) {
@@ -341,13 +457,20 @@ pub fn parse_bindings(contents: &str) -> Result<Bindings, String> {
 #[derive(Debug, PartialEq, Eq)]
 pub enum ResolveError {
     Bindings(String),
-    Step { index: usize, message: String },
+    /// A `--param` override, which belongs to neither file.
+    Param(String),
+    Step {
+        index: usize,
+        message: String,
+    },
 }
 
 impl std::fmt::Display for ResolveError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ResolveError::Bindings(message) => formatter.write_str(message),
+            ResolveError::Bindings(message) | ResolveError::Param(message) => {
+                formatter.write_str(message)
+            }
             ResolveError::Step { index, message } => {
                 write!(formatter, "step {}: {}", index + 1, message)
             }
@@ -369,10 +492,44 @@ impl std::fmt::Display for ResolveError {
 /// table isn't copied into steps; `main.rs` applies it once, before the
 /// first step.
 ///
+/// A step field written as `"{name}"` takes the param's value: `overrides`
+/// (`--param`, in order, so a later one wins) over the bindings file's
+/// `[params]` over the template's default (#92).
+///
 /// Expects a template from `parse()`, which has already rejected a slot
-/// used by more than one step. Errors say which input they belong to (see
-/// `ResolveError`).
-pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutStep>, ResolveError> {
+/// used by more than one step and checked every param reference and
+/// default. Errors say which input they belong to (see `ResolveError`).
+pub fn resolve(
+    template: &Template,
+    bindings: &Bindings,
+    overrides: &[(String, String)],
+) -> Result<Vec<LayoutStep>, ResolveError> {
+    let mut params: HashMap<&str, &str> = template
+        .params
+        .iter()
+        .map(|(name, default)| (name.as_str(), default.as_str()))
+        .collect();
+    for (name, value) in &bindings.params {
+        template
+            .check_param(name, value)
+            .map_err(|error| ResolveError::Bindings(format!("[params]: {}", error)))?;
+        params.insert(name, value);
+    }
+    for (name, value) in overrides {
+        template
+            .check_param(name, value)
+            .map_err(ResolveError::Param)?;
+        params.insert(name, value);
+    }
+    let substitute = |value: &Option<String>| {
+        value.as_deref().map(|value| {
+            param_reference(value)
+                .and_then(|name| params.get(name))
+                .unwrap_or(&value)
+                .to_string()
+        })
+    };
+
     let mut bindings_by_slot = HashMap::new();
     for binding in &bindings.binding {
         sway_launch::require_non_blank("binding.slot", &binding.slot)
@@ -530,9 +687,9 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
             workspace,
             workspace_number,
             output,
-            height: step.height.clone(),
-            width: step.width.clone(),
-            position: step.position.clone(),
+            height: substitute(&step.height),
+            width: substitute(&step.width),
+            position: substitute(&step.position),
             scratchpad: step.scratchpad,
             timeout: step.timeout,
             wait_time: step.wait_time,

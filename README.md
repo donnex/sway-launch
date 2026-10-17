@@ -141,6 +141,7 @@ Options:
       --show-template <NAME_OR_PATH>  Print a --template's raw TOML and exit, without running it. Same NAME_OR_PATH resolution as --template: a built-in name (see --list-templates), or a path ending in .toml. With --json, prints {"name": ..., "contents": "..."}
       --bindings <BINDINGS>           Bindings file supplying each --template slot's application identity (- reads it from stdin). Requires --template; conflicts with --apps
       --apps <APPS>                   Comma-separated list of commands to launch into --template's slots, in the order the template's slot steps appear. Requires --template; conflicts with --bindings
+      --param <NAME=VALUE>            Set one of --template's params (see --list-templates), overriding its default and a --bindings file's [params]. Repeatable. Requires --template
       --rollback-on-error             If a --layout/--template step fails, kill every window this invocation itself launched, by an earlier step or by the failing step before it failed (not one it merely retargeted via con_id/existing/target_id), rather than leaving them open. Requires --layout or --template
       --on-workspace <WORKSPACE>      Build a --layout/--template run on this workspace: switch to it once before the first step, so every window opens there. Overrides a template's own [layout] workspace. Requires --layout or --template
       --on-workspace-number <N>       --on-workspace by number, the way Sway's "workspace number N" finds it: 2 matches a workspace named "2: web". Requires --layout or --template
@@ -754,7 +755,32 @@ dual-row     Grid  Two windows side by side in a single row. (2 slots: left, rig
 
 `--json` reports the same slot info structurally as `slots` (the count) and `slot_names` (the
 array), so a script can size or pre-fill `--apps`/a `--bindings` file without parsing the
-template's TOML itself.
+template's TOML itself, and each template's params with their defaults as `params`.
+
+A template can leave its sizes open to the caller with a `[params]` table: each entry names a
+value and gives its default, and a step's `height`, `width` or `position` refers to one by writing
+its name in braces as the whole value:
+
+```toml
+[params]
+stack-width = "35ppt"
+
+[[step]]
+slot = "stack-top"
+width = "{stack-width}"
+```
+
+`--param NAME=VALUE` (repeatable) overrides a default for one run, and so does a `[params]` table
+in a `--bindings` file, with `--param` winning over both:
+
+```shell
+sway-launch --template master-dual-stack --apps code,foot,foot --param stack-width=40ppt
+```
+
+Every built-in with a size has params: `--list-templates` lists them with their defaults, and each
+file's header comment says what each one sizes. An unknown name, or a value that a field using it
+can't take, is an error before anything runs. A value is a plain substitution: there are no
+expressions, and a param can't stand for part of a value.
 
 ```shell
 sway-launch --template quad-grid --apps foot,firefox,code,thunar
@@ -790,13 +816,11 @@ slot labeled by name.
 | [<img src="screenshots/six-grid-vertical.png" width="120" alt="six-grid-vertical template layout">](screenshots/six-grid-vertical.png) | Grid | [`six-grid-vertical`](templates/six-grid-vertical.toml) | Equal grid, three rows of two — six-grid.toml rotated | 6 |
 | [<img src="screenshots/eight-grid-vertical.png" width="120" alt="eight-grid-vertical template layout">](screenshots/eight-grid-vertical.png) | Grid | [`eight-grid-vertical`](templates/eight-grid-vertical.toml) | Equal grid, four rows of two — eight-grid.toml rotated | 8 |
 | [<img src="screenshots/master-dual-stack.png" width="120" alt="master-dual-stack template layout">](screenshots/master-dual-stack.png) | Master/stack | [`master-dual-stack`](templates/master-dual-stack.toml) | One main window, a 2-window stack beside it | 3 |
-| [<img src="screenshots/master-dual-stack-wide.png" width="120" alt="master-dual-stack-wide template layout">](screenshots/master-dual-stack-wide.png) | Master/stack | [`master-dual-stack-wide`](templates/master-dual-stack-wide.toml) | One main window, a 2-window stack beside it (60%/40% instead of master-dual-stack.toml's ~65%/35%) | 3 |
 | [<img src="screenshots/master-triple-stack.png" width="120" alt="master-triple-stack template layout">](screenshots/master-triple-stack.png) | Master/stack | [`master-triple-stack`](templates/master-triple-stack.toml) | One main window, a 3-window stack beside it | 4 |
 | [<img src="screenshots/master-dual-stack-left.png" width="120" alt="master-dual-stack-left template layout">](screenshots/master-dual-stack-left.png) | Master/stack | [`master-dual-stack-left`](templates/master-dual-stack-left.toml) | A 2-window stack, one main window beside it — master-dual-stack.toml mirrored | 3 |
 | [<img src="screenshots/master-triple-stack-left.png" width="120" alt="master-triple-stack-left template layout">](screenshots/master-triple-stack-left.png) | Master/stack | [`master-triple-stack-left`](templates/master-triple-stack-left.toml) | A 3-window stack, one main window beside it — master-triple-stack.toml mirrored | 4 |
 | [<img src="screenshots/dual-sidebars.png" width="120" alt="dual-sidebars template layout">](screenshots/dual-sidebars.png) | Master/stack | [`dual-sidebars`](templates/dual-sidebars.toml) | One main window, a single narrow sidebar flanking each side | 3 |
 | [<img src="screenshots/dual-stack-sidebars.png" width="120" alt="dual-stack-sidebars template layout">](screenshots/dual-stack-sidebars.png) | Master/stack | [`dual-stack-sidebars`](templates/dual-stack-sidebars.toml) | One main window, a 2-window stack flanking each side | 5 |
-| [<img src="screenshots/dual-sidebars-wide.png" width="120" alt="dual-sidebars-wide template layout">](screenshots/dual-sidebars-wide.png) | Master/stack | [`dual-sidebars-wide`](templates/dual-sidebars-wide.toml) | One wide main window, a single narrow sidebar flanking each side (20%/60%/20% instead of dual-sidebars.toml's 50%/25%/25%) | 3 |
 | [<img src="screenshots/master-dual-stack-bottom.png" width="120" alt="master-dual-stack-bottom template layout">](screenshots/master-dual-stack-bottom.png) | Master/stack | [`master-dual-stack-bottom`](templates/master-dual-stack-bottom.toml) | One main window on top, a 2-window stack split below it | 3 |
 | [<img src="screenshots/master-triple-stack-bottom.png" width="120" alt="master-triple-stack-bottom template layout">](screenshots/master-triple-stack-bottom.png) | Master/stack | [`master-triple-stack-bottom`](templates/master-triple-stack-bottom.toml) | One main window on top, a 3-window stack split below it | 4 |
 | [<img src="screenshots/master-dual-stack-top.png" width="120" alt="master-dual-stack-top template layout">](screenshots/master-dual-stack-top.png) | Master/stack | [`master-dual-stack-top`](templates/master-dual-stack-top.toml) | A 2-window stack on top, one main window below it — master-dual-stack-left.toml rotated | 3 |

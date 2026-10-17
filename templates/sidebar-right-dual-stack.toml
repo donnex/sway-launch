@@ -14,10 +14,19 @@
 # set on sidebar-bottom for the same reason, one level down: it's the
 # second window added to the sidebar column, so it's the "solo in its own
 # axis" case again, same as sidebar-left-dual-stack.toml.
+#
+# Params, each overridable with --param NAME=VALUE or a bindings file's
+# [params] table:
+#   sidebar-width: the sidebar's width (default 25ppt)
+#   sidebar-bottom-height: the lower sidebar window's height (default 25ppt)
 
 [template]
 description = "A wide main window on the left, a sidebar on the right split into two stacked windows (75% height on top, 25% on the bottom)."
 category = "Sidebar"
+
+[params]
+sidebar-width = "25ppt"
+sidebar-bottom-height = "25ppt"
 
 [[step]]
 slot = "main"
@@ -26,8 +35,8 @@ split = "h"
 [[step]]
 slot = "sidebar-top"
 split = "v"
-width = "25ppt"
+width = "{sidebar-width}"
 
 [[step]]
 slot = "sidebar-bottom"
-height = "25ppt"
+height = "{sidebar-bottom-height}"

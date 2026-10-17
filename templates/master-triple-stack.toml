@@ -15,10 +15,17 @@
 # rather than joining a single flat column, producing an uneven
 # 360/180/180-style stack instead of three equal rows (confirmed live;
 # see six-grid.toml's own header comment for the same fix).
+#
+# Params, each overridable with --param NAME=VALUE or a bindings file's
+# [params] table:
+#   stack-width: the stack's width (default 30ppt)
 
 [template]
 description = "One large main window on the left, three smaller windows stacked in a column on the right."
 category = "Master/stack"
+
+[params]
+stack-width = "30ppt"
 
 [[step]]
 slot = "main"
@@ -27,7 +34,7 @@ split = "h"
 [[step]]
 slot = "stack-top"
 split = "v"
-width = "30ppt"
+width = "{stack-width}"
 
 [[step]]
 slot = "stack-middle"

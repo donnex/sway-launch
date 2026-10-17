@@ -3,10 +3,17 @@
 #   sway-launch --template sidebar-bottom --apps code,foot
 # or with per-slot app_id/class matching via a --bindings file; see
 # README.md's "Templates" section.
+#
+# Params, each overridable with --param NAME=VALUE or a bindings file's
+# [params] table:
+#   bottombar-height: the bottom bar's height (default 25ppt)
 
 [template]
 description = "A wide main window on top, a narrow bar across the bottom."
 category = "Sidebar"
+
+[params]
+bottombar-height = "25ppt"
 
 [[step]]
 slot = "main"
@@ -14,4 +21,4 @@ split = "v"
 
 [[step]]
 slot = "bottombar"
-height = "25ppt"
+height = "{bottombar-height}"

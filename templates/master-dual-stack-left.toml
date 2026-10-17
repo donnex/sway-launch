@@ -12,10 +12,17 @@
 # ("move right"), which pulls it out of the vertical stack and into a new
 # horizontal sibling beside it — converting the workspace from "three
 # windows stacked" into "stack column | main" side by side.
+#
+# Params, each overridable with --param NAME=VALUE or a bindings file's
+# [params] table:
+#   main-width: the main window's width (default 65ppt)
 
 [template]
 description = "A 2-window stack on the left, one large main window on the right."
 category = "Master/stack"
+
+[params]
+main-width = "65ppt"
 
 [[step]]
 slot = "stack-top"
@@ -27,4 +34,4 @@ slot = "stack-bottom"
 [[step]]
 slot = "main"
 new_column = true
-width = "65ppt"
+width = "{main-width}"

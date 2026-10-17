@@ -13,10 +13,17 @@
 # describes, applied at the top level here instead of a nested column). main
 # then joins last via new_column, pulling it out to become a new horizontal
 # sibling beside the finished stack.
+#
+# Params, each overridable with --param NAME=VALUE or a bindings file's
+# [params] table:
+#   main-width: the main window's width (default 70ppt)
 
 [template]
 description = "A 3-window stack on the left, one large main window on the right."
 category = "Master/stack"
+
+[params]
+main-width = "70ppt"
 
 [[step]]
 slot = "stack-top"
@@ -31,4 +38,4 @@ slot = "stack-bottom"
 [[step]]
 slot = "main"
 new_column = true
-width = "70ppt"
+width = "{main-width}"
