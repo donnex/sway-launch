@@ -21,7 +21,7 @@
 use super::ipc::quote_sway_string;
 use super::process_marker::PID_MARKER_VAR;
 use super::target::LaunchFilter;
-use super::values::{Position, Size, Split, WorkspaceTarget};
+use super::values::{Position, Size, Split, TitlePattern, WorkspaceTarget};
 use std::{fmt, time};
 
 /// Launches `command` and waits for the window it opens.
@@ -31,6 +31,8 @@ pub(super) struct ExecAction<'a> {
     /// `cd`/`export` run before `command`, from `--cwd`/`--env` (#113).
     pub(super) setup: Option<&'a str>,
     pub(super) filter: Option<LaunchFilter<'a>>,
+    /// `--title`: the window's title must match too (#14).
+    pub(super) title: Option<&'a TitlePattern>,
     pub(super) verbose: bool,
     pub(super) timeout: time::Duration,
 }
@@ -111,8 +113,11 @@ impl ActionKind<'_> {
 impl fmt::Display for ExecAction<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Exec \"{}\"", self.command)?;
-        match self.filter {
-            Some(filter) => write!(f, " (filter: {})", filter),
+        if let Some(filter) = self.filter {
+            write!(f, " (filter: {})", filter)?;
+        }
+        match self.title {
+            Some(title) => write!(f, " ({})", title),
             None => Ok(()),
         }
     }

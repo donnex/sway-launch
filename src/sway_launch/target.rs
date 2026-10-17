@@ -3,13 +3,14 @@
 //!
 //! The CLI, a `--layout` step and a `--template` binding each name a target
 //! through the same handful of fields (a command, a container id, `existing`,
-//! and an app_id/class/mark matcher). `Target::from_fields()` is the only way
-//! to turn those into a `Target`, and the types make every combination it
-//! rejects impossible to build any other way: a launch can only be filtered
-//! on app_id or class, an existing window needs exactly one matcher, and a
-//! container id carries none.
+//! an app_id/class/mark matcher and a title). `Target::from_fields()` is the
+//! only way to turn those into a `Target`, and the types make every
+//! combination it rejects impossible to build any other way: a launch can only
+//! be filtered on app_id or class plus a title, an existing window needs at
+//! most one matcher and at least one criterion, and a container id carries
+//! none.
 
-use super::values::validate_exec_command;
+use super::values::{validate_exec_command, TitlePattern};
 use std::fmt;
 use swayipc::Node;
 
@@ -29,18 +30,65 @@ pub enum LaunchFilter<'a> {
     Class(&'a str),
 }
 
+/// How `--existing` and `--list-windows` pick windows out: at most one
+/// app_id/class/mark matcher, narrowed by a title pattern (#14). A `Target`
+/// always has at least one of the two; `--list-windows` with neither lists
+/// everything.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct WindowCriteria<'a> {
+    pub matcher: Option<WindowMatch<'a>>,
+    pub title: Option<&'a TitlePattern>,
+}
+
+impl WindowCriteria<'_> {
+    pub(super) fn matches(&self, node: &Node) -> bool {
+        self.matcher.is_none_or(|matcher| matcher.matches(node))
+            && self
+                .title
+                .is_none_or(|title| title.matches(node.name.as_deref()))
+    }
+
+    /// `app_id="foot", title=~"x"`: how `--dry-run` names the criteria.
+    pub fn describe(&self) -> String {
+        let matcher = self
+            .matcher
+            .map(|matcher| format!("{}={:?}", matcher.field_name(), matcher.value()));
+        let title = self
+            .title
+            .map(|title| format!("title=~{:?}", title.source()));
+        matcher
+            .into_iter()
+            .chain(title)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// `app_id "foot" and title matching "x"`: how errors name the criteria.
+impl fmt::Display for WindowCriteria<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match (self.matcher, self.title) {
+            (Some(matcher), Some(title)) => write!(f, "{} and {}", matcher, title),
+            (Some(matcher), None) => write!(f, "{}", matcher),
+            (None, Some(title)) => write!(f, "{}", title),
+            (None, None) => write!(f, "any window"),
+        }
+    }
+}
+
 /// What `SwayLaunch::run()` acts on: a window it launches, a specific
-/// already-open container, or an already-open window found by a matcher —
+/// already-open container, or an already-open window found by its criteria —
 /// with `wait`, one that may not have opened yet (#108).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Target<'a> {
     Exec {
         command: &'a str,
         filter: Option<LaunchFilter<'a>>,
+        title: Option<&'a TitlePattern>,
     },
     ConId(i64),
     Existing {
-        window_match: WindowMatch<'a>,
+        criteria: WindowCriteria<'a>,
         wait: bool,
     },
 }
@@ -122,6 +170,7 @@ pub struct TargetFields<'a> {
     pub app_id: Option<&'a str>,
     pub class: Option<&'a str>,
     pub mark_match: Option<&'a str>,
+    pub title: Option<&'a TitlePattern>,
 }
 
 /// Which front end the fields came from, so a rejection names them the way
@@ -171,13 +220,14 @@ impl TargetError {
                 "must set only one of: app_id, class, mark_match".to_string()
             }
             TargetError::MatcherWithContainerId if cli => {
-                "--con-id can't be combined with --app-id, --class or --mark-match".to_string()
+                "--con-id can't be combined with --app-id, --class, --mark-match or --title"
+                    .to_string()
             }
             TargetError::MatcherWithContainerId if style == FieldStyle::LayoutStep => {
-                "must not combine con_id/target_id with app_id/class/mark_match".to_string()
+                "must not combine con_id/target_id with app_id/class/mark_match/title".to_string()
             }
             TargetError::MatcherWithContainerId => {
-                "must not combine con_id with app_id/class/mark_match".to_string()
+                "must not combine con_id with app_id/class/mark_match/title".to_string()
             }
             TargetError::MarkMatchWithoutExisting if cli => {
                 "--mark-match requires --existing".to_string()
@@ -186,10 +236,10 @@ impl TargetError {
                 "mark_match requires existing = true".to_string()
             }
             TargetError::ExistingWithoutMatcher if cli => {
-                "--existing requires --app-id, --class, or --mark-match".to_string()
+                "--existing requires --app-id, --class, --mark-match or --title".to_string()
             }
             TargetError::ExistingWithoutMatcher => {
-                "existing = true requires app_id, class, or mark_match".to_string()
+                "existing = true requires app_id, class, mark_match or title".to_string()
             }
             TargetError::WaitWithoutExisting if cli => "--wait requires --existing".to_string(),
             TargetError::WaitWithoutExisting => "wait = true requires existing = true".to_string(),
@@ -216,9 +266,9 @@ fn cli_name(field: &str) -> &str {
 impl<'a> Target<'a> {
     /// The one place the target rules live: exactly one of a command, a
     /// container id (`con_id` or a resolved `target_id`) or `existing`; at
-    /// most one matcher, never alongside a container id; `existing` needs a
-    /// matcher, and `mark_match` and `wait` need `existing`; and no blank
-    /// value.
+    /// most one matcher, and neither it nor a title alongside a container id;
+    /// `existing` needs a matcher or a title, and `mark_match` and `wait`
+    /// need `existing`; and no blank value.
     ///
     /// A blank matcher is checked before anything counts fields, since it
     /// would otherwise count as set and then match nothing. A launch command
@@ -266,18 +316,22 @@ impl<'a> Target<'a> {
             return Err(TargetError::WaitWithoutExisting);
         }
         if let Some(con_id) = fields.con_id.or(fields.target_id) {
-            return match matcher {
-                Some(_) => Err(TargetError::MatcherWithContainerId),
-                None => Ok(Target::ConId(con_id)),
+            return match (matcher, fields.title) {
+                (None, None) => Ok(Target::ConId(con_id)),
+                _ => Err(TargetError::MatcherWithContainerId),
             };
         }
         if fields.existing {
-            return matcher
-                .map(|window_match| Target::Existing {
-                    window_match,
-                    wait: fields.wait,
-                })
-                .ok_or(TargetError::ExistingWithoutMatcher);
+            if matcher.is_none() && fields.title.is_none() {
+                return Err(TargetError::ExistingWithoutMatcher);
+            }
+            return Ok(Target::Existing {
+                criteria: WindowCriteria {
+                    matcher,
+                    title: fields.title,
+                },
+                wait: fields.wait,
+            });
         }
         if matches!(matcher, Some(WindowMatch::Mark(_))) {
             return Err(TargetError::MarkMatchWithoutExisting);
@@ -289,7 +343,11 @@ impl<'a> Target<'a> {
             Some(WindowMatch::Class(class)) => Some(LaunchFilter::Class(class)),
             Some(WindowMatch::Mark(_)) | None => None,
         };
-        Ok(Target::Exec { command, filter })
+        Ok(Target::Exec {
+            command,
+            filter,
+            title: fields.title,
+        })
     }
 }
 

@@ -6981,3 +6981,73 @@ fn existing_wait_in_a_layout_step_times_out_naming_the_window() {
         "{stderr}"
     );
 }
+
+/// Launches `foot -T <title>`, matched on app_id and `title_pattern`.
+fn launch_titled_foot(title: &str, title_pattern: &str) -> (i64, KillOnDrop) {
+    let output = sway_launch_command()
+        .args([
+            "-a",
+            "foot",
+            "--title",
+            title_pattern,
+            "--timeout",
+            "10",
+            "--",
+            // `sleep` rather than a shell: Arch's bash prompt retitles the
+            // window, and these windows are told apart by title.
+            &format!("foot -T {title} sleep 60"),
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let container_id: i64 = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .expect("stdout should be a container id");
+    (container_id, KillOnDrop(container_id))
+}
+
+#[test]
+fn title_matches_a_launch_and_picks_one_of_several_existing_windows() {
+    fresh_workspace();
+    let mut connection = connect();
+    let (left, _left_guard) = launch_titled_foot("live-title-left", "^live-title-left$");
+    let (right, _right_guard) = launch_titled_foot("live-title-right", "title-right");
+    assert_eq!(
+        get_node(&mut connection, right).name.as_deref(),
+        Some("live-title-right")
+    );
+
+    let output = sway_launch_command()
+        .args([
+            "--existing",
+            "-a",
+            "foot",
+            "--title",
+            "^live-title-left$",
+            "--floating",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(single_action_status(&output.stdout), "changed");
+    assert!(node_is_floating(&get_node(&mut connection, left)));
+    assert!(!node_is_floating(&get_node(&mut connection, right)));
+
+    let rows = list_windows(&["--title", "^live-title-"]);
+    let ids: Vec<i64> = rows
+        .iter()
+        .filter_map(|row| row["container_id"].as_i64())
+        .collect();
+    assert_eq!(ids.len(), 2, "{rows:?}");
+    assert!(ids.contains(&left) && ids.contains(&right), "{rows:?}");
+}

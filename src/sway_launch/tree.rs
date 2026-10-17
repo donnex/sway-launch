@@ -13,8 +13,8 @@
 //! comparison behind a `&mut Connection`, where only a scripted compositor can
 //! reach each case.
 
-use super::target::{LaunchFilter, WindowMatch};
-use super::values::Position;
+use super::target::{LaunchFilter, WindowCriteria};
+use super::values::{Position, TitlePattern};
 use swayipc::{Node, NodeLayout, NodeType};
 
 /// `node`'s direct children, tiling (`nodes`) first, then floating
@@ -72,24 +72,28 @@ pub(super) fn launch_filter_match(node: &Node, filter: Option<LaunchFilter>) -> 
 }
 
 /// One window a launch is rechecking because it carried the launch's marker
-/// but failed its filter when it mapped: its app_id/class as the tree shows
-/// them now, and whether they pass the filter yet.
+/// but failed its filter when it mapped: its app_id/class/title as the tree
+/// shows them now, and whether they pass the filter and title pattern yet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct RecheckedWindow {
     pub(super) container_id: i64,
     pub(super) app_id: Option<String>,
     pub(super) class: Option<String>,
+    pub(super) title: Option<String>,
     pub(super) matches: bool,
 }
 
 /// Re-reads each of `container_ids` from `tree` against the launch filter, in
 /// the order given. A window that's no longer in the tree is left out, so the
 /// caller can stop rechecking it. Exists because a client can set its
-/// app_id/class after mapping, and Sway sends no window event when it does.
+/// app_id/class after mapping, and Sway sends no window event when it does;
+/// a title that changes later (a splash screen's window becoming the real
+/// one) is caught the same way.
 pub(super) fn recheck_launched_windows(
     tree: &Node,
     container_ids: &[i64],
     filter: Option<LaunchFilter>,
+    title: Option<&TitlePattern>,
 ) -> Vec<RecheckedWindow> {
     container_ids
         .iter()
@@ -101,17 +105,19 @@ pub(super) fn recheck_launched_windows(
                 .window_properties
                 .as_ref()
                 .and_then(|properties| properties.class.clone()),
-            matches: launch_filter_match(node, filter),
+            title: node.name.clone(),
+            matches: launch_filter_match(node, filter)
+                && title.is_none_or(|title| title.matches(node.name.as_deref())),
         })
         .collect()
 }
 
 /// Collects the container ids of every node in `tree` (tiling and floating
-/// children at every level) that `window_match` accepts, used to target an
+/// children at every level) that `criteria` accepts, used to target an
 /// already-open window instead of launching a new one.
-pub(super) fn matching_container_ids(tree: &Node, window_match: WindowMatch) -> Vec<i64> {
+pub(super) fn matching_container_ids(tree: &Node, criteria: WindowCriteria) -> Vec<i64> {
     descendants(tree)
-        .filter(|node| window_match.matches(node))
+        .filter(|node| criteria.matches(node))
         .map(|node| node.id)
         .collect()
 }
@@ -138,15 +144,15 @@ pub struct ListedWindow {
 }
 
 /// Every window in `tree`, scratchpad included, plus every marked split
-/// container, in tree order — narrowed to the ones `filter` accepts, so with
-/// one this lists exactly what `--existing` would choose between.
-pub(super) fn window_listing(tree: &Node, filter: Option<WindowMatch>) -> Vec<ListedWindow> {
+/// container, in tree order — narrowed to the ones `criteria` accepts, so
+/// this lists exactly what `--existing` would choose between.
+pub(super) fn window_listing(tree: &Node, criteria: WindowCriteria) -> Vec<ListedWindow> {
     descendants(tree)
         .filter(|node| {
             let listable = is_window(node)
                 || (matches!(node.node_type, NodeType::Con | NodeType::FloatingCon)
                     && !node.marks.is_empty());
-            listable && filter.is_none_or(|filter| filter.matches(node))
+            listable && criteria.matches(node)
         })
         .map(|node| {
             let path = ancestors_of(tree, node.id).unwrap_or_default();

@@ -27,9 +27,9 @@ use super::query::{
     existing_container, node_by_id, parent_node_layout, position_matches,
     recheck_launched_windows_now,
 };
-use super::target::{LaunchFilter, WindowMatch};
+use super::target::{LaunchFilter, WindowCriteria};
 use super::tree::{height_matches, is_window, width_matches, ContainerState};
-use super::values::{escape_control_characters, Size, Split};
+use super::values::{escape_control_characters, Size, Split, TitlePattern};
 use super::{MOVE_POLL_GRACE, WAIT_TIME_POLL_GRACE, WAIT_TIME_POLL_INTERVAL};
 use std::sync::mpsc;
 use std::{fmt, thread, time};
@@ -65,6 +65,7 @@ enum WindowEventMatchError {
     EventChangeTypeMismatch,
     WindowAppIdMismatch,
     WindowClassMismatch,
+    WindowTitleMismatch,
     NoMatchingEvent,
 }
 
@@ -79,6 +80,9 @@ impl fmt::Display for WindowEventMatchError {
             }
             WindowEventMatchError::WindowClassMismatch => {
                 write!(f, "class mismatch")
+            }
+            WindowEventMatchError::WindowTitleMismatch => {
+                write!(f, "title mismatch")
             }
             WindowEventMatchError::NoMatchingEvent => {
                 write!(f, "No matching event")
@@ -982,6 +986,7 @@ impl ExecAction<'_> {
             verbose,
             timeout,
             filter,
+            title,
             ..
         } = *self;
 
@@ -1018,6 +1023,11 @@ impl ExecAction<'_> {
         let mut rechecks: Vec<i64> = Vec::new();
         let mut next_recheck = time::Instant::now();
         let mut recheck_connection: Option<Connection> = None;
+
+        // Every window that mapped during this run. Only these get a second
+        // look when their title changes: an older window renaming itself is
+        // never the one this command opened.
+        let mut opened_this_run: Vec<i64> = Vec::new();
 
         loop {
             let effective_deadline = match fallback {
@@ -1056,6 +1066,7 @@ impl ExecAction<'_> {
                     message: exec_timeout_message(
                         timeout,
                         filter,
+                        title,
                         &unmatched_windows,
                         command_running,
                     ),
@@ -1097,8 +1108,8 @@ impl ExecAction<'_> {
                 ) {
                     if verbose {
                         diagnostic!(
-                            "Recheck match: container id {} set a matching app_id/class after \
-                             mapping (PID-marker-confirmed)",
+                            "Recheck match: container id {} set a matching app_id/class/title \
+                             after mapping (PID-marker-confirmed)",
                             container_id
                         );
                     }
@@ -1132,20 +1143,43 @@ impl ExecAction<'_> {
                 _ => continue,
             };
 
-            if let Err(mismatch) = self.matches_window_event(&window) {
+            let container_id = window.container.id;
+            let retitled = window.change == WindowChange::Title
+                && title.is_some()
+                && opened_this_run.contains(&container_id)
+                && fallback.is_none_or(|(fallback_id, _)| fallback_id != container_id);
+            if window.change == WindowChange::New {
+                opened_this_run.push(container_id);
+            }
+
+            let matched = if retitled {
+                self.matches_window(&window.container)
+            } else {
+                self.matches_window_event(&window)
+            };
+            if let Err(mismatch) = matched {
                 if matches!(
                     mismatch,
                     WindowEventMatchError::WindowAppIdMismatch
                         | WindowEventMatchError::WindowClassMismatch
+                        | WindowEventMatchError::WindowTitleMismatch
                 ) {
+                    if let Some(seen) = unmatched_windows
+                        .iter_mut()
+                        .find(|unmatched| unmatched.container_id == container_id)
+                    {
+                        seen.title = window.container.name.clone();
+                        continue;
+                    }
                     let unmatched = UnmatchedWindow {
-                        container_id: window.container.id,
+                        container_id,
                         app_id: window.container.app_id.clone(),
                         class: window
                             .container
                             .window_properties
                             .as_ref()
                             .and_then(|properties| properties.class.clone()),
+                        title: window.container.name.clone(),
                         launched_by_this_run: window
                             .container
                             .pid
@@ -1155,10 +1189,11 @@ impl ExecAction<'_> {
                         diagnostic!(
                             "Event mismatch: {:?} {} ({}){}",
                             window.change,
-                            describe_unmatched_window(&unmatched),
+                            describe_unmatched_window(&unmatched, title.is_some()),
                             mismatch,
                             if unmatched.launched_by_this_run {
-                                " — rechecking it in case it sets its app_id/class after mapping"
+                                " — rechecking it in case it sets its app_id/class/title after \
+                                 mapping"
                             } else {
                                 ""
                             }
@@ -1172,6 +1207,9 @@ impl ExecAction<'_> {
                 }
                 continue;
             }
+            // A window that failed its title when it mapped and matches now
+            // is no longer one to report.
+            unmatched_windows.retain(|unmatched| unmatched.container_id != container_id);
 
             let pid_confirmed = window
                 .container
@@ -1222,10 +1260,9 @@ impl ExecAction<'_> {
         if connection.is_none() {
             *connection = new_connection().ok();
         }
-        let Some(rechecked) = connection
-            .as_mut()
-            .and_then(|connection| recheck_launched_windows_now(connection, rechecks, self.filter))
-        else {
+        let Some(rechecked) = connection.as_mut().and_then(|connection| {
+            recheck_launched_windows_now(connection, rechecks, self.filter, self.title)
+        }) else {
             *connection = None;
             return None;
         };
@@ -1237,6 +1274,7 @@ impl ExecAction<'_> {
             {
                 unmatched.app_id = window.app_id.clone();
                 unmatched.class = window.class.clone();
+                unmatched.title = window.title.clone();
             }
         }
         *rechecks = rechecked.iter().map(|window| window.container_id).collect();
@@ -1247,7 +1285,7 @@ impl ExecAction<'_> {
     }
 
     /// Whether `window` is the `New` window this launch is waiting for,
-    /// filtered on `--app-id`/`--class` when either is set.
+    /// filtered on `--app-id`/`--class` and `--title` when set.
     ///
     /// Only `New` identifies a window as the one just launched. `Move` ("the
     /// view has been reparented in the tree") fires for any window whenever
@@ -1261,17 +1299,31 @@ impl ExecAction<'_> {
         if window.change != WindowChange::New {
             return Err(WindowEventMatchError::EventChangeTypeMismatch);
         }
+        self.matches_window(&window.container)
+    }
 
-        match self.filter {
-            None => Ok(WindowEventMatch::NewWindowMatchWithoutCheck),
-            Some(filter @ LaunchFilter::AppId(_)) => match filter.matches(&window.container) {
-                true => Ok(WindowEventMatch::WindowAppId),
-                false => Err(WindowEventMatchError::WindowAppIdMismatch),
+    /// `matches_window_event()`'s check of the window itself, which a window
+    /// opened during this run also gets again when its title changes.
+    fn matches_window(
+        &self,
+        node: &swayipc::Node,
+    ) -> Result<WindowEventMatch, WindowEventMatchError> {
+        let matched = match self.filter {
+            None => WindowEventMatch::NewWindowMatchWithoutCheck,
+            Some(filter @ LaunchFilter::AppId(_)) => match filter.matches(node) {
+                true => WindowEventMatch::WindowAppId,
+                false => return Err(WindowEventMatchError::WindowAppIdMismatch),
             },
-            Some(filter @ LaunchFilter::Class(_)) => match filter.matches(&window.container) {
-                true => Ok(WindowEventMatch::WindowClass),
-                false => Err(WindowEventMatchError::WindowClassMismatch),
+            Some(filter @ LaunchFilter::Class(_)) => match filter.matches(node) {
+                true => WindowEventMatch::WindowClass,
+                false => return Err(WindowEventMatchError::WindowClassMismatch),
             },
+        };
+        match self.title {
+            Some(title) if !title.matches(node.name.as_deref()) => {
+                Err(WindowEventMatchError::WindowTitleMismatch)
+            }
+            _ => Ok(matched),
         }
     }
 }
@@ -1337,43 +1389,60 @@ fn unfiltered_fallback_hint(filter: Option<LaunchFilter>) -> &'static str {
 fn exec_timeout_message(
     timeout: time::Duration,
     filter: Option<LaunchFilter>,
+    title: Option<&TitlePattern>,
     unmatched_windows: &[UnmatchedWindow],
     command_running: Option<bool>,
 ) -> String {
-    let filter = filter
-        .map(|filter| format!(" with {}", filter))
-        .unwrap_or_default();
+    let criteria = match (filter, title) {
+        (Some(filter), Some(title)) => format!(" with {} and {}", filter, title),
+        (Some(filter), None) => format!(" with {}", filter),
+        (None, Some(title)) => format!(" with {}", title),
+        (None, None) => String::new(),
+    };
     let base = format!(
         "no window{} appeared within {} sec",
-        filter,
+        criteria,
         timeout.as_secs()
     );
 
     if !unmatched_windows.is_empty() {
         let described: Vec<String> = unmatched_windows
             .iter()
-            .map(|window| format!("({})", describe_unmatched_window(window)))
+            .map(|window| format!("({})", describe_unmatched_window(window, title.is_some())))
             .collect();
         let noun = if unmatched_windows.len() == 1 {
             "window"
         } else {
             "windows"
         };
+        let properties = if title.is_some() {
+            "app_id/class/title"
+        } else {
+            "app_id/class"
+        };
         let recheck_note = if unmatched_windows
             .iter()
             .any(|window| window.launched_by_this_run)
         {
-            " (a window opened by this command was rechecked until the timeout, in case the \
-             app sets its app_id/class after mapping)"
+            format!(
+                " (a window opened by this command was rechecked until the timeout, in case the \
+                 app sets its {} after mapping)",
+                properties
+            )
         } else {
-            ""
+            String::new()
         };
         return format!(
-            "{}; {} other new {} did {} — check --app-id/--class{}",
+            "{}; {} other new {} did {} — check {}{}",
             base,
             unmatched_windows.len(),
             noun,
             described.join(", "),
+            if title.is_some() {
+                "--app-id/--class/--title"
+            } else {
+                "--app-id/--class"
+            },
             recheck_note
         );
     }
@@ -1393,7 +1462,7 @@ fn exec_timeout_message(
     }
 }
 
-/// `--existing --wait` (#108): the one window `window_match` accepts, waiting
+/// `--existing --wait` (#108): the one window `criteria` accepts, waiting
 /// up to `timeout` for it to open when none has yet, for a window something
 /// other than this run is starting (an autostart entry, a launcher).
 ///
@@ -1405,7 +1474,7 @@ fn exec_timeout_message(
 /// Several matches end the wait with the same error `--existing` gives:
 /// waiting longer can't make the choice less ambiguous.
 pub(super) fn run_wait_for_existing_window(
-    window_match: WindowMatch,
+    criteria: WindowCriteria,
     timeout: time::Duration,
     verbose: bool,
 ) -> Result<i64, String> {
@@ -1415,16 +1484,16 @@ pub(super) fn run_wait_for_existing_window(
     let mut announced = false;
 
     loop {
-        if let Some(container_id) = awaited_existing_container_id(&mut connection, window_match)? {
+        if let Some(container_id) = awaited_existing_container_id(&mut connection, criteria)? {
             return Ok(container_id);
         }
         if verbose && !announced {
-            diagnostic!("No window matches {} yet; waiting for one", window_match);
+            diagnostic!("No window matches {} yet; waiting for one", criteria);
             announced = true;
         }
         let remaining = deadline.saturating_duration_since(time::Instant::now());
         if remaining.is_zero() {
-            return Err(existing_wait_timeout_message(window_match, timeout));
+            return Err(existing_wait_timeout_message(criteria, timeout));
         }
         match events.recv_timeout(remaining.min(LATE_PROPERTY_RECHECK_INTERVAL)) {
             Ok(Ok(_)) | Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -1438,10 +1507,10 @@ pub(super) fn run_wait_for_existing_window(
     }
 }
 
-fn existing_wait_timeout_message(window_match: WindowMatch, timeout: time::Duration) -> String {
+fn existing_wait_timeout_message(criteria: WindowCriteria, timeout: time::Duration) -> String {
     format!(
         "no window with {} appeared within {} sec (--list-windows shows every open window)",
-        window_match,
+        criteria,
         timeout.as_secs()
     )
 }
@@ -1453,12 +1522,23 @@ fn existing_wait_timeout_message(window_match: WindowMatch, timeout: time::Durat
 /// setting its app_id/class late is waiting on its own startup, not on Sway.
 const LATE_PROPERTY_RECHECK_INTERVAL: time::Duration = time::Duration::from_millis(50);
 
-fn describe_unmatched_window(window: &UnmatchedWindow) -> String {
-    let identity = match (&window.app_id, &window.class) {
+/// `con_id 7, app_id "foot"`, with the window's title too when the launch
+/// was matching on one.
+fn describe_unmatched_window(window: &UnmatchedWindow, with_title: bool) -> String {
+    let mut identity = match (&window.app_id, &window.class) {
         (Some(app_id), _) => format!("app_id \"{}\"", app_id),
         (None, Some(class)) => format!("class \"{}\"", class),
         (None, None) => "no app_id or class".to_string(),
     };
+    if with_title {
+        match &window.title {
+            Some(title) => identity.push_str(&format!(
+                ", title \"{}\"",
+                escape_control_characters(title, false)
+            )),
+            None => identity.push_str(", no title"),
+        }
+    }
     let ownership = if window.launched_by_this_run {
         ", opened by this command"
     } else {

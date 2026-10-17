@@ -111,6 +111,7 @@ pub struct UnmatchedWindow {
     pub container_id: i64,
     pub app_id: Option<String>,
     pub class: Option<String>,
+    pub title: Option<String>,
     pub launched_by_this_run: bool,
 }
 

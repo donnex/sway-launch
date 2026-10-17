@@ -42,6 +42,7 @@ pub(super) fn exec_action<'a>(command: &'a str, app_id: &'a str, class: &'a str)
         command,
         setup: None,
         filter: filter(app_id, class),
+        title: None,
         verbose: false,
         timeout: time::Duration::from_secs(5),
     }

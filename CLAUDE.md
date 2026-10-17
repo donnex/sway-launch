@@ -159,9 +159,15 @@ what it rejects and why:
 
 A `Target` is built only through `Target::from_fields()` (#20), which every front end calls with a
 `TargetFields` and renders its `TargetError` in its own style (`FieldStyle`). The types make every
-rejected combination unrepresentable: `Exec { command, filter: Option<LaunchFilter> }`,
-`ConId(i64)`, or `Existing(WindowMatch)` with exactly one matcher. `tests/target_rules.rs` checks
+rejected combination unrepresentable: `Exec { command, filter: Option<LaunchFilter>, title }`,
+`ConId(i64)`, or `Existing { criteria: WindowCriteria, wait }`, whose criteria hold at most one
+`WindowMatch` plus an optional title and at least one of the two. `tests/target_rules.rs` checks
 the CLI, a layout step and a template binding give the same answer for every combination.
+
+A title (`--title`/`title`, #14) is a `TitlePattern`: an unanchored `regex-lite` regex (not
+`regex`: same syntax, without about a megabyte of Unicode tables), compiled by
+`parse_title_pattern()` when the flag or file is parsed (clap's value parser, serde for the
+files), so `Target` only borrows it and stays `Copy`.
 
 `SwayLaunch::resolve_container_id()` turns the target into a container id: `Exec` launches,
 `Existing` resolves exactly one match from the whole tree (scratchpad included) or errors, `ConId`
@@ -201,9 +207,11 @@ decides which:
   `process_has_env_var()` finds the marker. A content-matching window without it is held as a
   fallback and taken once the marker was seen and then gone (`MarkerTracker`: "gone" means seen,
   then gone, never merely absent) → `LaunchOwnership::Launched`, or after
-  `PID_MARKER_FALLBACK_GRACE` → `Adopted`. Windows the filter rejected are rechecked for a late
-  app_id/class (`recheck_launched_windows()`) and reported as `UnmatchedWindow`s on timeout, with
-  `exec_timeout_message()` explaining what was seen.
+  `PID_MARKER_FALLBACK_GRACE` → `Adopted`. Windows the filter or title rejected are rechecked for a
+  late app_id/class/title (`recheck_launched_windows()`) and reported as `UnmatchedWindow`s on
+  timeout, with `exec_timeout_message()` explaining what was seen. With a title, a `Title` event
+  re-runs `matches_window()` too, but only for a window whose `New` arrived during this run
+  (`opened_this_run`): an older window renaming itself is never this launch's.
 
 **Every `ActionKind` match in `confirmation.rs` names each variant** (no `_` arm), so a new kind
 doesn't compile until both its confirmation path and its state/poll arms are decided.
@@ -255,7 +263,7 @@ way. A poll cycle and the move guard each share one connection across their read
 dispatched first in `main()`, before any target is resolved. Every standalone mode, `--layout` and
 `--template` build their `conflicts_with_all` with `per_window_and()` from `PER_WINDOW_ARGS`, so a
 per-window flag is never silently discarded. `--list-windows` alone keeps `LIST_WINDOWS_FILTERS`
-(`-a`/`-c`/`--mark-match`, via `per_window_but_filters_and()`): they narrow its listing
+(`-a`/`-c`/`--mark-match`/`--title`, via `per_window_but_filters_and()`): they narrow its listing
 (`tree::window_listing()`) to what `--existing` would choose between, so its rows and
 `matching_container_ids()` must keep agreeing on what a match is.
 `per_window_args_conflict_with_every_standalone_mode` and
