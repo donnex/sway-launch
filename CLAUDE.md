@@ -282,7 +282,7 @@ checks those by hand, because the derive macro doesn't enforce `requires` reliab
 - A step's `id` names its container; a later `target_id` resolves to it through `resolved_ids`. A
   template's `slot` becomes the step's `id`, so templates use the same mechanism.
 - `run_steps()` applies the run's `BuildLocation` (a template's `[layout]` table, or
-  `--on-workspace`) once before the first step, so the shape is built in place. It warns when that
+  `--on-workspace`/`--on-output`, each overriding its half of it) once before the first step, so the shape is built in place. It warns when that
   workspace already holds tiled windows, and sets `require_launch_on_focused_workspace`, which
   fails a launch if focus moved while it waited (`focus_moved_during_launch()`, #45/#105).
 - `run_steps()` takes a run lock (`acquire_run_lock()`, #55) before `BuildLocation::apply()`: an
@@ -311,7 +311,7 @@ follow-up:
 - **`Args` ↔ `LayoutStep` ↔ `TemplateStep` ↔ `Binding`.** `schemas_mirror_args_field_for_field`
   checks the field lists (exceptions in `CLI_ONLY_ARGS`, `LAYOUT_ONLY_FIELDS`,
   `BINDING_SUPPLIED_FIELDS`, `TEMPLATE_ONLY_FIELDS`, `RESOLVE_SUPPLIED_FIELDS`,
-  `BINDING_ONLY_FIELDS`). It doesn't check wiring: a new flag also needs `to_sway_launch()`,
+  `BINDING_ONLY_FIELDS`, and `BINDING_OVERRIDE_FIELDS`: a binding's placement replaces the step's, #30). It doesn't check wiring: a new flag also needs `to_sway_launch()`,
   `resolve()` and README.md's "Layout files"/"Templates" field lists. The schemas duplicate fields
   rather than `#[serde(flatten)]`, which weakens `deny_unknown_fields`.
 - **README.md's help block** is `Args::command().render_help()` verbatim
