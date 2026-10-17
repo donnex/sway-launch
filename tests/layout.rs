@@ -905,3 +905,45 @@ fn layout_reads_stdin_for_dash_and_names_it_stdin() {
         "{output:?}"
     );
 }
+
+#[test]
+fn a_second_run_of_a_layout_is_refused_while_the_first_holds_its_lock() {
+    // Layout runs take a lock keyed on the file and workspace (#55), so a
+    // double-triggered layout can't interleave with itself. The lock here is
+    // held by the test, standing in for a run still in progress; --no-lock
+    // runs anyway. con_id-only steps with no actions need no compositor.
+    let runtime_dir = common::TestTempDir::new();
+    let path = TempToml::write("locked", "[[step]]\ncon_id = 42\n");
+    let run = |extra: &[&str]| {
+        sway_launch_without_a_compositor()
+            .env("XDG_RUNTIME_DIR", &*runtime_dir)
+            .args(["--layout", path.to_str().unwrap()])
+            .args(extra)
+            .output()
+            .expect("failed to run sway-launch binary")
+    };
+
+    let first = run(&[]);
+    assert!(first.status.success(), "{first:?}");
+    let lock_path = std::fs::read_dir(runtime_dir.join("sway-launch"))
+        .expect("the run should have created its lock directory")
+        .map(|entry| entry.expect("directory entry should be readable").path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "lock")
+        })
+        .expect("the run should have created a lock file");
+    let held = std::fs::File::open(&lock_path).expect("lock file should open");
+    held.try_lock()
+        .expect("the finished run should have released its lock");
+
+    let second = run(&[]);
+    assert_eq!(second.status.code(), Some(1), "{second:?}");
+    assert!(
+        String::from_utf8_lossy(&second.stderr).contains("still in progress"),
+        "{second:?}"
+    );
+
+    let forced = run(&["--no-lock"]);
+    assert!(forced.status.success(), "{forced:?}");
+}
