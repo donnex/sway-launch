@@ -137,6 +137,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workspace of your choice. A step can no longer combine `workspace` with `new_column`/`new_row`
   (nor the CLI `--workspace` with `--new-column`/`--new-row`): the relative move only ever applied
   on the workspace the window opened on. (#45, #105)
+- A layout or template run can't overlap with itself: a second run of the same file or built-in
+  template on the same workspace stops at once instead of interleaving its windows with the first
+  run's, as a double-pressed key used to. `--no-lock` runs anyway. Building from source now needs
+  Rust 1.89, for the file lock this uses. (#55)
 - `--rollback-on-error`: if a `--layout`/`--template` step fails, close every window this run
   launched — by an earlier step, or by the failing step before it failed — instead of leaving them
   open. A window this run only adopted by matching, without proof it launched it, is left open.
@@ -180,9 +184,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   #40, #46)
 - Supported Sway versions stated up front: 1.9 and newer. Every change is tested against both Sway
   1.9 and the newest Sway release. (#98)
-- A declared minimum Rust version for building from source: 1.85. An older compiler — common with
+- A declared minimum Rust version for building from source: 1.89. An older compiler — common with
   distribution-packaged Rust — gets a clear message naming `sway-launch` and the version it needs,
   instead of a dependency error about `clap`. The README's Installation section says so up front,
-  and shows `cargo install --path . --locked` for building and installing in one step. (#67)
+  and shows `cargo install --path . --locked` for building and installing in one step. (#55, #67)
 - Prebuilt Linux x86_64 release binaries, statically linked against musl, so they run on any
   distribution whatever its glibc version. (#26)

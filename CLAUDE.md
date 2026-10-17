@@ -250,6 +250,12 @@ checks those by hand, because the derive macro doesn't enforce `requires` reliab
   `--on-workspace`) once before the first step, so the shape is built in place. It warns when that
   workspace already holds tiled windows, and sets `require_launch_on_focused_workspace`, which
   fails a launch if focus moved while it waited (`focus_moved_during_launch()`, #45/#105).
+- `run_steps()` takes a run lock (`acquire_run_lock()`, #55) before `BuildLocation::apply()`: an
+  exclusive `File::try_lock()` on `$XDG_RUNTIME_DIR/sway-launch/<hash>.lock`, keyed on the
+  canonical file or template name plus the build workspace (the focused one only for a launching
+  run, so a retarget-only run still makes no IPC call of its own), held until the process exits.
+  `--no-lock` skips it; no runtime directory skips it with a `--verbose` note. It is why
+  `rust-version` is 1.89.
 - `--rollback-on-error` closes only windows whose `launch_ownership` is `Launched` — never
   retargeted or `Adopted` ones — most recent first (`rollback()`, `send_rollback_kills()`), waits
   `ROLLBACK_CLOSE_GRACE` for each to actually close, and stops at the first unanswered kill. It
@@ -1481,8 +1487,9 @@ had no release since September 2024 and still declares the now-deprecated `node2
 nothing newer to bump to; `actions-rust-lang/audit` is a composite action with no Node runtime of
 its own, so it sidesteps the issue rather than just deferring it).
 
-**`Cargo.toml` declares `rust-version`** (currently `1.85`, the floor the locked dependency set
-itself needs — `clap`, `clap_complete` and `toml` all declare it), so a too-old compiler reports
+**`Cargo.toml` declares `rust-version`** (currently `1.89`, for `std::fs::File::try_lock()`, which
+the `--layout`/`--template` run lock uses (#55); before that the floor was 1.85, what the locked
+dependency set itself needs), so a too-old compiler reports
 the requirement against `sway-launch` rather than failing inside a dependency; README.md's
 "Installation" section states the same figure. This is a floor for *building* the crate, separate
 from the Rust conventions' "target the latest stable" rule, which is about the development

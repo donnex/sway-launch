@@ -54,7 +54,7 @@ release.
 
 ## Installation
 
-Build from source with Cargo. This needs Rust 1.85 or newer — distribution packages are often
+Build from source with Cargo. This needs Rust 1.89 or newer — distribution packages are often
 older (Ubuntu 24.04 ships 1.75, Debian 12 ships 1.63), so install a current toolchain via
 rustup if yours is behind:
 
@@ -124,6 +124,7 @@ Options:
       --apps <APPS>                   Comma-separated list of commands to launch into --template's slots, in the order the template's slot steps appear. Requires --template; conflicts with --bindings
       --rollback-on-error             If a --layout/--template step fails, kill every window this invocation itself launched, by an earlier step or by the failing step before it failed (not one it merely retargeted via con_id/existing/target_id), rather than leaving them open. Requires --layout or --template
       --on-workspace <WORKSPACE>      Build a --layout/--template run on this workspace: switch to it once before the first step, so every window opens there. Overrides a template's own [layout] workspace. Requires --layout or --template
+      --no-lock                       Run a --layout/--template even if another run of the same file or template on the same workspace is still in progress. Requires --layout or --template
   -h, --help                          Print help
   -V, --version                       Print version
 ```
@@ -459,6 +460,14 @@ Every top-level per-window flag (`--split`, `--floating`, etc.) conflicts with `
 would otherwise be unclear which step it applied to — `--timeout`, `--wait-time`, `--verbose`, and
 `--json` still apply, the latter printing one object at the end (see
 [JSON output](#json-output) below) instead of a line per step.
+
+A layout or template run can't overlap with itself. A run takes a lock on its file (or built-in
+template name) and the workspace it builds on, so a second run of the same layout on the same
+workspace — a key pressed twice, a login script still running when you start it by hand — stops at
+once with `another run of this layout on workspace "3" is still in progress`, instead of
+interleaving its windows with the first run's. Different layouts, or the same one on different
+workspaces, run side by side. The lock lives under `$XDG_RUNTIME_DIR/sway-launch/` and is released
+when the run ends, even if it crashes. `--no-lock` runs anyway.
 
 Stopping at the first error leaves whatever earlier steps already launched open by default — and
 the failing step's own window too, when it launched one and then failed on a later action (a
