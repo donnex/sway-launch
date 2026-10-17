@@ -796,6 +796,141 @@ fn rollback_reports_a_window_that_stayed_open_after_its_kill() {
     );
 }
 
+/// Runs `arguments` with `--json` and parses stdout, for a run that exits
+/// non-zero but still reports its result there (`--continue-on-timeout`).
+fn run_reporting_on_stdout(fake: &FakeSway, arguments: &[&str]) -> (Output, Value) {
+    let output = fake
+        .sway_launch()
+        .args(arguments)
+        .arg("--json")
+        .output()
+        .expect("failed to run sway-launch");
+    let json = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "stdout isn't a JSON result ({error}); stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
+    (output, json)
+}
+
+#[test]
+fn continue_on_timeout_carries_on_past_a_missing_window_and_skips_its_dependents() {
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        opens_a_window_for_each_launch("fake-app"),
+    );
+    let layout = TempToml::write(
+        "continue-on-timeout",
+        r#"
+[[step]]
+id = "slow"
+command = "sleep 30"
+app_id = "slow-app"
+timeout = 1
+
+[[step]]
+target_id = "slow"
+floating = true
+
+[[step]]
+command = "sleep 30"
+app_id = "fake-app"
+"#,
+    );
+    let (output, json) = run_reporting_on_stdout(
+        &fake,
+        &[
+            "--layout",
+            layout.to_str().unwrap(),
+            "--continue-on-timeout",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1), "{json}");
+    // The first launch's window (100) failed its filter; the third step's is 101.
+    assert_eq!(json["container_ids"], serde_json::json!([101]), "{json}");
+    assert_eq!(json["timed_out_steps"][0]["step"], 1, "{json}");
+    assert_eq!(
+        json["timed_out_steps"][0]["unmatched_windows"][0]["container_id"], 100,
+        "{json}"
+    );
+    assert_eq!(
+        json["skipped_steps"],
+        serde_json::json!([{ "step": 2, "target_id": "slow" }]),
+        "{json}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("step 1: launch") && stderr.contains("continuing: --continue-on-timeout"),
+        "{stderr}"
+    );
+    assert!(
+        !fake
+            .commands()
+            .iter()
+            .any(|command| command.contains("floating")),
+        "the skipped step sent {:?}",
+        fake.commands()
+    );
+}
+
+#[test]
+fn continue_on_timeout_also_covers_an_existing_wait_that_sees_no_window() {
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        opens_a_window_for_each_launch("fake-app"),
+    );
+    let layout = TempToml::write(
+        "continue-on-wait-timeout",
+        r#"
+[[step]]
+existing = true
+wait = true
+app_id = "never-opens"
+timeout = 1
+
+[[step]]
+command = "sleep 30"
+app_id = "fake-app"
+"#,
+    );
+    let (output, json) = run_reporting_on_stdout(
+        &fake,
+        &[
+            "--layout",
+            layout.to_str().unwrap(),
+            "--continue-on-timeout",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1), "{json}");
+    assert_eq!(json["container_ids"], serde_json::json!([100]), "{json}");
+    assert_eq!(json["timed_out_steps"][0]["step"], 1, "{json}");
+}
+
+#[test]
+fn continue_on_timeout_still_stops_on_any_other_failure() {
+    let fake = FakeSway::start(SwayVersion::V1_11, |_, command| {
+        if command.contains("floating") {
+            return Err("refused".to_string());
+        }
+        Ok(())
+    });
+    let layout = TempToml::write(
+        "continue-on-timeout-other-failure",
+        &format!("[[step]]\ncon_id = {TILED}\nfloating = true\n"),
+    );
+    let run = run(
+        &fake,
+        &[
+            "--layout",
+            layout.to_str().unwrap(),
+            "--continue-on-timeout",
+        ],
+    );
+    assert!(!run.succeeded());
+    assert!(run.error().contains("step 1:"), "{}", run.error());
+}
+
 /// A handler that runs every `exec` and, once the launched process exists,
 /// opens one window per title for it, in order, all with `app_id`.
 fn opens_titled_windows_for_each_launch(

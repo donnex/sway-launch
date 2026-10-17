@@ -212,8 +212,7 @@ impl<'a> SwayLaunch<'a> {
                 criteria,
                 wait: true,
             } => run_wait_for_existing_window(criteria, self.timeout, self.verbose)
-                .map(|container_id| (container_id, None))
-                .map_err(RunError::from),
+                .map(|container_id| (container_id, None)),
         }
     }
 
