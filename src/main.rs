@@ -1002,6 +1002,9 @@ struct DryRunStep {
 struct DryRunAction {
     kind: &'static str,
     command: String,
+    /// Sent in one command with its batching neighbours (#32), so the plain
+    /// preview shows them on one line.
+    batched: bool,
 }
 
 /// A one-line description of what a `SwayLaunch`'s `target` would do,
@@ -1035,6 +1038,7 @@ fn dry_run_step(sway_launch: &sway_launch::SwayLaunch) -> DryRunStep {
             .map(|action| DryRunAction {
                 kind: action.kind_name(),
                 command: action.sway_command_verb(),
+                batched: action.joins_batch(),
             })
             .collect(),
     }
@@ -1075,20 +1079,34 @@ fn print_dry_run_steps(setup: &[String], steps: &[DryRunStep], json: bool) {
     }
 }
 
-/// `print_dry_run_steps()`'s plain-text lines. Control characters in a
-/// command, mark or name are escaped (see
+/// `print_dry_run_steps()`'s plain-text lines: one per setup command, step
+/// target and command sent, so actions a real run sends together as one
+/// command (#32) share a line, joined the way Sway receives them. Control
+/// characters in a command, mark or name are escaped (see
 /// `sway_launch::escape_control_characters()`), so a layout file can't use a
 /// carriage return or a terminal escape to make the preview show something
 /// other than what it will run.
 fn dry_run_plain_lines(setup: &[String], steps: &[DryRunStep]) -> Vec<String> {
-    let texts = setup
-        .iter()
-        .map(String::as_str)
-        .chain(steps.iter().flat_map(|step| {
-            std::iter::once(step.target.as_str())
-                .chain(step.actions.iter().map(|action| action.command.as_str()))
-        }));
+    let mut texts: Vec<String> = setup.to_vec();
+    for step in steps {
+        texts.push(step.target.clone());
+        let mut batch: Vec<&str> = Vec::new();
+        for action in &step.actions {
+            if action.batched {
+                batch.push(&action.command);
+                continue;
+            }
+            if !batch.is_empty() {
+                texts.push(std::mem::take(&mut batch).join(", "));
+            }
+            texts.push(action.command.clone());
+        }
+        if !batch.is_empty() {
+            texts.push(batch.join(", "));
+        }
+    }
     texts
+        .iter()
         .enumerate()
         .map(|(index, text)| {
             format!(
@@ -2435,6 +2453,7 @@ mod tests {
                 actions: vec![DryRunAction {
                     kind: "split",
                     command: "splith".to_string(),
+                    batched: true,
                 }],
             },
             DryRunStep {
@@ -2453,6 +2472,33 @@ mod tests {
         assert_eq!(
             dry_run_plain_lines(&["workspace \"3\"".to_string()], &steps[1..]),
             ["1. workspace \"3\"", "2. target existing container"]
+        );
+    }
+
+    #[test]
+    fn dry_run_plain_lines_join_what_a_run_sends_as_one_command() {
+        let action = |kind, command: &str, batched| DryRunAction {
+            kind,
+            command: command.to_string(),
+            batched,
+        };
+        let steps = [DryRunStep {
+            target: "target existing container".to_string(),
+            actions: vec![
+                action("workspace", "move workspace \"2\"", false),
+                action("floating", "floating enable", true),
+                action("mark", "mark \"m\"", true),
+                action("scratchpad", "move scratchpad", false),
+            ],
+        }];
+        assert_eq!(
+            dry_run_plain_lines(&[], &steps),
+            [
+                "1. target existing container",
+                "2. move workspace \"2\"",
+                "3. floating enable, mark \"m\"",
+                "4. move scratchpad",
+            ]
         );
     }
 

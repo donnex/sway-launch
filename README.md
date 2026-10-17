@@ -871,7 +871,14 @@ It's possible to run additional actions on the new window. Each action waits for
 corresponding Sway IPC event, or, if the action doesn't have one, waits `--wait-time` ms and then
 briefly polls Sway's tree to confirm the change (see [Wait time](#wait-time)).
 
-Multiple actions can be added to `sway-launch` and they'll be run one after another.
+Multiple actions can be added to `sway-launch`. They run in a fixed order: the moves
+(`--new-column`, `--new-row`, `--workspace`, `--output`) first, one at a time, since each one
+changes where the window is before the next is judged; then `--split`, `--floating`, `--sticky`,
+`--fullscreen`, `--focus`, `--height`, `--width`, `--position` and `--mark`, sent to Sway together
+as one command (`[con_id=N] floating enable, resize set width 700px, ...`), so the window takes
+them all at once instead of visibly floating, then resizing, then jumping into place; and
+`--scratchpad` last. Each action in that one command is still confirmed and reported on its own,
+and an action whose state already holds is left out of it.
 
 These flags exist for convenience — you could just as well get the container id and run manual
 `swaymsg` commands against it, set up window rules with a mark, or use other window rules
@@ -1236,9 +1243,9 @@ Sway command: exec export SWAY_LAUNCH_PID_MARKER=<pid>-<nanos> && foot
 Event match: New container id 437 (PID-marker-confirmed)
 Target container id: 437
 Sway action: Split (container id: 437) (split: Horizontal)
-No matching event types for action. Will run Sway command and wait 20 ms.
+Some actions have no matching event type. Will wait 20 ms, then run the Sway command.
 Sway command: [con_id=437] splith
-Confirmed via poll (container id: 437)
+Confirmed via poll: splith (container id: 437)
 437
 ```
 
@@ -1252,7 +1259,8 @@ output. `actions` lists every planned action, in order, each as `{"kind": ..., "
   `--new-column`, `"mark"` for `--mark`, `"height"` for `--height`, ...) — the same whether the
   action ran or was skipped. Match on this field: it never carries your values or Sway syntax.
 - `"command"` is the Sway command the action sent, the same text `--dry-run` prints for it (e.g.
-  `"move right"`, `"mark \"pinned\""`). It's absent for a skipped action, which never ran one.
+  `"move right"`, `"mark \"pinned\""`) — on its own, without the other parts of a command it was
+  sent as one part of. It's absent for a skipped action, which never ran one.
 - `"status"` is one of:
   - `"changed"` — the action ran and actually changed something.
   - `"already_satisfied"` — the window was already in the target state (already floating, already
@@ -1365,12 +1373,14 @@ $ sway-launch --template master-triple-stack --apps code,foot,foot,foot --dry-ru
 1. launch code
 2. splith
 3. launch foot
-4. move right
-5. splitv
-6. resize set width 30ppt
-7. launch foot
-8. launch foot
+4. splitv, resize set width 30ppt
+5. launch foot
+6. launch foot
 ```
+
+Actions a real run sends to Sway as one command (see [Actions reference](#actions-reference)) share
+a line, joined with `,` the way Sway receives them, though a real run leaves out any whose state
+already holds.
 
 Every line is container-id-free by design: for a fresh command, there's no real window yet to name
 one for; for `--con-id`/`--existing`, showing the id on some lines and not others would be an
@@ -1430,7 +1440,8 @@ static sleep time is used instead. Depending on the machine or setup, the wait t
 be set higher or lower than the default.
 
 The wait is always applied *before* the underlying Sway command, unconditionally — to let other
-running IPC clients finish their own commands. *After* the command, every action in this category
+running IPC clients finish their own commands — and once for all the actions sent together as one
+command, not once per action. *After* the command, every action in this category
 now briefly polls Sway's tree instead of unconditionally sleeping the full `--wait-time` again,
 returning as soon as the change is confirmed — so the actual delay is often just the one
 before-command wait, not double `--wait-time`. A few cases have no way to confirm via polling
@@ -1453,15 +1464,18 @@ that wants to treat unconfirmed as fatal has to check the field.
 ```shell
 ...
 Sway action: Split (container id: 439) (split: Horizontal)
-No matching event types for action. Will run Sway command and wait 100 ms.
+Some actions have no matching event type. Will wait 100 ms, then run the Sway command.
 Sway command: [con_id=439] splith
-Confirmed via poll (container id: 439)
+Confirmed via poll: splith (container id: 439)
 439
 ```
 
 When the change can't be observed within the poll window, the `Confirmed via poll` line is
-replaced by `Poll grace period elapsed without confirmation, falling back to wait-time (container
-id: 439)`.
+replaced by `Poll grace period elapsed without confirmation: splith (container id: 439)`. For the
+polled actions sent on their own (`--new-column`, `--new-row`, and `--workspace` together with
+`--output`), the lines read `No matching event types
+for action. Will run Sway command and wait 100 ms.`, `Confirmed via poll (container id: 439)` and
+`Poll grace period elapsed without confirmation, falling back to wait-time (container id: 439)`.
 
 ### Debug events
 

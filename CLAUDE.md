@@ -213,6 +213,16 @@ decides which:
   timeout, with `exec_timeout_message()` explaining what was seen. With a title, a `Title` event
   re-runs `matches_window()` too, but only for a window whose `New` arrived during this run
   (`opened_this_run`): an older window renaming itself is never this launch's.
+- **Batched** (#32) — every kind `ActionKind::joins_batch()` accepts (`Split`, `Floating`,
+  `Sticky`, `Fullscreen`, `Focus`, `Mark`, `Height`, `Width`, `Position`) goes through
+  `run_batch()` instead of `SwayAction::run()`: one `[con_id=N] a, b, c` command
+  (`batch_command()`), confirmed per action by the rules above merged into one loop. Existence
+  check, subscribe, one state read for the already-there check (an action already in effect is
+  left out of the command), `--wait-time` once if anything polled is sent, send, then
+  `batch_failure()` maps Sway's per-part replies back to actions (Sway runs every part even after
+  one fails, and stops only at a parse error; confirmed live). Each event wakes one state read for
+  every action whose event arrived; polled actions are polled in the same loop. Moves and
+  `Scratchpad` stay out: each changes what the next action is judged against.
 
 **Every `ActionKind` match in `confirmation.rs` names each variant** (no `_` arm), so a new kind
 doesn't compile until both its confirmation path and its state/poll arms are decided.
@@ -227,7 +237,8 @@ doesn't compile until both its confirmation path and its state/poll arms are dec
 `Scratchpad` is last so everything else applies while the window is visible. `NewColumn`/`NewRow`
 can't be combined with `Workspace` (#45).
 
-`execute_plan()` runs the plan and records an `ActionRecord` per action. Immediately before each
+`execute_plan()` runs the plan and records an `ActionRecord` per action, handing consecutive
+batching actions over together (`plan_groups()`, `run_plan_group()`). Immediately before each
 `NewColumn`/`NewRow` it asks `current_move_skip_reason()`, which delegates to
 `tree::move_skip_reason()`: a floating window, or (with several outputs) a fullscreen window or one
 Sway would escalate to the next output (`is_at_the_trailing_workspace_edge()`, a replay of Sway's

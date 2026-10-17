@@ -436,6 +436,287 @@ fn existing_wait_applies_its_actions_to_the_window_it_waited_for() {
     assert_eq!(run.action_status(), "changed");
 }
 
+/// A handler that carries out `floating enable`, `resize set height|width
+/// <N>px`, `move position <X> <Y>` and `mark "<M>"` on whichever window a
+/// command names, emitting the events Sway would. `move position` on a tiled
+/// window is refused with Sway's own message.
+fn arranges_on_command(sway: &mut Sway, command: &str) -> Result<(), String> {
+    let (target, verb) = command
+        .strip_prefix("[con_id=")
+        .and_then(|rest| rest.split_once("] "))
+        .expect("every follow-up command names its container");
+    let id: i64 = target.parse().expect("con_id is a number");
+    let words: Vec<&str> = verb.split_whitespace().collect();
+    let pixels = |word: &str| -> i64 { word.trim_end_matches("px").parse().unwrap() };
+    match words.as_slice() {
+        ["floating", "enable"] => {
+            sway.float(id);
+            sway.emit("floating", id);
+        }
+        ["resize", "set", "height", height] => {
+            let decoration = sway.node(id)["deco_rect"]["height"].as_i64().unwrap();
+            sway.node_mut(id)["rect"]["height"] = (pixels(height) - decoration).into();
+        }
+        ["resize", "set", "width", width] => {
+            sway.node_mut(id)["rect"]["width"] = pixels(width).into();
+        }
+        ["move", "position", x, y] => {
+            if sway.node(id)["type"] != "floating_con" {
+                return Err("Only floating containers can be moved to an absolute position".into());
+            }
+            sway.node_mut(id)["deco_rect"]["x"] = x.parse::<i64>().unwrap().into();
+            sway.node_mut(id)["deco_rect"]["y"] = y.parse::<i64>().unwrap().into();
+        }
+        ["mark", mark] => {
+            let mark = mark.trim_matches('"').to_string();
+            sway.node_mut(id)["marks"]
+                .as_array_mut()
+                .expect("marks is an array")
+                .push(mark.into());
+            sway.emit("mark", id);
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn action_statuses(run: &Run) -> Vec<(String, String)> {
+    run.json["actions"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no actions in {}", run.json))
+        .iter()
+        .map(|action| {
+            (
+                action["kind"].as_str().unwrap().to_string(),
+                action["status"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn follow_up_actions_reach_sway_as_one_command_and_are_each_confirmed() {
+    // #32: one command, so the window takes its whole arrangement at once.
+    for version in SwayVersion::ALL {
+        let fake = FakeSway::start(version, arranges_on_command);
+        let run = run(
+            &fake,
+            &[
+                "--con-id",
+                "5",
+                "--floating",
+                "--height",
+                "500px",
+                "--width",
+                "700px",
+                "--position",
+                "100,100",
+                "--mark",
+                "m",
+            ],
+        );
+        assert!(run.succeeded(), "{version:?}: {}", run.stderr());
+        assert_eq!(
+            fake.commands(),
+            vec![
+                "[con_id=5] floating enable, resize set height 500px, resize set width 700px, \
+                 move position 100 100, mark \"m\""
+                    .to_string()
+            ],
+            "{version:?}"
+        );
+        let changed = |kind: &str| (kind.to_string(), "changed".to_string());
+        assert_eq!(
+            action_statuses(&run),
+            vec![
+                changed("floating"),
+                changed("height"),
+                changed("width"),
+                changed("position"),
+                changed("mark"),
+            ],
+            "{version:?}"
+        );
+    }
+}
+
+#[test]
+fn an_action_already_in_effect_is_left_out_of_the_command() {
+    let fake = FakeSway::start(SwayVersion::V1_11, arranges_on_command);
+    let run = run(
+        &fake,
+        &[
+            "--con-id",
+            &FLOATING.to_string(),
+            "--floating",
+            "--mark",
+            "m",
+        ],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert_eq!(
+        fake.commands(),
+        vec![format!("[con_id={FLOATING}] mark \"m\"")]
+    );
+    assert_eq!(
+        action_statuses(&run),
+        vec![
+            ("floating".to_string(), "already_satisfied".to_string()),
+            ("mark".to_string(), "changed".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn a_part_of_the_command_sway_refuses_fails_naming_that_action() {
+    let fake = FakeSway::start(SwayVersion::V1_11, arranges_on_command);
+    let run = run(
+        &fake,
+        &["--con-id", "5", "--position", "10,10", "--mark", "m"],
+    );
+    assert!(!run.succeeded());
+    assert_eq!(
+        run.error(),
+        "move position 10 10: command failed with 'Only floating containers can be moved to an \
+         absolute position'"
+    );
+    assert_eq!(fake.commands().len(), 1, "sent {:?}", fake.commands());
+}
+
+#[test]
+fn a_batched_action_whose_event_never_comes_times_out_naming_it() {
+    // The mark's event arrives and confirms it; the floating one never does.
+    let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {
+        if command.ends_with("floating enable") {
+            return Ok(());
+        }
+        arranges_on_command(sway, command)
+    });
+    let run = run(
+        &fake,
+        &[
+            "--con-id",
+            "5",
+            "--floating",
+            "--mark",
+            "m",
+            "--timeout",
+            "1",
+        ],
+    );
+    assert!(!run.succeeded());
+    assert_eq!(
+        run.error(),
+        "floating enable: no matching window event within 1 sec"
+    );
+}
+
+#[test]
+fn a_batch_with_nothing_left_to_send_sends_nothing() {
+    let fake = FakeSway::accepting_everything(SwayVersion::V1_11);
+    let run = run(
+        &fake,
+        &["--con-id", &FLOATING.to_string(), "--floating", "--focus"],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert!(fake.commands().is_empty(), "sent {:?}", fake.commands());
+}
+
+#[test]
+fn a_new_column_is_confirmed_once_the_window_has_moved() {
+    // Sent on its own, outside the batch, so it's polled by run_wait_time().
+    let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {
+        if command == format!("[con_id={TILED}] move right") {
+            sway.node_mut(TILED)["rect"]["x"] = 640.into();
+        }
+        Ok(())
+    });
+    let run = run(&fake, &["--con-id", "5", "--new-column", "--verbose"]);
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert_eq!(run.action_status(), "changed");
+    assert!(
+        run.stderr()
+            .contains("Confirmed via poll (container id: 5)"),
+        "{}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn a_new_column_that_never_moves_the_window_is_unconfirmed() {
+    let fake = FakeSway::accepting_everything(SwayVersion::V1_11);
+    let run = run(&fake, &["--con-id", "5", "--new-column", "--verbose"]);
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert_eq!(run.action_status(), "unconfirmed");
+    assert!(
+        run.stderr()
+            .contains("Poll grace period elapsed without confirmation, falling back"),
+        "{}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn a_move_whose_event_arrives_before_its_state_keeps_waiting() {
+    // The lone-action counterpart of the batch's same rule.
+    let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {
+        if command.ends_with("move workspace \"2\"") {
+            sway.emit("move", TILED);
+            sway.after(Duration::from_millis(200), |sway| {
+                sway.node_mut(WORKSPACE)["name"] = "2".into();
+                sway.emit("move", TILED);
+            });
+        }
+        Ok(())
+    });
+    let run = run(&fake, &["--con-id", "5", "--workspace", "2", "--verbose"]);
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert_eq!(run.action_status(), "changed");
+    assert!(
+        run.stderr()
+            .contains("the requested state is not in effect"),
+        "{}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn a_batch_explains_each_action_under_verbose() {
+    let fake = FakeSway::start(SwayVersion::V1_11, arranges_on_command);
+    let run = run(
+        &fake,
+        &[
+            "--con-id",
+            &FLOATING.to_string(),
+            "--floating",
+            "--split",
+            "v",
+            "--mark",
+            "m",
+            "--verbose",
+        ],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    let stderr = run.stderr();
+    for expected in [
+        "Already in effect, not sent: floating enable",
+        "Some actions have no matching event type. Will wait 20 ms",
+        "Sway command: [con_id=6] splitv, mark \"m\"",
+        "Poll grace period elapsed without confirmation: splitv",
+        "Event match: Mark container id 6 (mark \"m\")",
+    ] {
+        assert!(stderr.contains(expected), "missing {expected:?}: {stderr}");
+    }
+    assert_eq!(
+        action_statuses(&run),
+        vec![
+            ("split".to_string(), "unconfirmed".to_string()),
+            ("floating".to_string(), "already_satisfied".to_string()),
+            ("mark".to_string(), "changed".to_string()),
+        ]
+    );
+}
+
 #[test]
 fn a_split_is_confirmed_once_the_parent_layout_changes() {
     let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {

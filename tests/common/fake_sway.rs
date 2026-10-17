@@ -349,27 +349,72 @@ impl Sway {
         });
     }
 
-    /// Answers one `RUN_COMMAND`. A `[con_id=N]` command for a container not
-    /// in the tree fails the way the recorded compositor's did, before the
-    /// handler sees it.
+    /// Answers one `RUN_COMMAND`, with one outcome per `,`-separated part of
+    /// a `[con_id=N] a, b` command, each handed to the handler as
+    /// `[con_id=N] a` and so on, as Sway applies the criteria to every part.
+    /// A part for a container not in the tree fails the way the recorded
+    /// compositor's did, before the handler sees it. Every part runs even
+    /// after one fails, as on real Sway. `commands()` records what was sent,
+    /// unsplit.
     fn run_command(&mut self, command: &str) -> Value {
         self.commands.push(command.to_string());
-        let outcome = match target_con_id(command) {
-            Some(id) if !self.contains(id) => Err(self.missing_container_error.clone()),
-            _ => match self.handler.take() {
-                Some(mut handler) => {
-                    let outcome = handler(self, command);
-                    self.handler = Some(handler);
-                    outcome
+        let outcomes: Vec<Value> = sub_commands(command)
+            .into_iter()
+            .map(|part| {
+                let outcome = match target_con_id(&part) {
+                    Some(id) if !self.contains(id) => Err(self.missing_container_error.clone()),
+                    _ => match self.handler.take() {
+                        Some(mut handler) => {
+                            let outcome = handler(self, &part);
+                            self.handler = Some(handler);
+                            outcome
+                        }
+                        None => Ok(()),
+                    },
+                };
+                match outcome {
+                    Ok(()) => json!({ "success": true }),
+                    Err(error) => json!({ "success": false, "parse_error": false, "error": error }),
                 }
-                None => Ok(()),
-            },
-        };
-        match outcome {
-            Ok(()) => json!([{ "success": true }]),
-            Err(error) => json!([{ "success": false, "parse_error": false, "error": error }]),
-        }
+            })
+            .collect();
+        Value::Array(outcomes)
     }
+}
+
+/// `command` split the way Sway splits a criteria-led command: the
+/// `[...]` prefix repeated in front of each part, parts separated by a `,`
+/// outside double quotes. A command without a criteria prefix (a launch's
+/// `exec`) is one part, whatever it contains.
+fn sub_commands(command: &str) -> Vec<String> {
+    let Some((criteria, rest)) = command
+        .strip_prefix('[')
+        .and_then(|rest| rest.split_once("] "))
+    else {
+        return vec![command.to_string()];
+    };
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut quoted = false;
+    let mut escaped = false;
+    for character in rest.chars() {
+        match character {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '"' => quoted = !quoted,
+            ',' if !quoted => {
+                parts.push(std::mem::take(&mut current));
+                continue;
+            }
+            _ => {}
+        }
+        current.push(character);
+    }
+    parts.push(current);
+    parts
+        .into_iter()
+        .map(|part| format!("[{criteria}] {}", part.trim()))
+        .collect()
 }
 
 /// Serves one client connection until it closes.

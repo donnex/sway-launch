@@ -1193,6 +1193,80 @@ fn floating_with_width_and_height_applies_all_three() {
 }
 
 #[test]
+fn follow_up_actions_reach_sway_as_one_command_and_are_each_confirmed() {
+    // #32: everything after the window is found goes to Sway in one command,
+    // and each action is still confirmed on its own: floating and the mark by
+    // their events, the geometry by polling.
+    fresh_workspace();
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&[]);
+
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--floating",
+            "--height",
+            "300px",
+            "--width",
+            "400px",
+            "--position",
+            "50,60",
+            "--mark",
+            "batched",
+            "--json",
+            "--verbose",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "sway-launch failed: {stderr}");
+
+    let sent: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.contains("Sway command: "))
+        .collect();
+    assert_eq!(
+        sent,
+        vec![format!(
+            "Sway command: [con_id={container_id}] floating enable, resize set height 300px, \
+             resize set width 400px, move position 50 60, mark \"batched\""
+        )],
+        "{stderr}"
+    );
+
+    let result: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout is the --json result");
+    let statuses: Vec<(&str, &str)> = result["actions"]
+        .as_array()
+        .expect("actions is an array")
+        .iter()
+        .map(|action| {
+            (
+                action["kind"].as_str().unwrap(),
+                action["status"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        statuses,
+        vec![
+            ("floating", "changed"),
+            ("height", "changed"),
+            ("width", "changed"),
+            ("position", "changed"),
+            ("mark", "changed"),
+        ]
+    );
+
+    let node = get_node(&mut connection, container_id);
+    assert!(node_is_floating(&node));
+    assert_eq!(node.rect.width, 400);
+    assert_eq!(node.rect.height + node.deco_rect.height, 300);
+    assert_eq!(node.marks, vec!["batched".to_string()]);
+}
+
+#[test]
 fn swaysock_wins_over_a_stale_i3sock() {
     fresh_workspace();
     // Sway exports both SWAYSOCK and I3SOCK to everything it spawns, so the way
