@@ -78,6 +78,8 @@ pub struct LayoutStep {
     pub app_id: Option<String>,
     pub class: Option<String>,
     pub mark_match: Option<String>,
+    /// A title pattern, compiled as the file is parsed (#14).
+    pub title: Option<sway_launch::TitlePattern>,
 
     pub split: Option<Split>,
     #[serde(default)]
@@ -179,6 +181,7 @@ impl LayoutStep {
             app_id: self.app_id.as_deref(),
             class: self.class.as_deref(),
             mark_match: self.mark_match.as_deref(),
+            title: self.title.as_ref(),
         })
         .map_err(|error| error.message(sway_launch::FieldStyle::LayoutStep))?;
 

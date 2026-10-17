@@ -504,7 +504,7 @@ fn existing_without_app_id_class_or_mark_match_errors() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
-    assert!(stderr.contains("--existing requires --app-id, --class, or --mark-match"));
+    assert!(stderr.contains("--existing requires --app-id, --class, --mark-match or --title"));
 }
 
 #[test]
@@ -832,4 +832,35 @@ fn dry_run_says_an_existing_wait_waits_for_the_window() {
         String::from_utf8_lossy(&output.stdout).trim(),
         "1. wait for existing window (app_id=\"firefox\")"
     );
+}
+
+#[test]
+fn dry_run_names_a_title_alongside_the_matcher() {
+    let output = sway_launch_without_a_compositor()
+        .args([
+            "--existing",
+            "-a",
+            "code",
+            "--title",
+            "^project",
+            "--dry-run",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "1. target existing window (app_id=\"code\", title=~\"^project\")"
+    );
+}
+
+#[test]
+fn an_invalid_title_regex_is_a_usage_error() {
+    let output = sway_launch_without_a_compositor()
+        .args(["--title", "(unclosed", "foot"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("not a valid regular expression"));
 }

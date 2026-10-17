@@ -699,3 +699,24 @@ fn workspace_target_quotes_a_name_but_not_a_number() {
     assert_eq!(WorkspaceTarget::Number(2).to_string(), "number 2");
     assert_eq!(WorkspaceTarget::Name("web").to_string(), "web");
 }
+
+#[test]
+fn parse_title_pattern_compiles_an_unanchored_regex() {
+    let pattern = parse_title_pattern("project-a").expect("a plain word is a valid pattern");
+    assert!(pattern.matches(Some("project-a — Visual Studio Code")));
+    assert!(!pattern.matches(Some("project-b — Visual Studio Code")));
+    assert!(!pattern.matches(None));
+    let anchored = parse_title_pattern("^Mozilla").expect("anchors are valid");
+    assert!(!anchored.matches(Some("Sway — Mozilla Firefox")));
+    assert_eq!(anchored.to_string(), "title matching \"^Mozilla\"");
+}
+
+#[test]
+fn parse_title_pattern_rejects_a_blank_or_invalid_pattern() {
+    assert!(parse_title_pattern("  ").is_err());
+    let error = parse_title_pattern("(unclosed").unwrap_err();
+    assert!(
+        error.starts_with("\"(unclosed\" is not a valid regular expression"),
+        "{error}"
+    );
+}

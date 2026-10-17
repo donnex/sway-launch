@@ -262,6 +262,85 @@ const WORKSPACE_KEYWORDS: &[&str] = &[
     "to",
 ];
 
+/// A `--title`/`title` pattern (#14): an unanchored regular expression a
+/// window's title must match, as in Sway's own `title=` criteria, so
+/// `project-a` matches `project-a — Visual Studio Code`. Compiled once, when
+/// the flag or file is parsed, so a bad pattern is reported there rather than
+/// partway through a run.
+///
+/// `regex-lite` rather than `regex`: the same syntax for anything a title
+/// needs, without the Unicode tables (`\w`, `\d` and `(?i)` are ASCII-only),
+/// which would add about a megabyte to the binary for matching a few
+/// dozen short strings.
+#[derive(Clone)]
+pub struct TitlePattern {
+    source: String,
+    regex: regex_lite::Regex,
+}
+
+impl TitlePattern {
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    /// Whether `title` (a node's `name`) matches. A window with no title
+    /// never does.
+    pub fn matches(&self, title: Option<&str>) -> bool {
+        title.is_some_and(|title| self.regex.is_match(title))
+    }
+}
+
+impl PartialEq for TitlePattern {
+    fn eq(&self, other: &Self) -> bool {
+        self.source == other.source
+    }
+}
+
+impl Eq for TitlePattern {}
+
+impl fmt::Debug for TitlePattern {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "TitlePattern({:?})", self.source)
+    }
+}
+
+/// `title matching "x"`: how messages name the criterion.
+impl fmt::Display for TitlePattern {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "title matching \"{}\"", self.source)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TitlePattern {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let source = String::deserialize(deserializer)?;
+        parse_title_pattern(&source).map_err(serde::de::Error::custom)
+    }
+}
+
+// Test-only, for main.rs's schema-parity test, which serializes a step to
+// read its field names back.
+#[cfg(test)]
+impl serde::Serialize for TitlePattern {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.source)
+    }
+}
+
+/// Compiles a `--title`/`title` pattern, rejecting a blank one (it would
+/// match every titled window) and one that isn't a valid regular expression.
+pub fn parse_title_pattern(value: &str) -> Result<TitlePattern, String> {
+    if value.trim().is_empty() {
+        return Err("must not be empty or whitespace-only".to_string());
+    }
+    let regex = regex_lite::Regex::new(value)
+        .map_err(|error| format!("{:?} is not a valid regular expression: {}", value, error))?;
+    Ok(TitlePattern {
+        source: value.to_string(),
+        regex,
+    })
+}
+
 /// Which workspace a move or a build location names: a workspace by its
 /// exact name (`--workspace`), or by its number (`--workspace-number`), the
 /// form `workspace number N` keybindings use, so `2` finds a workspace named

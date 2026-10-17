@@ -40,14 +40,15 @@ pub use ipc::{kill_container, KillError};
 pub use launch::{debug_events, BuildLocation, SwayLaunch};
 pub use outcome::{ActionRecord, ActionStatus, LaunchOwnership, RunError, UnmatchedWindow};
 pub use query::{containers_still_present, focused_workspace_occupancy, list_windows};
-pub use target::{FieldStyle, Target, TargetError, TargetFields, WindowMatch};
+pub use target::{FieldStyle, Target, TargetError, TargetFields, WindowCriteria, WindowMatch};
 pub use tree::ListedWindow;
 pub use values::{
     escape_control_characters, launch_setup, parse_env_assignment, parse_position, parse_size,
-    parse_workspace_number, render_argv, require_non_blank, validate_exec_command,
-    validate_non_blank_argument, validate_output_argument, validate_sway_string_argument,
-    validate_timeout_argument, validate_timeout_seconds, validate_workspace_argument,
-    validate_workspace_number, Position, Size, Split, WorkspaceTarget,
+    parse_title_pattern, parse_workspace_number, render_argv, require_non_blank,
+    validate_exec_command, validate_non_blank_argument, validate_output_argument,
+    validate_sway_string_argument, validate_timeout_argument, validate_timeout_seconds,
+    validate_workspace_argument, validate_workspace_number, Position, Size, Split, TitlePattern,
+    WorkspaceTarget,
 };
 
 /// The upper bound `run_poll_then_fallback()` polls `get_tree()` for a

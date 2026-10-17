@@ -18,6 +18,7 @@ fn unmatched(container_id: i64, app_id: Option<&str>, class: Option<&str>) -> Un
         container_id,
         app_id: app_id.map(str::to_string),
         class: class.map(str::to_string),
+        title: None,
         launched_by_this_run: false,
     }
 }
@@ -27,6 +28,7 @@ fn exec_timeout_message_names_a_window_the_filter_rejected() {
     let message = exec_timeout_message(
         time::Duration::from_secs(2),
         filter("notfoot", ""),
+        None,
         &[UnmatchedWindow {
             launched_by_this_run: true,
             ..unmatched(12, Some("foot"), None)
@@ -47,6 +49,7 @@ fn exec_timeout_message_lists_several_rejected_windows() {
     let message = exec_timeout_message(
         time::Duration::from_secs(5),
         filter("", "Firefox"),
+        None,
         &[
             unmatched(12, Some("foot"), None),
             unmatched(13, None, Some("XTerm")),
@@ -68,6 +71,7 @@ fn exec_timeout_message_names_a_launched_window_that_never_set_its_class() {
     let message = exec_timeout_message(
         time::Duration::from_secs(5),
         filter("", "Spotify"),
+        None,
         &[UnmatchedWindow {
             launched_by_this_run: true,
             ..unmatched(12, None, None)
@@ -88,6 +92,7 @@ fn exec_timeout_message_says_when_the_command_exited_without_a_window() {
     let message = exec_timeout_message(
         time::Duration::from_secs(2),
         filter("", ""),
+        None,
         &[],
         Some(false),
     );
@@ -103,6 +108,7 @@ fn exec_timeout_message_suggests_slowness_only_while_the_command_still_runs() {
     let message = exec_timeout_message(
         time::Duration::from_secs(2),
         filter("", ""),
+        None,
         &[],
         Some(true),
     );
@@ -113,7 +119,13 @@ fn exec_timeout_message_suggests_slowness_only_while_the_command_still_runs() {
 #[test]
 fn exec_timeout_message_adds_nothing_when_the_command_s_state_is_unknown() {
     assert_eq!(
-        exec_timeout_message(time::Duration::from_secs(3), filter("foot", ""), &[], None),
+        exec_timeout_message(
+            time::Duration::from_secs(3),
+            filter("foot", ""),
+            None,
+            &[],
+            None
+        ),
         "no window with app_id \"foot\" appeared within 3 sec"
     );
 }
@@ -123,6 +135,7 @@ fn exec_timeout_message_prefers_rejected_windows_over_the_command_s_state() {
     let message = exec_timeout_message(
         time::Duration::from_secs(2),
         filter("notfoot", ""),
+        None,
         &[unmatched(12, Some("foot"), None)],
         Some(false),
     );
@@ -851,4 +864,51 @@ fn split_container_error_names_the_container_and_the_fix() {
         "{message}"
     );
     assert!(message.contains("target a window inside it"), "{message}");
+}
+
+#[test]
+fn exec_with_a_title_rejects_a_window_whose_title_does_not_match_yet() {
+    let title = super::super::values::parse_title_pattern("project-a").unwrap();
+    let action = ExecAction {
+        title: Some(&title),
+        ..exec_action("code", "", "Code")
+    };
+    let mut splash = window_event("new", 99, None, Some("Code"));
+    splash.container.name = Some("Loading…".to_string());
+    assert!(matches!(
+        action.matches_window_event(&splash),
+        Err(WindowEventMatchError::WindowTitleMismatch)
+    ));
+    let mut editor = window_event("new", 100, None, Some("Code"));
+    editor.container.name = Some("main.rs - project-a".to_string());
+    assert!(matches!(
+        action.matches_window_event(&editor),
+        Ok(WindowEventMatch::WindowClass)
+    ));
+    // The app_id/class filter is checked first, so a wrong class says so.
+    let mut other = window_event("new", 101, None, Some("Firefox"));
+    other.container.name = Some("project-a".to_string());
+    assert!(matches!(
+        action.matches_window_event(&other),
+        Err(WindowEventMatchError::WindowClassMismatch)
+    ));
+}
+
+#[test]
+fn exec_timeout_message_names_the_title_it_waited_for() {
+    let title = super::super::values::parse_title_pattern("project-a").unwrap();
+    assert_eq!(
+        exec_timeout_message(
+            time::Duration::from_secs(3),
+            None,
+            Some(&title),
+            &[UnmatchedWindow {
+                title: None,
+                ..unmatched(12, Some("foot"), None)
+            }],
+            None
+        ),
+        "no window with title matching \"project-a\" appeared within 3 sec; 1 other new window \
+         did (con_id 12, app_id \"foot\", no title) — check --app-id/--class/--title"
+    );
 }

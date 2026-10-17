@@ -224,6 +224,7 @@ pub struct Binding {
     pub app_id: Option<String>,
     pub class: Option<String>,
     pub mark_match: Option<String>,
+    pub title: Option<sway_launch::TitlePattern>,
 }
 
 #[derive(Deserialize)]
@@ -359,69 +360,84 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
             sway_launch::require_non_blank("target_id", target_id).map_err(step_error)?;
         }
 
-        let (id, target_id, command, con_id, existing, wait, app_id, class, mark_match, cwd, env) =
-            if let Some(slot) = step.slot.as_deref() {
-                let binding = bindings_by_slot.get(slot).ok_or_else(|| {
-                    ResolveError::Bindings(format!("no binding for slot {:?}", slot))
-                })?;
+        let (
+            id,
+            target_id,
+            command,
+            con_id,
+            existing,
+            wait,
+            app_id,
+            class,
+            mark_match,
+            title,
+            cwd,
+            env,
+        ) = if let Some(slot) = step.slot.as_deref() {
+            let binding = bindings_by_slot
+                .get(slot)
+                .ok_or_else(|| ResolveError::Bindings(format!("no binding for slot {:?}", slot)))?;
 
-                // The same rules a layout step and the CLI go through, checked
-                // here so a mistake is reported against the bindings file
-                // rather than as a step the user never wrote.
-                sway_launch::Target::from_fields(sway_launch::TargetFields {
-                    command: binding.command.as_deref(),
-                    con_id: binding.con_id,
-                    existing: binding.existing,
-                    wait: binding.wait,
-                    target_id: None,
-                    app_id: binding.app_id.as_deref(),
-                    class: binding.class.as_deref(),
-                    mark_match: binding.mark_match.as_deref(),
-                })
-                .map_err(|error| {
-                    ResolveError::Bindings(format!(
-                        "binding for slot {:?}: {}",
-                        slot,
-                        error.message(sway_launch::FieldStyle::Binding)
-                    ))
-                })?;
+            // The same rules a layout step and the CLI go through, checked
+            // here so a mistake is reported against the bindings file
+            // rather than as a step the user never wrote.
+            sway_launch::Target::from_fields(sway_launch::TargetFields {
+                command: binding.command.as_deref(),
+                con_id: binding.con_id,
+                existing: binding.existing,
+                wait: binding.wait,
+                target_id: None,
+                app_id: binding.app_id.as_deref(),
+                class: binding.class.as_deref(),
+                mark_match: binding.mark_match.as_deref(),
+                title: binding.title.as_ref(),
+            })
+            .map_err(|error| {
+                ResolveError::Bindings(format!(
+                    "binding for slot {:?}: {}",
+                    slot,
+                    error.message(sway_launch::FieldStyle::Binding)
+                ))
+            })?;
 
-                if binding.command.is_none() && (binding.cwd.is_some() || !binding.env.is_empty()) {
-                    return Err(ResolveError::Bindings(format!(
-                        "binding for slot {:?}: cwd and env only apply to a launched command",
-                        slot
-                    )));
-                }
+            if binding.command.is_none() && (binding.cwd.is_some() || !binding.env.is_empty()) {
+                return Err(ResolveError::Bindings(format!(
+                    "binding for slot {:?}: cwd and env only apply to a launched command",
+                    slot
+                )));
+            }
 
-                used_slots.insert(slot);
-                (
-                    Some(slot.to_string()),
-                    None,
-                    binding.command.clone(),
-                    binding.con_id,
-                    binding.existing,
-                    binding.wait,
-                    binding.app_id.clone(),
-                    binding.class.clone(),
-                    binding.mark_match.clone(),
-                    binding.cwd.clone(),
-                    binding.env.clone(),
-                )
-            } else {
-                (
-                    None,
-                    step.target_id.clone(),
-                    None,
-                    None,
-                    false,
-                    false,
-                    None,
-                    None,
-                    None,
-                    None,
-                    Default::default(),
-                )
-            };
+            used_slots.insert(slot);
+            (
+                Some(slot.to_string()),
+                None,
+                binding.command.clone(),
+                binding.con_id,
+                binding.existing,
+                binding.wait,
+                binding.app_id.clone(),
+                binding.class.clone(),
+                binding.mark_match.clone(),
+                binding.title.clone(),
+                binding.cwd.clone(),
+                binding.env.clone(),
+            )
+        } else {
+            (
+                None,
+                step.target_id.clone(),
+                None,
+                None,
+                false,
+                false,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Default::default(),
+            )
+        };
 
         steps.push(LayoutStep {
             command,
@@ -435,6 +451,7 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
             app_id,
             class,
             mark_match,
+            title,
             split: step.split,
             floating: step.floating,
             sticky: step.sticky,
