@@ -498,6 +498,9 @@ pub fn escape_control_characters(text: &str, keep_newlines: bool) -> String {
 ///   quoting. Confirmed live on Sway 1.11 (a quoted newline in a window title
 ///   arrived as `;`). A carriage return is rejected alongside the newline, as
 ///   a newline in all but name — a CRLF-edited file is where one comes from.
+/// - an unquoted `#` starting a word, a shell comment, which would comment
+///   out the `)` of the subshell `ExecAction::sway_command()` runs the
+///   command in.
 ///
 /// Blank values aren't this function's concern: the CLI's own "Missing
 /// COMMAND" check and `to_sway_launch()`'s target logic already report those
@@ -519,32 +522,68 @@ pub fn validate_exec_command(value: &str) -> Result<String, String> {
             character
         ));
     }
+    if has_unquoted_comment(value) {
+        return Err(
+            "Must not contain a shell comment (an unquoted \"#\" starting a word) — the command \
+             runs inside ( ... ), which the comment would cut short. Quote the \"#\" or remove \
+             the comment"
+                .to_string(),
+        );
+    }
 
     Ok(value.to_string())
 }
 
 /// The first `,` or `;` in `value` that Sway's parser would split a command
-/// on, scanned with the rules Sway's `argsep()` uses: `"`/`'` quote, a
-/// backslash escapes the next character, and only a separator outside both
-/// counts.
+/// on; see `first_unquoted()`.
 fn unquoted_command_separator(value: &str) -> Option<char> {
+    first_unquoted(value, |character, _| matches!(character, ',' | ';'))
+}
+
+/// Whether `value` holds a shell comment: an unquoted `#` starting a word.
+/// `ExecAction::sway_command()` puts the command inside `( ... )`, so a
+/// comment would swallow the `)` and nothing would launch.
+fn has_unquoted_comment(value: &str) -> bool {
+    first_unquoted(value, |character, previous| {
+        character == '#'
+            && previous.is_none_or(|previous| {
+                previous.is_whitespace()
+                    || matches!(previous, '&' | '|' | ';' | '(' | ')' | '<' | '>')
+            })
+    })
+    .is_some()
+}
+
+/// The first character in `value` outside quotes for which `wanted` is true,
+/// given it and the character before it. Scanned with the rules Sway's
+/// `argsep()` uses, which match the shell's closely enough for this: `"`/`'`
+/// quote, a backslash escapes the next character, and only a character
+/// outside both counts.
+fn first_unquoted(value: &str, wanted: impl Fn(char, Option<char>) -> bool) -> Option<char> {
     let mut in_double_quotes = false;
     let mut in_single_quotes = false;
     let mut escaped = false;
+    let mut previous = None;
     for character in value.chars() {
         match character {
             '"' if !in_single_quotes && !escaped => in_double_quotes = !in_double_quotes,
             '\'' if !in_double_quotes && !escaped => in_single_quotes = !in_single_quotes,
-            '\\' => {
-                escaped = !escaped;
+            '\\' if !escaped => {
+                escaped = true;
+                previous = Some(character);
                 continue;
             }
-            ',' | ';' if !in_double_quotes && !in_single_quotes && !escaped => {
+            _ if !in_double_quotes
+                && !in_single_quotes
+                && !escaped
+                && wanted(character, previous) =>
+            {
                 return Some(character)
             }
             _ => {}
         }
         escaped = false;
+        previous = Some(character);
     }
     None
 }

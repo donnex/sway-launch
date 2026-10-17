@@ -208,6 +208,10 @@ Sway's own command parser reads the command before the shell does, which has thr
 - Sway substitutes its own `set $name` variables (`$term`, `$mod`, ...) in the command before
   running it.
 
+`sway-launch` also runs the command inside a `( ... )` group, which keeps the shell Sway starts
+alive above the program so the window can be recognised (see below). A shell comment (an unquoted
+`#` starting a word) would cut that group short, so it's rejected too.
+
 The same rules apply to a `command` in a layout or bindings file (see [Layout files](#layout-files)
 and [Templates](#templates)), where a NUL character (`\u0000`) is rejected along with a newline.
 
@@ -297,16 +301,21 @@ concurrent invocations both targeting a single-instance application can still co
 specific case; a heavily loaded system can, in principle, also delay marker observation long enough
 to hit the same fallback even for an ordinary application. When in doubt, chain calls sequentially.
 
+A program that never sees the marker is still recognised when it descends from the launch: a
+wrapper that clears the environment before starting it (`env -u`, `env -i`, a script that unsets
+it), or a program whose environment can't be read even by its own user (a setuid program, or one
+that marks itself non-dumpable, as security-sensitive programs do). `sway-launch` walks up from the
+window's process to the shell Sway started for this launch, which it knows by its command line, and
+takes the window at once. What it can't recognise is a program that has left that line of descent:
+one started through `systemd-run` or `setsid -f`, or by a daemon such as an app launcher.
+
 The marker is read back through `/proc`, so on a system without it (a BSD running Sway, an unusual
 container) every launch resolves through that same bounded fallback rather than the deterministic
-path. The same goes for a launch whose marker is never visible: a launcher that clears the
-environment before starting the real program (`systemd-run`, an app launcher, a wrapper using
-`env -u`), or a program whose environment can't be read even by its own user (a setuid program, or
-one that marks itself non-dumpable, as security-sensitive programs do). Nothing breaks — a window
-it can't confirm is never treated as this run's own for `--rollback-on-error`, and is only used
-after the short grace period — but correlation is best-effort there, so sequential chaining matters
-more. A window is only treated as this run's own without its marker when the launched process was
-actually seen running and has since exited, the single-instance case above.
+path, and so does a launch whose program left its line of descent. Nothing breaks — a window it
+can't confirm is never treated as this run's own for `--rollback-on-error`, and is only used after
+the short grace period — but correlation is best-effort there, so sequential chaining matters more.
+A window is only treated as this run's own without its marker or its ancestry when the launched
+process was actually seen running and has since exited, the single-instance case above.
 
 A client/server launcher is the one common case that always takes the slow path: `footclient`
 (with `foot --server` running), `emacsclient -c`, `code --wait`. The window belongs to the
@@ -1287,7 +1296,7 @@ is unset; `--json` error objects are never labelled or colored.
 ```shell
 $ sway-launch --split h -v foot
 Sway action: Exec "foot" (app_id_match: "") (class_match: "")
-Sway command: exec export SWAY_LAUNCH_PID_MARKER=<pid>-<nanos> && foot
+Sway command: exec export SWAY_LAUNCH_PID_MARKER=<pid>-<nanos> && ( foot )
 Event match: New container id 437 (PID-marker-confirmed)
 Target container id: 437
 Sway action: Split (container id: 437) (split: Horizontal)
