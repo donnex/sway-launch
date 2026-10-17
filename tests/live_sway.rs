@@ -3353,10 +3353,15 @@ fn rollback_on_error_leaves_a_window_opened_while_an_env_dropping_wrapper_waits(
     // as this run's own and killed by --rollback-on-error. A marker that was
     // never seen now counts for nothing: the fallback ends through the grace
     // period, as adopted, and the foreign window survives rollback.
+    //
+    // The marker is dropped with `unset` in the launching shell itself, not
+    // `env -u`: an `env` process carries the marker until it execs, and a
+    // scan catching that moment rightly reads "seen, then gone", which made
+    // this test fail now and then. With `unset`, no process ever carries it.
     let mut connection = connect();
     let path = TempToml::write(
         "rollback-env-dropping-wrapper",
-        "[[step]]\ncommand = 'env -u SWAY_LAUNCH_PID_MARKER sh -c \"sleep 2 && exec foot \
+        "[[step]]\ncommand = 'unset SWAY_LAUNCH_PID_MARKER && sh -c \"sleep 2 && exec foot \
          --app-id=wrap-probe -T mine sleep 60\"'\napp_id = \"wrap-probe\"\ntimeout = 20\n\n\
          [[step]]\ncon_id = 999999999\nmark = \"x\"\n",
     );
