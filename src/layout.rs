@@ -107,6 +107,8 @@ pub struct LayoutStep {
 
     pub timeout: Option<u64>,
     pub wait_time: Option<u64>,
+    /// `--settle` (#17), in ms.
+    pub settle: Option<u64>,
 }
 
 /// Parses a layout file's contents. Kept separate from reading the file
@@ -246,6 +248,8 @@ impl LayoutStep {
             .map(sway_launch::parse_position)
             .transpose()
             .map_err(|error| format!("position: {}", error))?;
+        let settle = sway_launch::settle_duration(self.settle, height, width, position)
+            .map_err(|error| format!("settle: {}", error))?;
         let env: Vec<(String, String)> = self
             .env
             .iter()
@@ -286,6 +290,7 @@ impl LayoutStep {
             verbose,
             require_launch_on_focused_workspace: false,
             catch_late_window: false,
+            settle,
         })
     }
 }

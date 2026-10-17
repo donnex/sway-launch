@@ -21,6 +21,7 @@ fn minimal_step() -> TemplateStep {
         scratchpad: false,
         timeout: None,
         wait_time: None,
+        settle: None,
     }
 }
 
@@ -58,6 +59,7 @@ fn minimal_binding() -> Binding {
         output: None,
         timeout: None,
         wait_time: None,
+        settle: None,
     }
 }
 
@@ -354,6 +356,7 @@ fn resolve_errors_on_binding_with_no_target_field_naming_the_slot() {
             output: None,
             timeout: None,
             wait_time: None,
+            settle: None,
         }],
         ..Default::default()
     };
@@ -394,6 +397,7 @@ fn resolve_errors_on_binding_with_command_and_con_id_together() {
             output: None,
             timeout: None,
             wait_time: None,
+            settle: None,
         }],
         ..Default::default()
     };
@@ -425,6 +429,7 @@ fn resolve_errors_on_binding_with_app_id_and_class_together() {
             output: None,
             timeout: None,
             wait_time: None,
+            settle: None,
         }],
         ..Default::default()
     };
@@ -1468,6 +1473,39 @@ fn resolve_lets_a_binding_set_its_slot_s_timeout_and_wait_time() {
     .expect("a zero timeout should be rejected");
     assert!(
         matches!(&error, ResolveError::Bindings(message) if message.contains("slot \"editor\": timeout:")),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn resolve_lets_a_binding_set_its_slot_s_settle() {
+    let mut step = minimal_step();
+    step.width = Some("700px".to_string());
+    let template = minimal_template(vec![step]);
+    let with_settle = |settle| Bindings {
+        binding: vec![Binding {
+            settle: Some(settle),
+            ..minimal_binding()
+        }],
+        ..Default::default()
+    };
+    let resolved = resolve(&template, &with_settle(300), &[]).expect("a binding settle resolves");
+    assert_eq!(resolved[0].settle, Some(300));
+
+    let error = resolve(&template, &with_settle(0), &[])
+        .err()
+        .expect("a zero settle should be rejected");
+    assert!(
+        matches!(&error, ResolveError::Bindings(message) if message.contains("slot \"editor\": settle:")),
+        "{error:?}"
+    );
+
+    let geometry_free = minimal_template(vec![minimal_step()]);
+    let error = resolve(&geometry_free, &with_settle(300), &[])
+        .err()
+        .expect("a settle with nothing to hold should be rejected");
+    assert!(
+        matches!(&error, ResolveError::Bindings(message) if message.contains("sets no height, width or position")),
         "{error:?}"
     );
 }

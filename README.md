@@ -48,8 +48,8 @@ release.
   - [Floating](#floating) · [Sticky](#sticky) · [Fullscreen](#fullscreen) · [Focus](#focus) ·
     [Mark](#mark)
   - [Workspace](#workspace) · [Output](#output) · [Height and width](#height-and-width) ·
-    [Position](#position) · [Split](#split) · [New column](#new-column) · [New row](#new-row) ·
-    [Scratchpad](#scratchpad)
+    [Position](#position) · [Settle](#settle) · [Split](#split) · [New column](#new-column) ·
+    [New row](#new-row) · [Scratchpad](#scratchpad)
   - [Verbose](#verbose) · [JSON output](#json-output) · [Dry run](#dry-run) ·
     [Validate](#validate) · [Wait time](#wait-time) · [Debug events](#debug-events)
 
@@ -126,6 +126,7 @@ Options:
       --output <OUTPUT>               Move the window to output (monitor)
       --position <POSITION>           Set position on the window. Either "center" or "<x>,<y>" in pixels, relative to its workspace (x/y may be negative)
       --scratchpad                    Move window to the scratchpad
+      --settle <MS>                   Keep holding --height/--width (in px) and --position for MS ms after they are confirmed, applying them again if the application changes them, as browsers do just after opening
       --dry-run                       Print the planned sequence of Sway commands instead of running them — works with a direct command or --layout/--template. Never touches Sway IPC or launches anything
       --validate                      Validate a --layout/--template file (and, for --template, --bindings/--apps resolution) without launching anything or touching Sway IPC. Requires --layout or --template
   -t, --timeout <TIMEOUT>             Seconds to wait for the launched window, and for each event-confirmed action, to be confirmed [default: 5]
@@ -528,10 +529,10 @@ same two forms. Like the CLI's, it runs in Sway's working directory and
 environment, not the layout file's directory or the caller's (see [Basic usage](#basic-usage)). A
 step's other keys mirror the CLI flags of the same name (`cwd`, `env`, `app_id`, `class`, `mark_match`, `title`, `con_id`,
 `existing`, `wait`, `split`, `floating`, `sticky`, `fullscreen`, `focus`, `mark`, `new_column`, `new_row`,
-`workspace`, `workspace_number`, `output`, `height`, `width`, `position`, `scratchpad`, `timeout`,
-`wait_time`) —
+`workspace`, `workspace_number`, `output`, `height`, `width`, `position`, `settle`, `scratchpad`,
+`timeout`, `wait_time`) —
 `app_id`/`class`/`mark_match` match exactly and case-sensitively, like their CLI equivalents,
-`height`/`width`/`position`/`timeout` are validated the same way their CLI equivalents are, and a step
+`height`/`width`/`position`/`settle`/`timeout` are validated the same way their CLI equivalents are, and a step
 without its own `timeout`/`wait_time` inherits the top-level `--timeout`/`--wait-time` values.
 Exactly one of `command`, `con_id`, `existing = true`, or `target_id` is required per step, matching
 the CLI's own command/`--con-id`/`--existing` mutual exclusivity plus one layout-only addition:
@@ -699,7 +700,7 @@ sway-launch --template template.toml --bindings bindings.toml
 ```
 
 A `Binding`'s keys are the same target-selection subset a layout step has (`command`, `con_id`,
-`existing`, `wait`, `app_id`, `class`, `mark_match`, `title`), plus the launched command's `cwd` and `env`, plus where the window goes (`workspace`/`workspace_number`/`output`, see below) and how long to wait for it (`timeout`/`wait_time`, replacing the step's and the command line's, so one slow-starting application's slot can wait longer than the rest) — exactly one of `command`/`con_id`/`existing = true` is
+`existing`, `wait`, `app_id`, `class`, `mark_match`, `title`), plus the launched command's `cwd` and `env`, plus where the window goes (`workspace`/`workspace_number`/`output`, see below) and how long to wait for it (`timeout`/`wait_time`, replacing the step's and the command line's, so one slow-starting application's slot can wait longer than the rest), plus `settle`, replacing the step's, so the slot a browser fills can hold its size (see [Settle](#settle)) — exactly one of `command`/`con_id`/`existing = true` is
 required, same rule as `--layout`, and `app_id`/`class`/`mark_match` can set only one of the three,
 same rule too (each an exact, case-sensitive match, as on the CLI). A binding's `command` runs in Sway's working directory and environment, the same as
 a layout step's (see [Basic usage](#basic-usage)). A template step's
@@ -1151,6 +1152,26 @@ coordinates are then relative to the workspace it lands on there.
 sway-launch --floating --position center foot
 sway-launch --floating --position 100,200 foot
 sway-launch --floating --output HDMI-A-1 --position 100,200 foot
+```
+
+### Settle
+
+Keep holding `--height`/`--width` (in `px`) and `--position` for the given number of milliseconds
+after they're confirmed, applying them again if the window stops showing them. Browsers set their
+own window size in the first fraction of a second after opening, often just after `sway-launch` has
+applied and confirmed the requested one, so without this a browser window can end up a different
+size from one run to the next. Every time the geometry has to be applied again, the hold starts
+over; after three re-applies the application is left to have its way, and whatever it changed is
+reported `"unconfirmed"` under [`--json`](#json-output) rather than failing the run.
+
+A `ppt` size can't be held, since there's no pixel figure to compare against, so `--settle` needs
+a pixel `--height`/`--width` or a `--position`. It accepts 1 to 60000 ms, and every run with it
+takes at least that long, so use it only for the applications that need it. In a template, a
+binding's `settle` replaces the step's: the binding is what knows the slot is a browser.
+
+```shell
+sway-launch --floating --width 1100px --height 1080px --position 20,20 --settle 500 \
+  firefox --new-window
 ```
 
 ### Split

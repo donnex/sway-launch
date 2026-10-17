@@ -717,6 +717,123 @@ fn a_batch_explains_each_action_under_verbose() {
     );
 }
 
+/// `arranges_on_command()`, plus a client that sets its own width
+/// `overwrites` times, 100 ms after each `resize set width`, the way a
+/// browser does just after mapping (#17).
+fn arranges_then_resizes_itself(
+    overwrites: usize,
+) -> impl FnMut(&mut Sway, &str) -> Result<(), String> + Send + 'static {
+    let mut left = overwrites;
+    move |sway, command| {
+        if command.contains("resize set width") && left > 0 {
+            left -= 1;
+            sway.after(Duration::from_millis(100), |sway| {
+                sway.node_mut(FLOATING)["rect"]["width"] = 956.into();
+            });
+        }
+        arranges_on_command(sway, command)
+    }
+}
+
+fn floating_width(fake: &FakeSway) -> i64 {
+    fake.sway().node(FLOATING)["rect"]["width"]
+        .as_i64()
+        .unwrap()
+}
+
+#[test]
+fn without_settle_a_client_resizing_itself_has_the_last_word() {
+    let fake = FakeSway::start(SwayVersion::V1_11, arranges_then_resizes_itself(1));
+    let run = run(
+        &fake,
+        &["--con-id", &FLOATING.to_string(), "--width", "700px"],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert_eq!(run.action_status(), "changed");
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(floating_width(&fake), 956);
+}
+
+#[test]
+fn settle_applies_the_geometry_again_after_the_client_changes_it() {
+    let fake = FakeSway::start(SwayVersion::V1_11, arranges_then_resizes_itself(1));
+    let run = run(
+        &fake,
+        &[
+            "--con-id",
+            &FLOATING.to_string(),
+            "--width",
+            "700px",
+            "--position",
+            "10,20",
+            "--settle",
+            "300",
+            "--verbose",
+        ],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert_eq!(
+        action_statuses(&run),
+        vec![
+            ("width".to_string(), "changed".to_string()),
+            ("position".to_string(), "changed".to_string()),
+        ]
+    );
+    assert_eq!(
+        fake.commands(),
+        vec![
+            format!("[con_id={FLOATING}] resize set width 700px, move position 10 20"),
+            format!("[con_id={FLOATING}] resize set width 700px, move position 10 20"),
+        ],
+        "the geometry is sent once, then once more after the client's change"
+    );
+    assert_eq!(floating_width(&fake), 700);
+    let stderr = run.stderr();
+    assert!(stderr.contains("re-applying (1 of 3)"), "{stderr}");
+    assert!(stderr.contains("Geometry held for 300 ms"), "{stderr}");
+}
+
+#[test]
+fn settle_gives_up_on_a_client_that_keeps_resizing_itself() {
+    let fake = FakeSway::start(SwayVersion::V1_11, arranges_then_resizes_itself(usize::MAX));
+    let run = run(
+        &fake,
+        &[
+            "--con-id",
+            &FLOATING.to_string(),
+            "--width",
+            "700px",
+            "--settle",
+            "300",
+        ],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert_eq!(run.action_status(), "unconfirmed");
+    assert_eq!(
+        fake.commands().len(),
+        4,
+        "sent once and re-applied three times: {:?}",
+        fake.commands()
+    );
+}
+
+#[test]
+fn settle_without_pixel_geometry_is_refused_before_anything_runs() {
+    let fake = FakeSway::accepting_everything(SwayVersion::V1_11);
+    let output = fake
+        .sway_launch()
+        .args(["--con-id", "5", "--width", "50ppt", "--settle", "300"])
+        .output()
+        .expect("failed to run sway-launch");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--settle: needs a height or width in px, or a position, to hold"),
+        "{stderr}"
+    );
+    assert!(fake.commands().is_empty());
+}
+
 #[test]
 fn a_split_is_confirmed_once_the_parent_layout_changes() {
     let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {

@@ -155,6 +155,10 @@ what it rejects and why:
 - `validate_non_blank_argument()`/`require_non_blank()` — free-form identifiers.
 - `validate_timeout_argument()`/`validate_timeout_seconds()` — `1..=MAX_TIMEOUT_SECONDS`; the
   deadline is computed (`deadline_after()`) before any command is sent.
+- `validate_settle_argument()`/`settle_duration()` — `--settle`/`settle`: `1..=60000` ms, and
+  only alongside a pixel height/width or a position, the geometry `hold_geometry()` can check. A
+  binding's `settle` is range-checked in `validate_overrides()`, which can't yet tell `px` from a
+  `{param}`.
 
 ### Targets
 
@@ -222,7 +226,10 @@ decides which:
   `batch_failure()` maps Sway's per-part replies back to actions (Sway runs every part even after
   one fails, and stops only at a parse error; confirmed live). Each event wakes one state read for
   every action whose event arrived; polled actions are polled in the same loop. Moves and
-  `Scratchpad` stay out: each changes what the next action is judged against.
+  `Scratchpad` stay out: each changes what the next action is judged against. With `--settle`
+  (#17, `settle_duration()`), `hold_geometry()` then holds the confirmed pixel sizes and position,
+  sending them again together when the client undoes them (at most `MAX_GEOMETRY_REAPPLIES`
+  times, then `Unconfirmed`).
 
 **Every `ActionKind` match in `confirmation.rs` names each variant** (no `_` arm), so a new kind
 doesn't compile until both its confirmation path and its state/poll arms are decided.

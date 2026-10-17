@@ -25,6 +25,7 @@ fn minimal_sway_launch() -> SwayLaunch<'static> {
         wait_time: time::Duration::from_millis(20),
         require_launch_on_focused_workspace: false,
         catch_late_window: false,
+        settle: None,
     }
 }
 
