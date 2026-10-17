@@ -74,7 +74,7 @@ jobs:
       # deliberately, re-measuring the baseline in the same change, and keep
       # the version in CLAUDE.md's Commands section in step.
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: cargo-llvm-cov@0.9.1
 
