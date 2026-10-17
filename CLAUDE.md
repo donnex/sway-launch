@@ -139,7 +139,8 @@ what it rejects and why:
   `sway_argument()` renders it (a number unquoted after `number`, or Sway reads it as a name) and
   `WorkspaceTarget::matches()` decides it against a workspace's name and `num` (#43).
 - `validate_exec_command()` — the launch command is sent raw, so it rejects what Sway's own parser
-  would split on (an unquoted `,`/`;`, any newline/CR/NUL). `run_single_sway_command()` backs it
+  would split on (an unquoted `,`/`;`, any newline/CR/NUL), and a shell comment, which would cut
+  the `( ... )` it runs in short. `run_single_sway_command()` backs it
   up by treating a multi-outcome reply as an error.
 - `render_argv()` — a step's or binding's `command` given as a list of words (#77), turned into one
   quoted string by `layout::deserialize_command()` at parse time, so nothing past parsing knows
@@ -213,8 +214,12 @@ decides which:
   `poll_baseline()`-based `NewColumn`/`NewRow` check). A kind that can't be confirmed reports
   `Unconfirmed`, never an error.
 - **Exec** — `run_wait_matching_exec_event()`. The command runs as `exec export
-  SWAY_LAUNCH_PID_MARKER=<token> && <command>` and a `New` window is ours once
-  `process_has_env_var()` finds the marker. A content-matching window without it is held as a
+  SWAY_LAUNCH_PID_MARKER=<token> && ( <command> )` and a `New` window is ours once
+  `launch_evidence()` finds the marker in its process's environment, or an ancestor that is this
+  launch's (#96): marked in its environment, or Sway's own `sh -c` for the launch, known by its
+  command line (`cmdline_is_launch_shell()`). The `( ... )` keeps that shell alive under bash, which
+  otherwise execs the last command of an `&&` list (confirmed live); `validate_exec_command()`
+  refuses a `#` comment, which would swallow the `)`. A content-matching window without it is held as a
   fallback and taken once the marker was seen and then gone (`MarkerTracker`: "gone" means seen,
   then gone, never merely absent) → `LaunchOwnership::Launched`, or after
   `PID_MARKER_FALLBACK_GRACE` → `Adopted`. Windows the filter or title rejected are rechecked for a

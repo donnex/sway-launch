@@ -89,6 +89,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   if the application changes them. Browsers set their own size just after opening, so a Firefox or
   Chromium window used to end up a different size from one run to the next while `sway-launch`
   reported success. A binding's `settle` replaces the step's. (#17)
+- A launched program that never sees the launch marker is now recognised through its process
+  ancestry, as long as it descends from the launch, instead of waiting out the 2-second grace and
+  being treated as adopted (which kept `--rollback-on-error` from closing it). This covers wrappers
+  that clear or unset the environment (`env -u`, `env -i`) and programs whose environment can't be
+  read. A launch command can no longer contain a shell comment (an unquoted `#` starting a word),
+  since the command now runs inside a `( ... )` group that keeps the launch's shell alive for this
+  check. (#96)
 - `--sway-command '<command>'` (repeatable, and `sway_commands = [...]` in a layout or template
   step) sends a Sway command of your own to the window, for properties no flag covers, such as
   `border none` or `opacity 0.9`, which used to need a separate `swaymsg` call with the captured id

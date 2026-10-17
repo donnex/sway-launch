@@ -3667,10 +3667,16 @@ fn rollback_on_error_leaves_a_window_opened_while_an_env_dropping_wrapper_waits(
     // `env -u`: an `env` process carries the marker until it execs, and a
     // scan catching that moment rightly reads "seen, then gone", which made
     // this test fail now and then. With `unset`, no process ever carries it.
+    //
+    // The program's own window would be recognised through its ancestry
+    // (#96), so it starts 4s in, after the grace has already settled on the
+    // foreign one: this is the case where nothing better arrives in time.
+    // rollback_on_error_kills_a_wrappers_window_found_through_its_ancestry is
+    // the same run with the program in time.
     let mut connection = connect();
     let path = TempToml::write(
         "rollback-env-dropping-wrapper",
-        "[[step]]\ncommand = 'unset SWAY_LAUNCH_PID_MARKER && sh -c \"sleep 2 && exec foot \
+        "[[step]]\ncommand = 'unset SWAY_LAUNCH_PID_MARKER && sh -c \"sleep 4 && exec foot \
          --app-id=wrap-probe -T mine sleep 60\"'\napp_id = \"wrap-probe\"\ntimeout = 20\n\n\
          [[step]]\ncon_id = 999999999\nmark = \"x\"\n",
     );
@@ -3733,6 +3739,112 @@ fn rollback_on_error_leaves_a_window_opened_while_an_env_dropping_wrapper_waits(
     assert!(
         !stderr.contains("Marked process no longer running"),
         "a marker that was never seen must not be read as exited: {stderr:?}"
+    );
+}
+
+#[test]
+fn rollback_on_error_kills_a_wrappers_window_found_through_its_ancestry() {
+    fresh_workspace();
+    // #96: the same wrapper as the test above, which no process lets see the
+    // marker, but with the program's window arriving before the grace runs
+    // out. It descends from the shell Sway started for this launch, so it's
+    // taken as launched over the foreign window held as the fallback, and
+    // --rollback-on-error closes it. The foreign window is never this run's.
+    let mut connection = connect();
+    let path = TempToml::write(
+        "rollback-ancestry",
+        "[[step]]\ncommand = 'unset SWAY_LAUNCH_PID_MARKER && sh -c \"sleep 0.8 && exec foot \
+         --app-id=ancestry-probe -T mine sleep 60\"'\napp_id = \"ancestry-probe\"\n\
+         timeout = 20\n\n[[step]]\ncon_id = 999999999\nmark = \"x\"\n",
+    );
+
+    let child = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--rollback-on-error",
+            "--json",
+            "--verbose",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to run sway-launch binary");
+
+    std::thread::sleep(Duration::from_millis(300));
+    connection
+        .run_command("exec foot --app-id=ancestry-probe -T FOREIGN sleep 60")
+        .expect("exec should succeed")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("exec should succeed");
+
+    let output = child
+        .wait_with_output()
+        .expect("failed to wait for sway-launch");
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let foreign_id = window_titled(&tree, "FOREIGN");
+    let _foreign_guard = foreign_id.map(KillOnDrop);
+    let own_left_open = window_titled(&tree, "mine");
+    let _own_guard = own_left_open.map(KillOnDrop);
+
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        !output.status.success(),
+        "sway-launch should fail on the bad second step"
+    );
+    assert!(
+        stderr.contains("(PID-marker-confirmed through its ancestor process"),
+        "the wrapper's window should be recognised through its ancestry: {stderr:?}"
+    );
+    assert!(
+        foreign_id.is_some(),
+        "--rollback-on-error killed a foreign window: {stderr:?}"
+    );
+    assert_eq!(
+        own_left_open, None,
+        "the launched window should have been rolled back: {stderr:?}"
+    );
+    assert!(
+        !stderr.contains("\"rolled_back\":[]"),
+        "the launched window should be listed as rolled back: {stderr:?}"
+    );
+}
+
+#[test]
+fn a_launch_through_an_exec_env_wrapper_is_recognised_at_once() {
+    fresh_workspace();
+    // #96: `exec env -u` leaves no process carrying the marker in its
+    // environment at all. The window is found through the shell Sway started
+    // for the launch, by its command line, instead of waiting out the 2s
+    // grace and being adopted.
+    let started = Instant::now();
+    let output = sway_launch_command()
+        .args([
+            "--app-id",
+            "foot",
+            "--verbose",
+            "sh -c 'exec env -u SWAY_LAUNCH_PID_MARKER foot'",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let elapsed = started.elapsed();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "sway-launch failed: {stderr}");
+    let container_id: i64 = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .expect("stdout should be a container id");
+    let _guard = KillOnDrop(container_id);
+
+    assert!(
+        stderr.contains("(PID-marker-confirmed through its ancestor process"),
+        "{stderr}"
+    );
+    assert!(
+        elapsed < Duration::from_millis(1800),
+        "took {elapsed:?}, as if waiting out the fallback grace: {stderr}"
     );
 }
 

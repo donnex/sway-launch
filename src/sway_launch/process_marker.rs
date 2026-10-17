@@ -3,7 +3,8 @@
 //! Sway broadcasts window events to every IPC connection, so matching a `New`
 //! window on app_id/class alone can pick up a window some other process
 //! launched. The launched command's environment is tagged with a token, and
-//! `/proc/<pid>/environ` is what confirms a window's process carries it. See
+//! `/proc/<pid>/environ` is what confirms a window's process carries it, or,
+//! for a program that never saw it, an ancestor's (`launch_evidence()`). See
 //! `confirmation.rs`'s `run_wait_matching_exec_event()` for how the signal is
 //! used, including what happens when it can't be confirmed.
 
@@ -28,8 +29,9 @@ pub(super) const PID_MARKER_VAR: &str = "SWAY_LAUNCH_PID_MARKER";
 /// without meaningfully slowing the genuinely-ambiguous (single-instance
 /// application) case, which resolves via `MarkerTracker::is_gone()` well
 /// before this cap in practice. It's also how a launch whose marker is never
-/// observed at all (a launcher that drops the environment, a non-dumpable
-/// program, no `/proc`) ends: as `LaunchOwnership::Adopted`, after this cap.
+/// observed at all ends, as `LaunchOwnership::Adopted` after this cap, when
+/// `launch_evidence()` finds no ancestry either: a program that detached
+/// from the launch's shell, or no `/proc`.
 pub(super) const PID_MARKER_FALLBACK_GRACE: time::Duration = time::Duration::from_millis(2000);
 
 /// A random-enough per-invocation token for `PID_MARKER_VAR`: this process's
@@ -119,6 +121,97 @@ pub(super) fn read_process_marker(pid: i32, var_name: &str, expected_value: &str
 /// confirmed", which sends the window down the fallback path.
 pub(super) fn process_has_env_var(pid: i32, var_name: &str, expected_value: &str) -> bool {
     read_process_marker(pid, var_name, expected_value) == MarkerRead::Present
+}
+
+/// How far `launch_evidence()` walks up from a window's process before giving
+/// up: a launch's own shell, a wrapper or two, and the program itself are a
+/// handful of generations, and the walk reads two small files per step.
+const MAX_ANCESTRY_DEPTH: usize = 32;
+
+/// Why a window's process counts as this launch's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LaunchEvidence {
+    /// Its own environment carries the marker.
+    OwnEnvironment,
+    /// It descends from this process, which carries the marker in its
+    /// environment, or is the shell Sway started for this launch.
+    Ancestor(i32),
+}
+
+/// Whether the window owned by `pid` was opened by this launch, and why: its
+/// own environment carries the marker, or one of its ancestors is this
+/// launch's (#96).
+///
+/// The ancestry half is what recognises a window whose program never sees
+/// the marker: a wrapper that unsets it (`env -u`), a launcher that starts
+/// the program with a clean environment (`env -i`), or a process whose
+/// `environ` can't be read. `/proc/<pid>/stat` stays readable for all of
+/// them. The walk's anchor is the `sh -c "export <marker> && ..."` Sway
+/// starts for the launch, recognised by its command line, since `export`
+/// never shows in a shell's own `environ`; `ExecAction::sway_command()`
+/// keeps that shell alive whichever shell `sh` is. A window from a process
+/// that detached to init, or from a server another process asked (a
+/// client/server launcher), has no such ancestor and still goes down the
+/// fallback path. Confirmed live on Sway 1.9 and 1.11, with dash and bash.
+pub(super) fn launch_evidence(pid: i32, token: &str) -> Option<LaunchEvidence> {
+    if process_has_env_var(pid, PID_MARKER_VAR, token) {
+        return Some(LaunchEvidence::OwnEnvironment);
+    }
+    marked_ancestor(pid, MAX_ANCESTRY_DEPTH, |ancestor| {
+        let marked = process_has_env_var(ancestor, PID_MARKER_VAR, token)
+            || std::fs::read(format!("/proc/{}/cmdline", ancestor))
+                .is_ok_and(|cmdline| cmdline_is_launch_shell(&cmdline, token));
+        (marked, parent_pid(ancestor))
+    })
+    .map(LaunchEvidence::Ancestor)
+}
+
+/// The first ancestor of `pid` (not `pid` itself) within `max_depth`
+/// generations for which `inspect` reports `true`. `inspect` answers for
+/// one process: whether it's marked, and its parent's pid, if known. The
+/// walk stops at pid 1, at a process with no parent left to read, and at a
+/// loop, which a pid reused mid-walk could produce.
+pub(super) fn marked_ancestor(
+    pid: i32,
+    max_depth: usize,
+    mut inspect: impl FnMut(i32) -> (bool, Option<i32>),
+) -> Option<i32> {
+    let mut visited = vec![pid];
+    let mut next = inspect(pid).1;
+    for _ in 0..max_depth {
+        let ancestor = next.filter(|&ancestor| ancestor > 1 && !visited.contains(&ancestor))?;
+        visited.push(ancestor);
+        let (marked, parent) = inspect(ancestor);
+        if marked {
+            return Some(ancestor);
+        }
+        next = parent;
+    }
+    None
+}
+
+/// A process's parent pid, from `/proc/<pid>/stat`, which is readable for
+/// every process, a non-dumpable one included.
+fn parent_pid(pid: i32) -> Option<i32> {
+    parent_pid_from_stat(&std::fs::read_to_string(format!("/proc/{}/stat", pid)).ok()?)
+}
+
+/// The `ppid` field of a `/proc/<pid>/stat` line. The command name before
+/// it is parenthesised and may itself contain spaces and `)`, so the fields
+/// are counted from the last `)`.
+pub(super) fn parent_pid_from_stat(stat: &str) -> Option<i32> {
+    let fields = &stat[stat.rfind(')')? + 1..];
+    fields.split_whitespace().nth(1)?.parse().ok()
+}
+
+/// Whether a NUL-separated `/proc/<pid>/cmdline` is the shell Sway started
+/// for the launch carrying `token`: `sh -c "export <marker>=<token> && ..."`,
+/// as `ExecAction::sway_command()` writes it after `exec `.
+pub(super) fn cmdline_is_launch_shell(cmdline: &[u8], token: &str) -> bool {
+    let script = format!("export {}={} && ", PID_MARKER_VAR, token);
+    cmdline
+        .split(|&byte| byte == 0)
+        .any(|argument| argument.starts_with(script.as_bytes()))
 }
 
 /// Folds one scan's per-process reads into a `MarkerPresence`. Split out of

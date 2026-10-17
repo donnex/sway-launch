@@ -38,7 +38,7 @@ fn exec_sway_command_prepends_the_marker_to_the_users_command() {
     let action = exec_action("foot --app-id=probe", "", "");
     assert_eq!(
         action.sway_command("1234-5678"),
-        "exec export SWAY_LAUNCH_PID_MARKER=1234-5678 && foot --app-id=probe"
+        "exec export SWAY_LAUNCH_PID_MARKER=1234-5678 && ( foot --app-id=probe )"
     );
 }
 
@@ -47,7 +47,7 @@ fn exec_sway_command_keeps_a_command_led_by_a_shell_builtin_intact() {
     let action = exec_action("cd /tmp && exec foot", "", "");
     assert_eq!(
         action.sway_command("1234-5678"),
-        "exec export SWAY_LAUNCH_PID_MARKER=1234-5678 && cd /tmp && exec foot"
+        "exec export SWAY_LAUNCH_PID_MARKER=1234-5678 && ( cd /tmp && exec foot )"
     );
 }
 
