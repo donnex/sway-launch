@@ -947,3 +947,28 @@ fn a_second_run_of_a_layout_is_refused_while_the_first_holds_its_lock() {
     let forced = run(&["--no-lock"]);
     assert!(forced.status.success(), "{forced:?}");
 }
+
+#[test]
+fn a_step_command_given_as_words_is_quoted_for_sway_and_the_shell() {
+    // A word list reaches the program exactly (#77): the preview shows the
+    // quoted command, and a word Sway would rewrite is refused at parse time.
+    let output = run_with_stdin(
+        &["--layout", "-", "--dry-run"],
+        "[[step]]\ncommand = [\"foot\", \"-T\", \"a, b; it's\"]\napp_id = \"foot\"\n",
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("launch 'foot' '-T' 'a, b; it'\\''s'"),
+        "{output:?}"
+    );
+
+    let output = run_with_stdin(
+        &["--layout", "-", "--validate"],
+        "[[step]]\ncommand = [\"echo\", \"$HOME\"]\n",
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("config variable"),
+        "{output:?}"
+    );
+}

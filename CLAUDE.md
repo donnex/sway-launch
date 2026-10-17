@@ -136,6 +136,12 @@ what it rejects and why:
 - `validate_exec_command()` — the launch command is sent raw, so it rejects what Sway's own parser
   would split on (an unquoted `,`/`;`, any newline/CR/NUL). `run_single_sway_command()` backs it
   up by treating a multi-outcome reply as an error.
+- `render_argv()` — a step's or binding's `command` given as a list of words (#77), turned into one
+  quoted string by `layout::deserialize_command()` at parse time, so nothing past parsing knows
+  which form a file used. Each word is single-quoted, with `\` written outside the quotes because
+  Sway reads a backslash inside single quotes as an escape; `$` is refused because Sway substitutes
+  its variables even there (both confirmed live). Files only: on the CLI, `--` keeps meaning "the
+  command string", by decision.
 - `validate_non_blank_argument()`/`require_non_blank()` — free-form identifiers.
 - `validate_timeout_argument()`/`validate_timeout_seconds()` — `1..=MAX_TIMEOUT_SECONDS`; the
   deadline is computed (`deadline_after()`) before any command is sent.
