@@ -16,6 +16,21 @@ fn generate_pid_marker_token_starts_with_this_processes_id() {
 }
 
 #[test]
+fn generate_pid_marker_token_is_unique_across_threads_generating_at_once() {
+    let tokens: Vec<String> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..16)
+            .map(|_| scope.spawn(generate_pid_marker_token))
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("thread"))
+            .collect()
+    });
+    let unique: std::collections::HashSet<&String> = tokens.iter().collect();
+    assert_eq!(unique.len(), tokens.len(), "{tokens:?}");
+}
+
+#[test]
 fn process_has_env_var_true_for_this_processes_own_environment() {
     let pid = std::process::id() as i32;
     let path = std::env::var("PATH").expect("PATH should be set in the test environment");
@@ -162,15 +177,71 @@ fn parent_pid_from_stat_counts_fields_from_the_last_parenthesis() {
 }
 
 #[test]
-fn cmdline_is_launch_shell_needs_this_launchs_exact_token() {
-    let cmdline = b"sh\0-c\0export SWAY_LAUNCH_PID_MARKER=12-345 && ( foot )\0";
-    assert!(cmdline_is_launch_shell(cmdline, "12-345"));
-    assert!(!cmdline_is_launch_shell(cmdline, "12-34"));
-    assert!(!cmdline_is_launch_shell(cmdline, "12-3456"));
-    assert!(!cmdline_is_launch_shell(
-        b"foot\0-T\0x export SWAY_LAUNCH_PID_MARKER=12-345 && \0",
-        "12-345"
-    ));
+fn launch_shell_token_reads_the_token_of_a_launch_shell_only() {
+    let token = |cmdline: &[u8]| launch_shell_token(cmdline);
+    assert_eq!(
+        token(b"sh\0-c\0export SWAY_LAUNCH_PID_MARKER=12-345 && ( foot )\0").as_deref(),
+        Some("12-345")
+    );
+    assert_eq!(
+        token(b"sh\0-c\0export SWAY_LAUNCH_PID_MARKER=12-345 && cd '/' && ( foot )\0").as_deref(),
+        Some("12-345")
+    );
+    assert_eq!(
+        token(b"foot\0-T\0x export SWAY_LAUNCH_PID_MARKER=12-345 && \0"),
+        None
+    );
+    assert_eq!(
+        token(b"sh\0-c\0export SWAY_LAUNCH_PID_MARKER=12-345\0"),
+        None
+    );
+}
+
+#[test]
+fn environ_marker_reads_the_markers_value() {
+    assert_eq!(
+        environ_marker(b"PATH=/bin\0SWAY_LAUNCH_PID_MARKER=12-345\0HOME=/h\0").as_deref(),
+        Some("12-345")
+    );
+    assert_eq!(
+        environ_marker(b"PATH=/bin\0SWAY_LAUNCH_PID_MARKER_X=1\0"),
+        None
+    );
+}
+
+#[test]
+fn is_sibling_launchs_window_counts_only_its_groups_launches() {
+    // The registry is process-wide, and this is the only test touching it.
+    let token = format!("{}-sibling-test", std::process::id());
+    let mut child = std::process::Command::new("sleep")
+        .arg("30")
+        .env(PID_MARKER_VAR, &token)
+        .spawn()
+        .expect("sleep should start");
+    let pid = child.id() as i32;
+    // Until the child has exec'd, its environ is still this process's.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !process_has_env_var(pid, PID_MARKER_VAR, &token) {
+        assert!(std::time::Instant::now() < deadline, "sleep never started");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    register_launch(&token);
+    assert!(
+        !is_sibling_launchs_window(pid, "own-launch"),
+        "outside a group, nothing is recorded"
+    );
+    let group = ConcurrentLaunches::begin();
+    register_launch("own-launch");
+    assert!(!is_sibling_launchs_window(pid, "own-launch"));
+    register_launch(&token);
+    assert!(is_sibling_launchs_window(pid, "own-launch"));
+    assert!(!is_sibling_launchs_window(pid, &token));
+    drop(group);
+    assert!(!is_sibling_launchs_window(pid, "own-launch"));
+
+    child.kill().ok();
+    child.wait().ok();
 }
 
 /// A process table for `marked_ancestor()`: pid -> (marked, parent).

@@ -284,7 +284,7 @@ struct Args {
     /// Print every Sway IPC event until interrupted, one JSON object per line
     /// with --json. Can't be combined with a command or per-window flags
     #[clap(short, long, conflicts_with_all = per_window_and(&[
-        "bindings", "apps", "param", "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock",
+        "bindings", "apps", "param", "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent",
     ]))]
     debug_events: bool,
 
@@ -295,7 +295,7 @@ struct Args {
     /// Generate a shell completion script and print it to stdout
     #[clap(long, value_enum, conflicts_with_all = per_window_and(&[
         "debug_events", "layout", "template", "list_templates", "bindings", "apps", "param",
-        "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "dry_run", "validate", "show_template", "json",
+        "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent", "dry_run", "validate", "show_template", "json",
     ]))]
     completions: Option<clap_complete::Shell>,
 
@@ -328,7 +328,7 @@ struct Args {
     /// List built-in --template names and exit
     #[clap(long, conflicts_with_all = per_window_and(&[
         "debug_events", "layout", "template", "completions", "bindings", "apps", "param",
-        "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "dry_run", "validate", "show_template",
+        "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent", "dry_run", "validate", "show_template",
     ]))]
     list_templates: bool,
 
@@ -337,7 +337,7 @@ struct Args {
     /// windows --existing would choose between
     #[clap(long, conflicts_with_all = per_window_but_filters_and(&[
         "debug_events", "layout", "template", "completions", "list_templates", "show_template",
-        "bindings", "apps", "param", "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "dry_run", "validate",
+        "bindings", "apps", "param", "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent", "dry_run", "validate",
     ]))]
     list_windows: bool,
 
@@ -347,7 +347,7 @@ struct Args {
     /// {"name": ..., "contents": "..."}
     #[clap(long, value_name = "NAME_OR_PATH", conflicts_with_all = per_window_and(&[
         "debug_events", "layout", "template", "completions", "bindings", "apps", "param",
-        "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "dry_run", "validate",
+        "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent", "dry_run", "validate",
     ]))]
     show_template: Option<PathBuf>,
 
@@ -409,6 +409,14 @@ struct Args {
     /// --layout or --template
     #[clap(long)]
     no_lock: bool,
+
+    /// Start every --layout/--template step's application at once, on a
+    /// workspace of its own, then arrange the windows in step order, so the
+    /// run takes about as long as its slowest application rather than all of
+    /// them together. Fails if two steps' launches end up with the same window,
+    /// as single-instance applications can. Requires --layout or --template
+    #[clap(long)]
+    concurrent: bool,
 
     /// Command to execute
     #[clap(value_parser = sway_launch::validate_exec_command)]
@@ -553,6 +561,15 @@ fn main() {
             .error(
                 ErrorKind::MissingRequiredArgument,
                 "--on-output requires --layout or --template",
+            )
+            .exit();
+    }
+
+    if args.concurrent && args.layout.is_none() && args.template.is_none() {
+        Args::command()
+            .error(
+                ErrorKind::MissingRequiredArgument,
+                "--concurrent requires --layout or --template",
             )
             .exit();
     }
@@ -1709,8 +1726,52 @@ fn run_steps(steps: &[layout::LayoutStep], build: sway_launch::BuildLocation, ar
         );
     }
 
+    let mut staged = if args.concurrent && launches {
+        Some(stage_launches(steps, args))
+    } else {
+        None
+    };
+    if let Some((index, error)) = staged
+        .as_mut()
+        .and_then(|staged| take_staging_failure(&mut staged.windows, args.continue_on_timeout))
+    {
+        // As a sequential launch's failure is: a window it caught late is
+        // its progress, and rolled back when it's this run's.
+        if let (Some(container_id), Some(ownership)) = (error.container_id, error.launch_ownership)
+        {
+            container_ids.push(container_id);
+            if ownership == sway_launch::LaunchOwnership::Launched {
+                launched_container_ids.push(container_id);
+            }
+        }
+        release_staged(
+            &mut staged,
+            steps,
+            args.verbose,
+            &mut launched_container_ids,
+            &mut container_ids,
+            &mut resolved_ids,
+        );
+        fail_step(
+            args,
+            &launched_container_ids,
+            &container_ids,
+            &resolved_ids,
+            index,
+            error,
+        );
+    }
+
     for (index, step) in steps.iter().enumerate() {
         if let Err(message) = sway_launch::interrupt::check() {
+            release_staged(
+                &mut staged,
+                steps,
+                args.verbose,
+                &mut launched_container_ids,
+                &mut container_ids,
+                &mut resolved_ids,
+            );
             fail_step(
                 args,
                 &launched_container_ids,
@@ -1756,17 +1817,37 @@ fn run_steps(steps: &[layout::LayoutStep], build: sway_launch::BuildLocation, ar
                 catch_late_window: args.rollback_on_error && !args.continue_on_timeout,
                 ..sway_launch
             },
-            Err(error) => fail_step(
-                args,
-                &launched_container_ids,
-                &container_ids,
-                &resolved_ids,
-                index,
-                error.into(),
-            ),
+            Err(error) => {
+                release_staged(
+                    &mut staged,
+                    steps,
+                    args.verbose,
+                    &mut launched_container_ids,
+                    &mut container_ids,
+                    &mut resolved_ids,
+                );
+                fail_step(
+                    args,
+                    &launched_container_ids,
+                    &container_ids,
+                    &resolved_ids,
+                    index,
+                    error.into(),
+                )
+            }
         };
 
-        match sway_launch.run() {
+        let staged_window = staged
+            .as_mut()
+            .and_then(|staged| staged.windows.remove(&index));
+        let result = match (staged_window, staged.as_ref()) {
+            (Some(window), Some(staged)) => {
+                arrange_staged(&staged.staging, window, sway_launch, args.verbose)
+            }
+            _ => sway_launch.run(),
+        };
+
+        match result {
             Ok(outcome) => {
                 if !args.json {
                     print_line_deferring_failure(
@@ -1833,6 +1914,14 @@ fn run_steps(steps: &[layout::LayoutStep], build: sway_launch::BuildLocation, ar
                         launched_container_ids.push(container_id);
                     }
                 }
+                release_staged(
+                    &mut staged,
+                    steps,
+                    args.verbose,
+                    &mut launched_container_ids,
+                    &mut container_ids,
+                    &mut resolved_ids,
+                );
                 fail_step(
                     args,
                     &launched_container_ids,
@@ -2077,6 +2166,223 @@ fn plan_step<'a>(
         args.verbose,
         resolved_ids,
     )
+}
+
+/// `--concurrent`'s launched windows (#73), each step's waiting on the
+/// staging workspace until its turn comes in `run_steps()`.
+struct StagedLaunches {
+    staging: sway_launch::Staging,
+    windows: StagedWindows,
+}
+
+type StagedWindows =
+    std::collections::BTreeMap<usize, Result<sway_launch::RunOutcome, sway_launch::RunError>>;
+
+/// Removes and returns the first staged launch, in step order, that fails
+/// the run: any failure but a timeout `--continue-on-timeout` carries on
+/// past, which stays for its step to report when it's reached.
+fn take_staging_failure(
+    windows: &mut StagedWindows,
+    continue_on_timeout: bool,
+) -> Option<(usize, sway_launch::RunError)> {
+    let index = *windows
+        .iter()
+        .find(|(_, result)| {
+            result
+                .as_ref()
+                .is_err_and(|error| !(continue_on_timeout && error.window_timed_out))
+        })?
+        .0;
+    let error = windows.remove(&index)?.err()?;
+    Some((index, error))
+}
+
+/// Fails every staged launch whose window an earlier step's launch already
+/// has: launches running at the same time can't tell such a window apart,
+/// as when a single-instance application hands both requests to one process
+/// and each launch then adopts its window.
+fn reject_shared_windows(windows: &mut StagedWindows) {
+    let mut claimed: HashMap<i64, usize> = HashMap::new();
+    for (index, result) in windows.iter_mut() {
+        let Ok(outcome) = result else { continue };
+        if let Some(first) = claimed.get(&outcome.container_id) {
+            *result = Err(format!(
+                "its window (container {}) is also step {}'s: launches running at the same time \
+                 couldn't be told apart, as happens with a single-instance application. Run \
+                 without --concurrent",
+                outcome.container_id,
+                first + 1
+            )
+            .into());
+        } else {
+            claimed.insert(outcome.container_id, *index);
+        }
+    }
+}
+
+/// Launches every `command` step at once (#73), without its actions, on a
+/// staging workspace, and returns each one's result by step index. The whole
+/// plan is checked first, so a mistake in any step fails the run before
+/// anything opens. Two steps ending up with the same window (a
+/// single-instance application handing both requests to one process, whose
+/// window each then adopts) can't be told apart, so the later one fails.
+fn stage_launches(steps: &[layout::LayoutStep], args: &Args) -> StagedLaunches {
+    if let Err(error) = plan_steps_offline(steps, args) {
+        fail(args.json, &error);
+    }
+    let staging = match sway_launch::Staging::enter(args.verbose) {
+        Ok(staging) => staging,
+        Err(error) => fail(args.json, &format!("{}: {}", steps_source(args), error)),
+    };
+    let no_ids = HashMap::new();
+    let launches: Vec<(usize, sway_launch::SwayLaunch)> = steps
+        .iter()
+        .enumerate()
+        .filter(|(_, step)| step.command.is_some())
+        .map(|(index, step)| {
+            let planned = plan_step(step, args, &no_ids)
+                .expect("plan_steps_offline() already accepted every step");
+            (index, launch_only(planned, args))
+        })
+        .collect();
+    if args.verbose {
+        diagnostic!(
+            "Launching {} steps at once on workspace {:?}",
+            launches.len(),
+            staging.staging_workspace()
+        );
+    }
+    let group = sway_launch::ConcurrentLaunches::begin();
+    let mut windows: StagedWindows = std::thread::scope(|scope| {
+        let handles: Vec<_> = launches
+            .into_iter()
+            .map(|(index, launch)| (index, scope.spawn(move || launch.run())))
+            .collect();
+        handles
+            .into_iter()
+            .map(|(index, handle)| {
+                let result = handle
+                    .join()
+                    .unwrap_or_else(|_| Err("the launch's thread panicked".to_string().into()));
+                (index, result)
+            })
+            .collect()
+    });
+    drop(group);
+    if let Err(error) = staging.leave(args.verbose) {
+        diagnostic!(
+            "{}{}",
+            stderr_label(Severity::Warning),
+            sway_launch::escape_control_characters(&error, false)
+        );
+    }
+
+    reject_shared_windows(&mut windows);
+    StagedLaunches { staging, windows }
+}
+
+/// A step's `SwayLaunch` reduced to its launch, for `stage_launches()`: its
+/// actions run later, once the window has been arranged.
+fn launch_only<'a>(
+    planned: sway_launch::SwayLaunch<'a>,
+    args: &Args,
+) -> sway_launch::SwayLaunch<'a> {
+    sway_launch::SwayLaunch {
+        split: None,
+        floating: false,
+        sticky: false,
+        fullscreen: false,
+        focus: false,
+        mark: None,
+        new_column: false,
+        new_row: false,
+        workspace: None,
+        output: None,
+        height: None,
+        width: None,
+        position: None,
+        scratchpad: false,
+        sway_commands: &[],
+        settle: None,
+        // The window opens on the staging workspace wherever focus goes.
+        require_launch_on_focused_workspace: false,
+        catch_late_window: args.rollback_on_error && !args.continue_on_timeout,
+        ..planned
+    }
+}
+
+/// Runs a staged step once its turn comes: its window is moved to the build
+/// workspace and focused, as it would be had it just opened there, then the
+/// step's actions run against it. The launch's ownership carries over, so
+/// `--rollback-on-error` treats the window as it would a sequential launch.
+fn arrange_staged(
+    staging: &sway_launch::Staging,
+    staged: Result<sway_launch::RunOutcome, sway_launch::RunError>,
+    planned: sway_launch::SwayLaunch,
+    verbose: bool,
+) -> Result<sway_launch::RunOutcome, sway_launch::RunError> {
+    let launched = staged?;
+    let container_id = launched.container_id;
+    let ownership = launched.launch_ownership;
+    let with_window = |error: sway_launch::RunError| sway_launch::RunError {
+        container_id: Some(container_id),
+        launch_ownership: ownership,
+        ..error
+    };
+    staging
+        .bring(container_id, true, verbose)
+        .map_err(|message| with_window(message.into()))?;
+    sway_launch::SwayLaunch {
+        target: sway_launch::Target::ConId(container_id),
+        launch_setup: None,
+        require_launch_on_focused_workspace: false,
+        catch_late_window: false,
+        ..planned
+    }
+    .run()
+    .map(|outcome| sway_launch::RunOutcome {
+        launch_ownership: ownership,
+        ..outcome
+    })
+    .map_err(with_window)
+}
+
+/// Before a `--concurrent` run fails, moves every staged window its turn
+/// never came for to the build workspace, rather than leaving it on the
+/// staging workspace out of sight, and counts it as progress: reported, and
+/// rolled back under `--rollback-on-error` when this run launched it.
+fn release_staged(
+    staged: &mut Option<StagedLaunches>,
+    steps: &[layout::LayoutStep],
+    verbose: bool,
+    launched_container_ids: &mut Vec<i64>,
+    container_ids: &mut Vec<i64>,
+    resolved_ids: &mut HashMap<String, i64>,
+) {
+    let Some(staged) = staged.take() else { return };
+    for (index, result) in staged.windows {
+        let (container_id, ownership) = match result {
+            Ok(outcome) => (outcome.container_id, outcome.launch_ownership),
+            Err(error) => match (error.container_id, error.launch_ownership) {
+                (Some(container_id), Some(ownership)) => (container_id, Some(ownership)),
+                _ => continue,
+            },
+        };
+        if let Err(error) = staged.staging.bring(container_id, false, verbose) {
+            diagnostic!(
+                "{}{}",
+                stderr_label(Severity::Warning),
+                sway_launch::escape_control_characters(&error, false)
+            );
+        }
+        container_ids.push(container_id);
+        if let Some(id) = steps[index].id.as_deref() {
+            resolved_ids.insert(id.to_string(), container_id);
+        }
+        if ownership == Some(sway_launch::LaunchOwnership::Launched) {
+            launched_container_ids.push(container_id);
+        }
+    }
 }
 
 /// `plan_step()` over every step without running any, for `--dry-run` and
@@ -2593,6 +2899,7 @@ mod tests {
         "on_workspace_number",
         "on_output",
         "no_lock",
+        "concurrent",
         "json",
         "verbose",
         // clap's own auto-generated arguments.
@@ -2645,6 +2952,65 @@ mod tests {
         "wait_time",
         "settle",
     ];
+
+    fn staged(container_id: i64) -> Result<sway_launch::RunOutcome, sway_launch::RunError> {
+        Ok(sway_launch::RunOutcome {
+            container_id,
+            actions: Vec::new(),
+            launch_ownership: Some(sway_launch::LaunchOwnership::Launched),
+        })
+    }
+
+    fn timed_out() -> Result<sway_launch::RunOutcome, sway_launch::RunError> {
+        Err(sway_launch::RunError {
+            window_timed_out: true,
+            ..sway_launch::RunError::from("no window appeared".to_string())
+        })
+    }
+
+    #[test]
+    fn take_staging_failure_skips_a_timeout_only_under_continue_on_timeout() {
+        let mut windows: StagedWindows = [(0, staged(10)), (2, timed_out())].into_iter().collect();
+        assert!(take_staging_failure(&mut windows, true).is_none());
+        assert_eq!(windows.len(), 2);
+
+        let (index, error) = take_staging_failure(&mut windows, false).expect("a failure");
+        assert_eq!((index, error.message.as_str()), (2, "no window appeared"));
+        assert_eq!(windows.keys().copied().collect::<Vec<_>>(), [0]);
+    }
+
+    #[test]
+    fn take_staging_failure_returns_the_first_failure_in_step_order() {
+        let mut windows: StagedWindows = [
+            (3, Err("later".to_string().into())),
+            (1, Err("earlier".to_string().into())),
+            (0, staged(10)),
+        ]
+        .into_iter()
+        .collect();
+        let (index, error) = take_staging_failure(&mut windows, true).expect("a failure");
+        assert_eq!((index, error.message.as_str()), (1, "earlier"));
+    }
+
+    #[test]
+    fn reject_shared_windows_fails_every_later_step_with_the_same_window() {
+        let mut windows: StagedWindows = [(0, staged(10)), (1, staged(11)), (4, staged(10))]
+            .into_iter()
+            .collect();
+        reject_shared_windows(&mut windows);
+        assert!(windows[&0].is_ok() && windows[&1].is_ok());
+        let error = windows[&4]
+            .as_ref()
+            .err()
+            .expect("step 5 shares step 1's window");
+        assert!(
+            error
+                .message
+                .starts_with("its window (container 10) is also step 1's"),
+            "{}",
+            error.message
+        );
+    }
 
     fn field_names<T: serde::Serialize>(value: &T) -> std::collections::BTreeSet<String> {
         serde_json::to_value(value)

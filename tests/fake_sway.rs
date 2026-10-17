@@ -1390,6 +1390,159 @@ app_id = "fake-app"
 }
 
 #[test]
+fn concurrent_launches_every_step_on_a_staging_workspace_then_arranges_in_order() {
+    // #73: both launches are sent before either window is arranged, on the
+    // staging workspace; each window is then moved to the build workspace
+    // and focused, and its own actions follow, in step order.
+    let mut launches = opens_a_window_for_each_launch("fake-app");
+    let fake = FakeSway::start(SwayVersion::V1_11, move |sway, command| {
+        if command.starts_with("exec ") {
+            launches(sway, command)
+        } else if command.starts_with("[con_id=") {
+            arranges_on_command(sway, command)
+        } else {
+            Ok(())
+        }
+    });
+    let layout = TempToml::write(
+        "concurrent-order",
+        "[[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\nmark = \"first\"\n\n\
+         [[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\nmark = \"second\"\n",
+    );
+    let run = run(
+        &fake,
+        &["--layout", layout.to_str().unwrap(), "--concurrent"],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    let commands = fake.commands();
+    let staging = "workspace \"sway-launch-staging-";
+    let position = |wanted: &str| {
+        commands
+            .iter()
+            .position(|command| command.starts_with(wanted))
+            .unwrap_or_else(|| panic!("{wanted:?} never sent: {commands:?}"))
+    };
+    let launches: Vec<usize> = commands
+        .iter()
+        .enumerate()
+        .filter(|(_, command)| command.starts_with("exec "))
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(launches.len(), 2, "{commands:?}");
+    assert!(position(staging) < launches[0], "{commands:?}");
+    // Which launch's window opens first is up to the processes; the order
+    // they're arranged in is the steps'.
+    let ids = &run.json["container_ids"];
+    let (first, second) = (ids[0].as_i64().unwrap(), ids[1].as_i64().unwrap());
+    let mut sorted = [first, second];
+    sorted.sort_unstable();
+    assert_eq!(sorted, [100, 101], "{}", run.json);
+    let first_moved = position(&format!("[con_id={first}] move container to workspace"));
+    let first_marked = position(&format!("[con_id={first}] mark \"first\""));
+    let second_moved = position(&format!("[con_id={second}] move container to workspace"));
+    assert!(launches[1] < first_moved, "{commands:?}");
+    assert!(
+        first_moved < position(&format!("[con_id={first}] focus")),
+        "{commands:?}"
+    );
+    assert!(
+        first_moved < first_marked && first_marked < second_moved,
+        "{commands:?}"
+    );
+    assert!(position(&format!("[con_id={second}] mark \"second\"")) > second_moved);
+}
+
+#[test]
+fn a_concurrent_launch_never_adopts_a_sibling_launchs_window() {
+    // Seen on Sway 1.9 in CI: one launch's window took longer than the
+    // fallback grace, and its launch adopted a sibling's window instead,
+    // which looked like a foreign window with the right app_id.
+    let mut launches = 0;
+    let fake = FakeSway::start(SwayVersion::V1_11, move |sway, command| {
+        if command.starts_with("exec ") {
+            let token = sway.launch(command);
+            launches += 1;
+            let delay = if launches == 1 {
+                Duration::ZERO
+            } else {
+                Duration::from_millis(2600)
+            };
+            sway.when_marked(token, move |sway, pid| {
+                sway.after(delay, move |sway| {
+                    let id = sway.open_window(Some("fake-app"), Some(pid));
+                    sway.emit("new", id);
+                });
+            });
+        }
+        Ok(())
+    });
+    let layout = TempToml::write(
+        "concurrent-slow-sibling",
+        "[[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n\n\
+         [[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n",
+    );
+    let run = run(
+        &fake,
+        &[
+            "--layout",
+            layout.to_str().unwrap(),
+            "--concurrent",
+            "--verbose",
+        ],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    let ids = &run.json["container_ids"];
+    assert_ne!(ids[0], ids[1], "{}", run.json);
+    assert!(
+        run.stderr()
+            .contains("is another launch's, still running alongside this one"),
+        "{}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn concurrent_launches_that_end_up_with_the_same_window_fail() {
+    // A single-instance application hands both requests to one process,
+    // whose one window both launches then adopt: they can't be told apart.
+    // Opened once both launches have sent their exec, and so subscribed.
+    let mut launches = 0;
+    let fake = FakeSway::start(SwayVersion::V1_11, move |sway, command| {
+        if command.starts_with("exec ") {
+            sway.launch(command);
+            launches += 1;
+            if launches == 2 {
+                let id = sway.open_window(Some("fake-app"), Some(std::process::id()));
+                sway.emit("new", id);
+            }
+        }
+        Ok(())
+    });
+    let layout = TempToml::write(
+        "concurrent-shared-window",
+        "[[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n\n\
+         [[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n",
+    );
+    let run = run(
+        &fake,
+        &["--layout", layout.to_str().unwrap(), "--concurrent"],
+    );
+    assert!(!run.succeeded());
+    assert!(
+        run.error()
+            .contains("step 2: its window (container 100) is also step 1's"),
+        "{}",
+        run.error()
+    );
+    assert_eq!(
+        run.json["container_ids"],
+        serde_json::json!([100]),
+        "{}",
+        run.json
+    );
+}
+
+#[test]
 fn continue_on_timeout_also_covers_an_existing_wait_that_sees_no_window() {
     let fake = FakeSway::start(
         SwayVersion::V1_11,

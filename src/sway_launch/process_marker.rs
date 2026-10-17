@@ -35,16 +35,20 @@ pub(super) const PID_MARKER_VAR: &str = "SWAY_LAUNCH_PID_MARKER";
 pub(super) const PID_MARKER_FALLBACK_GRACE: time::Duration = time::Duration::from_millis(2000);
 
 /// A random-enough per-invocation token for `PID_MARKER_VAR`: this process's
-/// own pid (unique across concurrently-running `sway-launch` invocations,
-/// which is all that actually matters here) plus a nanosecond timestamp (so
-/// a single process running several `Exec` actions in sequence — e.g. a
-/// multi-step `--layout` — doesn't reuse the same token for each).
+/// own pid (unique across concurrently-running `sway-launch` invocations),
+/// a nanosecond timestamp (so a pid reused later doesn't repeat one), and a
+/// counter unique within this process. The counter is what keeps
+/// `--concurrent`'s launches (#73) apart: they generate their tokens on
+/// separate threads at once, and two in the same clock tick would otherwise
+/// share one, each then confirming the other's window as its own.
 pub(super) fn generate_pid_marker_token() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let nanos = time::SystemTime::now()
         .duration_since(time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
-    format!("{}-{}", std::process::id(), nanos)
+    let sequence = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{}-{}-{}", std::process::id(), nanos, sequence)
 }
 
 /// How often `run_wait_matching_exec_event()` re-scans `/proc` for the
@@ -158,12 +162,103 @@ pub(super) fn launch_evidence(pid: i32, token: &str) -> Option<LaunchEvidence> {
         return Some(LaunchEvidence::OwnEnvironment);
     }
     marked_ancestor(pid, MAX_ANCESTRY_DEPTH, |ancestor| {
-        let marked = process_has_env_var(ancestor, PID_MARKER_VAR, token)
-            || std::fs::read(format!("/proc/{}/cmdline", ancestor))
-                .is_ok_and(|cmdline| cmdline_is_launch_shell(&cmdline, token));
+        let marked = launch_tokens(ancestor)
+            .iter()
+            .any(|carried| carried == token);
         (marked, parent_pid(ancestor))
     })
     .map(LaunchEvidence::Ancestor)
+}
+
+/// Tokens of every launch started since `ConcurrentLaunches::begin()`,
+/// while its group lasts; `None` outside one.
+static CONCURRENT_LAUNCHES: std::sync::Mutex<Option<Vec<String>>> = std::sync::Mutex::new(None);
+
+fn concurrent_launches() -> std::sync::MutexGuard<'static, Option<Vec<String>>> {
+    CONCURRENT_LAUNCHES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// A group of launches run side by side (`--concurrent`, #73): from
+/// `begin()` until it's dropped, each launch's token is recorded by
+/// `register_launch()`, so `is_sibling_launchs_window()` can tell the
+/// others' windows apart from foreign ones, including after the launch
+/// that opened one has finished.
+pub struct ConcurrentLaunches(());
+
+impl ConcurrentLaunches {
+    pub fn begin() -> ConcurrentLaunches {
+        *concurrent_launches() = Some(Vec::new());
+        ConcurrentLaunches(())
+    }
+}
+
+impl Drop for ConcurrentLaunches {
+    fn drop(&mut self) {
+        *concurrent_launches() = None;
+    }
+}
+
+/// Records a launch's token in the current `ConcurrentLaunches` group, if
+/// there is one.
+pub(super) fn register_launch(token: &str) {
+    if let Some(tokens) = concurrent_launches().as_mut() {
+        tokens.push(token.to_string());
+    }
+}
+
+/// Whether the window owned by `pid` is provably another launch's in the
+/// same `ConcurrentLaunches` group: `--concurrent` (#73) runs a layout's
+/// launches side by side, and each one's window would otherwise look like a
+/// foreign window with the right app_id to the others, to be adopted once
+/// `PID_MARKER_FALLBACK_GRACE` ran out on a slow start (seen on Sway 1.9 in
+/// CI). Only the group's launches count, so a hand-off to an application an
+/// earlier run launched (whose process still carries that run's marker) is
+/// adopted as before. Outside a group, nothing is read.
+pub(super) fn is_sibling_launchs_window(pid: i32, own_token: &str) -> bool {
+    let siblings: Vec<String> = concurrent_launches()
+        .iter()
+        .flatten()
+        .filter(|token| *token != own_token)
+        .cloned()
+        .collect();
+    if siblings.is_empty() {
+        return false;
+    }
+    let is_sibling = |process: i32| {
+        launch_tokens(process)
+            .iter()
+            .any(|token| siblings.contains(token))
+    };
+    is_sibling(pid)
+        || marked_ancestor(pid, MAX_ANCESTRY_DEPTH, |ancestor| {
+            (is_sibling(ancestor), parent_pid(ancestor))
+        })
+        .is_some()
+}
+
+/// The launch tokens a process carries: the marker in its environment, and,
+/// for the shell Sway started for a launch, the token in its command line.
+fn launch_tokens(pid: i32) -> Vec<String> {
+    let environ = std::fs::read(format!("/proc/{}/environ", pid)).ok();
+    let cmdline = std::fs::read(format!("/proc/{}/cmdline", pid)).ok();
+    environ
+        .as_deref()
+        .and_then(environ_marker)
+        .into_iter()
+        .chain(cmdline.as_deref().and_then(launch_shell_token))
+        .collect()
+}
+
+/// The marker's value in a NUL-separated `/proc/<pid>/environ`, if set.
+pub(super) fn environ_marker(environ: &[u8]) -> Option<String> {
+    let prefix = format!("{}=", PID_MARKER_VAR);
+    environ.split(|&byte| byte == 0).find_map(|entry| {
+        entry
+            .strip_prefix(prefix.as_bytes())
+            .map(|value| String::from_utf8_lossy(value).into_owned())
+    })
 }
 
 /// The first ancestor of `pid` (not `pid` itself) within `max_depth`
@@ -204,14 +299,18 @@ pub(super) fn parent_pid_from_stat(stat: &str) -> Option<i32> {
     fields.split_whitespace().nth(1)?.parse().ok()
 }
 
-/// Whether a NUL-separated `/proc/<pid>/cmdline` is the shell Sway started
-/// for the launch carrying `token`: `sh -c "export <marker>=<token> && ..."`,
-/// as `ExecAction::sway_command()` writes it after `exec `.
-pub(super) fn cmdline_is_launch_shell(cmdline: &[u8], token: &str) -> bool {
-    let script = format!("export {}={} && ", PID_MARKER_VAR, token);
-    cmdline
-        .split(|&byte| byte == 0)
-        .any(|argument| argument.starts_with(script.as_bytes()))
+/// The token of the launch whose shell a NUL-separated `/proc/<pid>/cmdline`
+/// is, if it is one: `sh -c "export <marker>=<token> && ..."`, as
+/// `ExecAction::sway_command()` writes it after `exec `.
+pub(super) fn launch_shell_token(cmdline: &[u8]) -> Option<String> {
+    let prefix = format!("export {}=", PID_MARKER_VAR);
+    cmdline.split(|&byte| byte == 0).find_map(|argument| {
+        let rest = argument.strip_prefix(prefix.as_bytes())?;
+        let end = rest.iter().position(|&byte| byte == b' ')?;
+        rest[end..]
+            .starts_with(b" && ")
+            .then(|| String::from_utf8_lossy(&rest[..end]).into_owned())
+    })
 }
 
 /// Folds one scan's per-process reads into a `MarkerPresence`. Split out of

@@ -217,7 +217,9 @@ decides which:
   SWAY_LAUNCH_PID_MARKER=<token> && ( <command> )` and a `New` window is ours once
   `launch_evidence()` finds the marker in its process's environment, or an ancestor that is this
   launch's (#96): marked in its environment, or Sway's own `sh -c` for the launch, known by its
-  command line (`cmdline_is_launch_shell()`). The `( ... )` keeps that shell alive under bash, which
+  command line (`launch_shell_token()`). A window `is_sibling_launchs_window()` says belongs to
+  another launch of the same `ConcurrentLaunches` group (`--concurrent`'s staging, each launch
+  recorded by `register_launch()`) is never a fallback candidate. The `( ... )` keeps that shell alive under bash, which
   otherwise execs the last command of an `&&` list (confirmed live); `validate_exec_command()`
   refuses a `#` comment, which would swallow the `)`. A content-matching window without it is held as a
   fallback and taken once the marker was seen and then gone (`MarkerTracker`: "gone" means seen,
@@ -321,6 +323,16 @@ checks those by hand, because the derive macro doesn't enforce `requires` reliab
   run, so a retarget-only run still makes no IPC call of its own), held until the process exits.
   `--no-lock` skips it; no runtime directory skips it with a `--verbose` note. It is why
   `rust-version` is 1.89.
+- `--concurrent` (#73) splits `run_steps()` in two: `stage_launches()` checks the whole plan
+  (`plan_steps_offline()`), switches to a per-process staging workspace (`Staging`, in
+  `launch.rs`) and runs every `command` step's launch at once on a thread each, actions stripped by
+  `launch_only()`; `reject_shared_windows()` fails a later step whose window an earlier one already
+  has. Then each step runs in order as before, a staged one through `arrange_staged()`: the window
+  is moved to the build workspace and focused (where a new window would open; every template's
+  shape matches, `every_shipped_template_builds_the_same_shape_with_concurrent`), then the step
+  runs against `Target::ConId` with the launch's ownership carried over. Every failure path first
+  calls `release_staged()`, so no window is left on the staging workspace and each counts as
+  progress and for rollback.
 - `--continue-on-timeout` (#19) carries `run_steps()` past a step whose `RunError` has
   `window_timed_out` (set only where no window was resolved: a launch's timeout and
   `--existing --wait`'s), recording it in `timed_out_steps`; a later `target_id` naming its id is

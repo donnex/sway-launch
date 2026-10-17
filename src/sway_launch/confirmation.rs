@@ -21,8 +21,9 @@ use super::ipc::{
 };
 use super::outcome::{ActionOutcome, LaunchOwnership, RunError, UnmatchedWindow};
 use super::process_marker::{
-    generate_pid_marker_token, launch_evidence, scan_marker_presence, LaunchEvidence,
-    MarkerPresence, MarkerTracker, MARKER_SCAN_INTERVAL, PID_MARKER_FALLBACK_GRACE, PID_MARKER_VAR,
+    generate_pid_marker_token, is_sibling_launchs_window, launch_evidence, register_launch,
+    scan_marker_presence, LaunchEvidence, MarkerPresence, MarkerTracker, MARKER_SCAN_INTERVAL,
+    PID_MARKER_FALLBACK_GRACE, PID_MARKER_VAR,
 };
 use super::query::{
     awaited_existing_container_id, container_state, container_state_on, ensure_container_exists,
@@ -1510,6 +1511,7 @@ impl ExecAction<'_> {
 
         let deadline = deadline_after(timeout)?;
         let token = generate_pid_marker_token();
+        register_launch(&token);
         let sway_command = self.sway_command(&token);
         if verbose {
             diagnostic!(
@@ -1768,6 +1770,21 @@ impl ExecAction<'_> {
                     );
                 }
                 return Ok((window.container.id, LaunchOwnership::Launched));
+            }
+
+            if window
+                .container
+                .pid
+                .is_some_and(|pid| is_sibling_launchs_window(pid, &token))
+            {
+                if verbose {
+                    diagnostic!(
+                        "Event content-matches but container id {} is another launch's, still \
+                         running alongside this one — not a fallback candidate",
+                        window.container.id
+                    );
+                }
+                continue;
             }
 
             if fallback.is_none() {

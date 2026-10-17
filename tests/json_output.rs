@@ -444,6 +444,20 @@ fn workspace_conflicts_with_new_column_and_new_row() {
 }
 
 #[test]
+fn concurrent_without_layout_or_template_errors() {
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--concurrent", "foot"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    assert!(
+        stderr.contains("--concurrent requires --layout or --template"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn continue_on_timeout_without_layout_or_template_errors() {
     let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
         .args(["--continue-on-timeout", "foot"])

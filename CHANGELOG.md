@@ -89,6 +89,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   if the application changes them. Browsers set their own size just after opening, so a Firefox or
   Chromium window used to end up a different size from one run to the next while `sway-launch`
   reported success. A binding's `settle` replaces the step's. (#17)
+- `--concurrent` starts every application in a `--layout`/`--template` run at once, then arranges
+  the windows in step order, so a layout takes about as long as its slowest application instead of
+  all of them together: a four-window grid of applications taking about a second each to start
+  drops from about 5 seconds to under 2. Every built-in template builds the same shape as without
+  it. The applications start on a temporary workspace of their own, so focus jumps there briefly;
+  a failure moves whatever already opened to the build workspace, and two steps ending up with the
+  same window (as a single-instance application can cause) fail the run. (#73)
 - A launched program that never sees the launch marker is now recognised through its process
   ancestry, as long as it descends from the launch, instead of waiting out the 2-second grace and
   being treated as adopted (which kept `--rollback-on-error` from closing it). This covers wrappers
