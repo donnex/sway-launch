@@ -187,10 +187,15 @@ impl<'a> SwayLaunch<'a> {
     /// creates a window rather than picking an existing one out.
     fn resolve_container_id(&self) -> Result<(i64, Option<LaunchOwnership>), RunError> {
         match self.target {
-            Target::Exec { command, filter } => ExecAction {
+            Target::Exec {
+                command,
+                filter,
+                title,
+            } => ExecAction {
                 command,
                 setup: self.launch_setup.as_deref(),
                 filter,
+                title,
                 verbose: self.verbose,
                 timeout: self.timeout,
             }
@@ -198,15 +203,15 @@ impl<'a> SwayLaunch<'a> {
             .map(|(container_id, ownership)| (container_id, Some(ownership))),
             Target::ConId(container_id) => Ok((container_id, None)),
             Target::Existing {
-                window_match,
+                criteria,
                 wait: false,
-            } => find_existing_container_id(window_match)
+            } => find_existing_container_id(criteria)
                 .map(|container_id| (container_id, None))
                 .map_err(RunError::from),
             Target::Existing {
-                window_match,
+                criteria,
                 wait: true,
-            } => run_wait_for_existing_window(window_match, self.timeout, self.verbose)
+            } => run_wait_for_existing_window(criteria, self.timeout, self.verbose)
                 .map(|container_id| (container_id, None))
                 .map_err(RunError::from),
         }

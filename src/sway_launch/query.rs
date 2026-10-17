@@ -9,54 +9,54 @@
 //! alone.
 
 use super::ipc::{ipc_error, new_connection};
-use super::target::{LaunchFilter, WindowMatch};
+use super::target::{LaunchFilter, WindowCriteria};
 use super::tree::{
     con_id_target_problem, expected_position, find_node, find_parent_layout, find_workspace_node,
     focused_workspace, matching_container_ids, move_skip_reason, node_position, present_ids,
     recheck_launched_windows, resolve_awaited_matches, resolve_matches, tiled_window_count,
     window_listing, ContainerState, ListedWindow, MoveDirection, RecheckedWindow,
 };
-use super::values::Position;
+use super::values::{Position, TitlePattern};
 use swayipc::{Connection, Node, NodeLayout};
 
-/// Finds exactly one already-open window `window_match` accepts via
+/// Finds exactly one already-open window `criteria` accepts via
 /// `get_tree()`, for `Target::Existing`.
 /// Errors — rather than silently picking one — if zero or more than one
 /// window matches, since guessing which of several matches the caller meant
 /// would be a worse default than asking them to retarget with `--con-id`.
-pub(super) fn find_existing_container_id(window_match: WindowMatch) -> Result<i64, String> {
+pub(super) fn find_existing_container_id(criteria: WindowCriteria) -> Result<i64, String> {
     let tree = match new_connection()?.get_tree() {
         Ok(tree) => tree,
         Err(error) => return Err(ipc_error(error)),
     };
 
     resolve_matches(
-        matching_container_ids(&tree, window_match),
-        &window_match.to_string(),
+        matching_container_ids(&tree, criteria),
+        &criteria.to_string(),
     )
 }
 
-/// Every open window `filter` accepts, for `--list-windows` (see
+/// Every open window `criteria` accepts, for `--list-windows` (see
 /// `window_listing()`).
-pub fn list_windows(filter: Option<WindowMatch>) -> Result<Vec<ListedWindow>, String> {
+pub fn list_windows(criteria: WindowCriteria) -> Result<Vec<ListedWindow>, String> {
     let tree = match new_connection()?.get_tree() {
         Ok(tree) => tree,
         Err(error) => return Err(ipc_error(error)),
     };
-    Ok(window_listing(&tree, filter))
+    Ok(window_listing(&tree, criteria))
 }
 
-/// The one window `window_match` accepts right now, `None` while there is
+/// The one window `criteria` accepts right now, `None` while there is
 /// none yet, or the ambiguity error when there are several — for
 /// `run_wait_for_existing_window()`, on its one connection.
 pub(super) fn awaited_existing_container_id(
     connection: &mut Connection,
-    window_match: WindowMatch,
+    criteria: WindowCriteria,
 ) -> Result<Option<i64>, String> {
     let tree = connection.get_tree().map_err(ipc_error)?;
     resolve_awaited_matches(
-        matching_container_ids(&tree, window_match),
-        &window_match.to_string(),
+        matching_container_ids(&tree, criteria),
+        &criteria.to_string(),
     )
 }
 
@@ -193,9 +193,15 @@ pub(super) fn recheck_launched_windows_now(
     connection: &mut Connection,
     container_ids: &[i64],
     filter: Option<LaunchFilter>,
+    title: Option<&TitlePattern>,
 ) -> Option<Vec<RecheckedWindow>> {
     let tree = connection.get_tree().ok()?;
-    Some(recheck_launched_windows(&tree, container_ids, filter))
+    Some(recheck_launched_windows(
+        &tree,
+        container_ids,
+        filter,
+        title,
+    ))
 }
 
 /// The tree node with id `container_id`, or `None` if it can't be read

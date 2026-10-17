@@ -80,6 +80,7 @@ const PER_WINDOW_ARGS: &[&str] = &[
     "app_id",
     "class",
     "mark_match",
+    "title",
     "split",
     "floating",
     "sticky",
@@ -104,7 +105,7 @@ fn per_window_and(extras: &[&'static str]) -> Vec<&'static str> {
 
 /// The per-window flags `--list-windows` accepts: they narrow the listing to
 /// what `--existing` would choose between, rather than being discarded.
-const LIST_WINDOWS_FILTERS: &[&str] = &["app_id", "class", "mark_match"];
+const LIST_WINDOWS_FILTERS: &[&str] = &["app_id", "class", "mark_match", "title"];
 
 /// `per_window_and()` for `--list-windows`, which keeps its filters.
 fn per_window_but_filters_and(extras: &[&'static str]) -> Vec<&'static str> {
@@ -134,6 +135,13 @@ struct Args {
     #[clap(long, conflicts_with_all = ["class", "con_id"],
         value_parser = sway_launch::validate_sway_string_argument)]
     mark_match: Option<String>,
+
+    /// Match only a window whose title matches this regular expression
+    /// (unanchored, like Sway's title= criteria). Narrows --app-id/--class,
+    /// or works alone; a launch waits past a non-matching splash window
+    #[clap(long, value_name = "REGEX", conflicts_with = "con_id",
+        value_parser = sway_launch::parse_title_pattern)]
+    title: Option<sway_launch::TitlePattern>,
 
     /// Act on an already-open window with this container id, instead of
     /// launching a new one
@@ -515,6 +523,7 @@ fn main() {
         app_id: args.app_id.as_deref(),
         class: args.class.as_deref(),
         mark_match: args.mark_match.as_deref(),
+        title: args.title.as_ref(),
     }) {
         Ok(target) => target,
         Err(error) => {
@@ -914,6 +923,7 @@ fn unmatched_windows_json(windows: &[sway_launch::UnmatchedWindow]) -> serde_jso
                 "container_id": window.container_id,
                 "app_id": window.app_id,
                 "class": window.class,
+                "title": window.title,
                 "launched_by_this_run": window.launched_by_this_run,
             })
         })
@@ -958,11 +968,10 @@ fn describe_target(sway_launch: &sway_launch::SwayLaunch) -> String {
             None => format!("launch {}", command),
         },
         sway_launch::Target::ConId(_) => "target existing container".to_string(),
-        sway_launch::Target::Existing { window_match, wait } => format!(
-            "{} existing window ({}={:?})",
+        sway_launch::Target::Existing { criteria, wait } => format!(
+            "{} existing window ({})",
             if *wait { "wait for" } else { "target" },
-            window_match.field_name(),
-            window_match.value()
+            criteria.describe()
         ),
     }
 }
@@ -1211,18 +1220,21 @@ fn print_builtin_templates(json: bool) {
 
 /// The `--list-windows` standalone mode: one row per open window, narrowed by
 /// whichever of `--app-id`/`--class`/`--mark-match` was given (clap allows at
-/// most one).
+/// most one) and by `--title`.
 fn print_window_listing(args: &Args) {
-    let filter = args
-        .app_id
-        .as_deref()
-        .map(sway_launch::WindowMatch::AppId)
-        .or(args.class.as_deref().map(sway_launch::WindowMatch::Class))
-        .or(args
-            .mark_match
+    let criteria = sway_launch::WindowCriteria {
+        matcher: args
+            .app_id
             .as_deref()
-            .map(sway_launch::WindowMatch::Mark));
-    let windows = match sway_launch::list_windows(filter) {
+            .map(sway_launch::WindowMatch::AppId)
+            .or(args.class.as_deref().map(sway_launch::WindowMatch::Class))
+            .or(args
+                .mark_match
+                .as_deref()
+                .map(sway_launch::WindowMatch::Mark)),
+        title: args.title.as_ref(),
+    };
+    let windows = match sway_launch::list_windows(criteria) {
         Ok(windows) => windows,
         Err(error) => fail(args.json, &error),
     };
@@ -1232,9 +1244,10 @@ fn print_window_listing(args: &Args) {
         return;
     }
     if windows.is_empty() {
-        match filter {
-            Some(filter) => diagnostic!("no open window matches {}", filter),
-            None => diagnostic!("no open windows"),
+        if criteria == sway_launch::WindowCriteria::default() {
+            diagnostic!("no open windows");
+        } else {
+            diagnostic!("no open window matches {}", criteria);
         }
         return;
     }
@@ -1490,6 +1503,7 @@ fn bindings_from_apps(
             app_id: None,
             class: None,
             mark_match: None,
+            title: None,
             cwd: None,
             env: Default::default(),
         })
@@ -2371,6 +2385,7 @@ mod tests {
         "app_id",
         "class",
         "mark_match",
+        "title",
         "id",
     ];
 

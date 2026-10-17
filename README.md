@@ -38,6 +38,7 @@ release.
 - [Quickstart](#quickstart)
 - [Basic usage](#basic-usage)
   - [Finding a window's app_id or class](#finding-a-windows-app_id-or-class)
+  - [Matching by title](#matching-by-title)
 - [Recreatable layouts](#recreatable-layouts)
   - [Examples](#examples)
   - [Layout files](#layout-files)
@@ -104,6 +105,7 @@ Options:
   -a, --app-id <APP_ID>               app_id match (exact and case-sensitive, not a regex). With --existing, matches an already-open window instead of the newly launched one
   -c, --class <CLASS>                 class match (exact and case-sensitive, not a regex). With --existing, matches an already-open window instead of the newly launched one
       --mark-match <MARK_MATCH>       Find the window to act on by this mark (exact and case-sensitive). Requires --existing or --list-windows
+      --title <REGEX>                 Match only a window whose title matches this regular expression (unanchored, like Sway's title= criteria). Narrows --app-id/--class, or works alone; a launch waits past a non-matching splash window
       --con-id <CON_ID>               Act on an already-open window with this container id, instead of launching a new one
       --existing                      Act on an already-open window found via --app-id/--class/--mark-match, instead of launching a new one
       --wait                          With --existing, wait up to --timeout for a matching window to open instead of failing when none is open yet, e.g. one an autostart entry is still starting
@@ -329,7 +331,7 @@ ID  APP_ID   CLASS  WORKSPACE     FLAGS     MARKS     TITLE
 A missing value prints as `-`, and a title longer than 50 characters is shortened. `--json` prints
 `{"windows": [...]}`, one object per row with the full title and each window's `output`,
 `scratchpad`, `floating`, `focused` and `split_container` fields; a missing value is `null` there.
-Pass `-a`/`-c`/`--mark-match` to narrow the list to the windows `--existing` would choose between,
+Pass `-a`/`-c`/`--mark-match` and `--title` to narrow the list to the windows `--existing` would choose between,
 so `sway-launch --list-windows -a foot` shows what `sway-launch --existing -a foot` would act on
 (see [Target an existing window](#target-an-existing-window)). A split container carrying a mark
 is listed too, with the flag `split`, since `--mark-match` can select one.
@@ -361,6 +363,31 @@ when it changes. A window the launched command itself opened is therefore not gi
 first fails to match: `sway-launch` keeps rechecking it until it matches or `--timeout` runs out.
 `--debug-events` shows only the value the window appeared with, so for such an app read the value
 from `--list-windows` (or `swaymsg -t get_tree`) instead.
+
+### Matching by title
+
+`--title <REGEX>` (`title` in a layout step or binding) also requires the window's title to match a
+regular expression. Like Sway's own `title=` criteria it's unanchored, so `--title project-a`
+matches `main.rs - project-a - Visual Studio Code`. Use `^` and `$` to anchor it. It narrows
+`--app-id`/`--class` (or `--mark-match` with `--existing`), or works on its own:
+
+```shell
+# Several terminals share app_id foot; pick the one titled "logs"
+sway-launch --existing -a foot --title '^logs$' --fullscreen
+
+# An editor that shows a splash window first: wait for the project window instead
+sway-launch -c Code --title 'project-a' --width 60ppt 'code ~/projects/project-a'
+```
+
+For a launch, a window that opens with a different title doesn't end the wait. That's how a splash
+or welcome window is skipped. A window this run opened is checked again when its title changes, so
+one that starts as `Loading…` and later shows its project's title still matches. An older window
+that happens to change its title meanwhile never counts. On a timeout, the windows that were
+turned away are listed with their titles. `--list-windows` shows every window's current title.
+
+The pattern syntax is the usual one (`.`, `*`, `[...]`, `(a|b)`, `(?i)` for case-insensitive);
+`\w`, `\d` and `(?i)` work on ASCII letters only. An invalid pattern is rejected before anything
+runs.
 
 ## Recreatable layouts
 
@@ -496,7 +523,7 @@ with one of its config variables before the shell runs, even inside quotes; so i
 plain string form, or a script, for anything that needs the shell. A binding's `command` takes the
 same two forms. Like the CLI's, it runs in Sway's working directory and
 environment, not the layout file's directory or the caller's (see [Basic usage](#basic-usage)). A
-step's other keys mirror the CLI flags of the same name (`cwd`, `env`, `app_id`, `class`, `mark_match`, `con_id`,
+step's other keys mirror the CLI flags of the same name (`cwd`, `env`, `app_id`, `class`, `mark_match`, `title`, `con_id`,
 `existing`, `wait`, `split`, `floating`, `sticky`, `fullscreen`, `focus`, `mark`, `new_column`, `new_row`,
 `workspace`, `workspace_number`, `output`, `height`, `width`, `position`, `scratchpad`, `timeout`,
 `wait_time`) —
@@ -646,7 +673,7 @@ sway-launch --template template.toml --bindings bindings.toml
 ```
 
 A `Binding`'s keys are the same target-selection subset a layout step has (`command`, `con_id`,
-`existing`, `wait`, `app_id`, `class`, `mark_match`), plus the launched command's `cwd` and `env` — exactly one of `command`/`con_id`/`existing = true` is
+`existing`, `wait`, `app_id`, `class`, `mark_match`, `title`), plus the launched command's `cwd` and `env` — exactly one of `command`/`con_id`/`existing = true` is
 required, same rule as `--layout`, and `app_id`/`class`/`mark_match` can set only one of the three,
 same rule too (each an exact, case-sensitive match, as on the CLI). A binding's `command` runs in Sway's working directory and environment, the same as
 a layout step's (see [Basic usage](#basic-usage)). A template step's
@@ -844,8 +871,10 @@ previously-marked window again without tracking a container id itself:
 sway-launch --existing --mark-match dropdown-term --scratchpad
 ```
 
-`--existing` requires exactly one of `--app-id`, `--class`, or `--mark-match` (they're mutually
-exclusive — pick whichever identifies the window), compares the value exactly and
+`--existing` requires one of `--app-id`, `--class`, or `--mark-match` (they're mutually
+exclusive — pick whichever identifies the window), or `--title` (see
+[Matching by title](#matching-by-title)), which can also narrow any of the three. It compares the
+value exactly and
 case-sensitively (see [Finding a window's app_id or class](#finding-a-windows-app_id-or-class)),
 and errors if that doesn't match exactly one window — it won't guess which one you meant. The
 same flags with `--list-windows` instead of `--existing` show the windows it would choose between,

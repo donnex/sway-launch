@@ -90,6 +90,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as `no window with container id N`, and a workspace's or output's id as `container N is a
   workspace, not a window`, rather than as a window that "may have closed". A bare `--con-id N`
   with no actions is still printed back unchecked. (#107)
+- `--title <REGEX>` (and `title` in a layout step or binding) matches a window by its title as
+  well, an unanchored regular expression like Sway's own `title=` criteria. It picks one of
+  several windows of the same app (`--existing -a foot --title '^logs$'`), and a launch now waits
+  past a splash or welcome window for the one whose title matches, including a window that
+  changes its title after appearing. It works with `--list-windows` too. (#14)
 - `--existing --wait` (and `wait = true` in a layout step or binding) waits up to `--timeout` for
   a matching window to open, instead of failing at once when none is open yet. It arranges windows
   something else starts, such as an `exec` line in the Sway config, an autostart entry or a

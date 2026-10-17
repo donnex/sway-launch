@@ -23,6 +23,7 @@ struct Case {
     app_id: Option<&'static str>,
     class: Option<&'static str>,
     mark_match: Option<&'static str>,
+    title: Option<&'static str>,
     accepted: bool,
 }
 
@@ -36,6 +37,7 @@ const fn case(name: &'static str, accepted: bool) -> Case {
         app_id: None,
         class: None,
         mark_match: None,
+        title: None,
         accepted,
     }
 }
@@ -130,6 +132,32 @@ fn cases() -> Vec<Case> {
             wait: true,
             ..case("con_id with wait", false)
         },
+        Case {
+            command: Some("foot"),
+            title: Some("project"),
+            ..case("command narrowed by title", true)
+        },
+        Case {
+            existing: true,
+            title: Some("project"),
+            ..case("existing by title alone", true)
+        },
+        Case {
+            existing: true,
+            class: Some("Code"),
+            title: Some("project"),
+            ..case("existing by class and title", true)
+        },
+        Case {
+            con_id: Some(42),
+            title: Some("project"),
+            ..case("con_id with title", false)
+        },
+        Case {
+            existing: true,
+            title: Some("(unclosed"),
+            ..case("existing with an invalid title regex", false)
+        },
         case("no target at all", false),
     ]
 }
@@ -150,6 +178,7 @@ fn cli_accepts(case: &Case) -> bool {
         ("--app-id", case.app_id),
         ("--class", case.class),
         ("--mark-match", case.mark_match),
+        ("--title", case.title),
     ] {
         if let Some(value) = value {
             command.args([flag, value]);
@@ -184,6 +213,7 @@ fn toml_fields(case: &Case) -> String {
         ("app_id", case.app_id),
         ("class", case.class),
         ("mark_match", case.mark_match),
+        ("title", case.title),
     ] {
         if let Some(value) = value {
             lines.push_str(&format!("{} = {:?}\n", field, value));

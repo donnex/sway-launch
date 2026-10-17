@@ -51,6 +51,7 @@ fn minimal_binding() -> Binding {
         app_id: None,
         class: None,
         mark_match: None,
+        title: None,
     }
 }
 
@@ -311,6 +312,7 @@ fn resolve_errors_on_binding_with_no_target_field_naming_the_slot() {
             app_id: None,
             class: None,
             mark_match: None,
+            title: None,
         }],
     };
     let error = resolve(&template, &bindings)
@@ -344,6 +346,7 @@ fn resolve_errors_on_binding_with_command_and_con_id_together() {
             app_id: None,
             class: None,
             mark_match: None,
+            title: None,
         }],
     };
     let error = resolve(&template, &bindings)
@@ -368,6 +371,7 @@ fn resolve_errors_on_binding_with_app_id_and_class_together() {
             app_id: Some("foot".to_string()),
             class: Some("Foot".to_string()),
             mark_match: None,
+            title: None,
         }],
     };
     let error = resolve(&template, &bindings)

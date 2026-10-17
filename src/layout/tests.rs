@@ -88,6 +88,7 @@ fn minimal_step() -> LayoutStep {
         app_id: None,
         class: None,
         mark_match: None,
+        title: None,
         split: None,
         floating: false,
         sticky: false,
@@ -116,7 +117,8 @@ fn to_sway_launch_exec_step_uses_command() {
         sway_launch.target,
         sway_launch::Target::Exec {
             command: "foot",
-            filter: None
+            filter: None,
+            title: None
         }
     ));
 }
@@ -210,7 +212,8 @@ fn to_sway_launch_existing_step_with_mark_match_succeeds() {
     let sway_launch = convert(&step).expect("existing step with mark_match should convert");
     assert_eq!(
         format!("{:?}", sway_launch.target),
-        "Existing { window_match: Mark(\"dropdown-term\"), wait: false }"
+        "Existing { criteria: WindowCriteria { matcher: Some(Mark(\"dropdown-term\")), title: None }, \
+         wait: false }"
     );
 }
 

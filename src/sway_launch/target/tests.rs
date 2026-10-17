@@ -18,7 +18,8 @@ fn from_fields_builds_a_launch_with_its_filter() {
         target,
         Ok(Target::Exec {
             command: "foot",
-            filter: Some(LaunchFilter::AppId("foot"))
+            filter: Some(LaunchFilter::AppId("foot")),
+            title: None
         })
     );
 
@@ -30,7 +31,8 @@ fn from_fields_builds_a_launch_with_its_filter() {
         unfiltered,
         Ok(Target::Exec {
             command: "foot",
-            filter: None
+            filter: None,
+            title: None
         })
     );
 }
@@ -76,7 +78,10 @@ fn from_fields_builds_an_existing_target_from_each_matcher() {
         assert_eq!(
             Target::from_fields(fields),
             Ok(Target::Existing {
-                window_match: expected,
+                criteria: WindowCriteria {
+                    matcher: Some(expected),
+                    title: None,
+                },
                 wait: false,
             })
         );
@@ -94,7 +99,10 @@ fn wait_carries_through_to_an_existing_target() {
     assert_eq!(
         Target::from_fields(fields),
         Ok(Target::Existing {
-            window_match: WindowMatch::AppId("firefox"),
+            criteria: WindowCriteria {
+                matcher: Some(WindowMatch::AppId("firefox")),
+                title: None,
+            },
             wait: true,
         })
     );
@@ -230,11 +238,11 @@ fn message_names_fields_the_way_each_front_end_spells_them() {
     let error = TargetError::ExistingWithoutMatcher;
     assert_eq!(
         error.message(FieldStyle::Cli),
-        "--existing requires --app-id, --class, or --mark-match"
+        "--existing requires --app-id, --class, --mark-match or --title"
     );
     assert_eq!(
         error.message(FieldStyle::LayoutStep),
-        "existing = true requires app_id, class, or mark_match"
+        "existing = true requires app_id, class, mark_match or title"
     );
 
     assert_eq!(
@@ -255,7 +263,7 @@ fn message_names_fields_the_way_each_front_end_spells_them() {
     );
     assert_eq!(
         TargetError::MatcherWithContainerId.message(FieldStyle::Binding),
-        "must not combine con_id with app_id/class/mark_match"
+        "must not combine con_id with app_id/class/mark_match/title"
     );
 }
 
@@ -296,4 +304,76 @@ fn launch_filter_matches_app_id_or_class() {
     let event = window_event("new", 1, None, Some("Firefox"));
     assert!(LaunchFilter::Class("Firefox").matches(&event.container));
     assert!(!LaunchFilter::AppId("Firefox").matches(&event.container));
+}
+
+#[test]
+fn a_title_narrows_a_launch_or_an_existing_window_but_never_a_container_id() {
+    let title = super::super::values::parse_title_pattern("project-a").unwrap();
+    assert_eq!(
+        Target::from_fields(TargetFields {
+            command: Some("code"),
+            class: Some("Code"),
+            title: Some(&title),
+            ..fields()
+        }),
+        Ok(Target::Exec {
+            command: "code",
+            filter: Some(LaunchFilter::Class("Code")),
+            title: Some(&title),
+        })
+    );
+    assert_eq!(
+        Target::from_fields(TargetFields {
+            existing: true,
+            title: Some(&title),
+            ..fields()
+        }),
+        Ok(Target::Existing {
+            criteria: WindowCriteria {
+                matcher: None,
+                title: Some(&title),
+            },
+            wait: false,
+        })
+    );
+    assert_eq!(
+        Target::from_fields(TargetFields {
+            con_id: Some(5),
+            title: Some(&title),
+            ..fields()
+        }),
+        Err(TargetError::MatcherWithContainerId)
+    );
+}
+
+#[test]
+fn window_criteria_need_every_part_to_match_and_name_each_part() {
+    let title = super::super::values::parse_title_pattern("^right").unwrap();
+    let criteria = WindowCriteria {
+        matcher: Some(WindowMatch::AppId("twin")),
+        title: Some(&title),
+    };
+    let window = |app_id: &str, name: &str| -> Node {
+        serde_json::from_value(serde_json::json!({
+            "id": 1, "type": "con", "border": "normal", "current_border_width": 0,
+            "layout": "none", "orientation": "none",
+            "rect": {"x": 0, "y": 0, "width": 0, "height": 0},
+            "window_rect": {"x": 0, "y": 0, "width": 0, "height": 0},
+            "deco_rect": {"x": 0, "y": 0, "width": 0, "height": 0},
+            "geometry": {"x": 0, "y": 0, "width": 0, "height": 0},
+            "urgent": false, "focused": false, "focus": [], "floating_nodes": [],
+            "sticky": false, "app_id": app_id, "name": name,
+        }))
+        .expect("valid Node test fixture")
+    };
+    assert!(criteria.matches(&window("twin", "right pane")));
+    assert!(!criteria.matches(&window("twin", "left pane")));
+    assert!(!criteria.matches(&window("other", "right pane")));
+    assert!(WindowCriteria::default().matches(&window("other", "anything")));
+
+    assert_eq!(
+        criteria.to_string(),
+        "app_id \"twin\" and title matching \"^right\""
+    );
+    assert_eq!(criteria.describe(), "app_id=\"twin\", title=~\"^right\"");
 }

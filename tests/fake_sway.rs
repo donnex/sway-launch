@@ -795,3 +795,199 @@ fn rollback_reports_a_window_that_stayed_open_after_its_kill() {
         run.json
     );
 }
+
+/// A handler that runs every `exec` and, once the launched process exists,
+/// opens one window per title for it, in order, all with `app_id`.
+fn opens_titled_windows_for_each_launch(
+    app_id: &'static str,
+    titles: &'static [&'static str],
+) -> impl FnMut(&mut Sway, &str) -> Result<(), String> + Send + 'static {
+    move |sway, command| {
+        if command.starts_with("exec ") {
+            let token = sway.launch(command);
+            sway.when_marked(token, move |sway, pid| {
+                for title in titles {
+                    let id = sway.open_window(Some(app_id), Some(pid));
+                    sway.node_mut(id)["name"] = serde_json::json!(title);
+                    sway.emit("new", id);
+                }
+            });
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn a_launch_with_a_title_skips_the_splash_window_for_the_titled_one() {
+    for version in SwayVersion::ALL {
+        let fake = FakeSway::start(
+            version,
+            opens_titled_windows_for_each_launch("fake-ide", &["Loading…", "project-a — Fake IDE"]),
+        );
+        let run = run(
+            &fake,
+            &["-a", "fake-ide", "--title", "project-a", "sleep 30"],
+        );
+        assert!(run.succeeded(), "{version:?}: {}", run.stderr());
+        assert_eq!(run.json["container_id"], 101, "{version:?}");
+    }
+}
+
+#[test]
+fn a_launched_window_that_retitles_itself_is_taken_on_its_title_event() {
+    let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {
+        if command.starts_with("exec ") {
+            let token = sway.launch(command);
+            sway.when_marked(token, |sway, pid| {
+                let id = sway.open_window(Some("fake-ide"), Some(pid));
+                sway.node_mut(id)["name"] = serde_json::json!("Loading…");
+                sway.emit("new", id);
+                sway.after(Duration::from_millis(300), move |sway| {
+                    sway.node_mut(id)["name"] = serde_json::json!("project-a — Fake IDE");
+                    sway.emit("title", id);
+                });
+            });
+        }
+        Ok(())
+    });
+    let run = run(
+        &fake,
+        &[
+            "-a",
+            "fake-ide",
+            "--title",
+            "^project-a",
+            "--verbose",
+            "sleep 30",
+        ],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert_eq!(run.json["container_id"], 100);
+    assert!(
+        run.stderr().contains("(PID-marker-confirmed)"),
+        "{}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn a_launched_window_retitled_without_an_event_is_found_by_the_recheck() {
+    let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {
+        if command.starts_with("exec ") {
+            let token = sway.launch(command);
+            sway.when_marked(token, |sway, pid| {
+                let id = sway.open_window(Some("fake-ide"), Some(pid));
+                sway.node_mut(id)["name"] = serde_json::json!("Loading…");
+                sway.emit("new", id);
+                sway.after(Duration::from_millis(300), move |sway| {
+                    sway.node_mut(id)["name"] = serde_json::json!("project-a — Fake IDE");
+                });
+            });
+        }
+        Ok(())
+    });
+    let run = run(
+        &fake,
+        &["-a", "fake-ide", "--title", "project-a", "sleep 30"],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert_eq!(run.json["container_id"], 100);
+}
+
+#[test]
+fn an_older_window_renamed_during_a_launch_is_never_taken() {
+    // Only a window that opened during the run gets a second look on a title
+    // change; a pre-existing one renaming itself (a browser tab switching)
+    // is someone else's window.
+    let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {
+        if command.starts_with("exec ") {
+            sway.launch(command);
+            sway.after(Duration::from_millis(200), |sway| {
+                sway.node_mut(FLOATING)["name"] = serde_json::json!("project-a");
+                sway.emit("title", FLOATING);
+            });
+        }
+        Ok(())
+    });
+    let run = run(
+        &fake,
+        &[
+            "-a",
+            "fixture-floating",
+            "--title",
+            "project-a",
+            "--timeout",
+            "1",
+            "sleep 30",
+        ],
+    );
+    assert!(!run.succeeded());
+    assert!(
+        run.error().contains(
+            "no window with app_id \"fixture-floating\" and title matching \"project-a\" \
+             appeared within 1 sec"
+        ),
+        "{}",
+        run.error()
+    );
+}
+
+#[test]
+fn a_title_mismatch_is_reported_with_the_window_s_title_on_timeout() {
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        opens_titled_windows_for_each_launch("fake-ide", &["Welcome"]),
+    );
+    let run = run(
+        &fake,
+        &[
+            "-a",
+            "fake-ide",
+            "--title",
+            "project-a",
+            "--timeout",
+            "1",
+            "sleep 30",
+        ],
+    );
+    assert!(!run.succeeded());
+    assert!(
+        run.error().contains(
+            "(con_id 100, app_id \"fake-ide\", title \"Welcome\", opened by this command)"
+        ),
+        "{}",
+        run.error()
+    );
+    assert!(run.error().contains("check --app-id/--class/--title"));
+    assert_eq!(run.json["unmatched_windows"][0]["title"], "Welcome");
+}
+
+#[test]
+fn existing_and_list_windows_narrow_by_title() {
+    let fake = FakeSway::accepting_everything(SwayVersion::V1_9);
+    let (left, right) = {
+        let mut sway = fake.sway();
+        let left = sway.open_window(Some("twin"), None);
+        sway.node_mut(left)["name"] = serde_json::json!("left pane");
+        let right = sway.open_window(Some("twin"), None);
+        sway.node_mut(right)["name"] = serde_json::json!("right pane");
+        (left, right)
+    };
+
+    let ambiguous = run(&fake, &["--existing", "-a", "twin"]);
+    assert!(!ambiguous.succeeded());
+    let narrowed = run(&fake, &["--existing", "-a", "twin", "--title", "^right"]);
+    assert!(narrowed.succeeded(), "{}", narrowed.stderr());
+    assert_eq!(narrowed.json["container_id"], right);
+    let title_alone = run(&fake, &["--existing", "--title", "left pane"]);
+    assert_eq!(title_alone.json["container_id"], left);
+
+    let listed = run(&fake, &["--list-windows", "--title", "pane$"]);
+    let ids: Vec<&Value> = listed.json["windows"]
+        .as_array()
+        .expect("a windows array")
+        .iter()
+        .map(|window| &window["container_id"])
+        .collect();
+    assert_eq!(ids, [left, right]);
+}
