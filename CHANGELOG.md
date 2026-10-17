@@ -156,6 +156,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   TOML without running it. A value ending in `.toml` is always read as a file, so writing a
   built-in's name with that extension fails — but the error names the built-in and the bare name
   to use instead. (#88)
+- `--continue-on-timeout`: a `--layout`/`--template` step whose window doesn't appear in time no
+  longer has to end the run. With the flag, it's reported (a warning on stderr, `timed_out_steps`
+  under `--json`) and the next step runs; a step that targets the missing window is skipped and
+  reported too. The run still exits non-zero. A binding can also set its own slot's `timeout`
+  and `wait_time`, so one slow-starting application can be given longer without every slot
+  waiting that long. (#19)
 - Template parameters: a template's `[params]` table names sizes a step uses as `"{name}"`, and
   `--param NAME=VALUE` (or a `[params]` table in a bindings file) changes them for one run, so
   `--template master-dual-stack --param stack-width=40ppt` gives a wider stack without copying

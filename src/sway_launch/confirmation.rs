@@ -1073,6 +1073,7 @@ impl ExecAction<'_> {
                     unmatched_windows,
                     container_id: None,
                     launch_ownership: None,
+                    window_timed_out: true,
                 });
             }
 
@@ -1477,7 +1478,7 @@ pub(super) fn run_wait_for_existing_window(
     criteria: WindowCriteria,
     timeout: time::Duration,
     verbose: bool,
-) -> Result<i64, String> {
+) -> Result<i64, RunError> {
     let events = spawn_event_forwarder(event_loop(&[EventType::Window])?);
     let deadline = deadline_after(timeout)?;
     let mut connection = new_connection()?;
@@ -1493,13 +1494,16 @@ pub(super) fn run_wait_for_existing_window(
         }
         let remaining = deadline.saturating_duration_since(time::Instant::now());
         if remaining.is_zero() {
-            return Err(existing_wait_timeout_message(criteria, timeout));
+            return Err(RunError {
+                window_timed_out: true,
+                ..existing_wait_timeout_message(criteria, timeout).into()
+            });
         }
         match events.recv_timeout(remaining.min(LATE_PROPERTY_RECHECK_INTERVAL)) {
             Ok(Ok(_)) | Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Ok(Err(error)) => return Err(error.to_string()),
+            Ok(Err(error)) => return Err(error.to_string().into()),
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err("Event stream closed unexpectedly".to_string());
+                return Err("Event stream closed unexpectedly".to_string().into());
             }
         }
         // One read covers every event that arrived meanwhile.

@@ -56,6 +56,8 @@ fn minimal_binding() -> Binding {
         workspace: None,
         workspace_number: None,
         output: None,
+        timeout: None,
+        wait_time: None,
     }
 }
 
@@ -350,6 +352,8 @@ fn resolve_errors_on_binding_with_no_target_field_naming_the_slot() {
             workspace: None,
             workspace_number: None,
             output: None,
+            timeout: None,
+            wait_time: None,
         }],
         ..Default::default()
     };
@@ -388,6 +392,8 @@ fn resolve_errors_on_binding_with_command_and_con_id_together() {
             workspace: None,
             workspace_number: None,
             output: None,
+            timeout: None,
+            wait_time: None,
         }],
         ..Default::default()
     };
@@ -417,6 +423,8 @@ fn resolve_errors_on_binding_with_app_id_and_class_together() {
             workspace: None,
             workspace_number: None,
             output: None,
+            timeout: None,
+            wait_time: None,
         }],
         ..Default::default()
     };
@@ -1422,4 +1430,44 @@ fn every_builtin_param_is_described_in_its_header_comment() {
             );
         }
     }
+}
+
+#[test]
+fn resolve_lets_a_binding_set_its_slot_s_timeout_and_wait_time() {
+    let mut step = minimal_step();
+    step.timeout = Some(5);
+    step.wait_time = Some(20);
+    let template = minimal_template(vec![step]);
+    let resolved = resolve(
+        &template,
+        &Bindings {
+            binding: vec![Binding {
+                timeout: Some(30),
+                ..minimal_binding()
+            }],
+            ..Default::default()
+        },
+        &[],
+    )
+    .expect("a binding timeout should resolve");
+    assert_eq!(resolved[0].timeout, Some(30));
+    assert_eq!(resolved[0].wait_time, Some(20));
+
+    let error = resolve(
+        &template,
+        &Bindings {
+            binding: vec![Binding {
+                timeout: Some(0),
+                ..minimal_binding()
+            }],
+            ..Default::default()
+        },
+        &[],
+    )
+    .err()
+    .expect("a zero timeout should be rejected");
+    assert!(
+        matches!(&error, ResolveError::Bindings(message) if message.contains("slot \"editor\": timeout:")),
+        "{error:?}"
+    );
 }

@@ -83,6 +83,11 @@ pub struct RunError {
     pub unmatched_windows: Vec<UnmatchedWindow>,
     pub container_id: Option<i64>,
     pub launch_ownership: Option<LaunchOwnership>,
+    /// The run's window never appeared within `--timeout`: a launch that saw
+    /// no matching window, or `--existing --wait` that saw none open. The one
+    /// failure `--continue-on-timeout` lets a layout carry on past (#19),
+    /// since nothing was resolved for a later step to act on by mistake.
+    pub window_timed_out: bool,
 }
 
 impl From<String> for RunError {
@@ -92,6 +97,7 @@ impl From<String> for RunError {
             unmatched_windows: Vec::new(),
             container_id: None,
             launch_ownership: None,
+            window_timed_out: false,
         }
     }
 }

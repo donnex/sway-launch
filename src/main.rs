@@ -1,5 +1,5 @@
 use clap::{error::ErrorKind, CommandFactory, Parser};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::{io, process, time};
@@ -270,7 +270,7 @@ struct Args {
     /// Print every Sway IPC event until interrupted, one JSON object per line
     /// with --json. Can't be combined with a command or per-window flags
     #[clap(short, long, conflicts_with_all = per_window_and(&[
-        "bindings", "apps", "param", "rollback_on_error", "on_workspace", "on_workspace_number", "on_output", "no_lock",
+        "bindings", "apps", "param", "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock",
     ]))]
     debug_events: bool,
 
@@ -281,7 +281,7 @@ struct Args {
     /// Generate a shell completion script and print it to stdout
     #[clap(long, value_enum, conflicts_with_all = per_window_and(&[
         "debug_events", "layout", "template", "list_templates", "bindings", "apps", "param",
-        "rollback_on_error", "on_workspace", "on_workspace_number", "on_output", "no_lock", "dry_run", "validate", "show_template", "json",
+        "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "dry_run", "validate", "show_template", "json",
     ]))]
     completions: Option<clap_complete::Shell>,
 
@@ -314,7 +314,7 @@ struct Args {
     /// List built-in --template names and exit
     #[clap(long, conflicts_with_all = per_window_and(&[
         "debug_events", "layout", "template", "completions", "bindings", "apps", "param",
-        "rollback_on_error", "on_workspace", "on_workspace_number", "on_output", "no_lock", "dry_run", "validate", "show_template",
+        "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "dry_run", "validate", "show_template",
     ]))]
     list_templates: bool,
 
@@ -323,7 +323,7 @@ struct Args {
     /// windows --existing would choose between
     #[clap(long, conflicts_with_all = per_window_but_filters_and(&[
         "debug_events", "layout", "template", "completions", "list_templates", "show_template",
-        "bindings", "apps", "param", "rollback_on_error", "on_workspace", "on_workspace_number", "on_output", "no_lock", "dry_run", "validate",
+        "bindings", "apps", "param", "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "dry_run", "validate",
     ]))]
     list_windows: bool,
 
@@ -333,7 +333,7 @@ struct Args {
     /// {"name": ..., "contents": "..."}
     #[clap(long, value_name = "NAME_OR_PATH", conflicts_with_all = per_window_and(&[
         "debug_events", "layout", "template", "completions", "bindings", "apps", "param",
-        "rollback_on_error", "on_workspace", "on_workspace_number", "on_output", "no_lock", "dry_run", "validate",
+        "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "dry_run", "validate",
     ]))]
     show_template: Option<PathBuf>,
 
@@ -361,6 +361,13 @@ struct Args {
     /// --layout or --template
     #[clap(long)]
     rollback_on_error: bool,
+
+    /// If a --layout/--template step's window doesn't appear within its
+    /// timeout, report it and carry on with the next step instead of stopping
+    /// the run. Later steps that target the missing window are skipped. The
+    /// run still exits non-zero. Requires --layout or --template
+    #[clap(long)]
+    continue_on_timeout: bool,
 
     /// Build a --layout/--template run on this workspace: switch to it once
     /// before the first step, so every window opens there. Overrides a
@@ -496,6 +503,15 @@ fn main() {
             .error(
                 ErrorKind::MissingRequiredArgument,
                 "--rollback-on-error requires --layout or --template",
+            )
+            .exit();
+    }
+
+    if args.continue_on_timeout && args.layout.is_none() && args.template.is_none() {
+        Args::command()
+            .error(
+                ErrorKind::MissingRequiredArgument,
+                "--continue-on-timeout requires --layout or --template",
             )
             .exit();
     }
@@ -1556,6 +1572,8 @@ fn bindings_from_apps(
             workspace: None,
             workspace_number: None,
             output: None,
+            timeout: None,
+            wait_time: None,
             cwd: None,
             env: Default::default(),
         })
@@ -1624,8 +1642,41 @@ fn run_steps(steps: &[layout::LayoutStep], build: sway_launch::BuildLocation, ar
     // invocation) — see step_action_records_json()'s doc comment.
     let mut actions = Vec::new();
     let mut stdout_failure = None;
+    // --continue-on-timeout's record: the steps whose window never appeared,
+    // the ids they would have resolved, and the later steps skipped because
+    // they target one of those.
+    let mut timed_out_steps = Vec::new();
+    let mut missing_ids = HashSet::new();
+    let mut skipped_steps = Vec::new();
 
     for (index, step) in steps.iter().enumerate() {
+        if let Some(target_id) = step
+            .target_id
+            .as_deref()
+            .filter(|target_id| missing_ids.contains(*target_id))
+        {
+            diagnostic!(
+                "{}{}",
+                stderr_label(Severity::Warning),
+                sway_launch::escape_control_characters(
+                    &step_error(
+                        args,
+                        index,
+                        &format!(
+                            "skipped: target_id {:?} names a step whose window never appeared",
+                            target_id
+                        )
+                    ),
+                    true
+                )
+            );
+            skipped_steps.push(serde_json::json!({ "step": index + 1, "target_id": target_id }));
+            if let Some(id) = step.id.as_deref() {
+                missing_ids.insert(id.to_string());
+            }
+            continue;
+        }
+
         let sway_launch = match plan_step(step, args, &resolved_ids) {
             Ok(sway_launch) => sway_launch::SwayLaunch {
                 require_launch_on_focused_workspace: true,
@@ -1671,6 +1722,22 @@ fn run_steps(steps: &[layout::LayoutStep], build: sway_launch::BuildLocation, ar
                 }
                 actions.extend(step_action_records_json(index, outcome.actions));
             }
+            Err(error) if args.continue_on_timeout && error.window_timed_out => {
+                let message = step_error(args, index, &error.message);
+                diagnostic!(
+                    "{}{} (continuing: --continue-on-timeout)",
+                    stderr_label(Severity::Warning),
+                    sway_launch::escape_control_characters(&message, true)
+                );
+                let mut entry = serde_json::json!({ "step": index + 1, "error": message });
+                if !error.unmatched_windows.is_empty() {
+                    entry["unmatched_windows"] = unmatched_windows_json(&error.unmatched_windows);
+                }
+                timed_out_steps.push(entry);
+                if let Some(id) = step.id.as_deref() {
+                    missing_ids.insert(id.to_string());
+                }
+            }
             Err(error) => {
                 // A step can launch its window and then fail on a later
                 // action, so that window joins the earlier ones: reported as
@@ -1713,13 +1780,21 @@ fn run_steps(steps: &[layout::LayoutStep], build: sway_launch::BuildLocation, ar
         if !warnings.is_empty() {
             result["warnings"] = serde_json::json!(warnings);
         }
+        if !timed_out_steps.is_empty() {
+            result["timed_out_steps"] = serde_json::json!(timed_out_steps);
+        }
+        if !skipped_steps.is_empty() {
+            result["skipped_steps"] = serde_json::json!(skipped_steps);
+        }
         print_line(&result.to_string());
     }
 
     if let Some(error) = stdout_failure {
         exit_on_write_failure(&error);
     }
-    process::exit(0);
+    // Each timed-out step was already reported as it happened; the status is
+    // what tells a calling script the layout is incomplete.
+    process::exit(if timed_out_steps.is_empty() { 0 } else { 1 });
 }
 
 /// The warning a `--layout`/`--template` run gives when the workspace it's
@@ -2411,6 +2486,7 @@ mod tests {
         "dry_run",
         "validate",
         "rollback_on_error",
+        "continue_on_timeout",
         "on_workspace",
         "on_workspace_number",
         "on_output",
@@ -2459,7 +2535,13 @@ mod tests {
 
     /// `template::Binding` fields that override the template step's own
     /// field of the same name (#30), rather than supplying a missing one.
-    const BINDING_OVERRIDE_FIELDS: &[&str] = &["workspace", "workspace_number", "output"];
+    const BINDING_OVERRIDE_FIELDS: &[&str] = &[
+        "workspace",
+        "workspace_number",
+        "output",
+        "timeout",
+        "wait_time",
+    ];
 
     fn field_names<T: serde::Serialize>(value: &T) -> std::collections::BTreeSet<String> {
         serde_json::to_value(value)

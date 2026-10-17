@@ -6933,6 +6933,51 @@ fn workspace_number_finds_a_numbered_and_labelled_workspace() {
 }
 
 #[test]
+fn continue_on_timeout_carries_a_template_past_a_slot_whose_binding_timeout_ran_out() {
+    fresh_workspace();
+    let mut connection = connect();
+    // The left slot's command exits without a window; its binding's own
+    // one-second timeout, not the run's ten, decides when it gives up.
+    let bindings = TempToml::write(
+        "continue-on-timeout-bindings",
+        "[[binding]]\nslot = \"left\"\ncommand = \"true\"\ntimeout = 1\n\n\
+         [[binding]]\nslot = \"right\"\ncommand = \"foot\"\napp_id = \"foot\"\n",
+    );
+
+    let output = sway_launch_command()
+        .args([
+            "--template",
+            "dual-row",
+            "--bindings",
+            bindings.to_str().unwrap(),
+            "--continue-on-timeout",
+            "--timeout",
+            "10",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "stdout should be the run's JSON result ({error}); stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
+    let container_id = json["containers"]["right"]
+        .as_i64()
+        .unwrap_or_else(|| panic!("the right slot should have opened: {json}"));
+    let _guard = KillOnDrop(container_id);
+
+    assert_eq!(output.status.code(), Some(1), "{json}");
+    assert_eq!(json["container_ids"], serde_json::json!([container_id]));
+    assert_eq!(json["timed_out_steps"][0]["step"], 1, "{json}");
+    let error = json["timed_out_steps"][0]["error"].as_str().unwrap();
+    assert!(error.contains("appeared within 1 sec"), "{error}");
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert!(find_node(&tree, container_id).is_some());
+}
+
+#[test]
 fn on_output_builds_a_layout_on_that_output() {
     fresh_workspace();
     let mut connection = connect();

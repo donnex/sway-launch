@@ -291,6 +291,12 @@ checks those by hand, because the derive macro doesn't enforce `requires` reliab
   run, so a retarget-only run still makes no IPC call of its own), held until the process exits.
   `--no-lock` skips it; no runtime directory skips it with a `--verbose` note. It is why
   `rust-version` is 1.89.
+- `--continue-on-timeout` (#19) carries `run_steps()` past a step whose `RunError` has
+  `window_timed_out` (set only where no window was resolved: a launch's timeout and
+  `--existing --wait`'s), recording it in `timed_out_steps`; a later `target_id` naming its id is
+  skipped (`skipped_steps`). Any other failure still goes through `fail_step()`. The result object
+  still goes to stdout, then the run exits 1. A binding's `timeout`/`wait_time` override the step's
+  like its placement does.
 - `--rollback-on-error` closes only windows whose `launch_ownership` is `Launched` — never
   retargeted or `Adopted` ones — most recent first (`rollback()`, `send_rollback_kills()`), waits
   `ROLLBACK_CLOSE_GRACE` for each to actually close, and stops at the first unanswered kill. It
