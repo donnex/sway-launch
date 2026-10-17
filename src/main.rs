@@ -224,7 +224,7 @@ struct Args {
     /// Print every Sway IPC event until interrupted, one JSON object per line
     /// with --json. Can't be combined with a command or per-window flags
     #[clap(short, long, conflicts_with_all = per_window_and(&[
-        "bindings", "apps", "rollback_on_error", "on_workspace",
+        "bindings", "apps", "rollback_on_error", "on_workspace", "no_lock",
     ]))]
     debug_events: bool,
 
@@ -235,7 +235,7 @@ struct Args {
     /// Generate a shell completion script and print it to stdout
     #[clap(long, value_enum, conflicts_with_all = per_window_and(&[
         "debug_events", "layout", "template", "list_templates", "bindings", "apps",
-        "rollback_on_error", "on_workspace", "dry_run", "validate", "show_template", "json",
+        "rollback_on_error", "on_workspace", "no_lock", "dry_run", "validate", "show_template", "json",
     ]))]
     completions: Option<clap_complete::Shell>,
 
@@ -248,9 +248,10 @@ struct Args {
     json: bool,
 
     /// Run a declarative TOML layout file instead of a single command (-
-    /// reads it from stdin); see README.md for the schema. Each step is the equivalent of one
-    /// sway-launch invocation's flags, so this conflicts with every
-    /// per-window flag, which would otherwise apply to no specific step
+    /// reads it from stdin); see README.md for the schema. Each step is the
+    /// equivalent of one sway-launch invocation's flags, so this conflicts
+    /// with every per-window flag, which would otherwise apply to no specific
+    /// step
     #[clap(long, conflicts_with_all = per_window_and(&["debug_events", "bindings", "apps"]))]
     layout: Option<PathBuf>,
 
@@ -258,15 +259,16 @@ struct Args {
     /// command; see README.md for the schema. Steps declare a slot instead
     /// of an application, resolved via --bindings or --apps. Either a path
     /// to a template file ending in .toml, - to read it from stdin, or a
-    /// built-in template name with no extension (see --list-templates). Conflicts with --layout and
-    /// every per-window flag, same reasoning as --layout
+    /// built-in template name with no extension (see --list-templates).
+    /// Conflicts with --layout and every per-window flag, same reasoning as
+    /// --layout
     #[clap(long, conflicts_with_all = per_window_and(&["debug_events", "layout"]))]
     template: Option<PathBuf>,
 
     /// List built-in --template names and exit
     #[clap(long, conflicts_with_all = per_window_and(&[
         "debug_events", "layout", "template", "completions", "bindings", "apps",
-        "rollback_on_error", "on_workspace", "dry_run", "validate", "show_template",
+        "rollback_on_error", "on_workspace", "no_lock", "dry_run", "validate", "show_template",
     ]))]
     list_templates: bool,
 
@@ -276,7 +278,7 @@ struct Args {
     /// {"name": ..., "contents": "..."}
     #[clap(long, value_name = "NAME_OR_PATH", conflicts_with_all = per_window_and(&[
         "debug_events", "layout", "template", "completions", "bindings", "apps",
-        "rollback_on_error", "on_workspace", "dry_run", "validate",
+        "rollback_on_error", "on_workspace", "no_lock", "dry_run", "validate",
     ]))]
     show_template: Option<PathBuf>,
 
@@ -305,6 +307,12 @@ struct Args {
     #[clap(long, value_name = "WORKSPACE",
         value_parser = sway_launch::validate_workspace_argument)]
     on_workspace: Option<String>,
+
+    /// Run a --layout/--template even if another run of the same file or
+    /// template on the same workspace is still in progress. Requires
+    /// --layout or --template
+    #[clap(long)]
+    no_lock: bool,
 
     /// Command to execute
     #[clap(value_parser = sway_launch::validate_exec_command)]
@@ -390,6 +398,15 @@ fn main() {
             .error(
                 ErrorKind::MissingRequiredArgument,
                 "--on-workspace requires --layout or --template",
+            )
+            .exit();
+    }
+
+    if args.no_lock && args.layout.is_none() && args.template.is_none() {
+        Args::command()
+            .error(
+                ErrorKind::MissingRequiredArgument,
+                "--no-lock requires --layout or --template",
             )
             .exit();
     }
@@ -1247,12 +1264,20 @@ fn run_steps(steps: &[layout::LayoutStep], build: sway_launch::BuildLocation, ar
         run_steps_validate(steps, args);
     }
 
+    // Held until the process exits, so a second run of the same layout on
+    // the same workspace can't interleave its windows with this one's.
+    let launches = steps.iter().any(|step| step.command.is_some());
+    let _run_lock = match acquire_run_lock(build, launches, args) {
+        Ok(lock) => lock,
+        Err(error) => fail(args.json, &format!("{}: {}", steps_source(args), error)),
+    };
+
     if let Err(error) = build.apply(args.verbose) {
         fail(args.json, &format!("{}: {}", steps_source(args), error));
     }
     // Only a run that launches windows builds a shape; one that only
     // retargets existing windows never needs to read the tree here.
-    let warnings = if steps.iter().any(|step| step.command.is_some()) {
+    let warnings = if launches {
         occupied_workspace_warning(args)
     } else {
         Vec::new()
@@ -1374,6 +1399,103 @@ fn run_steps(steps: &[layout::LayoutStep], build: sway_launch::BuildLocation, ar
 /// returned for `--json`'s `"warnings"`. A failure to read the tree only
 /// skips the warning: the run itself will report a compositor that isn't
 /// answering.
+/// What a `--layout`/`--template` run's lock is keyed on: the file (by its
+/// canonical path, so `./x.toml` and its absolute path agree) or built-in
+/// template name, and the workspace the run builds on. Two runs of the same
+/// layout on different workspaces don't block each other.
+fn run_lock_identity(args: &Args, workspace: &str) -> String {
+    let source = args
+        .layout
+        .as_deref()
+        .or(args.template.as_deref())
+        .map(|path| {
+            if is_stdin(path) {
+                "<stdin>".to_string()
+            } else {
+                std::fs::canonicalize(path)
+                    .unwrap_or_else(|_| path.to_path_buf())
+                    .display()
+                    .to_string()
+            }
+        })
+        .unwrap_or_default();
+    format!("{}\0{}", source, workspace)
+}
+
+/// The lock file's name for an identity: a stable FNV-1a hash, so any path
+/// or workspace name maps to a plain file name.
+fn run_lock_file_name(identity: &str) -> String {
+    let hash = identity
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+        });
+    format!("{:016x}.lock", hash)
+}
+
+/// Takes the run's lock (#55): an exclusive lock on a file under
+/// `$XDG_RUNTIME_DIR/sway-launch/`, held for the life of the process and
+/// released by the kernel when it exits, even on a crash. The workspace comes
+/// from the run's build location, or for a launching run the focused one.
+/// `None` when locking
+/// is off (`--no-lock`) or there is no runtime directory to put it in.
+fn acquire_run_lock(
+    build: sway_launch::BuildLocation,
+    launches: bool,
+    args: &Args,
+) -> Result<Option<std::fs::File>, String> {
+    if args.no_lock {
+        return Ok(None);
+    }
+    let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR").filter(|dir| !dir.is_empty())
+    else {
+        if args.verbose {
+            diagnostic!("XDG_RUNTIME_DIR is not set; running without a run lock");
+        }
+        return Ok(None);
+    };
+    // A run that only retargets existing windows makes no IPC call of its
+    // own here, so it locks on the file alone.
+    let workspace = match build.workspace {
+        Some(workspace) => workspace.to_string(),
+        None if !launches => String::new(),
+        None => sway_launch::focused_workspace_occupancy()
+            .ok()
+            .flatten()
+            .map(|(workspace, _)| workspace)
+            .unwrap_or_default(),
+    };
+    let directory = Path::new(&runtime_dir).join("sway-launch");
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| format!("run lock: {}: {}", directory.display(), error))?;
+    let path = directory.join(run_lock_file_name(&run_lock_identity(args, &workspace)));
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(|error| format!("run lock: {}: {}", path.display(), error))?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(std::fs::TryLockError::WouldBlock) => Err(run_lock_held_message(&workspace)),
+        Err(std::fs::TryLockError::Error(error)) => {
+            Err(format!("run lock: {}: {}", path.display(), error))
+        }
+    }
+}
+
+fn run_lock_held_message(workspace: &str) -> String {
+    let place = if workspace.is_empty() {
+        String::new()
+    } else {
+        format!(" on workspace {:?}", workspace)
+    };
+    format!(
+        "another run of this layout{} is still in progress; pass --no-lock to run it anyway",
+        place
+    )
+}
+
 fn occupied_workspace_warning(args: &Args) -> Vec<String> {
     let Ok(Some((workspace, tiled_windows))) = sway_launch::focused_workspace_occupancy() else {
         return Vec::new();
@@ -1902,6 +2024,22 @@ mod tests {
     }
 
     #[test]
+    fn run_lock_file_name_is_stable_and_differs_by_workspace() {
+        let here = run_lock_file_name("/layouts/dev.toml\0ws-3");
+        assert_eq!(here, run_lock_file_name("/layouts/dev.toml\0ws-3"));
+        assert_ne!(here, run_lock_file_name("/layouts/dev.toml\0ws-4"));
+        assert!(here.ends_with(".lock") && here.len() == 21, "{here}");
+    }
+
+    #[test]
+    fn run_lock_held_message_names_the_workspace_and_the_way_out() {
+        let message = run_lock_held_message("3");
+        assert!(message.contains("workspace \"3\""), "{message}");
+        assert!(message.contains("--no-lock"), "{message}");
+        assert!(!run_lock_held_message("").contains("workspace"));
+    }
+
+    #[test]
     fn occupied_workspace_message_names_the_workspace_and_the_way_out() {
         let message = occupied_workspace_message("1", 2);
         assert!(message.contains("workspace \"1\" already has 2 tiled window(s)"));
@@ -1942,6 +2080,7 @@ mod tests {
         "validate",
         "rollback_on_error",
         "on_workspace",
+        "no_lock",
         "json",
         "verbose",
         // clap's own auto-generated arguments.

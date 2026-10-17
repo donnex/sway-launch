@@ -3469,6 +3469,9 @@ fn concurrent_template_runs_report_disjoint_container_ids() {
                 "foot,foot,foot,foot",
                 "--timeout",
                 "10",
+                // Overlapping on purpose: the run lock (#55) would otherwise
+                // refuse the second run before it launches anything.
+                "--no-lock",
             ])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -6239,6 +6242,55 @@ fn debug_events_line_arrives(
             Err(_) => return false,
         }
     }
+}
+
+#[test]
+fn a_second_run_of_a_layout_on_the_same_workspace_is_refused_while_the_first_runs() {
+    let workspace = fresh_workspace();
+    // A double-triggered layout used to interleave its windows with the first
+    // run's (#55); the run lock now refuses the second run at once. Its first
+    // step takes about a second to map, so the first run is still going.
+    let path = TempToml::write(
+        "run-lock",
+        "[[step]]\ncommand = 'sh -c \"sleep 1 && exec foot --app-id=lock-probe\"'\n\
+         app_id = \"lock-probe\"\n",
+    );
+    let first = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--on-workspace",
+            &workspace,
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to run sway-launch binary");
+    std::thread::sleep(Duration::from_millis(300));
+
+    let second = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--on-workspace",
+            &workspace,
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let first = first
+        .wait_with_output()
+        .expect("failed to wait for the first run");
+    let container_id: i64 = String::from_utf8_lossy(&first.stdout)
+        .trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("the first run should print its id: {first:?}"));
+    let _guard = KillOnDrop(container_id);
+
+    assert_eq!(second.status.code(), Some(1), "{second:?}");
+    assert!(
+        String::from_utf8_lossy(&second.stderr).contains("is still in progress"),
+        "{second:?}"
+    );
 }
 
 #[test]
