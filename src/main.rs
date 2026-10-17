@@ -96,6 +96,7 @@ const PER_WINDOW_ARGS: &[&str] = &[
     "width",
     "position",
     "scratchpad",
+    "settle",
 ];
 
 /// `PER_WINDOW_ARGS` plus a standalone mode's own extra conflicts.
@@ -234,6 +235,11 @@ struct Args {
     /// Move window to the scratchpad
     #[clap(long)]
     scratchpad: bool,
+
+    /// Keep holding --height/--width (in px) and --position for MS ms after they are confirmed,
+    /// applying them again if the application changes them, as browsers do just after opening
+    #[clap(long, value_name = "MS", value_parser = sway_launch::validate_settle_argument)]
+    settle: Option<u64>,
 
     /// Print the planned sequence of Sway commands instead of running them —
     /// works with a direct command or --layout/--template. Never touches
@@ -602,6 +608,17 @@ fn main() {
                 .exit(),
         };
 
+    let settle =
+        match sway_launch::settle_duration(args.settle, args.height, args.width, args.position) {
+            Ok(settle) => settle,
+            Err(error) => Args::command()
+                .error(
+                    ErrorKind::MissingRequiredArgument,
+                    format!("--settle: {}", error),
+                )
+                .exit(),
+        };
+
     let sway_launch = sway_launch::SwayLaunch {
         target,
         launch_setup,
@@ -627,6 +644,7 @@ fn main() {
         scratchpad: args.scratchpad,
         timeout: time::Duration::from_secs(args.timeout),
         wait_time: time::Duration::from_millis(args.wait_time),
+        settle,
         verbose: args.verbose,
         require_launch_on_focused_workspace: false,
         catch_late_window: false,
@@ -1595,6 +1613,7 @@ fn bindings_from_apps(
             output: None,
             timeout: None,
             wait_time: None,
+            settle: None,
             cwd: None,
             env: Default::default(),
         })
@@ -2615,6 +2634,7 @@ mod tests {
         "output",
         "timeout",
         "wait_time",
+        "settle",
     ];
 
     fn field_names<T: serde::Serialize>(value: &T) -> std::collections::BTreeSet<String> {

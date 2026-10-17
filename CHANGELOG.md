@@ -84,6 +84,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on its own, and a part Sway refuses fails naming that action. Moves (`--new-column`,
   `--new-row`, `--workspace`, `--output`) still run first, each on its own, and `--scratchpad`
   last. `--dry-run` shows the actions sent together on one line. (#32)
+- `--settle <ms>` (and `settle` in a layout step, template step or binding) keeps holding a pixel
+  `--height`/`--width` and `--position` for that long after they're confirmed, applying them again
+  if the application changes them. Browsers set their own size just after opening, so a Firefox or
+  Chromium window used to end up a different size from one run to the next while `sway-launch`
+  reported success. A binding's `settle` replaces the step's. (#17)
 - `--app-id`/`--class` matching, so a call in a multi-window script matches the right window rather
   than whichever one happened to appear first. The value (like `--mark-match`'s) must match exactly,
   case included — unlike Sway's own regex criteria, `-a firefox` doesn't match

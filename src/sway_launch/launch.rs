@@ -68,6 +68,10 @@ pub struct SwayLaunch<'a> {
     pub verbose: bool,
     pub timeout: time::Duration,
     pub wait_time: time::Duration,
+    /// `--settle` (#17): how long to keep holding the confirmed pixel
+    /// height/width and position against the client, if at all. See
+    /// `run_batch()`.
+    pub settle: Option<time::Duration>,
 
     /// Fail a launch if focus left the workspace it started on before its
     /// window appeared — `--layout`/`--template` set this, since their shapes
@@ -392,7 +396,7 @@ impl<'a> SwayLaunch<'a> {
             .execute_plan(
                 plan,
                 |direction| current_move_skip_reason(container_id, direction),
-                run_plan_group,
+                |group| run_plan_group(group, self.settle),
             )
             .map_err(resolved)?;
 
@@ -427,11 +431,15 @@ fn plan_groups<'p, 'a>(plan: &'p [SwayAction<'a>]) -> Vec<&'p [SwayAction<'a>]> 
 }
 
 /// Runs one of `plan_groups()`'s groups for real: a batch through
-/// `run_batch()`, a lone non-batching action through `SwayAction::run()`.
-fn run_plan_group(group: &[SwayAction<'_>]) -> Result<Vec<ActionOutcome>, RunError> {
+/// `run_batch()`, which holds its geometry for `settle`, and a lone
+/// non-batching action through `SwayAction::run()`.
+fn run_plan_group(
+    group: &[SwayAction<'_>],
+    settle: Option<time::Duration>,
+) -> Result<Vec<ActionOutcome>, RunError> {
     match group {
         [action] if !action.kind.joins_batch() => action.run().map(|outcome| vec![outcome]),
-        _ => run_batch(group),
+        _ => run_batch(group, settle),
     }
 }
 

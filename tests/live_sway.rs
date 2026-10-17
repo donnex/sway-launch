@@ -1267,6 +1267,55 @@ fn follow_up_actions_reach_sway_as_one_command_and_are_each_confirmed() {
 }
 
 #[test]
+fn settle_applies_the_geometry_again_after_something_else_changes_it() {
+    // #17: a browser sets its own size just after mapping. No browser is
+    // available here, so the test plays the client, resizing the window over
+    // IPC while --settle is holding it.
+    fresh_workspace();
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&["--floating"]);
+
+    let child = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--width",
+            "400px",
+            "--height",
+            "300px",
+            "--settle",
+            "1000",
+            "--json",
+            "--verbose",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to run sway-launch binary");
+    std::thread::sleep(Duration::from_millis(400));
+    for outcome in connection
+        .run_command(format!("[con_id={container_id}] resize set width 600px"))
+        .expect("the competing resize should be sent")
+    {
+        outcome.expect("the competing resize should succeed");
+    }
+    let output = child.wait_with_output().expect("sway-launch should finish");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "sway-launch failed: {stderr}");
+    assert!(stderr.contains("re-applying (1 of 3)"), "{stderr}");
+    assert!(stderr.contains("Geometry held for 1000 ms"), "{stderr}");
+
+    let result: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout is the --json result");
+    for action in result["actions"].as_array().expect("actions is an array") {
+        assert_eq!(action["status"], "changed", "{result}");
+    }
+    let node = get_node(&mut connection, container_id);
+    assert_eq!(node.rect.width, 400);
+    assert_eq!(node.rect.height + node.deco_rect.height, 300);
+}
+
+#[test]
 fn swaysock_wins_over_a_stale_i3sock() {
     fresh_workspace();
     // Sway exports both SWAYSOCK and I3SOCK to everything it spawns, so the way

@@ -106,6 +106,7 @@ fn minimal_step() -> LayoutStep {
         scratchpad: false,
         timeout: None,
         wait_time: None,
+        settle: None,
     }
 }
 
@@ -544,4 +545,19 @@ fn to_sway_launch_accepts_an_explicit_timeout() {
     step.timeout = Some(30);
     let launch = convert(&step).expect("a 30-second timeout should be accepted");
     assert_eq!(launch.timeout, time::Duration::from_secs(30));
+}
+
+#[test]
+fn to_sway_launch_carries_settle_and_refuses_it_without_geometry() {
+    let mut step = minimal_step();
+    step.settle = Some(300);
+    step.width = Some("700px".to_string());
+    let sway_launch = convert(&step).expect("settle with a width is valid");
+    assert_eq!(sway_launch.settle, Some(time::Duration::from_millis(300)));
+
+    step.width = Some("70ppt".to_string());
+    assert_eq!(
+        convert(&step).err(),
+        Some("settle: needs a height or width in px, or a position, to hold".to_string())
+    );
 }

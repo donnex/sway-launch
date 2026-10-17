@@ -751,6 +751,59 @@ pub fn validate_timeout_argument(value: &str) -> Result<u64, String> {
     validate_timeout_seconds(seconds)
 }
 
+/// The longest `--settle` accepted, in milliseconds (#17). A client sets its
+/// own size within a fraction of a second of mapping, so a minute is already
+/// far past any wait that could help, and keeps a typo from holding a run for
+/// days.
+pub const MAX_SETTLE_MILLISECONDS: u64 = 60_000;
+
+/// Validates a `--settle` value, or a step's or binding's `settle` field, in
+/// milliseconds: `1..=MAX_SETTLE_MILLISECONDS`. Zero would watch for nothing,
+/// which leaving the flag off already says.
+pub fn validate_settle_milliseconds(milliseconds: u64) -> Result<u64, String> {
+    if (1..=MAX_SETTLE_MILLISECONDS).contains(&milliseconds) {
+        Ok(milliseconds)
+    } else {
+        Err(format!(
+            "Must be between 1 and {} ms",
+            MAX_SETTLE_MILLISECONDS
+        ))
+    }
+}
+
+/// `validate_settle_milliseconds()` for the CLI's `--settle`, which arrives
+/// as text.
+pub fn validate_settle_argument(value: &str) -> Result<u64, String> {
+    let milliseconds = value.parse::<u64>().map_err(|_| {
+        format!(
+            "Must be a whole number of ms between 1 and {}",
+            MAX_SETTLE_MILLISECONDS
+        )
+    })?;
+    validate_settle_milliseconds(milliseconds)
+}
+
+/// `settle` as the duration a `SwayLaunch` carries, refused unless there is
+/// geometry it can hold: a pixel `height`/`width` or a `position`. A `ppt`
+/// size has no pixel figure to compare against, so a settle with only that
+/// could never notice the client undoing it, and would only add a wait.
+pub fn settle_duration(
+    settle: Option<u64>,
+    height: Option<Size>,
+    width: Option<Size>,
+    position: Option<Position>,
+) -> Result<Option<std::time::Duration>, String> {
+    let Some(milliseconds) = settle else {
+        return Ok(None);
+    };
+    validate_settle_milliseconds(milliseconds)?;
+    let pixels = |size: Option<Size>| matches!(size, Some(Size::Pixels(_)));
+    if !pixels(height) && !pixels(width) && position.is_none() {
+        return Err("needs a height or width in px, or a position, to hold".to_string());
+    }
+    Ok(Some(std::time::Duration::from_millis(milliseconds)))
+}
+
 /// Rejects an empty or whitespace-only value for a named field — shared by
 /// every layout/template schema field that's a free-form identifier or
 /// required string (`id`, `target_id`, `slot`, a binding's `command`, a
