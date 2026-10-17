@@ -270,6 +270,40 @@ fn list_windows_with_no_match_says_so_on_stderr_only() {
 }
 
 #[test]
+fn a_workspace_number_is_satisfied_by_the_workspace_s_num_on_every_version() {
+    // The fixtures' workspace is named "1", so Sway records num 1 for it.
+    for version in SwayVersion::ALL {
+        let fake = FakeSway::accepting_everything(version);
+        let run = run(
+            &fake,
+            &["--con-id", &TILED.to_string(), "--workspace-number", "1"],
+        );
+        assert!(run.succeeded(), "{version:?}: {}", run.stderr());
+        assert_eq!(run.action_status(), "already_satisfied", "{version:?}");
+        assert!(fake.commands().is_empty(), "{version:?}");
+    }
+}
+
+#[test]
+fn a_workspace_number_move_is_confirmed_once_the_window_is_on_that_number() {
+    let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {
+        if command == format!("[con_id={TILED}] move workspace number 1") {
+            sway.node_mut(WORKSPACE)["num"] = serde_json::json!(1);
+            sway.emit("move", TILED);
+        }
+        Ok(())
+    });
+    // Renumber the window's workspace first, so the move has something to do.
+    fake.sway().node_mut(WORKSPACE)["num"] = serde_json::json!(7);
+    let run = run(
+        &fake,
+        &["--con-id", &TILED.to_string(), "--workspace-number", "1"],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert_eq!(run.action_status(), "changed");
+}
+
+#[test]
 fn a_split_is_confirmed_once_the_parent_layout_changes() {
     let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {
         if command == format!("[con_id={TILED}] splitv") {

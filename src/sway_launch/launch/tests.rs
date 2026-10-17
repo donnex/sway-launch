@@ -64,7 +64,7 @@ fn build_actions_includes_every_flag_in_the_documented_fixed_order() {
     let mut sway_launch = minimal_sway_launch();
     sway_launch.new_column = true;
     sway_launch.new_row = true;
-    sway_launch.workspace = Some("3");
+    sway_launch.workspace = Some(WorkspaceTarget::Name("3"));
     sway_launch.output = Some("HDMI-A-1");
     sway_launch.split = Some(Split::H);
     sway_launch.floating = true;
@@ -114,14 +114,17 @@ fn build_actions_moves_the_workspace_to_the_output_when_both_are_set() {
     assert_eq!(alone.len(), 1);
     assert_eq!(alone[0].kind, ActionKind::Output("HDMI-A-1"));
 
-    sway_launch.workspace = Some("3");
+    sway_launch.workspace = Some(WorkspaceTarget::Name("3"));
     let both = sway_launch.build_actions(42);
     assert_eq!(both.len(), 2);
-    assert_eq!(both[0].kind, ActionKind::Workspace("3"));
+    assert_eq!(
+        both[0].kind,
+        ActionKind::Workspace(WorkspaceTarget::Name("3"))
+    );
     assert_eq!(
         both[1].kind,
         ActionKind::WorkspaceToOutput {
-            workspace: "3",
+            workspace: WorkspaceTarget::Name("3"),
             output: "HDMI-A-1"
         }
     );
@@ -381,4 +384,21 @@ fn focus_moved_during_launch_names_both_workspaces() {
     assert!(focus_moved_during_launch("1", None)
         .expect("focus left")
         .contains("left workspace \"1\""));
+}
+
+#[test]
+fn build_location_focuses_the_output_then_the_workspace_by_name_or_number() {
+    let by_name = BuildLocation {
+        workspace: Some(WorkspaceTarget::Name("2: web")),
+        output: Some("HEADLESS-1"),
+    };
+    assert_eq!(
+        by_name.commands(),
+        ["focus output \"HEADLESS-1\"", "workspace \"2: web\""]
+    );
+    let by_number = BuildLocation {
+        workspace: Some(WorkspaceTarget::Number(2)),
+        output: None,
+    };
+    assert_eq!(by_number.commands(), ["workspace number 2"]);
 }

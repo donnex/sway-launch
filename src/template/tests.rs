@@ -13,6 +13,7 @@ fn minimal_step() -> TemplateStep {
         new_column: false,
         new_row: false,
         workspace: None,
+        workspace_number: None,
         output: None,
         height: None,
         width: None,
@@ -619,6 +620,43 @@ fn parse_rejects_an_invalid_layout_context_workspace_naming_the_table() {
         error.starts_with("[layout] workspace: "),
         "error should name the [layout] table: {error:?}"
     );
+}
+
+#[test]
+fn layout_context_workspace_number_is_a_numbered_build_target() {
+    let template = parse(
+        r#"
+            [template]
+            description = "A test template."
+            category = "Test"
+
+            [layout]
+            workspace_number = 3
+
+            [[step]]
+            slot = "editor"
+            "#,
+    )
+    .expect("a [layout] workspace_number should parse");
+    assert_eq!(
+        template.layout.workspace_target(),
+        Some(sway_launch::WorkspaceTarget::Number(3))
+    );
+}
+
+#[test]
+fn parse_rejects_a_layout_context_with_both_workspace_forms_or_a_bad_number() {
+    for layout in [
+        "workspace = \"web\"\nworkspace_number = 3",
+        "workspace_number = -2",
+    ] {
+        let result = parse(&format!(
+            "[template]\ndescription = \"A test template.\"\ncategory = \"Test\"\n\n\
+             [layout]\n{layout}\n\n[[step]]\nslot = \"editor\"\n"
+        ));
+        let error = result.err().expect("should be rejected");
+        assert!(error.starts_with("[layout]"), "{error:?}");
+    }
 }
 
 #[test]

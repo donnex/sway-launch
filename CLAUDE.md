@@ -131,6 +131,12 @@ what it rejects and why:
 - `validate_workspace_argument()`/`validate_output_argument()` — the same, plus Sway's own keywords
   (`WORKSPACE_KEYWORDS`/`OUTPUT_KEYWORDS`, compared ignoring case), which Sway acts on even when
   quoted. Names are compared ignoring case everywhere, as Sway does (#5).
+- `parse_workspace_number()`/`validate_workspace_number()` — `--workspace-number`/
+  `--on-workspace-number`/`workspace_number`: `0..=i32::MAX`, since Sway's `num` is an `int` and
+  -1 is what every unnumbered workspace has. Either form becomes a `WorkspaceTarget` (`Name` or
+  `Number`), the one type `ActionKind::Workspace`/`WorkspaceToOutput` and `BuildLocation` carry:
+  `sway_argument()` renders it (a number unquoted after `number`, or Sway reads it as a name) and
+  `WorkspaceTarget::matches()` decides it against a workspace's name and `num` (#43).
 - `validate_exec_command()` — the launch command is sent raw, so it rejects what Sway's own parser
   would split on (an unquoted `,`/`;`, any newline/CR/NUL). `run_single_sway_command()` backs it
   up by treating a multi-outcome reply as an error.

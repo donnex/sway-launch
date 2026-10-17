@@ -119,7 +119,25 @@ pub struct Template {
 #[serde(deny_unknown_fields)]
 pub struct TemplateLayoutContext {
     pub workspace: Option<String>,
+    /// The workspace by number instead of by name (#43).
+    pub workspace_number: Option<i64>,
     pub output: Option<String>,
+}
+
+impl TemplateLayoutContext {
+    /// The workspace this table names, by name or by number. Expects a
+    /// table `parse()` has validated, which rejects both at once and a
+    /// number out of range.
+    pub fn workspace_target(&self) -> Option<sway_launch::WorkspaceTarget<'_>> {
+        self.workspace
+            .as_deref()
+            .map(sway_launch::WorkspaceTarget::Name)
+            .or_else(|| {
+                self.workspace_number
+                    .and_then(|number| sway_launch::validate_workspace_number(number).ok())
+                    .map(sway_launch::WorkspaceTarget::Number)
+            })
+    }
 }
 
 /// A template file's required `[template]` table: a one-line `description`
@@ -168,6 +186,7 @@ pub struct TemplateStep {
     #[serde(default)]
     pub new_row: bool,
     pub workspace: Option<String>,
+    pub workspace_number: Option<i64>,
     pub output: Option<String>,
     pub height: Option<String>,
     pub width: Option<String>,
@@ -233,6 +252,17 @@ pub fn parse(contents: &str) -> Result<Template, String> {
     if let Some(workspace) = template.layout.workspace.as_deref() {
         sway_launch::validate_workspace_argument(workspace)
             .map_err(|error| format!("[layout] workspace: {}", error))?;
+    }
+    if let Some(number) = template.layout.workspace_number {
+        if template.layout.workspace.is_some() {
+            return Err(
+                "[layout]: workspace and workspace_number can't both be set — pick the workspace \
+                 by name or by number"
+                    .to_string(),
+            );
+        }
+        sway_launch::validate_workspace_number(number)
+            .map_err(|error| format!("[layout] workspace_number: {}", error))?;
     }
     if let Some(output) = template.layout.output.as_deref() {
         sway_launch::validate_output_argument(output)
@@ -407,6 +437,7 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
             new_column: step.new_column,
             new_row: step.new_row,
             workspace: step.workspace.clone(),
+            workspace_number: step.workspace_number,
             output: step.output.clone(),
             height: step.height.clone(),
             width: step.width.clone(),

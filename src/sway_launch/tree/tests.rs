@@ -586,6 +586,24 @@ fn container_state_from_tree_reads_the_containing_workspace_and_output() {
 }
 
 #[test]
+fn container_state_from_tree_reads_the_workspace_s_number() {
+    let workspace = named_node_value(
+        2,
+        "workspace",
+        "2: web",
+        vec![leaf_node_value(10, None, None)],
+    );
+    let mut workspace = workspace;
+    workspace["num"] = serde_json::json!(2);
+    let output = named_node_value(1, "output", "HEADLESS-1", vec![workspace]);
+    let tree: Node = serde_json::from_value(named_node_value(0, "root", "root", vec![output]))
+        .expect("valid Node test fixture");
+
+    let state = ContainerState::from_tree(&tree, 10).expect("the container is in the tree");
+    assert_eq!(state.workspace_number, Some(2));
+}
+
+#[test]
 fn container_state_from_tree_reports_whether_the_workspace_is_the_visible_one() {
     let visible = ContainerState::from_tree(
         &state_tree("3", leaf_node_value(10, Some("foot"), None)),

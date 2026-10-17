@@ -10,6 +10,7 @@
 //!
 //! All pure, all unit-tested — nothing here has any idea a compositor exists.
 
+use super::ipc::quote_sway_string;
 use clap::ValueEnum;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -260,6 +261,79 @@ const WORKSPACE_KEYWORDS: &[&str] = &[
     "number",
     "to",
 ];
+
+/// Which workspace a move or a build location names: a workspace by its
+/// exact name (`--workspace`), or by its number (`--workspace-number`), the
+/// form `workspace number N` keybindings use, so `2` finds a workspace named
+/// `2: web` (#43).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum WorkspaceTarget<'a> {
+    Name(&'a str),
+    Number(i32),
+}
+
+impl WorkspaceTarget<'_> {
+    /// The workspace argument of a Sway `workspace`/`move workspace` command.
+    /// A number is sent unquoted after the `number` keyword; quoted, `number
+    /// 2` would be an ordinary name.
+    pub(super) fn sway_argument(&self) -> String {
+        match self {
+            WorkspaceTarget::Name(name) => quote_sway_string(name),
+            WorkspaceTarget::Number(number) => format!("number {}", number),
+        }
+    }
+
+    /// Whether a workspace called `name`, numbered `number`, is this one.
+    /// Names compare ignoring case, as Sway compares them; a number matches
+    /// any workspace whose name starts with it, which is what Sway's `num`
+    /// field records.
+    pub(super) fn matches(&self, name: Option<&str>, number: Option<i32>) -> bool {
+        match self {
+            WorkspaceTarget::Name(wanted) => {
+                name.is_some_and(|name| name.eq_ignore_ascii_case(wanted))
+            }
+            WorkspaceTarget::Number(wanted) => number == Some(*wanted),
+        }
+    }
+}
+
+/// The name, or `number N`: how messages and the run lock name it.
+impl fmt::Display for WorkspaceTarget<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            WorkspaceTarget::Name(name) => write!(f, "{}", name),
+            WorkspaceTarget::Number(number) => write!(f, "number {}", number),
+        }
+    }
+}
+
+/// `--workspace-number`/`workspace_number`: a whole number Sway can hold as a
+/// workspace's `num`, which is an `int`. Negative numbers are refused: Sway
+/// gives a name that doesn't start with a digit the number -1, so `-1` would
+/// match every unnumbered workspace.
+pub fn parse_workspace_number(value: &str) -> Result<i32, String> {
+    let number: i64 = value.trim().parse().map_err(|_| {
+        format!(
+            "{:?} is not a workspace number (a whole number, 0 or more)",
+            value
+        )
+    })?;
+    validate_workspace_number(number)
+}
+
+/// `parse_workspace_number()`'s range check, for a TOML integer.
+pub fn validate_workspace_number(number: i64) -> Result<i32, String> {
+    i32::try_from(number)
+        .ok()
+        .filter(|number| *number >= 0)
+        .ok_or_else(|| {
+            format!(
+                "{} is not a workspace number (a whole number from 0 to {})",
+                number,
+                i32::MAX
+            )
+        })
+}
 
 /// Values `move container to output` reads as directions or the current
 /// output rather than as an output name, compared case-insensitively.

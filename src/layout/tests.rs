@@ -96,6 +96,7 @@ fn minimal_step() -> LayoutStep {
         new_column: false,
         new_row: false,
         workspace: None,
+        workspace_number: None,
         output: None,
         height: None,
         width: None,
@@ -426,6 +427,42 @@ fn to_sway_launch_rejects_a_blank_workspace() {
         error.contains("workspace"),
         "error should name the field: {error:?}"
     );
+}
+
+#[test]
+fn to_sway_launch_turns_workspace_number_into_a_numbered_target() {
+    let mut step = minimal_step();
+    step.workspace_number = Some(2);
+    let launch = convert(&step).expect("a workspace number should convert");
+    assert_eq!(
+        launch.workspace,
+        Some(sway_launch::WorkspaceTarget::Number(2))
+    );
+}
+
+#[test]
+fn to_sway_launch_rejects_workspace_and_workspace_number_together() {
+    let mut step = minimal_step();
+    step.workspace = Some("web".to_string());
+    step.workspace_number = Some(2);
+    let error = convert(&step).err().expect("both should be rejected");
+    assert!(error.contains("workspace_number"), "{error:?}");
+}
+
+#[test]
+fn to_sway_launch_rejects_workspace_number_with_a_relative_move_or_out_of_range() {
+    let mut step = minimal_step();
+    step.workspace_number = Some(2);
+    step.new_column = true;
+    let error = convert(&step)
+        .err()
+        .expect("a relative move should be rejected");
+    assert!(error.contains("new_column"), "{error:?}");
+
+    let mut step = minimal_step();
+    step.workspace_number = Some(-1);
+    let error = convert(&step).err().expect("-1 should be rejected");
+    assert!(error.starts_with("workspace_number: "), "{error:?}");
 }
 
 #[test]
