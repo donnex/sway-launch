@@ -1,8 +1,8 @@
 # Three windows, each moved to its own named workspace.
 # Run with, e.g.:
 #   sway-launch --template workspace-spread --apps foot,firefox,code
-# or with per-slot app_id/class matching via a --bindings file; see
-# README.md's "Templates" section.
+# or via a --bindings file, where a binding's `workspace` replaces the
+# step's 1/2/3; see README.md's "Templates" section.
 
 [template]
 description = "Three windows, each moved to its own named workspace."

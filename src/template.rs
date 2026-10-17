@@ -225,6 +225,53 @@ pub struct Binding {
     pub class: Option<String>,
     pub mark_match: Option<String>,
     pub title: Option<sway_launch::TitlePattern>,
+    /// Where this slot's window goes, overriding the template step's own
+    /// (#30), so a bindings file can place a built-in's windows on the
+    /// user's own workspaces and outputs without copying the template.
+    pub workspace: Option<String>,
+    pub workspace_number: Option<i64>,
+    pub output: Option<String>,
+}
+
+impl Binding {
+    fn sets_workspace(&self) -> bool {
+        self.workspace.is_some() || self.workspace_number.is_some()
+    }
+
+    /// Checks the placement this binding gives `step`'s window, so a mistake
+    /// is reported against the bindings file. Moving a window to another
+    /// workspace after a relative move is refused for the same reason
+    /// `to_sway_launch()` refuses it in a single step.
+    fn validate_placement(&self, step: &TemplateStep) -> Result<(), String> {
+        if self.workspace.is_some() && self.workspace_number.is_some() {
+            return Err(
+                "workspace and workspace_number can't both be set — pick the workspace by name \
+                 or by number"
+                    .to_string(),
+            );
+        }
+        if let Some(workspace) = self.workspace.as_deref() {
+            sway_launch::validate_workspace_argument(workspace)
+                .map_err(|error| format!("workspace: {}", error))?;
+        }
+        if let Some(number) = self.workspace_number {
+            sway_launch::validate_workspace_number(number)
+                .map_err(|error| format!("workspace_number: {}", error))?;
+        }
+        if let Some(output) = self.output.as_deref() {
+            sway_launch::validate_output_argument(output)
+                .map_err(|error| format!("output: {}", error))?;
+        }
+        if self.sets_workspace() && (step.new_column || step.new_row) {
+            return Err(
+                "workspace can't be set for a slot whose step uses new_column/new_row — the \
+                 relative move would apply on the workspace the window opened on; build the whole \
+                 template there instead (--on-workspace)"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
 }
 
 #[derive(Deserialize)]
@@ -315,10 +362,12 @@ impl std::fmt::Display for ResolveError {
 /// slot name, so a later `target_id` step can reference it via the same
 /// mechanism named layout steps already use.
 ///
-/// Every resolved step's `workspace`/`output` falls back to the template's
-/// own `[layout]` table (`TemplateLayoutContext`) when the step doesn't set
-/// its own — applied per-field via `Option::or_else()`, so a step can mix a
-/// template-level workspace with its own output, or vice versa.
+/// A binding's `workspace`/`workspace_number`/`output` replaces the step's
+/// own (#30): the bindings file is the user's, the template may be a
+/// built-in they can't edit. The workspace pair is replaced as a whole, so a
+/// binding's number never meets the step's name. The template's `[layout]`
+/// table isn't copied into steps; `main.rs` applies it once, before the
+/// first step.
 ///
 /// Expects a template from `parse()`, which has already rejected a slot
 /// used by more than one step. Errors say which input they belong to (see
@@ -400,6 +449,10 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
                 ))
             })?;
 
+            binding.validate_placement(step).map_err(|error| {
+                ResolveError::Bindings(format!("binding for slot {:?}: {}", slot, error))
+            })?;
+
             if binding.command.is_none() && (binding.cwd.is_some() || !binding.env.is_empty()) {
                 return Err(ResolveError::Bindings(format!(
                     "binding for slot {:?}: cwd and env only apply to a launched command",
@@ -439,6 +492,20 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
             )
         };
 
+        let binding = step
+            .slot
+            .as_deref()
+            .and_then(|slot| bindings_by_slot.get(slot).copied());
+        let (workspace, workspace_number) = match binding {
+            Some(binding) if binding.sets_workspace() => {
+                (binding.workspace.clone(), binding.workspace_number)
+            }
+            _ => (step.workspace.clone(), step.workspace_number),
+        };
+        let output = binding
+            .and_then(|binding| binding.output.clone())
+            .or_else(|| step.output.clone());
+
         steps.push(LayoutStep {
             command,
             cwd,
@@ -460,9 +527,9 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
             mark: step.mark.clone(),
             new_column: step.new_column,
             new_row: step.new_row,
-            workspace: step.workspace.clone(),
-            workspace_number: step.workspace_number,
-            output: step.output.clone(),
+            workspace,
+            workspace_number,
+            output,
             height: step.height.clone(),
             width: step.width.clone(),
             position: step.position.clone(),

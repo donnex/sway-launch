@@ -52,6 +52,9 @@ fn minimal_binding() -> Binding {
         class: None,
         mark_match: None,
         title: None,
+        workspace: None,
+        workspace_number: None,
+        output: None,
     }
 }
 
@@ -313,6 +316,9 @@ fn resolve_errors_on_binding_with_no_target_field_naming_the_slot() {
             class: None,
             mark_match: None,
             title: None,
+            workspace: None,
+            workspace_number: None,
+            output: None,
         }],
     };
     let error = resolve(&template, &bindings)
@@ -347,6 +353,9 @@ fn resolve_errors_on_binding_with_command_and_con_id_together() {
             class: None,
             mark_match: None,
             title: None,
+            workspace: None,
+            workspace_number: None,
+            output: None,
         }],
     };
     let error = resolve(&template, &bindings)
@@ -372,6 +381,9 @@ fn resolve_errors_on_binding_with_app_id_and_class_together() {
             class: Some("Foot".to_string()),
             mark_match: None,
             title: None,
+            workspace: None,
+            workspace_number: None,
+            output: None,
         }],
     };
     let error = resolve(&template, &bindings)
@@ -1123,5 +1135,99 @@ fn builtin_templates_header_comment_repeats_its_description() {
             template.name,
             template.description
         );
+    }
+}
+
+#[test]
+fn resolve_lets_a_binding_replace_the_step_placement() {
+    let mut step = minimal_step();
+    step.workspace = Some("1".to_string());
+    step.output = Some("HDMI-A-1".to_string());
+    let template = minimal_template(vec![step]);
+
+    let resolved = resolve(
+        &template,
+        &Bindings {
+            binding: vec![minimal_binding()],
+        },
+    )
+    .expect("a binding without placement should resolve");
+    assert_eq!(resolved[0].workspace.as_deref(), Some("1"));
+    assert_eq!(resolved[0].output.as_deref(), Some("HDMI-A-1"));
+
+    let resolved = resolve(
+        &template,
+        &Bindings {
+            binding: vec![Binding {
+                workspace_number: Some(4),
+                output: Some("DP-2".to_string()),
+                ..minimal_binding()
+            }],
+        },
+    )
+    .expect("a binding with placement should resolve");
+    // The workspace pair is replaced as a whole, so the step's name doesn't
+    // survive next to the binding's number.
+    assert_eq!(resolved[0].workspace, None);
+    assert_eq!(resolved[0].workspace_number, Some(4));
+    assert_eq!(resolved[0].output.as_deref(), Some("DP-2"));
+}
+
+#[test]
+fn resolve_reports_a_bad_binding_placement_against_the_bindings() {
+    let mut new_column_step = minimal_step();
+    new_column_step.new_column = true;
+    let cases = [
+        (
+            minimal_step(),
+            Binding {
+                workspace: Some("3".to_string()),
+                workspace_number: Some(3),
+                ..minimal_binding()
+            },
+            "can't both be set",
+        ),
+        (
+            minimal_step(),
+            Binding {
+                output: Some("current".to_string()),
+                ..minimal_binding()
+            },
+            "output:",
+        ),
+        (
+            minimal_step(),
+            Binding {
+                workspace_number: Some(-1),
+                ..minimal_binding()
+            },
+            "workspace_number:",
+        ),
+        (
+            new_column_step,
+            Binding {
+                workspace: Some("3".to_string()),
+                ..minimal_binding()
+            },
+            "new_column/new_row",
+        ),
+    ];
+    for (step, binding, expected) in cases {
+        let template = minimal_template(vec![step]);
+        let error = resolve(
+            &template,
+            &Bindings {
+                binding: vec![binding],
+            },
+        )
+        .err()
+        .expect("a bad placement should be rejected");
+        match error {
+            ResolveError::Bindings(message) => {
+                assert!(message.contains("slot \"editor\""), "{message}");
+                assert!(message.contains(expected), "{message}");
+            }
+            other => panic!("expected a bindings error, got {other:?}"),
+        }
     }
 }

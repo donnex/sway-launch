@@ -144,6 +144,7 @@ Options:
       --rollback-on-error             If a --layout/--template step fails, kill every window this invocation itself launched, by an earlier step or by the failing step before it failed (not one it merely retargeted via con_id/existing/target_id), rather than leaving them open. Requires --layout or --template
       --on-workspace <WORKSPACE>      Build a --layout/--template run on this workspace: switch to it once before the first step, so every window opens there. Overrides a template's own [layout] workspace. Requires --layout or --template
       --on-workspace-number <N>       --on-workspace by number, the way Sway's "workspace number N" finds it: 2 matches a workspace named "2: web". Requires --layout or --template
+      --on-output <OUTPUT>            Build a --layout/--template run on this output: focus it once before the first step, so a new workspace is created there. Overrides a template's own [layout] output. Requires --layout or --template
       --no-lock                       Run a --layout/--template even if another run of the same file or template on the same workspace is still in progress. Requires --layout or --template
   -h, --help                          Print help
   -V, --version                       Print version
@@ -673,7 +674,7 @@ sway-launch --template template.toml --bindings bindings.toml
 ```
 
 A `Binding`'s keys are the same target-selection subset a layout step has (`command`, `con_id`,
-`existing`, `wait`, `app_id`, `class`, `mark_match`, `title`), plus the launched command's `cwd` and `env` — exactly one of `command`/`con_id`/`existing = true` is
+`existing`, `wait`, `app_id`, `class`, `mark_match`, `title`), plus the launched command's `cwd` and `env`, plus where the window goes (`workspace`/`workspace_number`/`output`, see below) — exactly one of `command`/`con_id`/`existing = true` is
 required, same rule as `--layout`, and `app_id`/`class`/`mark_match` can set only one of the three,
 same rule too (each an exact, case-sensitive match, as on the CLI). A binding's `command` runs in Sway's working directory and environment, the same as
 a layout step's (see [Basic usage](#basic-usage)). A template step's
@@ -706,6 +707,29 @@ own `workspace`/`output` still moves that one window afterwards, as before. Both
 are validated where they're declared, so a bad one is reported as `[layout] workspace: ...`.
 `workspace_number = 3` in place of `workspace` picks the workspace by number instead (see
 [Workspace](#workspace)), and so does `--on-workspace-number <N>` on the command line.
+`--on-output <OUTPUT>` overrides the `[layout]` output the same way, and builds a `--layout` run
+on that output's current workspace.
+
+A binding can also move its own slot's window, with the same `workspace`, `workspace_number` and
+`output` keys a step has. A binding's value replaces the step's, so a built-in template that places
+windows on fixed workspaces or outputs works on your own setup without copying the file:
+
+```toml
+# sway-launch --template dual-output --bindings outputs.toml
+[[binding]]
+slot = "first"
+command = "foot"
+output = "eDP-1"
+
+[[binding]]
+slot = "second"
+command = "firefox"
+output = "HDMI-A-2"
+```
+
+A binding can't set a `workspace` for a slot whose step uses `new_column`/`new_row`, for the same
+reason a step can't: the move would apply where the window opened. Use `--on-workspace` to build
+the whole template elsewhere instead.
 
 A step whose application is still starting when focus moves to another workspace — a keybinding,
 a notification click, another script — fails, naming both workspaces: every later step would

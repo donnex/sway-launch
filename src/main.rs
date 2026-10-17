@@ -270,7 +270,7 @@ struct Args {
     /// Print every Sway IPC event until interrupted, one JSON object per line
     /// with --json. Can't be combined with a command or per-window flags
     #[clap(short, long, conflicts_with_all = per_window_and(&[
-        "bindings", "apps", "rollback_on_error", "on_workspace", "on_workspace_number", "no_lock",
+        "bindings", "apps", "rollback_on_error", "on_workspace", "on_workspace_number", "on_output", "no_lock",
     ]))]
     debug_events: bool,
 
@@ -281,7 +281,7 @@ struct Args {
     /// Generate a shell completion script and print it to stdout
     #[clap(long, value_enum, conflicts_with_all = per_window_and(&[
         "debug_events", "layout", "template", "list_templates", "bindings", "apps",
-        "rollback_on_error", "on_workspace", "on_workspace_number", "no_lock", "dry_run", "validate", "show_template", "json",
+        "rollback_on_error", "on_workspace", "on_workspace_number", "on_output", "no_lock", "dry_run", "validate", "show_template", "json",
     ]))]
     completions: Option<clap_complete::Shell>,
 
@@ -314,7 +314,7 @@ struct Args {
     /// List built-in --template names and exit
     #[clap(long, conflicts_with_all = per_window_and(&[
         "debug_events", "layout", "template", "completions", "bindings", "apps",
-        "rollback_on_error", "on_workspace", "on_workspace_number", "no_lock", "dry_run", "validate", "show_template",
+        "rollback_on_error", "on_workspace", "on_workspace_number", "on_output", "no_lock", "dry_run", "validate", "show_template",
     ]))]
     list_templates: bool,
 
@@ -323,7 +323,7 @@ struct Args {
     /// windows --existing would choose between
     #[clap(long, conflicts_with_all = per_window_but_filters_and(&[
         "debug_events", "layout", "template", "completions", "list_templates", "show_template",
-        "bindings", "apps", "rollback_on_error", "on_workspace", "on_workspace_number", "no_lock", "dry_run", "validate",
+        "bindings", "apps", "rollback_on_error", "on_workspace", "on_workspace_number", "on_output", "no_lock", "dry_run", "validate",
     ]))]
     list_windows: bool,
 
@@ -333,7 +333,7 @@ struct Args {
     /// {"name": ..., "contents": "..."}
     #[clap(long, value_name = "NAME_OR_PATH", conflicts_with_all = per_window_and(&[
         "debug_events", "layout", "template", "completions", "bindings", "apps",
-        "rollback_on_error", "on_workspace", "on_workspace_number", "no_lock", "dry_run", "validate",
+        "rollback_on_error", "on_workspace", "on_workspace_number", "on_output", "no_lock", "dry_run", "validate",
     ]))]
     show_template: Option<PathBuf>,
 
@@ -369,6 +369,13 @@ struct Args {
     #[clap(long, value_name = "N", conflicts_with = "on_workspace",
         value_parser = sway_launch::parse_workspace_number)]
     on_workspace_number: Option<i32>,
+
+    /// Build a --layout/--template run on this output: focus it once before
+    /// the first step, so a new workspace is created there. Overrides a
+    /// template's own [layout] output. Requires --layout or --template
+    #[clap(long, value_name = "OUTPUT",
+        value_parser = sway_launch::validate_output_argument)]
+    on_output: Option<String>,
 
     /// Run a --layout/--template even if another run of the same file or
     /// template on the same workspace is still in progress. Requires
@@ -492,6 +499,15 @@ fn main() {
             .error(
                 ErrorKind::MissingRequiredArgument,
                 "--on-workspace-number requires --layout or --template",
+            )
+            .exit();
+    }
+
+    if args.on_output.is_some() && args.layout.is_none() && args.template.is_none() {
+        Args::command()
+            .error(
+                ErrorKind::MissingRequiredArgument,
+                "--on-output requires --layout or --template",
             )
             .exit();
     }
@@ -1090,7 +1106,7 @@ fn run_layout(path: &Path, args: &Args) -> ! {
 
     let build = sway_launch::BuildLocation {
         workspace: on_workspace(args),
-        output: None,
+        output: args.on_output.as_deref(),
     };
     run_steps(&parsed_layout.step, build, args);
 }
@@ -1443,11 +1459,14 @@ fn run_template(path: &Path, bindings_source: BindingsSource, args: &Args) -> ! 
         }
     };
 
-    // --on-workspace wins over the template's own [layout] workspace; the
-    // template's output still applies, so a new workspace is created there.
+    // Each of --on-workspace and --on-output wins over its own half of the
+    // template's [layout] table, so either can be overridden alone.
     let build = sway_launch::BuildLocation {
         workspace: on_workspace(args).or(parsed_template.layout.workspace_target()),
-        output: parsed_template.layout.output.as_deref(),
+        output: args
+            .on_output
+            .as_deref()
+            .or(parsed_template.layout.output.as_deref()),
     };
     run_steps(&resolved_steps, build, args);
 }
@@ -1504,6 +1523,9 @@ fn bindings_from_apps(
             class: None,
             mark_match: None,
             title: None,
+            workspace: None,
+            workspace_number: None,
+            output: None,
             cwd: None,
             env: Default::default(),
         })
@@ -2357,6 +2379,7 @@ mod tests {
         "rollback_on_error",
         "on_workspace",
         "on_workspace_number",
+        "on_output",
         "no_lock",
         "json",
         "verbose",
@@ -2399,6 +2422,10 @@ mod tests {
     /// `template::Binding` fields with no `BINDING_SUPPLIED_FIELDS` entry:
     /// `slot` is the key a binding is looked up by, not a value it supplies.
     const BINDING_ONLY_FIELDS: &[&str] = &["slot"];
+
+    /// `template::Binding` fields that override the template step's own
+    /// field of the same name (#30), rather than supplying a missing one.
+    const BINDING_OVERRIDE_FIELDS: &[&str] = &["workspace", "workspace_number", "output"];
 
     fn field_names<T: serde::Serialize>(value: &T) -> std::collections::BTreeSet<String> {
         serde_json::to_value(value)
@@ -2502,12 +2529,19 @@ mod tests {
             difference(
                 &binding_fields,
                 &binding_supplied_fields,
-                BINDING_ONLY_FIELDS
+                &[BINDING_ONLY_FIELDS, BINDING_OVERRIDE_FIELDS].concat()
             ),
             Vec::<String>::new(),
             "every template::Binding field needs an entry in BINDING_SUPPLIED_FIELDS (or in \
-             BINDING_ONLY_FIELDS)"
+             BINDING_ONLY_FIELDS/BINDING_OVERRIDE_FIELDS)"
         );
+        for field in BINDING_OVERRIDE_FIELDS {
+            assert!(
+                binding_fields.contains(*field) && template_fields.contains(*field),
+                "BINDING_OVERRIDE_FIELDS entry {field:?} must be a field of both \
+                 template::Binding and template::TemplateStep"
+            );
+        }
     }
 
     /// The standalone modes: each never acts on a single window, so each has

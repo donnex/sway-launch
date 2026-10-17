@@ -1,10 +1,14 @@
 # Two windows, each moved to a different output (monitor).
-# HDMI-A-1 and DP-1 are placeholder output names — replace them with the
-# names your own setup uses (list them with `swaymsg -t get_outputs`).
-# Run with, e.g.:
-#   sway-launch --template dual-output --apps foot,firefox
-# or with per-slot app_id/class matching via a --bindings file; see
-# README.md's "Templates" section.
+# HDMI-A-1 and DP-1 are placeholder output names. Give each slot your own
+# setup's output (list them with `swaymsg -t get_outputs`) in a --bindings
+# file, whose `output` replaces the step's:
+#   [[binding]]
+#   slot = "first"
+#   command = "foot"
+#   output = "eDP-1"
+# and the same for "second", then run:
+#   sway-launch --template dual-output --bindings outputs.toml
+# See README.md's "Templates" section.
 
 [template]
 description = "Two windows, each moved to a different output (monitor)."

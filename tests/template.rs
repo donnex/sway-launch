@@ -1315,3 +1315,46 @@ fn a_binding_command_given_as_words_is_quoted_too() {
         "{output:?}"
     );
 }
+
+#[test]
+fn a_binding_places_a_built_in_template_slot_on_its_own_output() {
+    let bindings = TempToml::write(
+        "dual-output-bindings",
+        "[[binding]]\nslot = \"first\"\ncommand = \"foot\"\noutput = \"eDP-1\"\n\n\
+         [[binding]]\nslot = \"second\"\ncommand = \"foot\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args([
+            "--template",
+            "dual-output",
+            "--bindings",
+            bindings.to_str().unwrap(),
+            "--on-output",
+            "DP-3",
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(output.status.success(), "{output:?}");
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be a JSON object");
+    assert_eq!(json["setup"], serde_json::json!(["focus output \"DP-3\""]));
+    let commands: Vec<&str> = json["steps"]
+        .as_array()
+        .expect("steps should be an array")
+        .iter()
+        .map(|step| step["actions"][0]["command"].as_str().unwrap())
+        .collect();
+    // The first slot's binding replaces the step's output; the second keeps
+    // the template's own.
+    assert_eq!(
+        commands,
+        [
+            "move container to output \"eDP-1\"",
+            "move container to output \"DP-1\""
+        ]
+    );
+}
