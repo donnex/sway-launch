@@ -35,6 +35,8 @@ pub(super) struct ExecAction<'a> {
     pub(super) title: Option<&'a TitlePattern>,
     pub(super) verbose: bool,
     pub(super) timeout: time::Duration,
+    /// See `SwayLaunch::catch_late_window`.
+    pub(super) catch_late_window: bool,
 }
 
 /// One action against an already-resolved container.

@@ -100,6 +100,7 @@ instruction set: where it disagrees with this file or the code, it's stale.
   | `action.rs` | `SwayAction`/`ActionKind`/`ExecAction` themselves: fields, `Display`, `sway_command_verb()`, `flag_name()` |
   | `confirmation.rs` | how an action's effect is established: event matching, state checks, polling, the `run_*` drivers |
   | `outcome.rs` | `RunOutcome`/`RunError`/`UnmatchedWindow`/`ActionRecord`/`ActionStatus`/`LaunchOwnership` |
+  | `interrupt.rs` | SIGINT/SIGTERM as a flag (`install()`, `check()`), and the interruptible `sleep()`/`recv()` every long wait uses |
   | `launch.rs` | `SwayLaunch`, `BuildLocation`, `build_actions()`/`execute_plan()`/`run()`, `debug_events()` |
 
 **Layering rules:**
@@ -297,6 +298,14 @@ checks those by hand, because the derive macro doesn't enforce `requires` reliab
   skipped (`skipped_steps`). Any other failure still goes through `fail_step()`. The result object
   still goes to stdout, then the run exits 1. A binding's `timeout`/`wait_time` override the step's
   like its placement does.
+- `run_steps()` installs the signal handlers (`interrupt::install()`, #15) before its first step
+  and checks them before each one; every wait that can run long (`run_wait_matching_events()`,
+  the exec and `--existing --wait` loops, `--wait-time`'s sleeps) goes through
+  `interrupt::recv()`/`interrupt::sleep()`, so a signal fails the run through `fail_step()` within
+  50ms, and `fail_with_rollback()` exits `128 + signal`. A direct-CLI run installs nothing and
+  dies to a signal as before. Under `--rollback-on-error` (and not `--continue-on-timeout`), a
+  launch timeout watches `LATE_WINDOW_GRACE` more for a marked window (`late_marked_window()`) and
+  hands it to rollback as the failed step's `Launched` container.
 - `--rollback-on-error` closes only windows whose `launch_ownership` is `Launched` — never
   retargeted or `Adopted` ones — most recent first (`rollback()`, `send_rollback_kills()`), waits
   `ROLLBACK_CLOSE_GRACE` for each to actually close, and stops at the first unanswered kill. It
