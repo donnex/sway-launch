@@ -79,6 +79,10 @@ pub(super) enum ActionKind<'a> {
     Height(Size),
     Width(Size),
     Position(Position),
+    /// `--sway-command` (#90): one command from `SWAY_WINDOW_COMMANDS`,
+    /// sent as given, for a property no other flag models. Nothing it does
+    /// can be confirmed, so it reports `unconfirmed`.
+    SwayCommand(&'a str),
     Scratchpad,
 }
 
@@ -107,6 +111,7 @@ impl ActionKind<'_> {
             ActionKind::Height(_) => "height",
             ActionKind::Width(_) => "width",
             ActionKind::Position(_) => "position",
+            ActionKind::SwayCommand(_) => "sway_command",
             ActionKind::Scratchpad => "scratchpad",
         }
     }
@@ -142,6 +147,7 @@ impl fmt::Display for SwayAction<'_> {
             ActionKind::Height(_) => "Height",
             ActionKind::Width(_) => "Width",
             ActionKind::Position(_) => "Position",
+            ActionKind::SwayCommand(_) => "Sway command",
             ActionKind::Scratchpad => "Scratchpad",
         };
         write!(f, "{} (container id: {})", name, self.container_id)?;
@@ -156,6 +162,7 @@ impl fmt::Display for SwayAction<'_> {
             ActionKind::Height(height) => write!(f, " (height: {})", height),
             ActionKind::Width(width) => write!(f, " (width: {})", width),
             ActionKind::Position(position) => write!(f, " (position: {})", position),
+            ActionKind::SwayCommand(command) => write!(f, " (command: {})", command),
             ActionKind::Floating
             | ActionKind::Sticky
             | ActionKind::Fullscreen
@@ -291,6 +298,7 @@ impl<'a> SwayAction<'a> {
                 };
                 format!("move position {}", position_command)
             }
+            ActionKind::SwayCommand(command) => command.to_string(),
             ActionKind::Scratchpad => "move scratchpad".to_string(),
         }
     }

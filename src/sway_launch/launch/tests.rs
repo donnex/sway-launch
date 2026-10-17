@@ -20,6 +20,7 @@ fn minimal_sway_launch() -> SwayLaunch<'static> {
         width: None,
         position: None,
         scratchpad: false,
+        sway_commands: &[],
         verbose: false,
         timeout: time::Duration::from_secs(5),
         wait_time: time::Duration::from_millis(20),
@@ -51,6 +52,7 @@ fn kind_label(action: &SwayAction) -> &'static str {
         ActionKind::Width(_) => "width",
         ActionKind::Position(_) => "position",
         ActionKind::Mark(_) => "mark",
+        ActionKind::SwayCommand(_) => "sway_command",
         ActionKind::Scratchpad => "scratchpad",
     }
 }
@@ -60,7 +62,8 @@ fn build_actions_includes_every_flag_in_the_documented_fixed_order() {
     // Pins build_actions()'s full plan order against CLAUDE.md's
     // Architecture section: NewColumn -> NewRow -> Workspace -> Output ->
     // Split -> Floating -> Sticky -> Fullscreen -> Focus -> Height ->
-    // Width -> Position -> Mark -> Scratchpad. Planning never consults the
+    // Width -> Position -> Mark -> SwayCommand (each, in order) ->
+    // Scratchpad. Planning never consults the
     // NewColumn/NewRow guard (execute_plan() does, per move), so both are
     // always planned.
     let mut sway_launch = minimal_sway_launch();
@@ -77,6 +80,8 @@ fn build_actions_includes_every_flag_in_the_documented_fixed_order() {
     sway_launch.width = Some(Size::Pixels(400));
     sway_launch.position = Some(Position::Center);
     sway_launch.mark = Some("pinned");
+    let sway_commands = ["border none".to_string(), "opacity 0.9".to_string()];
+    sway_launch.sway_commands = &sway_commands;
     sway_launch.scratchpad = true;
 
     let actions = sway_launch.build_actions(42);
@@ -98,9 +103,17 @@ fn build_actions_includes_every_flag_in_the_documented_fixed_order() {
             "width",
             "position",
             "mark",
+            "sway_command",
+            "sway_command",
             "scratchpad",
         ]
     );
+    let verbs: Vec<String> = actions
+        .iter()
+        .filter(|action| matches!(action.kind, ActionKind::SwayCommand(_)))
+        .map(SwayAction::sway_command_verb)
+        .collect();
+    assert_eq!(verbs, ["border none", "opacity 0.9"]);
     for action in &actions {
         assert_eq!(action.container_id, 42);
     }

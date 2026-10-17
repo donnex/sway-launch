@@ -152,6 +152,11 @@ what it rejects and why:
   `cd '…' && export NAME='…'` prefix with `render_argv()`'s quoting, carried as
   `SwayLaunch.launch_setup` and put between the PID marker and the command by
   `ExecAction::sway_command()`. Only for a launch; `--dry-run` shows the prefix.
+- `validate_sway_command()` — `--sway-command`/`sway_commands` (#90), checked for files by
+  `layout::deserialize_sway_commands()` at parse time: the first word must be in
+  `SWAY_WINDOW_COMMANDS`, since Sway runs any command behind `[con_id=N]`, `exec`/`bindsym`/`exit`
+  included (confirmed live), and a shared file may only change its own window. No unquoted `,`/`;`,
+  control character but tab, `$`, or leading `[`, so one entry stays one command.
 - `validate_non_blank_argument()`/`require_non_blank()` — free-form identifiers.
 - `validate_timeout_argument()`/`validate_timeout_seconds()` — `1..=MAX_TIMEOUT_SECONDS`; the
   deadline is computed (`deadline_after()`) before any command is sent.
@@ -200,7 +205,7 @@ decides which:
   split container is refused up front for the kinds Sway only reports for views
   (`ActionKind::needs_a_window()`, #93).
 - **Polled** (`Split`, `Sticky`, `NewColumn`, `NewRow`, `Height`, `Width`, `Position`,
-  `WorkspaceToOutput`) — `run_wait_time()`: `ensure_container_exists()` before *and* after the
+  `WorkspaceToOutput`, and `SwayCommand`, which `polls()` never confirms) — `run_wait_time()`: `ensure_container_exists()` before *and* after the
   `--wait-time` sleep (both are load-bearing: fast failure, and Sway 1.9 treating a missing
   `[con_id=N]` as success), send, then `run_poll_then_fallback()`. `polls()` decides whether a kind
   can be confirmed at all; `poll_matches()` reads the tree on one shared connection; the grace is
@@ -218,7 +223,7 @@ decides which:
   re-runs `matches_window()` too, but only for a window whose `New` arrived during this run
   (`opened_this_run`): an older window renaming itself is never this launch's.
 - **Batched** (#32) — every kind `ActionKind::joins_batch()` accepts (`Split`, `Floating`,
-  `Sticky`, `Fullscreen`, `Focus`, `Mark`, `Height`, `Width`, `Position`) goes through
+  `Sticky`, `Fullscreen`, `Focus`, `Mark`, `Height`, `Width`, `Position`, `SwayCommand`) goes through
   `run_batch()` instead of `SwayAction::run()`: one `[con_id=N] a, b, c` command
   (`batch_command()`), confirmed per action by the rules above merged into one loop. Existence
   check, subscribe, one state read for the already-there check (an action already in effect is
@@ -240,7 +245,8 @@ doesn't compile until both its confirmation path and its state/poll arms are dec
 `build_actions()` plans actions in a fixed order without touching IPC (pinned by
 `build_actions_includes_every_flag_in_the_documented_fixed_order`): `NewColumn` → `NewRow` →
 `Workspace` → `Output` (or `WorkspaceToOutput`, see `output_action()`) → `Split` → `Floating` →
-`Sticky` → `Fullscreen` → `Focus` → `Height` → `Width` → `Position` → `Mark` → `Scratchpad`.
+`Sticky` → `Fullscreen` → `Focus` → `Height` → `Width` → `Position` → `Mark` → each
+`SwayCommand` in the order given → `Scratchpad`.
 `Scratchpad` is last so everything else applies while the window is visible. `NewColumn`/`NewRow`
 can't be combined with `Workspace` (#45).
 

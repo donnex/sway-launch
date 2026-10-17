@@ -161,6 +161,7 @@ impl ActionKind<'_> {
             | ActionKind::NewRow
             | ActionKind::Height(_)
             | ActionKind::Width(_)
+            | ActionKind::SwayCommand(_)
             | ActionKind::Position(_) => None,
             // "move scratchpad" reparents the container into the special
             // __i3_scratch workspace, which — like Workspace/Output above —
@@ -197,6 +198,7 @@ impl ActionKind<'_> {
             | ActionKind::Mark(_)
             | ActionKind::Height(_)
             | ActionKind::Width(_)
+            | ActionKind::SwayCommand(_)
             | ActionKind::Position(_)
             | ActionKind::Scratchpad => false,
         }
@@ -397,6 +399,7 @@ impl SwayAction<'_> {
             | ActionKind::NewRow
             | ActionKind::Height(_)
             | ActionKind::Width(_)
+            | ActionKind::SwayCommand(_)
             | ActionKind::Position(_) => false,
         }
     }
@@ -416,6 +419,7 @@ impl SwayAction<'_> {
             | ActionKind::Sticky
             | ActionKind::Height(_)
             | ActionKind::Width(_)
+            | ActionKind::SwayCommand(_)
             | ActionKind::Position(_)
             | ActionKind::Floating
             | ActionKind::Fullscreen
@@ -454,6 +458,7 @@ impl SwayAction<'_> {
             | ActionKind::Workspace(_)
             | ActionKind::Output(_)
             | ActionKind::Mark(_)
+            | ActionKind::SwayCommand(_)
             | ActionKind::Scratchpad => false,
         }
     }
@@ -528,6 +533,7 @@ impl SwayAction<'_> {
             | ActionKind::Workspace(_)
             | ActionKind::Output(_)
             | ActionKind::Mark(_)
+            | ActionKind::SwayCommand(_)
             | ActionKind::Scratchpad => false,
         }
     }
@@ -550,6 +556,7 @@ impl SwayAction<'_> {
             | ActionKind::Sticky
             | ActionKind::Height(_)
             | ActionKind::Width(_)
+            | ActionKind::SwayCommand(_)
             | ActionKind::Position(_)
             | ActionKind::Floating
             | ActionKind::Fullscreen
@@ -920,6 +927,7 @@ impl ActionKind<'_> {
             | ActionKind::Mark(_)
             | ActionKind::Height(_)
             | ActionKind::Width(_)
+            | ActionKind::SwayCommand(_)
             | ActionKind::Position(_) => true,
             ActionKind::NewColumn
             | ActionKind::NewRow
@@ -1307,6 +1315,7 @@ fn is_held_geometry(kind: ActionKind<'_>) -> bool {
         | ActionKind::Output(_)
         | ActionKind::WorkspaceToOutput { .. }
         | ActionKind::Mark(_)
+        | ActionKind::SwayCommand(_)
         | ActionKind::Scratchpad => false,
     }
 }
