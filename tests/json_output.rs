@@ -597,6 +597,20 @@ fn a_closed_stdout_exits_cleanly_instead_of_panicking() {
 }
 
 #[test]
+fn capture_conflicts_with_a_per_window_flag_and_json() {
+    let output = sway_launch_without_a_compositor()
+        .args(["--capture", "--floating"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert_conflict_error(&output, "--capture", "--floating");
+    let output = sway_launch_without_a_compositor()
+        .args(["--capture", "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert_conflict_error(&output, "--capture", "--json");
+}
+
+#[test]
 fn debug_events_conflicts_with_a_command() {
     // --debug-events never acts on a window, so a command alongside it could
     // only be discarded -- it used to parse cleanly and dump events while

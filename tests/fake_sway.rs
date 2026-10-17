@@ -956,6 +956,70 @@ fn a_window_closing_during_the_wait_time_fails_before_its_command_is_sent() {
     );
 }
 
+#[test]
+fn capture_prints_a_layout_rebuilding_the_recorded_workspace() {
+    for version in SwayVersion::ALL {
+        let fake = FakeSway::accepting_everything(version);
+        let output = fake
+            .sway_launch()
+            .args(["--capture", "1"])
+            .output()
+            .expect("failed to run sway-launch");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let captured = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            captured.contains(
+                "# foot\n[[step]]\nid = \"fixture-tiled\"\ncommand = \"fixture-tiled\"\n\
+                 app_id = \"fixture-tiled\"\n"
+            ),
+            "{version:?}: {captured}"
+        );
+        assert!(
+            captured.contains(
+                "id = \"fixture-floating\"\ncommand = \"fixture-floating\"\n\
+                 app_id = \"fixture-floating\"\nfloating = true\nwidth = \""
+            ),
+            "{version:?}: {captured}"
+        );
+        if version == SwayVersion::V1_11 {
+            assert!(
+                captured.contains("width = \"700px\"\nheight = \"521px\"\nposition = \"290,88\"\n"),
+                "{captured}"
+            );
+        }
+        assert!(!captured.contains("fixture-scratchpad"), "{captured}");
+    }
+}
+
+#[test]
+fn capture_without_a_name_captures_the_focused_workspace_and_reports_a_missing_one() {
+    let fake = FakeSway::accepting_everything(SwayVersion::V1_11);
+    let focused = fake
+        .sway_launch()
+        .arg("--capture")
+        .output()
+        .expect("failed to run sway-launch");
+    assert!(focused.status.success());
+    assert!(String::from_utf8_lossy(&focused.stdout).contains("workspace \"1\""));
+
+    let missing = fake
+        .sway_launch()
+        .args(["--capture", "nowhere"])
+        .output()
+        .expect("failed to run sway-launch");
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&missing.stderr)
+            .contains("--capture: no workspace is named \"nowhere\""),
+        "{}",
+        String::from_utf8_lossy(&missing.stderr)
+    );
+}
+
 /// A handler that runs every `exec` for real and, once the launched process
 /// exists, opens a window for it with `app_id`, owned by that process.
 fn opens_a_window_for_each_launch(

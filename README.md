@@ -42,6 +42,7 @@ release.
 - [Recreatable layouts](#recreatable-layouts)
   - [Examples](#examples)
   - [Layout files](#layout-files)
+  - [Capturing a workspace](#capturing-a-workspace)
   - [Templates](#templates)
 - [Actions reference](#actions-reference)
   - [Target an existing window](#target-an-existing-window)
@@ -140,6 +141,7 @@ Options:
       --template <TEMPLATE>           Run a reusable declarative TOML layout template instead of a single command; see README.md for the schema. Steps declare a slot instead of an application, resolved via --bindings or --apps. Either a path to a template file ending in .toml, - to read it from stdin, or a built-in template name with no extension (see --list-templates). Conflicts with --layout and every per-window flag, same reasoning as --layout
       --list-templates                List built-in --template names and exit
       --list-windows                  List every open window (container id, app_id, class, workspace, marks, title) and exit. --app-id/--class/--mark-match narrow it to the windows --existing would choose between
+      --capture [<WORKSPACE>]         Print a --layout file that rebuilds WORKSPACE (the focused one if not given) and exit: its windows' splits, sizes, marks, and floating windows' size and position. Each window's command is a guess from its app_id or class. Tabbed and stacked containers can't be captured
       --show-template <NAME_OR_PATH>  Print a --template's raw TOML and exit, without running it. Same NAME_OR_PATH resolution as --template: a built-in name (see --list-templates), or a path ending in .toml. With --json, prints {"name": ..., "contents": "..."}
       --bindings <BINDINGS>           Bindings file supplying each --template slot's application identity (- reads it from stdin). Requires --template; conflicts with --apps
       --apps <APPS>                   Comma-separated list of commands to launch into --template's slots, in the order the template's slot steps appear. Requires --template; conflicts with --bindings
@@ -656,6 +658,31 @@ This is **window-launch rollback**, not transactional rollback: it undoes *launc
 all (see above), so any changes an earlier step made to it stay applied even after a later step
 fails. There's no mechanism that tracks or reverses individual mutations, only whether this
 invocation is the one that created the window in the first place.
+
+### Capturing a workspace
+
+Arrange a workspace by hand once, then let `sway-launch` write the layout file that rebuilds it:
+
+```shell
+sway-launch --capture > my-workspace.toml        # the focused workspace
+sway-launch --capture 3 > three.toml             # workspace "3"
+sway-launch --layout my-workspace.toml
+```
+
+The file opens each window where it would have to open to rebuild the same splits, splits and
+focuses windows in between, then sets the sizes, and finishes with the floating windows' size and
+position. Marks, sticky and fullscreen windows are kept too. It can't know how a window was
+started, so each step's `command` is a guess from the window's app_id (or its class, lowercased):
+check and edit the commands before running the file. Each step carries a comment with the window's
+title, to help tell them apart. Every built-in template rebuilds its exact shape from its own
+capture.
+
+Two things can't be captured exactly. Tabbed and stacked containers aren't supported, and
+`--capture` refuses a workspace holding one. And some uneven sizes come out approximate, since Sway
+shares each resize with a window's siblings, and Sway 1.12 shares it differently from older
+versions: two windows, three whose outer two are the same size, and even splits are exact on every
+version; any other three are exact on Sway 1.9 to 1.11; four or more uneven ones are approximate.
+The file says so in a note at the top when it applies.
 
 ### Templates
 
