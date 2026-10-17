@@ -234,6 +234,15 @@ criteria, which are regexes, so a value copied out of a Sway config may need adj
 [Finding a window's app_id or class](#finding-a-windows-app_id-or-class) below for how to look up
 the right value.
 
+**Pass `-a`/`-c` whenever the application might already be running**, even when the call launches
+only one window. A browser or editor that's already open usually hands the request to the running
+copy, and the window it opens can't be traced back to this launch, so `sway-launch` falls back to
+the first new window that appears within a short grace period. Without a filter that can be any
+window — a notification, another application finishing its own start — and every follow-up action
+then lands on it. With `-a`/`-c` only the right application's window can match. The same goes for
+`app_id`/`class` in a layout step or a template binding. `--verbose` points this out when an
+unfiltered launch is matched that way.
+
 **Prefer running `sway-launch` calls one at a time over backgrounding them.** Every example in
 this README — and `--layout`/`--template`'s own step-by-step execution — chains calls
 sequentially, each one finishing (its window matched and confirmed) before the next starts, and

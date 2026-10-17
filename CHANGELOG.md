@@ -24,7 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   newline, carriage return or NUL anywhere in it, which Sway turns into a `;` even inside quotes.
   The same target rules apply on the command line, in a layout step and in a template binding: a
   blank or whitespace-only command is rejected up front everywhere, instead of the command line
-  accepting one that then launched nothing and timed out. (#2, #3, #4, #20)
+  accepting one that then launched nothing and timed out. A launch without `--app-id`/`--class`
+  that ends up taking a window this way says so under `--verbose`, since without a filter any new
+  window can qualify. (#2, #3, #4, #18, #20)
 - Follow-up actions applied to that window in one invocation: `--split`, `--floating`, `--sticky`,
   `--fullscreen`, `--focus`, `--mark`, `--new-column`, `--new-row`, `--workspace`, `--output`,
   `--height`, `--width`, `--position` and `--scratchpad`.

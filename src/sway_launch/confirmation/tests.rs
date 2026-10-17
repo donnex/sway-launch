@@ -2,6 +2,15 @@ use super::super::test_support::*;
 use super::super::values::Position;
 use super::*;
 
+// unfiltered_fallback_hint
+
+#[test]
+fn unfiltered_fallback_hint_is_empty_with_a_filter_and_names_the_flags_without() {
+    assert_eq!(unfiltered_fallback_hint(filter("foot", "")), "");
+    let hint = unfiltered_fallback_hint(None);
+    assert!(hint.contains("pass -a/-c"), "{hint}");
+}
+
 // exec_timeout_message / event_timeout_message
 
 fn unmatched(container_id: i64, app_id: Option<&str>, class: Option<&str>) -> UnmatchedWindow {

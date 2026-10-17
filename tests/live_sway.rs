@@ -4244,6 +4244,37 @@ fn exec_falls_back_to_a_content_match_when_its_own_process_already_exited() {
 }
 
 #[test]
+fn an_unfiltered_launch_matched_by_fallback_says_to_pass_a_filter() {
+    fresh_workspace();
+    // Without -a/-c any new window qualifies for the fallback, so an
+    // unrelated one can be picked up; --verbose says so when it happens (#18).
+    // Same setup as the filtered test above, minus the filter.
+    let mut connection = connect();
+    connection
+        .run_command("exec sh -c 'sleep 1; exec foot'")
+        .expect("exec should succeed")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("exec should succeed");
+
+    let output = sway_launch_command()
+        .args(["--verbose", "--timeout", "10", "sleep 0.3"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "sway-launch failed: {stderr}");
+    let container_id: i64 = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .expect("stdout should be a container id");
+    let _guard = KillOnDrop(container_id);
+    assert!(
+        stderr.contains("pass -a/-c"),
+        "an unfiltered fallback match should suggest a filter: {stderr}"
+    );
+}
+
+#[test]
 fn wait_time_action_errors_clearly_when_its_container_already_closed() {
     fresh_workspace();
     // Regression test: on Sway 1.9, a [con_id=N] criteria matching zero
