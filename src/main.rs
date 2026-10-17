@@ -214,11 +214,6 @@ struct Args {
     // on a window, so a command or per-window flag alongside it could only
     // be discarded. Rejected rather than ignored, same as those.
     //
-    // --json is in that list too: debug_events() writes plain `Event: N`
-    // lines regardless, so accepting the flag could only throw it away. That
-    // is a choice rather than a constraint (Sway's events are JSON on the
-    // wire), but until a JSON event dump exists, rejecting it is honest.
-    //
     // --bindings/--apps/--rollback-on-error are listed for the same reason
     // --completions and --list-templates list them: main() dispatches this
     // mode before its manual "requires --template/--layout" checks run, so
@@ -226,10 +221,10 @@ struct Args {
     //
     // Kept as `//` rather than `///`: clap renders every doc-comment
     // paragraph into `--help`, where these notes mean nothing to a user.
-    /// Print every Sway IPC event until interrupted. Can't be combined with a
-    /// command, per-window flags or --json
+    /// Print every Sway IPC event until interrupted, one JSON object per line
+    /// with --json. Can't be combined with a command or per-window flags
     #[clap(short, long, conflicts_with_all = per_window_and(&[
-        "json", "bindings", "apps", "rollback_on_error", "on_workspace",
+        "bindings", "apps", "rollback_on_error", "on_workspace",
     ]))]
     debug_events: bool,
 
@@ -340,7 +335,7 @@ fn main() {
     }
 
     if args.debug_events {
-        match sway_launch::debug_events() {
+        match sway_launch::debug_events(args.json) {
             Ok(_) => process::exit(0),
             Err(error) => fail(args.json, &error),
         }

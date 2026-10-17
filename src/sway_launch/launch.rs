@@ -25,7 +25,7 @@ use super::tree::MoveDirection;
 use super::values::{Position, Size, Split};
 use std::io::Write;
 use std::time;
-use swayipc::EventType;
+use swayipc::{Event, EventType};
 
 /// Every event type `--debug-events` subscribes to, which its help text
 /// promises is all of them. Mirrors `swayipc`'s `EventType` by hand: that enum
@@ -118,7 +118,7 @@ impl BuildLocation<'_> {
 /// because it acts on no window and reads none of an invocation's settings,
 /// so `main()` dispatches it with the other standalone modes, before any
 /// target is resolved.
-pub fn debug_events() -> Result<(), String> {
+pub fn debug_events(json: bool) -> Result<(), String> {
     for (i, event) in event_loop(&DEBUG_EVENT_SUBSCRIPTIONS)?.enumerate() {
         let event = match event {
             Ok(event) => event,
@@ -131,7 +131,11 @@ pub fn debug_events() -> Result<(), String> {
         // `--debug-events | head` is a normal way to use it, and Rust
         // ignores SIGPIPE. Reported as success — the reader got what it
         // asked for and went away.
-        let written = writeln!(std::io::stdout(), "Event: {}\n{:?}\n", i, event);
+        let written = if json {
+            writeln!(std::io::stdout(), "{}", debug_event_json(&event))
+        } else {
+            writeln!(std::io::stdout(), "Event: {}\n{:?}\n", i, event)
+        };
         if let Err(error) = written {
             if error.kind() == std::io::ErrorKind::BrokenPipe {
                 return Ok(());
@@ -141,6 +145,34 @@ pub fn debug_events() -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// One event as `--debug-events --json` prints it: Sway's own payload, the
+/// shape `swaymsg -t subscribe` shows, with an `event` field naming its type
+/// (`window`, `output`, `bar_config_update`, ...), since the payload alone
+/// doesn't say. A payload that isn't an object is kept under `payload`.
+fn debug_event_json(event: &Event) -> serde_json::Value {
+    let tagged = serde_json::to_value(event).unwrap_or(serde_json::Value::Null);
+    let Some((variant, payload)) = tagged.as_object().and_then(|object| object.iter().next())
+    else {
+        return serde_json::json!({ "event": "unknown", "payload": tagged });
+    };
+    let mut name = String::new();
+    for (index, character) in variant.chars().enumerate() {
+        if character.is_uppercase() && index > 0 {
+            name.push('_');
+        }
+        name.push(character.to_ascii_lowercase());
+    }
+    match payload {
+        serde_json::Value::Object(fields) => {
+            let mut object = serde_json::Map::new();
+            object.insert("event".to_string(), serde_json::Value::String(name));
+            object.extend(fields.clone());
+            serde_json::Value::Object(object)
+        }
+        other => serde_json::json!({ "event": name, "payload": other }),
+    }
 }
 
 impl<'a> SwayLaunch<'a> {

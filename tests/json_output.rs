@@ -573,17 +573,24 @@ fn debug_events_conflicts_with_a_command() {
 }
 
 #[test]
-fn debug_events_rejects_json_rather_than_ignoring_it() {
-    // Same reasoning as completions_rejects_json_rather_than_ignoring_it:
-    // debug_events() writes plain `Event: N` lines and never sees the flag, so
-    // a raw event dump has no JSON shape for --json to take, so it's rejected
-    // rather than accepted and discarded, consistent with --completions.
+fn debug_events_accepts_json() {
+    // --debug-events --json prints one JSON object per event (#85). With no
+    // compositor it gets as far as subscribing, so the failure is the
+    // connection, reported as a --json error object, not a usage error.
     let output = sway_launch_without_a_compositor()
         .args(["--debug-events", "--json"])
         .output()
         .expect("failed to run sway-launch binary");
 
-    assert_conflict_error(&output, "--debug-events", "--json");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let error: serde_json::Value =
+        serde_json::from_str(stderr.lines().next_back().unwrap_or_default())
+            .unwrap_or_else(|_| panic!("the last stderr line should be JSON: {stderr:?}"));
+    assert!(error["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("Sway IPC"));
 }
 
 #[test]
