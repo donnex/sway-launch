@@ -318,6 +318,11 @@ pub struct Binding {
     pub workspace: Option<String>,
     pub workspace_number: Option<i64>,
     pub output: Option<String>,
+    /// This slot's own `timeout`/`wait_time`, overriding the template
+    /// step's and the run's (#19): a slow-starting application's slot can
+    /// wait longer without every other slot waiting as long.
+    pub timeout: Option<u64>,
+    pub wait_time: Option<u64>,
 }
 
 impl Binding {
@@ -325,11 +330,15 @@ impl Binding {
         self.workspace.is_some() || self.workspace_number.is_some()
     }
 
-    /// Checks the placement this binding gives `step`'s window, so a mistake
+    /// Checks the values this binding overrides `step`'s with, so a mistake
     /// is reported against the bindings file. Moving a window to another
     /// workspace after a relative move is refused for the same reason
     /// `to_sway_launch()` refuses it in a single step.
-    fn validate_placement(&self, step: &TemplateStep) -> Result<(), String> {
+    fn validate_overrides(&self, step: &TemplateStep) -> Result<(), String> {
+        if let Some(timeout) = self.timeout {
+            sway_launch::validate_timeout_seconds(timeout)
+                .map_err(|error| format!("timeout: {}", error))?;
+        }
         if self.workspace.is_some() && self.workspace_number.is_some() {
             return Err(
                 "workspace and workspace_number can't both be set — pick the workspace by name \
@@ -606,7 +615,7 @@ pub fn resolve(
                 ))
             })?;
 
-            binding.validate_placement(step).map_err(|error| {
+            binding.validate_overrides(step).map_err(|error| {
                 ResolveError::Bindings(format!("binding for slot {:?}: {}", slot, error))
             })?;
 
@@ -691,8 +700,10 @@ pub fn resolve(
             width: substitute(&step.width),
             position: substitute(&step.position),
             scratchpad: step.scratchpad,
-            timeout: step.timeout,
-            wait_time: step.wait_time,
+            timeout: binding.and_then(|binding| binding.timeout).or(step.timeout),
+            wait_time: binding
+                .and_then(|binding| binding.wait_time)
+                .or(step.wait_time),
         });
     }
 

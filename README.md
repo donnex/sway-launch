@@ -143,6 +143,7 @@ Options:
       --apps <APPS>                   Comma-separated list of commands to launch into --template's slots, in the order the template's slot steps appear. Requires --template; conflicts with --bindings
       --param <NAME=VALUE>            Set one of --template's params (see --list-templates), overriding its default and a --bindings file's [params]. Repeatable. Requires --template
       --rollback-on-error             If a --layout/--template step fails, kill every window this invocation itself launched, by an earlier step or by the failing step before it failed (not one it merely retargeted via con_id/existing/target_id), rather than leaving them open. Requires --layout or --template
+      --continue-on-timeout           If a --layout/--template step's window doesn't appear within its timeout, report it and carry on with the next step instead of stopping the run. Later steps that target the missing window are skipped. The run still exits non-zero. Requires --layout or --template
       --on-workspace <WORKSPACE>      Build a --layout/--template run on this workspace: switch to it once before the first step, so every window opens there. Overrides a template's own [layout] workspace. Requires --layout or --template
       --on-workspace-number <N>       --on-workspace by number, the way Sway's "workspace number N" finds it: 2 matches a workspace named "2: web". Requires --layout or --template
       --on-output <OUTPUT>            Build a --layout/--template run on this output: focus it once before the first step, so a new workspace is created there. Overrides a template's own [layout] output. Requires --layout or --template
@@ -602,6 +603,17 @@ as unconfirmed straight away. With `--json`, the error object includes which con
 closed, and which ones couldn't be confirmed closed: `{"error": "...", "rolled_back": [123, 456], "rollback_failed": [789]}`
 (see [JSON output](#json-output) below).
 
+By default a step whose window doesn't appear within its `timeout` stops the run, so one slow
+application at the start of a layout leaves every later one unopened. `--continue-on-timeout`
+reports that step and carries on with the next one instead. A later step that targets the missing
+window (`target_id`) is skipped and reported too, since there is nothing for it to act on. The run
+still exits non-zero, so a calling script knows the layout is incomplete. Each such step gets a
+warning on stderr, and `--json` lists them under `timed_out_steps` (`step`, `error`, and any
+`unmatched_windows`) and `skipped_steps` (`step`, `target_id`). Plain output prints a container id
+only for each step that has one, so match steps to windows with `--json`'s `containers` when steps
+may be missing. Only a missing window counts: a step that fails any other way still stops the run,
+and with `--rollback-on-error`, still rolls it back.
+
 This is **window-launch rollback**, not transactional rollback: it undoes *launches*, not
 *actions*. A `move`/`resize`/`mark`/etc. an earlier step applied to a `con_id`/`existing`/
 `target_id`-retargeted window is never reverted — that window is never eligible for rollback at
@@ -675,7 +687,7 @@ sway-launch --template template.toml --bindings bindings.toml
 ```
 
 A `Binding`'s keys are the same target-selection subset a layout step has (`command`, `con_id`,
-`existing`, `wait`, `app_id`, `class`, `mark_match`, `title`), plus the launched command's `cwd` and `env`, plus where the window goes (`workspace`/`workspace_number`/`output`, see below) — exactly one of `command`/`con_id`/`existing = true` is
+`existing`, `wait`, `app_id`, `class`, `mark_match`, `title`), plus the launched command's `cwd` and `env`, plus where the window goes (`workspace`/`workspace_number`/`output`, see below) and how long to wait for it (`timeout`/`wait_time`, replacing the step's and the command line's, so one slow-starting application's slot can wait longer than the rest) — exactly one of `command`/`con_id`/`existing = true` is
 required, same rule as `--layout`, and `app_id`/`class`/`mark_match` can set only one of the three,
 same rule too (each an exact, case-sensitive match, as on the CLI). A binding's `command` runs in Sway's working directory and environment, the same as
 a layout step's (see [Basic usage](#basic-usage)). A template step's
