@@ -1,0 +1,174 @@
+#!/bin/sh
+#
+# Record the Sway IPC replies tests/fake_sway.rs replays, from a headless Sway.
+#
+set -eu
+
+print_usage() {
+  printf 'Usage: %s OUTPUT_DIR\n' "$(basename "$0")"
+  printf '\n'
+  printf 'Start a throwaway headless Sway compositor, open a tiled, a floating and a\n'
+  printf 'scratchpad foot window, and write what Sway reports into OUTPUT_DIR:\n'
+  printf '\n'
+  printf '  version.json                 get_version\n'
+  printf '  tree.json                    get_tree\n'
+  printf '  outputs.json                 get_outputs\n'
+  printf '  window-events.jsonl          every window event, one per line\n'
+  printf '  missing-container-reply.json a command for a container that does not exist\n'
+  printf '\n'
+  printf 'tests/fake-sway/ holds one such directory per supported Sway version.\n'
+  printf 'Requires sway, swaymsg and foot on PATH.\n'
+}
+
+die() {
+  printf '✗ %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  if [ "${1:-0}" -ne 0 ]; then
+    print_usage >&2
+  else
+    print_usage
+  fi
+  exit "${1:-0}"
+}
+
+poll() {
+  poll_max_attempts="$1"
+  poll_delay_seconds="$2"
+  shift 2
+  poll_attempt=0
+  while [ "$poll_attempt" -lt "$poll_max_attempts" ]; do
+    "$@" && return 0
+    sleep "$poll_delay_seconds"
+    poll_attempt=$((poll_attempt + 1))
+  done
+  return 1
+}
+
+output_dir=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+  -h | --help)
+    usage 0
+    ;;
+  --)
+    shift
+    break
+    ;;
+  -*)
+    usage 1
+    ;;
+  esac
+  [ -z "$output_dir" ] || usage 1
+  output_dir="$1"
+  shift
+done
+if [ "$#" -gt 0 ]; then
+  if [ -n "$output_dir" ] || [ "$#" -ne 1 ]; then
+    usage 1
+  fi
+  output_dir="$1"
+fi
+[ -n "$output_dir" ] || usage 1
+
+for command_name in sway swaymsg foot; do
+  command -v "$command_name" >/dev/null 2>&1 ||
+    die "$command_name not found on PATH."
+done
+
+mkdir -p "$output_dir" || die "Could not create $output_dir."
+
+sway_pid=''
+subscriber_pid=''
+foot_pids=''
+runtime_dir=''
+
+cleanup() {
+  for foot_pid in $foot_pids; do
+    kill "$foot_pid" >/dev/null 2>&1 || true
+  done
+  [ -n "$subscriber_pid" ] && kill "$subscriber_pid" >/dev/null 2>&1
+  [ -n "$sway_pid" ] && kill "$sway_pid" >/dev/null 2>&1
+  [ -n "$sway_pid" ] && wait "$sway_pid" 2>/dev/null
+  [ -n "$runtime_dir" ] && rm -rf "$runtime_dir"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# A Unix socket path is limited to about 100 bytes, and Sway puts its IPC
+# socket in XDG_RUNTIME_DIR, so the directory comes from mktemp's own short
+# default rather than a possibly long TMPDIR.
+runtime_dir="$(mktemp -d -p /tmp)"
+
+env \
+  WLR_BACKENDS=headless \
+  WLR_RENDERER=pixman \
+  WLR_LIBINPUT_NO_DEVICES=1 \
+  XDG_RUNTIME_DIR="$runtime_dir" \
+  sway -c /dev/null >"$runtime_dir/sway.log" 2>&1 &
+sway_pid="$!"
+
+user_id="$(id -u)"
+SWAYSOCK="$runtime_dir/sway-ipc.$user_id.$sway_pid.sock"
+I3SOCK="$SWAYSOCK"
+export SWAYSOCK I3SOCK
+
+sway_ipc_ready() {
+  swaymsg -t get_version >/dev/null 2>&1
+}
+if ! poll 50 0.1 sway_ipc_ready; then
+  cat "$runtime_dir/sway.log" >&2
+  die 'Timed out waiting for headless Sway to become ready.'
+fi
+
+wayland_display=''
+for wayland_socket in "$runtime_dir"/wayland-*; do
+  case "$wayland_socket" in
+  *.lock) continue ;;
+  esac
+  [ -S "$wayland_socket" ] && wayland_display="$(basename "$wayland_socket")"
+done
+[ -n "$wayland_display" ] || die "Could not find a Wayland display socket under $runtime_dir."
+
+swaymsg -t subscribe -m '["window"]' >"$output_dir/window-events.jsonl" &
+subscriber_pid="$!"
+sleep 0.3
+
+window_count() {
+  swaymsg -t get_tree | grep -c "\"app_id\": \"fixture-" || true
+}
+
+open_window() {
+  app_id="$1"
+  expected_count="$2"
+  XDG_RUNTIME_DIR="$runtime_dir" WAYLAND_DISPLAY="$wayland_display" \
+    foot --app-id "$app_id" >/dev/null 2>&1 &
+  foot_pids="$foot_pids $!"
+  window_has_opened() {
+    [ "$(window_count)" -ge "$expected_count" ]
+  }
+  poll 50 0.1 window_has_opened || die "foot --app-id $app_id never opened a window."
+}
+
+open_window fixture-tiled 1
+open_window fixture-floating 2
+open_window fixture-scratchpad 3
+
+swaymsg '[app_id="fixture-floating"] floating enable' >/dev/null ||
+  die 'Could not float the floating fixture window.'
+swaymsg '[app_id="fixture-scratchpad"] move scratchpad' >/dev/null ||
+  die 'Could not move the scratchpad fixture window.'
+sleep 0.3
+
+swaymsg -r -t get_version >"$output_dir/version.json" || die 'get_version failed.'
+swaymsg -r -t get_tree >"$output_dir/tree.json" || die 'get_tree failed.'
+swaymsg -r -t get_outputs >"$output_dir/outputs.json" || die 'get_outputs failed.'
+# swaymsg exits non-zero when Sway reports the command failed, which is one
+# of the two answers worth recording.
+swaymsg -r '[con_id=2147480000] floating enable' >"$output_dir/missing-container-reply.json" || true
+
+sleep 0.3
+printf '✓ Wrote %s fixtures to %s\n' "$(sway --version)" "$output_dir"
