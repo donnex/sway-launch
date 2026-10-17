@@ -140,3 +140,25 @@ pub fn assert_conflict_error(output: &Output, flag: &str, conflicting: &str) {
         "expected the conflict error to name {conflicting}: {stderr}"
     );
 }
+
+/// Runs the binary with `args`, writing `stdin` to it, for the inputs that
+/// accept `-` (#50).
+pub fn run_with_stdin(args: &[&str], stdin: &str) -> std::process::Output {
+    use std::io::Write;
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to run sway-launch binary");
+    child
+        .stdin
+        .take()
+        .expect("stdin should be piped")
+        .write_all(stdin.as_bytes())
+        .expect("writing stdin should succeed");
+    child
+        .wait_with_output()
+        .expect("failed to wait for sway-launch")
+}

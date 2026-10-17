@@ -6237,6 +6237,46 @@ fn debug_events_line_arrives(
 }
 
 #[test]
+fn a_layout_piped_through_stdin_launches_its_steps() {
+    fresh_workspace();
+    // `--layout -` reads the layout from stdin (#50), so a script can pipe a
+    // generated one in; the run itself is an ordinary layout run.
+    use std::io::Write;
+    let mut child = sway_launch_command()
+        .args(["--layout", "-", "--json"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to run sway-launch binary");
+    child
+        .stdin
+        .take()
+        .expect("stdin should be piped")
+        .write_all(b"[[step]]\nid = \"piped\"\ncommand = \"foot\"\napp_id = \"foot\"\n")
+        .expect("writing stdin should succeed");
+    let output = child
+        .wait_with_output()
+        .expect("failed to wait for sway-launch");
+    assert!(
+        output.status.success(),
+        "sway-launch --layout - failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be JSON");
+    let container_id = json["containers"]["piped"]
+        .as_i64()
+        .unwrap_or_else(|| panic!("expected the piped step's container id in {json}"));
+    let _guard = KillOnDrop(container_id);
+    let mut connection = connect();
+    assert_eq!(
+        get_node(&mut connection, container_id).app_id.as_deref(),
+        Some("foot")
+    );
+}
+
+#[test]
 fn debug_events_json_prints_a_real_window_event_as_one_json_line() {
     fresh_workspace();
     // --debug-events --json writes Sway's payload plus an `event` type per

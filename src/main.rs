@@ -247,8 +247,8 @@ struct Args {
     #[clap(long)]
     json: bool,
 
-    /// Run a declarative TOML layout file instead of a single command; see
-    /// README.md for the schema. Each step is the equivalent of one
+    /// Run a declarative TOML layout file instead of a single command (-
+    /// reads it from stdin); see README.md for the schema. Each step is the equivalent of one
     /// sway-launch invocation's flags, so this conflicts with every
     /// per-window flag, which would otherwise apply to no specific step
     #[clap(long, conflicts_with_all = per_window_and(&["debug_events", "bindings", "apps"]))]
@@ -257,8 +257,8 @@ struct Args {
     /// Run a reusable declarative TOML layout template instead of a single
     /// command; see README.md for the schema. Steps declare a slot instead
     /// of an application, resolved via --bindings or --apps. Either a path
-    /// to a template file ending in .toml, or a built-in template name with
-    /// no extension (see --list-templates). Conflicts with --layout and
+    /// to a template file ending in .toml, - to read it from stdin, or a
+    /// built-in template name with no extension (see --list-templates). Conflicts with --layout and
     /// every per-window flag, same reasoning as --layout
     #[clap(long, conflicts_with_all = per_window_and(&["debug_events", "layout"]))]
     template: Option<PathBuf>,
@@ -280,8 +280,8 @@ struct Args {
     ]))]
     show_template: Option<PathBuf>,
 
-    /// Bindings file supplying each --template slot's application identity.
-    /// Requires --template; conflicts with --apps
+    /// Bindings file supplying each --template slot's application identity
+    /// (- reads it from stdin). Requires --template; conflicts with --apps
     #[clap(long, conflicts_with = "apps")]
     bindings: Option<PathBuf>,
 
@@ -355,6 +355,14 @@ fn main() {
     }
 
     if let Some(template_path) = &args.template {
+        if is_stdin(template_path) && args.bindings.as_deref().is_some_and(is_stdin) {
+            Args::command()
+                .error(
+                    ErrorKind::ArgumentConflict,
+                    "--template and --bindings can't both read stdin (-)",
+                )
+                .exit();
+        }
         let bindings_source = match (&args.bindings, &args.apps) {
             (Some(bindings_path), None) => BindingsSource::File(bindings_path),
             (None, Some(apps)) => BindingsSource::Apps(apps),
@@ -909,16 +917,42 @@ fn dry_run_plain_lines(setup: &[String], steps: &[DryRunStep]) -> Vec<String> {
         .collect()
 }
 
+/// Whether a `--layout`/`--template`/`--bindings` value is `-`, meaning
+/// "read stdin", so a generated file can be piped in without a temp file.
+fn is_stdin(path: &Path) -> bool {
+    path.as_os_str() == "-"
+}
+
+/// How errors and `--validate` name an input: `<stdin>` for `-`, otherwise
+/// the path as given.
+fn input_label(path: &Path) -> String {
+    if is_stdin(path) {
+        "<stdin>".to_string()
+    } else {
+        path.display().to_string()
+    }
+}
+
+/// Reads a `--layout`/`--template`/`--bindings` input: stdin for `-`,
+/// otherwise the file.
+fn read_input(path: &Path) -> std::io::Result<String> {
+    if is_stdin(path) {
+        std::io::read_to_string(std::io::stdin())
+    } else {
+        std::fs::read_to_string(path)
+    }
+}
+
 /// Reads and parses a `--layout` file, then hands its steps to `run_steps()`.
 fn run_layout(path: &Path, args: &Args) -> ! {
-    let contents = match std::fs::read_to_string(path) {
+    let contents = match read_input(path) {
         Ok(contents) => contents,
-        Err(error) => fail(args.json, &format!("{}: {}", path.display(), error)),
+        Err(error) => fail(args.json, &format!("{}: {}", input_label(path), error)),
     };
 
     let parsed_layout = match layout::parse(&contents) {
         Ok(parsed_layout) => parsed_layout,
-        Err(error) => fail(args.json, &format!("{}: {}", path.display(), error)),
+        Err(error) => fail(args.json, &format!("{}: {}", input_label(path), error)),
     };
 
     let build = sway_launch::BuildLocation {
@@ -956,7 +990,9 @@ fn resolve_template_contents(template_arg: &Path, flag: &str) -> Result<String, 
         .to_str()
         .is_some_and(|value| value.ends_with(".toml"));
 
-    if is_file {
+    if is_stdin(template_arg) {
+        read_input(template_arg).map_err(|error| format!("<stdin>: {}", error))
+    } else if is_file {
         std::fs::read_to_string(template_arg).map_err(|error| {
             let hint = if error.kind() == std::io::ErrorKind::NotFound {
                 builtin_name_hint(template_arg, flag)
@@ -1083,23 +1119,23 @@ fn run_template(path: &Path, bindings_source: BindingsSource, args: &Args) -> ! 
 
     let parsed_template = match template::parse(&contents) {
         Ok(parsed_template) => parsed_template,
-        Err(error) => fail(args.json, &format!("{}: {}", path.display(), error)),
+        Err(error) => fail(args.json, &format!("{}: {}", input_label(path), error)),
     };
 
     let bindings = match bindings_source {
         BindingsSource::File(bindings_path) => {
-            let contents = match std::fs::read_to_string(bindings_path) {
+            let contents = match read_input(bindings_path) {
                 Ok(contents) => contents,
                 Err(error) => fail(
                     args.json,
-                    &format!("{}: {}", bindings_path.display(), error),
+                    &format!("{}: {}", input_label(bindings_path), error),
                 ),
             };
             match template::parse_bindings(&contents) {
                 Ok(bindings) => bindings,
                 Err(error) => fail(
                     args.json,
-                    &format!("{}: {}", bindings_path.display(), error),
+                    &format!("{}: {}", input_label(bindings_path), error),
                 ),
             }
         }
@@ -1116,13 +1152,13 @@ fn run_template(path: &Path, bindings_source: BindingsSource, args: &Args) -> ! 
         Ok(resolved_steps) => resolved_steps,
         Err(error @ template::ResolveError::Bindings(_)) => {
             let bindings_label = match bindings_source {
-                BindingsSource::File(bindings_path) => bindings_path.display().to_string(),
+                BindingsSource::File(bindings_path) => input_label(bindings_path),
                 BindingsSource::Apps(_) => "--apps".to_string(),
             };
             fail(args.json, &format!("{}: {}", bindings_label, error))
         }
         Err(error @ template::ResolveError::Step { .. }) => {
-            fail(args.json, &format!("{}: {}", path.display(), error))
+            fail(args.json, &format!("{}: {}", input_label(path), error))
         }
     };
 
@@ -1483,9 +1519,8 @@ fn steps_source(args: &Args) -> String {
     args.layout
         .as_deref()
         .or(args.template.as_deref())
+        .map(input_label)
         .expect("run_steps() is only reachable via --layout or --template")
-        .display()
-        .to_string()
 }
 
 /// Reports a step failure (`<source>: step N: <message>`) — shared by every failure
