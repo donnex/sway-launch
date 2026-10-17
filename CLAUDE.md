@@ -224,7 +224,7 @@ way. A poll cycle and the move guard each share one connection across their read
 
 - stdout carries exactly one value: the container id, or the `--json` object. The exceptions are
   modes whose output *is* the job (`--debug-events`, `--dry-run`, `--validate`, `--list-templates`,
-  `--show-template`, `--completions`).
+  `--list-windows`, `--show-template`, `--completions`).
 - Every stdout write goes through `print_line()`/`print_str()`, so a closed pipe is a clean exit
   (`exit_on_write_failure()`), never a panic. `run_steps()`'s per-step ids use
   `print_line_deferring_failure()`, so a closed stdout never stops a layout halfway.
@@ -242,10 +242,14 @@ way. A poll cycle and the move guard each share one connection across their read
 
 ### Standalone modes
 
-`--completions`, `--list-templates`, `--show-template` and `--debug-events` are dispatched first in
-`main()`, before any target is resolved. Every standalone mode, `--layout` and `--template` build
-their `conflicts_with_all` with `per_window_and()` from `PER_WINDOW_ARGS`, so a per-window flag is
-never silently discarded; `per_window_args_conflict_with_every_standalone_mode` and
+`--completions`, `--list-templates`, `--show-template`, `--list-windows` and `--debug-events` are
+dispatched first in `main()`, before any target is resolved. Every standalone mode, `--layout` and
+`--template` build their `conflicts_with_all` with `per_window_and()` from `PER_WINDOW_ARGS`, so a
+per-window flag is never silently discarded. `--list-windows` alone keeps `LIST_WINDOWS_FILTERS`
+(`-a`/`-c`/`--mark-match`, via `per_window_but_filters_and()`): they narrow its listing
+(`tree::window_listing()`) to what `--existing` would choose between, so its rows and
+`matching_container_ids()` must keep agreeing on what a match is.
+`per_window_args_conflict_with_every_standalone_mode` and
 `per_window_args_lists_every_flag_a_layout_step_mirrors` keep the list complete. clap's `requires`
 is not used for `--bindings`/`--apps`/`--rollback-on-error`/`--on-workspace`/`--validate`: `main()`
 checks those by hand, because the derive macro doesn't enforce `requires` reliably. A new entry in

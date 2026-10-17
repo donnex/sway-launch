@@ -116,12 +116,71 @@ pub(super) fn matching_container_ids(tree: &Node, window_match: WindowMatch) -> 
         .collect()
 }
 
+/// One row of `--list-windows`: what a user needs to write a matcher, a
+/// `--con-id` or a bindings file for an open window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListedWindow {
+    pub container_id: i64,
+    pub app_id: Option<String>,
+    pub class: Option<String>,
+    pub title: Option<String>,
+    pub marks: Vec<String>,
+    /// `None` when the window is hidden in the scratchpad.
+    pub workspace: Option<String>,
+    pub output: Option<String>,
+    pub scratchpad: bool,
+    pub floating: bool,
+    pub focused: bool,
+    /// Whether this is a split container rather than a window. Listed only
+    /// when it carries a mark, since a mark is the one matcher that can
+    /// resolve `--existing` to one.
+    pub split_container: bool,
+}
+
+/// Every window in `tree`, scratchpad included, plus every marked split
+/// container, in tree order — narrowed to the ones `filter` accepts, so with
+/// one this lists exactly what `--existing` would choose between.
+pub(super) fn window_listing(tree: &Node, filter: Option<WindowMatch>) -> Vec<ListedWindow> {
+    descendants(tree)
+        .filter(|node| {
+            let listable = is_window(node)
+                || (matches!(node.node_type, NodeType::Con | NodeType::FloatingCon)
+                    && !node.marks.is_empty());
+            listable && filter.is_none_or(|filter| filter.matches(node))
+        })
+        .map(|node| {
+            let path = ancestors_of(tree, node.id).unwrap_or_default();
+            let workspace = name_of_nearest(&path, NodeType::Workspace);
+            let scratchpad = is_scratchpad_workspace(workspace.as_deref());
+            ListedWindow {
+                container_id: node.id,
+                app_id: node.app_id.clone(),
+                class: node
+                    .window_properties
+                    .as_ref()
+                    .and_then(|properties| properties.class.clone()),
+                title: node.name.clone(),
+                marks: node.marks.clone(),
+                workspace: workspace.filter(|_| !scratchpad),
+                output: name_of_nearest(&path, NodeType::Output).filter(|_| !scratchpad),
+                scratchpad,
+                floating: node_is_floating(node),
+                focused: node.focused,
+                split_container: !is_window(node),
+            }
+        })
+        .collect()
+}
+
 /// Turns the container ids `matching_container_ids()` found into a single
 /// target, erroring — rather than silently picking one — on zero or more
 /// than one match.
 pub(super) fn resolve_matches(matches: Vec<i64>, criteria: &str) -> Result<i64, String> {
     match matches.len() {
-        0 => Err(format!("No existing window matches {}", criteria)),
+        0 => Err(format!(
+            "No existing window matches {} (--list-windows shows every open window)",
+            criteria
+        )),
         1 => Ok(matches[0]),
         _ => {
             let ids = matches
@@ -130,7 +189,7 @@ pub(super) fn resolve_matches(matches: Vec<i64>, criteria: &str) -> Result<i64, 
                 .collect::<Vec<_>>()
                 .join(", ");
             Err(format!(
-                "{} windows match {}: {} — retarget with --con-id",
+                "{} windows match {}: {} — retarget with --con-id (--list-windows shows them)",
                 matches.len(),
                 criteria,
                 ids

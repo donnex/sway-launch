@@ -103,7 +103,7 @@ Arguments:
 Options:
   -a, --app-id <APP_ID>               app_id match (exact and case-sensitive, not a regex). With --existing, matches an already-open window instead of the newly launched one
   -c, --class <CLASS>                 class match (exact and case-sensitive, not a regex). With --existing, matches an already-open window instead of the newly launched one
-      --mark-match <MARK_MATCH>       Find the window to act on by this mark (exact and case-sensitive). Requires --existing
+      --mark-match <MARK_MATCH>       Find the window to act on by this mark (exact and case-sensitive). Requires --existing or --list-windows
       --con-id <CON_ID>               Act on an already-open window with this container id, instead of launching a new one
       --existing                      Act on an already-open window found via --app-id/--class/--mark-match, instead of launching a new one
       --cwd <DIR>                     Start the launched command in this directory instead of Sway's. A relative path is relative to the current directory
@@ -133,6 +133,7 @@ Options:
       --layout <LAYOUT>               Run a declarative TOML layout file instead of a single command (- reads it from stdin); see README.md for the schema. Each step is the equivalent of one sway-launch invocation's flags, so this conflicts with every per-window flag, which would otherwise apply to no specific step
       --template <TEMPLATE>           Run a reusable declarative TOML layout template instead of a single command; see README.md for the schema. Steps declare a slot instead of an application, resolved via --bindings or --apps. Either a path to a template file ending in .toml, - to read it from stdin, or a built-in template name with no extension (see --list-templates). Conflicts with --layout and every per-window flag, same reasoning as --layout
       --list-templates                List built-in --template names and exit
+      --list-windows                  List every open window (container id, app_id, class, workspace, marks, title) and exit. --app-id/--class/--mark-match narrow it to the windows --existing would choose between
       --show-template <NAME_OR_PATH>  Print a --template's raw TOML and exit, without running it. Same NAME_OR_PATH resolution as --template: a built-in name (see --list-templates), or a path ending in .toml. With --json, prints {"name": ..., "contents": "..."}
       --bindings <BINDINGS>           Bindings file supplying each --template slot's application identity (- reads it from stdin). Requires --template; conflicts with --apps
       --apps <APPS>                   Comma-separated list of commands to launch into --template's slots, in the order the template's slot steps appear. Requires --template; conflicts with --bindings
@@ -310,7 +311,27 @@ match, and chain such launches sequentially.
 `--app-id`, `--class`, `--existing` and a bindings file's `app_id`/`class` all need the value the
 application actually reports, which isn't always its command name. The match is exact and
 case-sensitive (no regex, no substring, unlike Sway's own criteria), so copy the value verbatim.
-Open the application, then either:
+Open the application, then run `sway-launch --list-windows`. It prints one row per open window,
+the scratchpad included, with the values `--app-id`/`--class`/`--mark-match`/`--con-id` need:
+
+```console
+$ sway-launch --list-windows
+ID  APP_ID   CLASS  WORKSPACE     FLAGS     MARKS     TITLE
+4   foot     -      1             -         -         ~/projects
+7   firefox  -      2             focused   -         Sway — Mozilla Firefox
+9   -        Code   2             floating  editor    main.rs - sway-launch - Visual Studio Code
+12  foot     -      (scratchpad)  floating  dropdown  ~
+```
+
+A missing value prints as `-`, and a title longer than 50 characters is shortened. `--json` prints
+`{"windows": [...]}`, one object per row with the full title and each window's `output`,
+`scratchpad`, `floating`, `focused` and `split_container` fields; a missing value is `null` there.
+Pass `-a`/`-c`/`--mark-match` to narrow the list to the windows `--existing` would choose between,
+so `sway-launch --list-windows -a foot` shows what `sway-launch --existing -a foot` would act on
+(see [Target an existing window](#target-an-existing-window)). A split container carrying a mark
+is listed too, with the flag `split`, since `--mark-match` can select one.
+
+Two other ways to see the same values:
 
 - run `swaymsg -t get_tree` and look for its window's `"app_id"` and `"class"` fields (`"class"`
   sits under `"window_properties"`), or
@@ -336,7 +357,7 @@ for some XWayland apps), so the window briefly has none, or a different one, and
 when it changes. A window the launched command itself opened is therefore not given up on when it
 first fails to match: `sway-launch` keeps rechecking it until it matches or `--timeout` runs out.
 `--debug-events` shows only the value the window appeared with, so for such an app read the value
-from `swaymsg -t get_tree` instead.
+from `--list-windows` (or `swaymsg -t get_tree`) instead.
 
 ## Recreatable layouts
 
@@ -820,7 +841,9 @@ sway-launch --existing --mark-match dropdown-term --scratchpad
 `--existing` requires exactly one of `--app-id`, `--class`, or `--mark-match` (they're mutually
 exclusive — pick whichever identifies the window), compares the value exactly and
 case-sensitively (see [Finding a window's app_id or class](#finding-a-windows-app_id-or-class)),
-and errors if that doesn't match exactly one window — it won't guess which one you meant. The search includes windows in Sway's scratchpad
+and errors if that doesn't match exactly one window — it won't guess which one you meant. The
+same flags with `--list-windows` instead of `--existing` show the windows it would choose between,
+with their container ids. The search includes windows in Sway's scratchpad
 (hidden/stashed windows), not just visible ones — if you have both a visible and a scratchpad
 window with the same `app_id`/`class`/mark, retarget with `--con-id` instead to be unambiguous.
 

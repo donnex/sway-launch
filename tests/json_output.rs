@@ -725,3 +725,26 @@ fn cli_rejects_a_sway_keyword_as_a_workspace_name_before_running() {
     let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
     assert!(stderr.contains("is a Sway keyword"), "{stderr}");
 }
+
+#[test]
+fn list_windows_conflicts_with_a_per_window_flag_but_not_a_filter() {
+    let output = sway_launch_without_a_compositor()
+        .args(["--list-windows", "--floating"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert_conflict_error(&output, "--list-windows", "--floating");
+
+    // A filter is accepted, so the run gets as far as the socket.
+    let output = sway_launch_without_a_compositor()
+        .args(["--list-windows", "--mark-match", "dropdown", "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+    let error: serde_json::Value =
+        serde_json::from_str(stderr.trim()).expect("stderr should be a JSON object");
+    assert!(error["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("Sway IPC"));
+}

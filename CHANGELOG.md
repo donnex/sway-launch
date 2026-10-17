@@ -90,6 +90,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as `no window with container id N`, and a workspace's or output's id as `container N is a
   workspace, not a window`, rather than as a window that "may have closed". A bare `--con-id N`
   with no actions is still printed back unchecked. (#107)
+- `--list-windows`: a table of every open window, scratchpad included, with the container id,
+  app_id, class, workspace, marks and title a matcher or `--con-id` needs, so finding them no
+  longer means reading `swaymsg -t get_tree`. `--json` prints the same as `{"windows": [...]}`,
+  and `-a`/`-c`/`--mark-match` narrow the list to exactly the windows `--existing` would choose
+  between. The errors for an `--existing` that matches no window or several now point to it. (#42)
 - Input checks that catch values Sway would quietly misread. `--app-id`, `--class` and
   `--mark-match` reject a blank value, and `--mark-match` requires `--existing`. `--mark`,
   `--mark-match`, `--workspace` and `--output` also reject a double quote, a backslash, a `$` and
