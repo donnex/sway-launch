@@ -106,7 +106,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--layout <FILE>`: run a whole layout from one declarative TOML file and one invocation, each
   `[[step]]` the equivalent of one call's flags, stopping at the first error. A step's `id` names it
   so a later step's `target_id` can retarget that specific window — the one way to single out one of
-  several windows sharing an `app_id`. A file with no steps is an error.
+  several windows sharing an `app_id`. A file with no steps is an error. `--layout -` reads the
+  file from stdin, as do `--template -` and `--bindings -` (one per run), so a generated layout can
+  be piped in. (#50)
 - `--template <FILE|NAME>` with `--apps`/`--bindings`: the same shape decoupled from the
   applications it applies to, so one template can be reused across completely different programs.
   A template file declares a `[template]` table with a `description` and `category`, and may
