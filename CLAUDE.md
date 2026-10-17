@@ -1175,6 +1175,13 @@ only to topic branches.
   path (`src/main.rs:`, `CLAUDE.md:`). Several files sharing one concern → the directory that
   contains them (`src:`). End the title with the issue number when the work is tied to a tracked
   issue: `(#12)`.
+  - Project-specific adaptation (#16, decided 2026-10-13): when one concern spans files in a few
+    unrelated places that share no useful directory (only the repo root), list them
+    comma-separated instead, most central first (`src, tests, *.md:`), with `*.md` standing for
+    the root Markdown files. Keep the list short enough that the title stays under 80 characters;
+    past that, use the shortest scope that still says where the change is, and name the files in
+    the body's bullets. The same change to the shared conventions is pending; once it lands there
+    and is synced into the rule above, this sub-bullet goes.
 - Keep the title under 80 characters. Only exceed this if absolutely unavoidable.
 - Put detailed descriptions in the commit body, not the title. For a commit spanning several
   files, use a one- or two-line prose summary followed by per-file bullets (`- src/main.rs: ...`)
