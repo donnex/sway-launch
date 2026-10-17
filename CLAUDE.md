@@ -317,6 +317,19 @@ follow-up:
   files, `sway_launch_without_a_compositor()`, `assert_conflict_error()`); add new ones there. A
   flag-conflict test uses `assert_conflict_error()`, never a bare failure check, which keeps
   passing after the conflict is dropped.
+- **Fake-Sway tests** (`tests/fake_sway.rs`, part of `cargo test`) drive the binary against
+  `tests/common/fake_sway.rs`, a fake Sway IPC server on the far side of `SWAYSOCK` (#103): no
+  production code knows it exists. It replays a recorded tree, outputs and missing-container reply
+  per supported version (`tests/fake-sway/sway-1.9/`, `sway-1.11/`, written by
+  `scripts/capture-fake-sway-fixtures` against a real compositor; 1.9 was recorded in an
+  `ubuntu:24.04` container), and each test's handler decides how a command is answered: the tree
+  changes and window events it causes, now or later (`after()`), or none. A launch's `exec` runs
+  for real through `sh -c`, so the PID-marker logic reads a real `/proc`; `when_marked()` acts once
+  the marked process exists. This is the tier for event orderings a live compositor can't be made
+  to produce on demand (an event without its state, a late app_id, a hand-off to an unmarked
+  process) and for version-specific tree shapes; whether real Sway behaves as a handler scripts it
+  is still the live tier's to show. Re-record the fixtures when a new Sway version changes what
+  they hold, or when the oldest supported version moves.
 - **Live tests** (`tests/live_sway.rs`, `live-sway-tests` feature) run only through
   `scripts/run-live-sway-tests`, against a throwaway headless compositor; `live_socket()` panics
   otherwise, so they can never touch a real session. They exercise everything IPC-touching, and
@@ -342,7 +355,8 @@ without a reason that wasn't considered then.
   replace event confirmation outright (2026-09-03 review).
 - A structural (parent/index) predicate for `NewColumn`/`NewRow`, or always reporting them
   `Unconfirmed`: both measured worse than the bounded `rect` check (2026-09-03 review).
-- A mocking layer or trait over Sway IPC: the live tier covers it.
+- A mocking layer or trait over Sway IPC: the live tier covers it, and the socket-level fake
+  (`tests/fake_sway.rs`, #103) covers the orderings it can't, with no production change.
 - A clap `ArgGroup` for the standalone-mode conflicts: clap's error lists every group member.
 - `#[serde(flatten)]` for the shared schema fields.
 - Restoring the default `SIGPIPE` disposition: needs `unsafe` and a dependency.
@@ -663,7 +677,9 @@ comments, name things clearly instead" style). Two rule-specific overrides:
     tier from `cargo test`'s coverage-measured suite, gated behind the `live-sway-tests` Cargo
     feature so it stays opt-in. No mocking layer has been introduced on the judgment that a
     trait-based abstraction purely to unit-test thin IPC wiring isn't worth the indirection for a
-    tool this size; revisit if the IPC-touching logic grows more complex than it is today.
+    tool this size. The drivers are tested headlessly instead from the other side of the socket,
+    by `tests/fake_sway.rs` (see Tests under Architecture), which `cargo llvm-cov` measures like any
+    other integration test: it runs the instrumented binary.
 - Measure coverage with `cargo llvm-cov` (requires the `cargo-llvm-cov` subcommand and the
   `llvm-tools-preview` rustup component):
   - `cargo llvm-cov --summary-only --ignore-filename-regex 'main\.rs'` — summary

@@ -4,6 +4,8 @@
 // crate-wide allow below rather than one per item.
 #![allow(dead_code)]
 
+pub mod fake_sway;
+
 use std::fs::{self, DirBuilder};
 use std::hash::{BuildHasher, Hasher, RandomState};
 use std::io::ErrorKind;
