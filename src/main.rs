@@ -319,7 +319,25 @@ struct Args {
     command: Option<String>,
 }
 
+/// The man page, rendered from the same `Args` definition `--help` comes
+/// from, so it can't drift from the real flags. Built only with the
+/// `generate-man` feature, which the release job uses (#109).
+#[cfg(feature = "generate-man")]
+fn render_man_page(out: &mut dyn std::io::Write) -> std::io::Result<()> {
+    clap_mangen::Man::new(Args::command()).render(out)
+}
+
 fn main() {
+    // Checked before parsing: it isn't an `Args` flag, so it never appears in
+    // --help or in the shipped binary, which is built without the feature.
+    #[cfg(feature = "generate-man")]
+    if std::env::args().nth(1).as_deref() == Some("--generate-man") {
+        if let Err(error) = render_man_page(&mut std::io::stdout()) {
+            exit_on_write_failure(&error);
+        }
+        process::exit(0);
+    }
+
     let args = Args::parse();
 
     if let Some(shell) = args.completions {
@@ -2336,6 +2354,20 @@ mod tests {
         assert_eq!(
             plan_step(&steps[0], &offline_args(), &resolved_ids).err(),
             Some("id \"main\" was already used by an earlier step".to_string())
+        );
+    }
+
+    #[cfg(feature = "generate-man")]
+    #[test]
+    fn man_page_is_rendered_from_the_cli_definition() {
+        let mut page = Vec::new();
+        render_man_page(&mut page).expect("rendering the man page should succeed");
+        let page = String::from_utf8(page).expect("the man page should be UTF-8");
+        assert!(page.starts_with(".ie"), "unexpected roff start: {page:.80}");
+        assert!(page.contains("sway\\-launch"), "{page:.200}");
+        assert!(
+            page.contains("debug\\-events"),
+            "every flag should be documented"
         );
     }
 
