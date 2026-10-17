@@ -11,6 +11,7 @@
 //! incidental; see `build_actions()`.
 
 use super::action::{ActionKind, ExecAction, SwayAction};
+use super::confirmation::run_wait_for_existing_window;
 use super::ipc::event_loop;
 use super::ipc::{quote_sway_string, run_sway_command};
 use super::outcome::{
@@ -196,7 +197,16 @@ impl<'a> SwayLaunch<'a> {
             .run()
             .map(|(container_id, ownership)| (container_id, Some(ownership))),
             Target::ConId(container_id) => Ok((container_id, None)),
-            Target::Existing(window_match) => find_existing_container_id(window_match)
+            Target::Existing {
+                window_match,
+                wait: false,
+            } => find_existing_container_id(window_match)
+                .map(|container_id| (container_id, None))
+                .map_err(RunError::from),
+            Target::Existing {
+                window_match,
+                wait: true,
+            } => run_wait_for_existing_window(window_match, self.timeout, self.verbose)
                 .map(|container_id| (container_id, None))
                 .map_err(RunError::from),
         }

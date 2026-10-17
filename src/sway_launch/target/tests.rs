@@ -73,8 +73,56 @@ fn from_fields_builds_an_existing_target_from_each_matcher() {
             existing: true,
             ..fields
         };
-        assert_eq!(Target::from_fields(fields), Ok(Target::Existing(expected)));
+        assert_eq!(
+            Target::from_fields(fields),
+            Ok(Target::Existing {
+                window_match: expected,
+                wait: false,
+            })
+        );
     }
+}
+
+#[test]
+fn wait_carries_through_to_an_existing_target() {
+    let fields = TargetFields {
+        existing: true,
+        wait: true,
+        app_id: Some("firefox"),
+        ..fields()
+    };
+    assert_eq!(
+        Target::from_fields(fields),
+        Ok(Target::Existing {
+            window_match: WindowMatch::AppId("firefox"),
+            wait: true,
+        })
+    );
+}
+
+#[test]
+fn wait_without_existing_is_rejected_in_each_front_end_s_words() {
+    for fields in [
+        TargetFields {
+            wait: true,
+            command: Some("firefox"),
+            ..fields()
+        },
+        TargetFields {
+            wait: true,
+            con_id: Some(5),
+            ..fields()
+        },
+    ] {
+        let error = Target::from_fields(fields);
+        assert_eq!(error, Err(TargetError::WaitWithoutExisting));
+    }
+    let error = TargetError::WaitWithoutExisting;
+    assert_eq!(error.message(FieldStyle::Cli), "--wait requires --existing");
+    assert_eq!(
+        error.message(FieldStyle::Binding),
+        "wait = true requires existing = true"
+    );
 }
 
 #[test]

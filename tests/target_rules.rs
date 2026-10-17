@@ -1,6 +1,6 @@
 // The target-selection rules (exactly one of a command, a container id or
-// `existing`; at most one matcher; `existing` needs one and `mark_match` needs
-// `existing`; no blank value) are written once, in `Target::from_fields()`,
+// `existing`; at most one matcher; `existing` needs one, and `mark_match` and
+// `wait` need `existing`; no blank value) are written once, in `Target::from_fields()`,
 // but each front end reaches it differently: the CLI through clap's own
 // conflicts first, a layout step through `to_sway_launch()`, and a template
 // binding through `resolve()`. This drives one table of combinations through
@@ -19,6 +19,7 @@ struct Case {
     command: Option<&'static str>,
     con_id: Option<i64>,
     existing: bool,
+    wait: bool,
     app_id: Option<&'static str>,
     class: Option<&'static str>,
     mark_match: Option<&'static str>,
@@ -31,6 +32,7 @@ const fn case(name: &'static str, accepted: bool) -> Case {
         command: None,
         con_id: None,
         existing: false,
+        wait: false,
         app_id: None,
         class: None,
         mark_match: None,
@@ -112,6 +114,22 @@ fn cases() -> Vec<Case> {
             command: Some("foot; firefox"),
             ..case("command Sway would split", false)
         },
+        Case {
+            existing: true,
+            wait: true,
+            app_id: Some("foot"),
+            ..case("existing by app_id, waiting", true)
+        },
+        Case {
+            command: Some("foot"),
+            wait: true,
+            ..case("command with wait", false)
+        },
+        Case {
+            con_id: Some(42),
+            wait: true,
+            ..case("con_id with wait", false)
+        },
         case("no target at all", false),
     ]
 }
@@ -124,6 +142,9 @@ fn cli_accepts(case: &Case) -> bool {
     }
     if case.existing {
         command.arg("--existing");
+    }
+    if case.wait {
+        command.arg("--wait");
     }
     for (flag, value) in [
         ("--app-id", case.app_id),
@@ -155,6 +176,9 @@ fn toml_fields(case: &Case) -> String {
     }
     if case.existing {
         lines.push_str("existing = true\n");
+    }
+    if case.wait {
+        lines.push_str("wait = true\n");
     }
     for (field, value) in [
         ("app_id", case.app_id),

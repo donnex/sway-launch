@@ -65,6 +65,9 @@ pub struct LayoutStep {
     pub con_id: Option<i64>,
     #[serde(default)]
     pub existing: bool,
+    /// With `existing`, wait for the window to open (#108).
+    #[serde(default)]
+    pub wait: bool,
     pub target_id: Option<String>,
 
     /// Names this step, so a later step can target its window via
@@ -171,6 +174,7 @@ impl LayoutStep {
             command: self.command.as_deref(),
             con_id: self.con_id,
             existing: self.existing,
+            wait: self.wait,
             target_id,
             app_id: self.app_id.as_deref(),
             class: self.class.as_deref(),

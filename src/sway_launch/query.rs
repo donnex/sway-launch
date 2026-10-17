@@ -13,8 +13,8 @@ use super::target::{LaunchFilter, WindowMatch};
 use super::tree::{
     con_id_target_problem, expected_position, find_node, find_parent_layout, find_workspace_node,
     focused_workspace, matching_container_ids, move_skip_reason, node_position, present_ids,
-    recheck_launched_windows, resolve_matches, tiled_window_count, window_listing, ContainerState,
-    ListedWindow, MoveDirection, RecheckedWindow,
+    recheck_launched_windows, resolve_awaited_matches, resolve_matches, tiled_window_count,
+    window_listing, ContainerState, ListedWindow, MoveDirection, RecheckedWindow,
 };
 use super::values::Position;
 use swayipc::{Connection, Node, NodeLayout};
@@ -44,6 +44,20 @@ pub fn list_windows(filter: Option<WindowMatch>) -> Result<Vec<ListedWindow>, St
         Err(error) => return Err(ipc_error(error)),
     };
     Ok(window_listing(&tree, filter))
+}
+
+/// The one window `window_match` accepts right now, `None` while there is
+/// none yet, or the ambiguity error when there are several — for
+/// `run_wait_for_existing_window()`, on its one connection.
+pub(super) fn awaited_existing_container_id(
+    connection: &mut Connection,
+    window_match: WindowMatch,
+) -> Result<Option<i64>, String> {
+    let tree = connection.get_tree().map_err(ipc_error)?;
+    resolve_awaited_matches(
+        matching_container_ids(&tree, window_match),
+        &window_match.to_string(),
+    )
 }
 
 /// Reads `container_id`'s `ContainerState`, or `None` if it isn't in the tree.

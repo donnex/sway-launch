@@ -82,6 +82,7 @@ fn minimal_step() -> LayoutStep {
         env: Default::default(),
         con_id: None,
         existing: false,
+        wait: false,
         target_id: None,
         id: None,
         app_id: None,
@@ -146,7 +147,7 @@ fn to_sway_launch_existing_step_with_app_id_succeeds() {
     let sway_launch = convert(&step).expect("existing step with app_id should convert");
     assert!(matches!(
         sway_launch.target,
-        sway_launch::Target::Existing(_)
+        sway_launch::Target::Existing { wait: false, .. }
     ));
 }
 
@@ -209,7 +210,7 @@ fn to_sway_launch_existing_step_with_mark_match_succeeds() {
     let sway_launch = convert(&step).expect("existing step with mark_match should convert");
     assert_eq!(
         format!("{:?}", sway_launch.target),
-        "Existing(Mark(\"dropdown-term\"))"
+        "Existing { window_match: Mark(\"dropdown-term\"), wait: false }"
     );
 }
 
