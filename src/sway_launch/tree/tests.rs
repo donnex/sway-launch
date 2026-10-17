@@ -125,6 +125,91 @@ fn matching_container_ids_recurses_into_nested_containers() {
     );
 }
 
+// window_listing
+
+/// root → HEADLESS-1 → workspace "1" (a tiled foot, and a marked split
+/// container holding an unmarked Firefox, plus a floating Code) and the
+/// scratchpad holding a marked foot.
+fn listing_tree() -> Node {
+    let mut foot = leaf_node_value(10, Some("foot"), None);
+    foot["name"] = serde_json::json!("shell");
+    foot["focused"] = serde_json::json!(true);
+    let mut split =
+        container_node_value(11, vec![leaf_node_value(12, None, Some("Firefox"))], vec![]);
+    split["marks"] = serde_json::json!(["browsers"]);
+    let mut code = leaf_node_value(13, None, Some("Code"));
+    code["type"] = serde_json::json!("floating_con");
+    let mut workspace = named_node_value(2, "workspace", "1", vec![foot, split]);
+    workspace["floating_nodes"] = serde_json::json!([code]);
+    let output = named_node_value(1, "output", "HEADLESS-1", vec![workspace]);
+
+    let mut dropdown = leaf_node_value(20, Some("foot"), None);
+    dropdown["type"] = serde_json::json!("floating_con");
+    dropdown["marks"] = serde_json::json!(["dropdown"]);
+    let mut scratch = named_node_value(4, "workspace", "__i3_scratch", vec![]);
+    scratch["floating_nodes"] = serde_json::json!([dropdown]);
+    let internal = named_node_value(3, "output", "__i3", vec![scratch]);
+
+    serde_json::from_value(named_node_value(0, "root", "root", vec![internal, output]))
+        .expect("valid Node test fixture")
+}
+
+#[test]
+fn window_listing_lists_windows_and_marked_split_containers_in_tree_order() {
+    let ids: Vec<i64> = window_listing(&listing_tree(), None)
+        .iter()
+        .map(|window| window.container_id)
+        .collect();
+    assert_eq!(ids, vec![20, 10, 11, 12, 13]);
+}
+
+#[test]
+fn window_listing_describes_each_window() {
+    let listing = window_listing(&listing_tree(), None);
+    assert_eq!(
+        listing[1],
+        ListedWindow {
+            container_id: 10,
+            app_id: Some("foot".to_string()),
+            class: None,
+            title: Some("shell".to_string()),
+            marks: vec![],
+            workspace: Some("1".to_string()),
+            output: Some("HEADLESS-1".to_string()),
+            scratchpad: false,
+            floating: false,
+            focused: true,
+            split_container: false,
+        }
+    );
+    assert!(listing[2].split_container);
+    assert_eq!(listing[2].marks, vec!["browsers".to_string()]);
+    assert!(listing[4].floating);
+    assert_eq!(listing[4].class.as_deref(), Some("Code"));
+}
+
+#[test]
+fn window_listing_reports_a_scratchpad_window_without_a_workspace_or_output() {
+    let dropdown = &window_listing(&listing_tree(), None)[0];
+    assert!(dropdown.scratchpad);
+    assert_eq!(dropdown.workspace, None);
+    assert_eq!(dropdown.output, None);
+}
+
+#[test]
+fn window_listing_with_a_filter_lists_what_existing_chooses_between() {
+    let ids = |filter| -> Vec<i64> {
+        window_listing(&listing_tree(), Some(filter))
+            .iter()
+            .map(|window| window.container_id)
+            .collect()
+    };
+    assert_eq!(ids(WindowMatch::AppId("foot")), vec![20, 10]);
+    assert_eq!(ids(WindowMatch::Class("Firefox")), vec![12]);
+    assert_eq!(ids(WindowMatch::Mark("browsers")), vec![11]);
+    assert_eq!(ids(WindowMatch::AppId("nothing")), Vec::<i64>::new());
+}
+
 // launch_filter_match / recheck_launched_windows
 
 #[test]
@@ -204,7 +289,10 @@ fn recheck_launched_windows_drops_a_window_that_closed_and_keeps_the_order() {
 fn resolve_matches_errors_on_zero_matches() {
     assert_eq!(
         resolve_matches(vec![], "app_id \"foot\""),
-        Err("No existing window matches app_id \"foot\"".to_string())
+        Err(
+            "No existing window matches app_id \"foot\" (--list-windows shows every open window)"
+                .to_string()
+        )
     );
 }
 
@@ -217,7 +305,11 @@ fn resolve_matches_ok_on_single_match() {
 fn resolve_matches_errors_listing_ids_on_multiple_matches() {
     assert_eq!(
         resolve_matches(vec![42, 91], "app_id \"foot\""),
-        Err("2 windows match app_id \"foot\": 42, 91 — retarget with --con-id".to_string())
+        Err(
+            "2 windows match app_id \"foot\": 42, 91 — retarget with --con-id (--list-windows \
+             shows them)"
+                .to_string()
+        )
     );
 }
 

@@ -6739,3 +6739,83 @@ fn launch_timeout_says_when_the_command_exited_without_a_window() {
         "the error should say the command exited: {stderr}"
     );
 }
+
+/// `--list-windows --json`'s `windows` array, run with `extra_args`.
+fn list_windows(extra_args: &[&str]) -> Vec<serde_json::Value> {
+    let output = sway_launch_command()
+        .args(["--list-windows", "--json"])
+        .args(extra_args)
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --list-windows failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("--json output should be valid JSON");
+    json["windows"].as_array().expect("a windows array").clone()
+}
+
+#[test]
+fn list_windows_shows_where_each_window_is_and_what_existing_would_match() {
+    let home = fresh_workspace();
+    let (tiled, _tiled_guard) = launch_foot(&["--mark", "live-list-tiled"]);
+    let (floating, _floating_guard) = launch_foot(&["--floating"]);
+    let (hidden, _hidden_guard) = launch_foot(&["--mark", "live-list-hidden", "--scratchpad"]);
+
+    let windows = list_windows(&[]);
+    let row = |id: i64| {
+        windows
+            .iter()
+            .find(|window| window["container_id"] == id)
+            .unwrap_or_else(|| panic!("no row for {id}: {windows:?}"))
+    };
+    assert_eq!(row(tiled)["app_id"], "foot");
+    assert_eq!(row(tiled)["workspace"], home.as_str());
+    assert_eq!(row(tiled)["output"], original_output());
+    assert_eq!(row(tiled)["marks"], serde_json::json!(["live-list-tiled"]));
+    assert_eq!(row(tiled)["floating"], false);
+    assert_eq!(row(floating)["floating"], true);
+    assert_eq!(row(hidden)["scratchpad"], true);
+    assert_eq!(row(hidden)["workspace"], serde_json::Value::Null);
+
+    // The filter narrows the list to exactly what --existing resolves.
+    let marked = list_windows(&["--mark-match", "live-list-hidden"]);
+    assert_eq!(marked.len(), 1, "{marked:?}");
+    let output = sway_launch_command()
+        .args(["--existing", "--mark-match", "live-list-hidden"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        marked[0]["container_id"].to_string()
+    );
+
+    // The plain table names the scratchpad rather than __i3_scratch.
+    let output = sway_launch_command()
+        .args(["--list-windows", "--mark-match", "live-list-hidden"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let table = String::from_utf8_lossy(&output.stdout);
+    assert!(table.starts_with("ID "), "{table}");
+    assert!(table.contains("(scratchpad)"), "{table}");
+    assert!(!table.contains("__i3_scratch"), "{table}");
+}
+
+#[test]
+fn list_windows_includes_a_marked_split_container() {
+    fresh_workspace();
+    let mut connection = connect();
+    let (_beside, _beside_guard) = launch_foot(&[]);
+    let (first, _first_guard) = launch_foot(&["--split", "v"]);
+    let (_second, _second_guard) = launch_foot(&[]);
+    run_command_ok(&mut connection, &format!("[con_id={first}] focus parent"));
+    run_command_ok(&mut connection, "mark live-list-split");
+
+    let rows = list_windows(&["--mark-match", "live-list-split"]);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["split_container"], true);
+    assert_ne!(rows[0]["container_id"], first);
+}
