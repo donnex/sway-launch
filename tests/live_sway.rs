@@ -6978,6 +6978,108 @@ fn continue_on_timeout_carries_a_template_past_a_slot_whose_binding_timeout_ran_
 }
 
 #[test]
+fn sigint_during_a_layout_rolls_back_what_it_launched() {
+    fresh_workspace();
+    let mut connection = connect();
+    let path = TempToml::write(
+        "interrupted-layout",
+        "[[step]]\ncommand = \"foot --app-id=live-interrupted\"\napp_id = \"live-interrupted\"\n\n\
+         [[step]]\ncommand = \"sleep 30\"\napp_id = \"never-opens\"\ntimeout = 30\n",
+    );
+    let child = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--rollback-on-error",
+            "--json",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to start sway-launch binary");
+    let started = std::time::Instant::now();
+    while count_app_id_windows(
+        &connection.get_tree().expect("get_tree should succeed"),
+        "live-interrupted",
+    ) == 0
+    {
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the first step's window never opened"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // Long enough for the second step to be waiting on its window.
+    std::thread::sleep(Duration::from_millis(500));
+    let killed = std::process::Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .expect("failed to run kill");
+    assert!(killed.success());
+
+    let output = child.wait_with_output().expect("sway-launch should exit");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(130), "{stderr}");
+    let error: serde_json::Value = serde_json::from_str(stderr.lines().next_back().unwrap())
+        .unwrap_or_else(|error| panic!("no JSON error on stderr ({error}): {stderr}"));
+    assert!(
+        error["error"]
+            .as_str()
+            .unwrap()
+            .contains("interrupted by SIGINT"),
+        "{error}"
+    );
+    let rolled_back = error["rolled_back"].as_array().unwrap();
+    assert_eq!(rolled_back.len(), 1, "{error}");
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        count_app_id_windows(&tree, "live-interrupted"),
+        0,
+        "{error}"
+    );
+}
+
+#[test]
+fn rollback_closes_a_window_that_opens_just_after_its_launch_timed_out() {
+    fresh_workspace();
+    let mut connection = connect();
+    // The command outlives its one-second timeout by half a second before
+    // opening its window, which carries the launch's marker all the same.
+    let path = TempToml::write(
+        "late-window-layout",
+        "[[step]]\ncommand = \"sleep 1.5 && foot --app-id=live-late-window\"\n\
+         app_id = \"live-late-window\"\ntimeout = 1\n",
+    );
+    let output = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--rollback-on-error",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    let error: serde_json::Value = serde_json::from_str(stderr.lines().next_back().unwrap())
+        .unwrap_or_else(|error| panic!("no JSON error on stderr ({error}): {stderr}"));
+    assert!(
+        error["error"]
+            .as_str()
+            .unwrap()
+            .contains("opened within 2 sec after that"),
+        "{error}"
+    );
+    assert_eq!(error["rolled_back"].as_array().unwrap().len(), 1, "{error}");
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        count_app_id_windows(&tree, "live-late-window"),
+        0,
+        "{error}"
+    );
+}
+
+#[test]
 fn on_output_builds_a_layout_on_that_output() {
     fresh_workspace();
     let mut connection = connect();

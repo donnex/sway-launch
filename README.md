@@ -603,6 +603,18 @@ as unconfirmed straight away. With `--json`, the error object includes which con
 closed, and which ones couldn't be confirmed closed: `{"error": "...", "rolled_back": [123, 456], "rollback_failed": [789]}`
 (see [JSON output](#json-output) below).
 
+An interrupted run fails the same way. Ctrl-C (SIGINT) or SIGTERM — a `timeout(1)` wrapper, a
+service being stopped — ends a `--layout`/`--template` run within a moment as a failure of the step
+it was on, so `--rollback-on-error` closes what the run launched and `--json` reports its partial
+progress, and the run exits with the usual status for that signal (130 or 143). A second signal
+exits at once, skipping the cleanup. A launch interrupted while waiting for its window says the
+command may still open one.
+
+An application slower than its `timeout` can open its window just after the run has given up on
+it. With `--rollback-on-error`, a timed-out launch keeps watching for up to 2 more seconds for a
+window carrying its marker, and rolls that one back too, rather than leaving it to appear after the
+run has failed.
+
 By default a step whose window doesn't appear within its `timeout` stops the run, so one slow
 application at the start of a layout leaves every later one unopened. `--continue-on-timeout`
 reports that step and carries on with the next one instead. A later step that targets the missing

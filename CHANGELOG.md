@@ -156,6 +156,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   TOML without running it. A value ending in `.toml` is always read as a file, so writing a
   built-in's name with that extension fails — but the error names the built-in and the bare name
   to use instead. (#88)
+- Interrupting a `--layout`/`--template` run with Ctrl-C or SIGTERM no longer leaves every window
+  it launched open with nothing reported: the run now fails as the step it was on, so
+  `--rollback-on-error` closes its windows and `--json` reports partial progress, then exits with
+  status 130 or 143. A second signal exits at once. With `--rollback-on-error`, a launch that
+  timed out also waits up to 2 more seconds for its window and closes it if it opens, instead of
+  leaving it to appear after the run has failed. (#15)
 - `--continue-on-timeout`: a `--layout`/`--template` step whose window doesn't appear in time no
   longer has to end the run. With the flag, it's reported (a warning on stderr, `timed_out_steps`
   under `--json`) and the next step runs; a step that targets the missing window is skipped and

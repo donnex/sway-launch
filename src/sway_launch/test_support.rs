@@ -45,6 +45,7 @@ pub(super) fn exec_action<'a>(command: &'a str, app_id: &'a str, class: &'a str)
         title: None,
         verbose: false,
         timeout: time::Duration::from_secs(5),
+        catch_late_window: false,
     }
 }
 
