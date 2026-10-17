@@ -1037,8 +1037,9 @@ impl ExecAction<'_> {
                         diagnostic!(
                             "No PID-marker-confirmed match arrived; using earlier \
                              content-matched container id {} (adopted, not confirmed as \
-                             launched by this run)",
-                            container_id
+                             launched by this run){}",
+                            container_id,
+                            unfiltered_fallback_hint(filter)
                         );
                     }
                     return Ok((container_id, LaunchOwnership::Adopted));
@@ -1081,8 +1082,9 @@ impl ExecAction<'_> {
                         diagnostic!(
                             "Marked process no longer running; using fallback container id {} \
                              (nothing marker-confirmed can still arrive, so this window is this \
-                             run's own)",
-                            container_id
+                             run's own){}",
+                            container_id,
+                            unfiltered_fallback_hint(filter)
                         );
                     }
                     return Ok((container_id, LaunchOwnership::Launched));
@@ -1309,6 +1311,19 @@ fn split_container_error(container_id: i64) -> String {
 /// the action's own verb, which is what tells several such actions apart.
 fn event_timeout_message(timeout: time::Duration) -> String {
     format!("no matching window event within {} sec", timeout.as_secs())
+}
+
+/// What a `--verbose` fallback line adds when the launch had no
+/// `--app-id`/`--class` filter: without one, any new window that appears
+/// during the wait qualifies, so an unrelated one can be picked up (#18).
+fn unfiltered_fallback_hint(filter: Option<LaunchFilter>) -> &'static str {
+    match filter {
+        Some(_) => "",
+        None => {
+            "; this launch has no --app-id/--class filter, so any new window could have \
+                 matched; pass -a/-c (app_id/class in a file) to pin it to its app"
+        }
+    }
 }
 
 /// A launch's timeout, saying as much as the wait observed about why.
