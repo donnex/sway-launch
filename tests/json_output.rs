@@ -819,3 +819,17 @@ fn on_workspace_number_requires_layout_or_template_and_conflicts_with_on_workspa
         .expect("failed to run sway-launch binary");
     assert_conflict_error(&output, "--on-workspace", "--on-workspace-number");
 }
+
+#[test]
+fn dry_run_says_an_existing_wait_waits_for_the_window() {
+    let output = sway_launch_without_a_compositor()
+        .args(["--existing", "--wait", "-a", "firefox", "--dry-run"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "1. wait for existing window (app_id=\"firefox\")"
+    );
+}

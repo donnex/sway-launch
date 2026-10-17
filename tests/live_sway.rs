@@ -6918,3 +6918,66 @@ fn on_workspace_number_builds_a_layout_on_the_numbered_workspace() {
     );
     assert!(!workspace_names(&mut connection).contains(&"48".to_string()));
 }
+
+#[test]
+fn existing_wait_arranges_a_window_something_else_starts() {
+    fresh_workspace();
+    let mut connection = connect();
+    // The window is started by Sway's own exec, not by sway-launch, after the
+    // wait has begun: the autostart case --wait exists for.
+    let waiting = sway_launch_command()
+        .args([
+            "--existing",
+            "--wait",
+            "-a",
+            "live-existing-wait",
+            "--floating",
+            "--timeout",
+            "10",
+            "--json",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to start sway-launch binary");
+    std::thread::sleep(Duration::from_millis(500));
+    run_command_ok(&mut connection, "exec foot --app-id=live-existing-wait");
+
+    let output = waiting
+        .wait_with_output()
+        .expect("sway-launch should finish");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("--json output should be valid JSON");
+    let container_id = json["container_id"]
+        .as_i64()
+        .unwrap_or_else(|| panic!("no container id in {json}"));
+    let _guard = KillOnDrop(container_id);
+    assert_eq!(single_action_status(&output.stdout), "changed");
+    let node = get_node(&mut connection, container_id);
+    assert_eq!(node.app_id.as_deref(), Some("live-existing-wait"));
+    assert!(node_is_floating(&node));
+}
+
+#[test]
+fn existing_wait_in_a_layout_step_times_out_naming_the_window() {
+    fresh_workspace();
+    let path = TempToml::write(
+        "existing-wait-timeout",
+        "[[step]]\nexisting = true\nwait = true\napp_id = \"live-never-opens\"\ntimeout = 1\n",
+    );
+    let output = sway_launch_command()
+        .args(["--layout", path.to_str().unwrap()])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no window with app_id \"live-never-opens\" appeared within 1 sec"),
+        "{stderr}"
+    );
+}

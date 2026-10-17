@@ -218,6 +218,9 @@ pub struct Binding {
     pub con_id: Option<i64>,
     #[serde(default)]
     pub existing: bool,
+    /// With `existing`, wait for the window to open (#108).
+    #[serde(default)]
+    pub wait: bool,
     pub app_id: Option<String>,
     pub class: Option<String>,
     pub mark_match: Option<String>,
@@ -356,7 +359,7 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
             sway_launch::require_non_blank("target_id", target_id).map_err(step_error)?;
         }
 
-        let (id, target_id, command, con_id, existing, app_id, class, mark_match, cwd, env) =
+        let (id, target_id, command, con_id, existing, wait, app_id, class, mark_match, cwd, env) =
             if let Some(slot) = step.slot.as_deref() {
                 let binding = bindings_by_slot.get(slot).ok_or_else(|| {
                     ResolveError::Bindings(format!("no binding for slot {:?}", slot))
@@ -369,6 +372,7 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
                     command: binding.command.as_deref(),
                     con_id: binding.con_id,
                     existing: binding.existing,
+                    wait: binding.wait,
                     target_id: None,
                     app_id: binding.app_id.as_deref(),
                     class: binding.class.as_deref(),
@@ -396,6 +400,7 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
                     binding.command.clone(),
                     binding.con_id,
                     binding.existing,
+                    binding.wait,
                     binding.app_id.clone(),
                     binding.class.clone(),
                     binding.mark_match.clone(),
@@ -408,6 +413,7 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
                     step.target_id.clone(),
                     None,
                     None,
+                    false,
                     false,
                     None,
                     None,
@@ -423,6 +429,7 @@ pub fn resolve(template: &Template, bindings: &Bindings) -> Result<Vec<LayoutSte
             env,
             con_id,
             existing,
+            wait,
             target_id,
             id,
             app_id,

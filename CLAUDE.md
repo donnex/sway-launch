@@ -165,7 +165,10 @@ the CLI, a layout step and a template binding give the same answer for every com
 
 `SwayLaunch::resolve_container_id()` turns the target into a container id: `Exec` launches,
 `Existing` resolves exactly one match from the whole tree (scratchpad included) or errors, `ConId`
-uses the id. A `ConId` run with actions is then looked up once (`ensure_con_id_target()`, deciding
+uses the id. `Existing { wait: true }` (`--wait`, #108) goes through
+`run_wait_for_existing_window()` instead: subscribe, then re-read the tree on every window event
+and every `LATE_PROPERTY_RECHECK_INTERVAL` (a late app_id sends no event) until
+`tree::resolve_awaited_matches()` finds one, errors on several, or `--timeout` runs out. A `ConId` run with actions is then looked up once (`ensure_con_id_target()`, deciding
 in `con_id_target_problem()`); a bare `--con-id N` is never looked up, so it works without a
 compositor (#107).
 

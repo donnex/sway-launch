@@ -176,12 +176,24 @@ pub(super) fn window_listing(tree: &Node, filter: Option<WindowMatch>) -> Vec<Li
 /// target, erroring — rather than silently picking one — on zero or more
 /// than one match.
 pub(super) fn resolve_matches(matches: Vec<i64>, criteria: &str) -> Result<i64, String> {
-    match matches.len() {
-        0 => Err(format!(
+    resolve_awaited_matches(matches, criteria)?.ok_or_else(|| {
+        format!(
             "No existing window matches {} (--list-windows shows every open window)",
             criteria
-        )),
-        1 => Ok(matches[0]),
+        )
+    })
+}
+
+/// `resolve_matches()` for `--existing --wait`, where no match yet means
+/// keep waiting (`None`) rather than an error. Several matches are still an
+/// error: waiting longer can't make the choice less ambiguous.
+pub(super) fn resolve_awaited_matches(
+    matches: Vec<i64>,
+    criteria: &str,
+) -> Result<Option<i64>, String> {
+    match matches.len() {
+        0 => Ok(None),
+        1 => Ok(Some(matches[0])),
         _ => {
             let ids = matches
                 .iter()

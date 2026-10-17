@@ -30,7 +30,8 @@ pub enum LaunchFilter<'a> {
 }
 
 /// What `SwayLaunch::run()` acts on: a window it launches, a specific
-/// already-open container, or an already-open window found by a matcher.
+/// already-open container, or an already-open window found by a matcher —
+/// with `wait`, one that may not have opened yet (#108).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Target<'a> {
     Exec {
@@ -38,7 +39,10 @@ pub enum Target<'a> {
         filter: Option<LaunchFilter<'a>>,
     },
     ConId(i64),
-    Existing(WindowMatch<'a>),
+    Existing {
+        window_match: WindowMatch<'a>,
+        wait: bool,
+    },
 }
 
 impl WindowMatch<'_> {
@@ -113,6 +117,7 @@ pub struct TargetFields<'a> {
     pub command: Option<&'a str>,
     pub con_id: Option<i64>,
     pub existing: bool,
+    pub wait: bool,
     pub target_id: Option<i64>,
     pub app_id: Option<&'a str>,
     pub class: Option<&'a str>,
@@ -138,6 +143,7 @@ pub enum TargetError {
     MatcherWithContainerId,
     MarkMatchWithoutExisting,
     ExistingWithoutMatcher,
+    WaitWithoutExisting,
     Blank(&'static str),
     Command(String),
 }
@@ -185,6 +191,8 @@ impl TargetError {
             TargetError::ExistingWithoutMatcher => {
                 "existing = true requires app_id, class, or mark_match".to_string()
             }
+            TargetError::WaitWithoutExisting if cli => "--wait requires --existing".to_string(),
+            TargetError::WaitWithoutExisting => "wait = true requires existing = true".to_string(),
             TargetError::Blank(field) if cli => {
                 format!("{} must not be empty or whitespace-only", cli_name(field))
             }
@@ -209,7 +217,8 @@ impl<'a> Target<'a> {
     /// The one place the target rules live: exactly one of a command, a
     /// container id (`con_id` or a resolved `target_id`) or `existing`; at
     /// most one matcher, never alongside a container id; `existing` needs a
-    /// matcher and `mark_match` needs `existing`; and no blank value.
+    /// matcher, and `mark_match` and `wait` need `existing`; and no blank
+    /// value.
     ///
     /// A blank matcher is checked before anything counts fields, since it
     /// would otherwise count as set and then match nothing. A launch command
@@ -253,6 +262,9 @@ impl<'a> Target<'a> {
             return Err(TargetError::SeveralTargets);
         }
 
+        if fields.wait && !fields.existing {
+            return Err(TargetError::WaitWithoutExisting);
+        }
         if let Some(con_id) = fields.con_id.or(fields.target_id) {
             return match matcher {
                 Some(_) => Err(TargetError::MatcherWithContainerId),
@@ -261,7 +273,10 @@ impl<'a> Target<'a> {
         }
         if fields.existing {
             return matcher
-                .map(Target::Existing)
+                .map(|window_match| Target::Existing {
+                    window_match,
+                    wait: fields.wait,
+                })
                 .ok_or(TargetError::ExistingWithoutMatcher);
         }
         if matches!(matcher, Some(WindowMatch::Mark(_))) {
