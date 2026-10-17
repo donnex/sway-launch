@@ -384,6 +384,55 @@ pub fn validate_exec_command(value: &str) -> Result<String, String> {
     Ok(value.to_string())
 }
 
+/// Renders a launch command given as a list of words (#77) into the text
+/// sent to Sway's `exec`, so each word reaches the program exactly, with no
+/// shell or Sway syntax applying to it. Each word is single-quoted for `sh`;
+/// a `'` becomes `'\''` and a `\` is written outside the quotes as `\\`,
+/// since Sway's own parser reads a backslash inside single quotes as
+/// escaping the next character, so `'a\'` would end the quote early for Sway
+/// (confirmed live). A `$` is refused: Sway replaces `$name` with a config
+/// variable even inside single quotes (confirmed live). So are a newline, a
+/// carriage return and NUL, which Sway turns into command separators first.
+pub fn render_argv(words: &[String]) -> Result<String, String> {
+    match words.first() {
+        None => return Err("Must name at least the program to run".to_string()),
+        Some(program) if program.trim().is_empty() => {
+            return Err("The first word, the program to run, must not be blank".to_string())
+        }
+        Some(_) => {}
+    }
+    let mut rendered = Vec::with_capacity(words.len());
+    for word in words {
+        if let Some(character) = word
+            .chars()
+            .find(|&c| matches!(c, '$' | '\n' | '\r' | '\0'))
+        {
+            return Err(format!(
+                "{:?} in {:?}: Sway would read it before the program does ({}), so it can't be \
+                 passed through. Use the string form with a script if it's needed",
+                character,
+                word,
+                if character == '$' {
+                    "as a config variable"
+                } else {
+                    "as a command separator"
+                }
+            ));
+        }
+        let mut quoted = String::from("'");
+        for character in word.chars() {
+            match character {
+                '\'' => quoted.push_str("'\\''"),
+                '\\' => quoted.push_str("'\\\\'"),
+                other => quoted.push(other),
+            }
+        }
+        quoted.push('\'');
+        rendered.push(quoted);
+    }
+    Ok(rendered.join(" "))
+}
+
 /// `require_non_blank()` in the shape clap's `value_parser` wants, for a flag
 /// whose only constraint is "not blank" — `--app-id`/`--class`, the two
 /// window-matching criteria. Unlike `validate_sway_string_argument()` above,

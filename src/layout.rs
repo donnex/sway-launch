@@ -3,6 +3,41 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::time;
 
+/// A step's or binding's `command`: a string, sent to Sway's `exec` as
+/// written, or a list of words (#77), quoted by `render_argv()` so each word
+/// reaches the program exactly. Both end up as the same string, so nothing
+/// past parsing needs to know which form a file used.
+pub fn deserialize_command<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct CommandVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for CommandVisitor {
+        type Value = String;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str(
+                "a command string, or a list of words such as [\"foot\", \"-T\", \"notes\"]",
+            )
+        }
+
+        fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<String, E> {
+            Ok(value.to_string())
+        }
+
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<String, A::Error> {
+            let mut words = Vec::new();
+            while let Some(word) = seq.next_element::<String>()? {
+                words.push(word);
+            }
+            sway_launch::render_argv(&words).map_err(serde::de::Error::custom)
+        }
+    }
+
+    deserializer.deserialize_any(CommandVisitor).map(Some)
+}
+
 /// A declarative layout file: a sequence of steps, each the moral
 /// equivalent of one `sway-launch` CLI invocation's flags. TOML's
 /// array-of-tables syntax (`[[step]]`) maps directly onto `step: Vec<...>`.
@@ -21,6 +56,7 @@ pub struct Layout {
 #[cfg_attr(test, derive(serde::Serialize))]
 #[serde(deny_unknown_fields)]
 pub struct LayoutStep {
+    #[serde(default, deserialize_with = "deserialize_command")]
     pub command: Option<String>,
     pub con_id: Option<i64>,
     #[serde(default)]

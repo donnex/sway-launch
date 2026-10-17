@@ -190,6 +190,7 @@ pub struct TemplateStep {
 #[serde(deny_unknown_fields)]
 pub struct Binding {
     pub slot: String,
+    #[serde(default, deserialize_with = "crate::layout::deserialize_command")]
     pub command: Option<String>,
     pub con_id: Option<i64>,
     #[serde(default)]
