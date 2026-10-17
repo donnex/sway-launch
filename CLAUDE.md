@@ -19,12 +19,17 @@ rules both apply in full because of this — there's no "private repo" fallback 
 ## Commands
 
 - All pre-commit checks: `scripts/run-checks` — `cargo fmt --check`, `cargo clippy --all-targets
-  --all-features -- -D warnings`, `cargo build`, `cargo test` (all `--locked`), `shellcheck`/`shfmt`
+  --all-features -- -D warnings`, `cargo build`, `cargo test` (all `--locked`; plus the man page
+  test, which needs `--features generate-man`), `shellcheck`/`shfmt`
   on every shell script under `scripts/`/`examples/scripts/` (found by shebang), `markdownlint` on
   every tracked Markdown file (tracked only, so an untracked signal file such as `REVIEW.md` isn't
   linted; stage a new file to include it), and `black`/`ruff` on the Python script. Stops at the
   first failure. Both workflows run this same script (see CI below), so a new check is added there
   once (#62). Not included: the coverage gate, the live-Sway tests and the audit.
+- Man page: `cargo run --features generate-man -- --generate-man > sway-launch.1`. The optional
+  `generate-man` feature (and its `clap_mangen` dependency) exists only for this: `main()` checks
+  for `--generate-man` before parsing `Args`, so it never appears in `--help` or in the shipped
+  binary, which is built without the feature. The release job builds it separately (#109).
 - Build: `cargo build`
 - Run: `cargo run -- [OPTIONS] [COMMAND]` (e.g. `cargo run -- -a foot foot`)
 - Format: `cargo fmt`
@@ -1528,9 +1533,9 @@ when a `v*` tag is pushed. Its `check` job also fails unless the tag's version (
 binary whose `--version` disagrees with its release name. Building and publishing are separate
 jobs: `build` (read-only token) compiles for `x86_64-unknown-linux-musl`, so the published binary
 is statically linked and runs whatever the user's glibc version (no `musl-tools` needed: the crate
-has no C dependencies and Rust's musl target ships its own C runtime), and packages the archive (the binary, `README.md`, and
-`LICENSE` — BSD-3-Clause requires a binary redistribution to carry the copyright notice and
-conditions, so the project's own release artifact has to include it) and hands it on via
+has no C dependencies and Rust's musl target ships its own C runtime), and packages the archive (the
+binary, `README.md`, `LICENSE` — BSD-3-Clause requires a binary redistribution to carry the
+copyright notice and conditions — the man page and bash/zsh/fish completions) and hands it on via
 `actions/upload-artifact`, and only `publish` (no checkout, no build — just a download and
 `gh release create`) holds `contents: write`, because compiling runs every dependency's build
 script and proc-macro, none of which should ever share a job with the write token. Release notes come from `CHANGELOG.md` rather than `gh`'s own

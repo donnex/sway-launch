@@ -189,4 +189,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of a dependency error about `clap`. The README's Installation section says so up front,
   and shows `cargo install --path . --locked` for building and installing in one step. (#55, #67)
 - Prebuilt Linux x86_64 release binaries, statically linked against musl, so they run on any
-  distribution whatever its glibc version. (#26)
+  distribution whatever its glibc version. The archive also includes `LICENSE`, a `sway-launch(1)`
+  man page generated from the same definition as `--help`, and ready-made bash, zsh and fish
+  completions. (#26, #39, #109)

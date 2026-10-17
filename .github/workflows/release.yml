@@ -1,7 +1,8 @@
 name: Release
 
 # Push a tag like "v0.2.0" to trigger a build + GitHub release with a
-# sway-launch-<tag>-x86_64-unknown-linux-gnu.tar.gz (binary + README.md) and
+# sway-launch-<tag>-x86_64-unknown-linux-musl.tar.gz (binary, README.md,
+# LICENSE, man page and bash/zsh/fish completions) and
 # its .sha256 checksum attached. Only the Linux x86_64 target, matching the
 # runner's own platform. Uses the `GITHUB_TOKEN` GitHub Actions injects
 # automatically for every run rather than requiring a manually-created
@@ -118,6 +119,19 @@ jobs:
       - name: Build release binary
         run: cargo build --release --locked --target x86_64-unknown-linux-musl
 
+      # The man page comes from a separate build with the generate-man
+      # feature, so the shipped binary carries no man page generator. The
+      # completions come from the shipped binary itself.
+      - name: Generate man page and shell completions
+        run: |
+          set -euo pipefail
+          mkdir -p dist/extras/completions
+          cargo run --locked --features generate-man -- --generate-man > dist/extras/sway-launch.1
+          binary=target/x86_64-unknown-linux-musl/release/sway-launch
+          "$binary" --completions bash > dist/extras/completions/sway-launch.bash
+          "$binary" --completions zsh > dist/extras/completions/_sway-launch
+          "$binary" --completions fish > dist/extras/completions/sway-launch.fish
+
       # The archive name carries the version/platform detail; the binary
       # inside it stays plain `sway-launch` so extracting it needs no
       # renaming. Assigned as an ordinary shell variable rather than read back
@@ -135,6 +149,8 @@ jobs:
           cp target/x86_64-unknown-linux-musl/release/sway-launch "dist/$ARCHIVE_NAME/sway-launch"
           cp README.md "dist/$ARCHIVE_NAME/"
           cp LICENSE "dist/$ARCHIVE_NAME/"
+          cp dist/extras/sway-launch.1 "dist/$ARCHIVE_NAME/"
+          cp -r dist/extras/completions "dist/$ARCHIVE_NAME/"
           chmod +x "dist/$ARCHIVE_NAME/sway-launch"
           tar -C dist -czf "dist/$ARCHIVE_NAME.tar.gz" "$ARCHIVE_NAME"
           (cd dist && sha256sum "$ARCHIVE_NAME.tar.gz" > "$ARCHIVE_NAME.tar.gz.sha256")

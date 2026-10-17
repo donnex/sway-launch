@@ -17,6 +17,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1"
 include_dir = "0.7.4"
+clap_mangen = { version = "0.3.3", optional = true }
 
 [features]
 live-sway-tests = []
+# Only for the release job, which builds the man page with it; the shipped
+# binary is built without it.
+generate-man = ["dep:clap_mangen"]
