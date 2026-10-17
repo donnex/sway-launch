@@ -90,6 +90,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as `no window with container id N`, and a workspace's or output's id as `container N is a
   workspace, not a window`, rather than as a window that "may have closed". A bare `--con-id N`
   with no actions is still printed back unchecked. (#107)
+- `--existing --wait` (and `wait = true` in a layout step or binding) waits up to `--timeout` for
+  a matching window to open, instead of failing at once when none is open yet. It arranges windows
+  something else starts, such as an `exec` line in the Sway config, an autostart entry or a
+  launcher, with no `sleep` in front: `exec sway-launch --existing --wait -a firefox --workspace
+  2`. A window that sets its app_id/class only after appearing is still found. Several matching
+  windows are still an error, and a window found this way is never closed by
+  `--rollback-on-error`. (#108)
 - `--workspace-number <N>`, and `workspace_number` in a layout or template step, move a window to a
   workspace by number the way Sway's own `workspace number N` keybindings do, so `2` finds a
   workspace named `2: web`. `--workspace 2` used to be the only option there, and it silently

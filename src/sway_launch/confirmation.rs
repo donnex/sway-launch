@@ -23,10 +23,11 @@ use super::process_marker::{
     MarkerTracker, MARKER_SCAN_INTERVAL, PID_MARKER_FALLBACK_GRACE, PID_MARKER_VAR,
 };
 use super::query::{
-    container_state, container_state_on, ensure_container_exists, existing_container, node_by_id,
-    parent_node_layout, position_matches, recheck_launched_windows_now,
+    awaited_existing_container_id, container_state, container_state_on, ensure_container_exists,
+    existing_container, node_by_id, parent_node_layout, position_matches,
+    recheck_launched_windows_now,
 };
-use super::target::LaunchFilter;
+use super::target::{LaunchFilter, WindowMatch};
 use super::tree::{height_matches, is_window, width_matches, ContainerState};
 use super::values::{escape_control_characters, Size, Split};
 use super::{MOVE_POLL_GRACE, WAIT_TIME_POLL_GRACE, WAIT_TIME_POLL_INTERVAL};
@@ -1390,6 +1391,59 @@ fn exec_timeout_message(
         ),
         None => base,
     }
+}
+
+/// `--existing --wait` (#108): the one window `window_match` accepts, waiting
+/// up to `timeout` for it to open when none has yet, for a window something
+/// other than this run is starting (an autostart entry, a launcher).
+///
+/// Subscribes before the first tree read, the same order
+/// `run_wait_matching_events()` uses, so a window mapping between the two
+/// can't be missed. Every window event then prompts another read, and so does
+/// every `LATE_PROPERTY_RECHECK_INTERVAL` without one, since a client can
+/// set its app_id/class after mapping and Sway sends no event when it does.
+/// Several matches end the wait with the same error `--existing` gives:
+/// waiting longer can't make the choice less ambiguous.
+pub(super) fn run_wait_for_existing_window(
+    window_match: WindowMatch,
+    timeout: time::Duration,
+    verbose: bool,
+) -> Result<i64, String> {
+    let events = spawn_event_forwarder(event_loop(&[EventType::Window])?);
+    let deadline = deadline_after(timeout)?;
+    let mut connection = new_connection()?;
+    let mut announced = false;
+
+    loop {
+        if let Some(container_id) = awaited_existing_container_id(&mut connection, window_match)? {
+            return Ok(container_id);
+        }
+        if verbose && !announced {
+            diagnostic!("No window matches {} yet; waiting for one", window_match);
+            announced = true;
+        }
+        let remaining = deadline.saturating_duration_since(time::Instant::now());
+        if remaining.is_zero() {
+            return Err(existing_wait_timeout_message(window_match, timeout));
+        }
+        match events.recv_timeout(remaining.min(LATE_PROPERTY_RECHECK_INTERVAL)) {
+            Ok(Ok(_)) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Ok(Err(error)) => return Err(error.to_string()),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err("Event stream closed unexpectedly".to_string());
+            }
+        }
+        // One read covers every event that arrived meanwhile.
+        while let Ok(Ok(_)) = events.try_recv() {}
+    }
+}
+
+fn existing_wait_timeout_message(window_match: WindowMatch, timeout: time::Duration) -> String {
+    format!(
+        "no window with {} appeared within {} sec (--list-windows shows every open window)",
+        window_match,
+        timeout.as_secs()
+    )
 }
 
 /// How often `run_wait_matching_exec_event()` re-reads the tree for a window

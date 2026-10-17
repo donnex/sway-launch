@@ -304,6 +304,139 @@ fn a_workspace_number_move_is_confirmed_once_the_window_is_on_that_number() {
 }
 
 #[test]
+fn existing_wait_takes_a_window_that_is_already_open_without_waiting() {
+    let fake = FakeSway::accepting_everything(SwayVersion::V1_9);
+    let started = std::time::Instant::now();
+    let run = run(&fake, &["--existing", "--wait", "-a", "fixture-tiled"]);
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert_eq!(run.json["container_id"], TILED);
+    assert!(started.elapsed() < Duration::from_secs(2));
+}
+
+#[test]
+fn existing_wait_takes_a_window_that_opens_during_the_wait() {
+    for version in SwayVersion::ALL {
+        let fake = FakeSway::accepting_everything(version);
+        fake.sway().after(Duration::from_millis(400), |sway| {
+            let id = sway.open_window(Some("autostarted"), None);
+            sway.emit("new", id);
+        });
+        let run = run(
+            &fake,
+            &[
+                "--existing",
+                "--wait",
+                "-a",
+                "autostarted",
+                "--timeout",
+                "5",
+            ],
+        );
+        assert!(run.succeeded(), "{version:?}: {}", run.stderr());
+        let container_id = run.json["container_id"].as_i64().expect("a container id");
+        assert!(fake.sway().contains(container_id), "{version:?}");
+        assert_eq!(
+            fake.sway().node(container_id)["app_id"],
+            "autostarted",
+            "{version:?}"
+        );
+    }
+}
+
+#[test]
+fn existing_wait_notices_an_app_id_set_after_mapping_without_an_event() {
+    // The window maps with no app_id and sets one later; Sway sends no event
+    // for that, so only the periodic tree read can see it.
+    let fake = FakeSway::accepting_everything(SwayVersion::V1_11);
+    fake.sway().after(Duration::from_millis(200), |sway| {
+        let id = sway.open_window(None, None);
+        sway.emit("new", id);
+        sway.after(Duration::from_millis(400), move |sway| {
+            sway.node_mut(id)["app_id"] = serde_json::json!("late-app");
+        });
+    });
+    let run = run(
+        &fake,
+        &["--existing", "--wait", "-a", "late-app", "--timeout", "5"],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    let container_id = run.json["container_id"].as_i64().expect("a container id");
+    assert_eq!(fake.sway().node(container_id)["app_id"], "late-app");
+}
+
+#[test]
+fn existing_wait_times_out_naming_what_it_waited_for() {
+    let fake = FakeSway::accepting_everything(SwayVersion::V1_11);
+    let started = std::time::Instant::now();
+    let run = run(
+        &fake,
+        &[
+            "--existing",
+            "--wait",
+            "-a",
+            "never-opens",
+            "--timeout",
+            "1",
+        ],
+    );
+    assert!(!run.succeeded());
+    assert!(started.elapsed() >= Duration::from_secs(1));
+    assert_eq!(
+        run.error(),
+        "no window with app_id \"never-opens\" appeared within 1 sec (--list-windows shows \
+         every open window)"
+    );
+}
+
+#[test]
+fn existing_wait_fails_at_once_when_several_windows_match() {
+    // Waiting can't make an ambiguous choice less ambiguous.
+    let fake = FakeSway::accepting_everything(SwayVersion::V1_11);
+    {
+        let mut sway = fake.sway();
+        sway.open_window(Some("twin"), None);
+        sway.open_window(Some("twin"), None);
+    }
+    let started = std::time::Instant::now();
+    let run = run(
+        &fake,
+        &["--existing", "--wait", "-a", "twin", "--timeout", "5"],
+    );
+    assert!(!run.succeeded());
+    assert!(
+        run.error().contains("2 windows match app_id \"twin\""),
+        "{}",
+        run.error()
+    );
+    assert!(started.elapsed() < Duration::from_secs(2));
+}
+
+#[test]
+fn existing_wait_applies_its_actions_to_the_window_it_waited_for() {
+    let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {
+        if let Some(id) = command
+            .strip_prefix("[con_id=")
+            .and_then(|rest| rest.strip_suffix("] floating enable"))
+            .and_then(|id| id.parse().ok())
+        {
+            sway.float(id);
+            sway.emit("floating", id);
+        }
+        Ok(())
+    });
+    fake.sway().after(Duration::from_millis(300), |sway| {
+        let id = sway.open_window(Some("float-me"), None);
+        sway.emit("new", id);
+    });
+    let run = run(
+        &fake,
+        &["--existing", "--wait", "-a", "float-me", "--floating"],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert_eq!(run.action_status(), "changed");
+}
+
+#[test]
 fn a_split_is_confirmed_once_the_parent_layout_changes() {
     let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {
         if command == format!("[con_id={TILED}] splitv") {

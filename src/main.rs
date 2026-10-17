@@ -76,6 +76,7 @@ const PER_WINDOW_ARGS: &[&str] = &[
     "env",
     "con_id",
     "existing",
+    "wait",
     "app_id",
     "class",
     "mark_match",
@@ -143,6 +144,12 @@ struct Args {
     /// instead of launching a new one
     #[clap(long, conflicts_with_all = ["command", "con_id"])]
     existing: bool,
+
+    /// With --existing, wait up to --timeout for a matching window to open
+    /// instead of failing when none is open yet, e.g. one an autostart entry
+    /// is still starting
+    #[clap(long)]
+    wait: bool,
 
     /// Start the launched command in this directory instead of Sway's. A
     /// relative path is relative to the current directory
@@ -503,6 +510,7 @@ fn main() {
         command: args.command.as_deref(),
         con_id: args.con_id,
         existing: args.existing,
+        wait: args.wait,
         target_id: None,
         app_id: args.app_id.as_deref(),
         class: args.class.as_deref(),
@@ -513,7 +521,8 @@ fn main() {
             let kind = match error {
                 sway_launch::TargetError::NoTarget
                 | sway_launch::TargetError::ExistingWithoutMatcher
-                | sway_launch::TargetError::MarkMatchWithoutExisting => {
+                | sway_launch::TargetError::MarkMatchWithoutExisting
+                | sway_launch::TargetError::WaitWithoutExisting => {
                     ErrorKind::MissingRequiredArgument
                 }
                 sway_launch::TargetError::SeveralTargets
@@ -949,8 +958,9 @@ fn describe_target(sway_launch: &sway_launch::SwayLaunch) -> String {
             None => format!("launch {}", command),
         },
         sway_launch::Target::ConId(_) => "target existing container".to_string(),
-        sway_launch::Target::Existing(window_match) => format!(
-            "target existing window ({}={:?})",
+        sway_launch::Target::Existing { window_match, wait } => format!(
+            "{} existing window ({}={:?})",
+            if *wait { "wait for" } else { "target" },
             window_match.field_name(),
             window_match.value()
         ),
@@ -1476,6 +1486,7 @@ fn bindings_from_apps(
             command: Some(command.to_string()),
             con_id: None,
             existing: false,
+            wait: false,
             app_id: None,
             class: None,
             mark_match: None,
@@ -2356,6 +2367,7 @@ mod tests {
         "env",
         "con_id",
         "existing",
+        "wait",
         "app_id",
         "class",
         "mark_match",

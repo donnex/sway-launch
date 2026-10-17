@@ -125,6 +125,22 @@ fn matching_container_ids_recurses_into_nested_containers() {
     );
 }
 
+// resolve_awaited_matches
+
+#[test]
+fn resolve_awaited_matches_keeps_waiting_on_none_and_fails_on_several() {
+    assert_eq!(resolve_awaited_matches(vec![], "app_id \"x\""), Ok(None));
+    assert_eq!(
+        resolve_awaited_matches(vec![7], "app_id \"x\""),
+        Ok(Some(7))
+    );
+    let error = resolve_awaited_matches(vec![7, 8], "app_id \"x\"").unwrap_err();
+    assert!(
+        error.starts_with("2 windows match app_id \"x\": 7, 8"),
+        "{error}"
+    );
+}
+
 // window_listing
 
 /// root → HEADLESS-1 → workspace "1" (a tiled foot, and a marked split
