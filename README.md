@@ -922,7 +922,9 @@ else. So a command must start with one that acts on one window: `allow_tearing`,
 `opacity`, `resize`, `scratchpad`, `shortcuts_inhibitor`, `split`/`splith`/`splitv`/`splitt`,
 `sticky`, `swap`, `title_format`, `unmark` or `urgent`. Each entry is one command: an unquoted `,`
 or `;`, a newline, and a leading `[` (the criteria are `sway-launch`'s to add) are refused, and so
-is a `$`, which Sway would replace with a variable from your own config.
+is a `$`, which Sway would replace with a variable from your own config. So is an entry that ends
+inside an unclosed quote or after an unpaired `\`: a step's entries reach Sway as one command, so
+the quote would carry on into the next entry.
 
 ### Height and width
 

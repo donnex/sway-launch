@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- A layout or template file can no longer run an arbitrary Sway command, `exec` included, through
+  `sway_commands`. An entry that left a quote open (`'title_format "a'`) passed validation, and
+  since a step's entries are sent to Sway as one command, the open quote changed how Sway split the
+  entries after it, so text quoted inside a later entry ran as a separate command outside the list
+  of allowed window commands. An entry (or `--sway-command`) ending inside an unclosed quote or
+  after an unpaired backslash is now refused, as is a launch command ending that way, and every
+  command is checked once more as a whole before it is sent, rather than only after Sway had
+  already run it. (#123)
+
 ## [0.1.0] - 2026-10-18
 
 The first release.

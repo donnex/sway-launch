@@ -9,6 +9,7 @@
 //! needs a compositor to talk to: `tests/fake_sway.rs` provides a fake one,
 //! and `tests/live_sway.rs` a real one.
 
+use super::values::sway_command_split_problem;
 use std::sync::mpsc;
 use std::{fmt, thread, time};
 use swayipc::{Connection, Event, EventStream, EventType, Fallible};
@@ -246,7 +247,18 @@ pub(super) fn run_sway_command(command: &str) -> Result<(), String> {
 /// action that sent it. Sway runs every sub-command even after one fails, and
 /// stops only at one it can't parse, so the reply can be shorter than the
 /// command (both confirmed live on Sway 1.11).
-pub(super) fn run_sway_commands(command: &str) -> Result<Vec<Result<(), String>>, String> {
+///
+/// `command` joins `expected_parts` commands, and is refused before anything
+/// is sent if Sway would read it as any other number
+/// (`sway_command_split_problem()`, #123): by the time the reply shows a
+/// split, Sway has already run every part.
+pub(super) fn run_sway_commands(
+    command: &str,
+    expected_parts: usize,
+) -> Result<Vec<Result<(), String>>, String> {
+    if let Some(problem) = sway_command_split_problem(command, expected_parts) {
+        return Err(problem);
+    }
     let outcomes = new_connection()?.run_command(command).map_err(ipc_error)?;
     Ok(outcomes
         .into_iter()
@@ -256,10 +268,16 @@ pub(super) fn run_sway_commands(command: &str) -> Result<Vec<Result<(), String>>
 
 /// `run_sway_command()` for a command that must reach Sway as exactly one
 /// command — the launch's `exec`. `validate_exec_command()` already rejects
-/// anything Sway would split, so this is the backstop: if Sway's reply still
-/// carries more than one outcome, the text was split after all, and the
-/// launch is reported as failed rather than as whatever its first piece did.
+/// anything Sway would split in the command itself; this backs it up twice.
+/// Before sending, the whole text (setup prefix included) is refused if Sway
+/// would split it at all (`sway_command_split_problem()`, #123), since
+/// nothing after that can undo a part Sway has run. After, a reply carrying
+/// more than one outcome still fails the launch rather than reporting
+/// whatever its first piece did.
 pub(super) fn run_single_sway_command(command: &str) -> Result<(), String> {
+    if let Some(problem) = sway_command_split_problem(command, 1) {
+        return Err(problem);
+    }
     let outcomes = match new_connection()?.run_command(command) {
         Ok(outcomes) => outcomes,
         Err(error) => return Err(ipc_error(error)),

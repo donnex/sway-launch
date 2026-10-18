@@ -1391,6 +1391,33 @@ fn a_layout_steps_sway_commands_take_effect_and_session_commands_are_refused() {
     );
     std::thread::sleep(Duration::from_millis(200));
     get_node_with_border(&mut connection, container_id, swayipc::NodeBorder::Pixel, 4);
+
+    // #123: a quote split across two entries, which joined would run the
+    // `exec` behind [con_id=N]. Refused before anything is sent.
+    let touched =
+        std::env::temp_dir().join(format!("sway-launch-split-quote-{}", std::process::id()));
+    let _ = std::fs::remove_file(&touched);
+    let split_quote = TempToml::write(
+        "sway-commands-split-quote",
+        &format!(
+            "[[step]]\ncon_id = {container_id}\nsway_commands = ['title_format \"a', \
+             'border \", exec touch {}, border \"']\n",
+            touched.display()
+        ),
+    );
+    let output = sway_launch_command()
+        .args(["--layout", split_quote.to_str().unwrap()])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("unclosed '\"' quote"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(!touched.exists(), "the split-off exec ran");
+    get_node_with_border(&mut connection, container_id, swayipc::NodeBorder::Pixel, 4);
 }
 
 #[test]

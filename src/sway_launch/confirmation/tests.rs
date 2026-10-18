@@ -1,5 +1,5 @@
 use super::super::test_support::*;
-use super::super::values::{Position, Size, Split, WorkspaceTarget};
+use super::super::values::{sway_command_split_problem, Position, Size, Split, WorkspaceTarget};
 use super::*;
 
 // unfiltered_fallback_hint
@@ -1026,4 +1026,16 @@ fn is_held_geometry_is_pixel_sizes_and_positions_only() {
     assert!(!is_held_geometry(ActionKind::Height(Size::Percent(1))));
     assert!(!is_held_geometry(ActionKind::Width(Size::Percent(1))));
     assert!(!is_held_geometry(ActionKind::Floating));
+}
+
+#[test]
+fn a_batch_whose_entries_split_a_quote_between_them_is_refused_before_sending() {
+    // #123: neither entry passes validate_sway_command() any more, but the
+    // pre-send check refuses their join as well.
+    let first = targeted(ActionKind::SwayCommand("title_format \"a"));
+    let second = targeted(ActionKind::SwayCommand(
+        "border \", exec touch /tmp/x, border \"",
+    ));
+    let command = batch_command(42, &[&first, &second]);
+    assert!(sway_command_split_problem(&command, 2).is_some());
 }

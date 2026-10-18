@@ -142,7 +142,8 @@ what it rejects and why:
 - `validate_exec_command()` — the launch command is sent raw, so it rejects what Sway's own parser
   would split on (an unquoted `,`/`;`, any newline/CR/NUL), and a shell comment, which would cut
   the `( ... )` it runs in short. `run_single_sway_command()` backs it
-  up by treating a multi-outcome reply as an error.
+  up twice: the pre-send `sway_command_split_problem()` check (below), and treating a
+  multi-outcome reply as an error.
 - `render_argv()` — a step's or binding's `command` given as a list of words (#77), turned into one
   quoted string by `layout::deserialize_command()` at parse time, so nothing past parsing knows
   which form a file used. Each word is single-quoted, with `\` written outside the quotes because
@@ -158,7 +159,11 @@ what it rejects and why:
   `layout::deserialize_sway_commands()` at parse time: the first word must be in
   `SWAY_WINDOW_COMMANDS`, since Sway runs any command behind `[con_id=N]`, `exec`/`bindsym`/`exit`
   included (confirmed live), and a shared file may only change its own window. No unquoted `,`/`;`,
-  control character but tab, `$`, or leading `[`, so one entry stays one command.
+  control character but tab, `$`, or leading `[`, so one entry stays one command, and no unclosed
+  quote or trailing unpaired `\` (`open_quoting()`, also applied by `validate_exec_command()`),
+  which would carry on into the next entry once a batch joins them (#123). Behind both,
+  `run_single_sway_command()` and `run_sway_commands()` refuse, before sending, a command
+  `sway_command_split_problem()` says Sway would split into other than the parts it was built from.
 - `validate_non_blank_argument()`/`require_non_blank()` — free-form identifiers.
 - `validate_timeout_argument()`/`validate_timeout_seconds()` — `1..=MAX_TIMEOUT_SECONDS`; the
   deadline is computed (`deadline_after()`) before any command is sent.

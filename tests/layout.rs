@@ -1039,3 +1039,23 @@ fn a_step_s_cwd_and_env_appear_in_the_preview_and_need_a_command() {
         "{output:?}"
     );
 }
+
+#[test]
+fn a_quote_split_across_sway_commands_entries_is_refused_by_validate() {
+    // #123: each entry but the first is balanced on its own, and joined
+    // they would run an `exec` behind [con_id=N].
+    let path = TempToml::write(
+        "split-quote-sway-commands",
+        "[[step]]\ncon_id = 91\n\
+         sway_commands = ['title_format \"a', 'border \", exec touch /tmp/x, border \"']\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        .args(["--layout", path.to_str().unwrap(), "--validate"])
+        .output()
+        .expect("failed to run sway-launch binary");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unclosed '\"' quote"), "{stderr}");
+}

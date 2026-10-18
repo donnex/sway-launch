@@ -838,3 +838,76 @@ fn sway_window_commands_is_sorted_and_unique() {
     sorted.dedup();
     assert_eq!(sorted, SWAY_WINDOW_COMMANDS);
 }
+
+#[test]
+fn validate_sway_command_rejects_an_entry_ending_inside_quoting() {
+    // #123: joined with the next entry, the open quote would turn a `,`
+    // quoted there into a separator and run what follows it.
+    for (command, described) in [
+        ("title_format \"a", "unclosed '\"' quote"),
+        ("title_format 'a", "unclosed \"'\" quote"),
+        ("title_format a\\", "unpaired trailing '\\'"),
+    ] {
+        let error = validate_sway_command(command).expect_err(command);
+        assert!(error.contains(described), "{command}: {error:?}");
+    }
+    assert!(validate_sway_command("title_format a\\\\").is_ok());
+    assert!(validate_sway_command("title_format \"it's\"").is_ok());
+}
+
+#[test]
+fn validate_exec_command_rejects_a_command_ending_inside_quoting() {
+    for command in ["foot -T \"a", "foot -T 'a", "foot -T a\\"] {
+        let error = validate_exec_command(command).expect_err(command);
+        assert!(error.contains("Must not end in"), "{command}: {error:?}");
+    }
+    assert!(validate_exec_command("foot -T 'a\\\\'").is_ok());
+}
+
+// sway_command_split_problem
+
+#[test]
+fn sway_command_split_problem_accepts_what_splits_as_built() {
+    assert_eq!(
+        sway_command_split_problem("[con_id=1] border none", 1),
+        None
+    );
+    assert_eq!(
+        sway_command_split_problem("[con_id=1] mark \"a, b\", border none", 2),
+        None
+    );
+    assert_eq!(
+        sway_command_split_problem("exec export X=1 && ( foot -T 'a;b' )", 1),
+        None
+    );
+}
+
+#[test]
+fn sway_command_split_problem_refuses_a_quote_split_across_two_entries() {
+    // The #123 template: each entry is balanced on its own but the first,
+    // so the joined command splits into four, `exec` among them.
+    let joined = "[con_id=1] title_format \"a, border \", exec touch /tmp/x, border \"";
+    let error = sway_command_split_problem(joined, 2).expect("must be refused");
+    assert!(error.contains("unclosed '\"' quote"), "{error:?}");
+
+    let balanced_at_the_end =
+        "[con_id=1] title_format \"a, border \", exec touch /tmp/x, border none";
+    let error = sway_command_split_problem(balanced_at_the_end, 2).expect("refused");
+    assert!(error.contains("into 3 commands, not the 2"), "{error:?}");
+}
+
+#[test]
+fn sway_command_split_problem_refuses_extra_separators_and_open_quoting() {
+    assert!(sway_command_split_problem("exec foot; exit", 1)
+        .expect("refused")
+        .contains("into 2 commands"));
+    assert!(sway_command_split_problem("exec foot -T \"a\nb\"", 1)
+        .expect("refused")
+        .contains("into 2 commands"));
+    assert!(sway_command_split_problem("exec foot \\", 1)
+        .expect("refused")
+        .contains("unpaired trailing"));
+    assert!(sway_command_split_problem("exec foot 'a", 1)
+        .expect("refused")
+        .contains("unclosed \"'\" quote"));
+}

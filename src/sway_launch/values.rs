@@ -501,6 +501,8 @@ pub fn escape_control_characters(text: &str, keep_newlines: bool) -> String {
 /// - an unquoted `#` starting a word, a shell comment, which would comment
 ///   out the `)` of the subshell `ExecAction::sway_command()` runs the
 ///   command in.
+/// - an unclosed quote or a trailing unpaired backslash (#123), which would
+///   run on into that `)` the same way.
 ///
 /// Blank values aren't this function's concern: the CLI's own "Missing
 /// COMMAND" check and `to_sway_launch()`'s target logic already report those
@@ -520,6 +522,13 @@ pub fn validate_exec_command(value: &str) -> Result<String, String> {
              would run as a separate Sway command. Wrap the part containing it in quotes, or \
              move the command into a script",
             character
+        ));
+    }
+    if let Some(open) = open_quoting(value) {
+        return Err(format!(
+            "Must not end in {} — the command runs inside ( ... ), and Sway would read the \
+             \")\" as part of it. Close the quote, or quote the backslash",
+            open.describe()
         ));
     }
     if has_unquoted_comment(value) {
@@ -555,11 +564,43 @@ fn has_unquoted_comment(value: &str) -> bool {
 }
 
 /// The first character in `value` outside quotes for which `wanted` is true,
-/// given it and the character before it. Scanned with the rules Sway's
-/// `argsep()` uses, which match the shell's closely enough for this: `"`/`'`
-/// quote, a backslash escapes the next character, and only a character
-/// outside both counts.
-fn first_unquoted(value: &str, wanted: impl Fn(char, Option<char>) -> bool) -> Option<char> {
+/// given it and the character before it; see `scan_unquoted()`.
+fn first_unquoted(value: &str, wanted: impl FnMut(char, Option<char>) -> bool) -> Option<char> {
+    scan_unquoted(value, wanted).found
+}
+
+/// What a scan of a Sway command can end inside, rather than outside any
+/// quoting: whatever Sway reads after the text then continues it (#123).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpenQuoting {
+    DoubleQuote,
+    SingleQuote,
+    Backslash,
+}
+
+impl OpenQuoting {
+    fn describe(self) -> &'static str {
+        match self {
+            OpenQuoting::DoubleQuote => "an unclosed '\"' quote",
+            OpenQuoting::SingleQuote => "an unclosed \"'\" quote",
+            OpenQuoting::Backslash => "an unpaired trailing '\\'",
+        }
+    }
+}
+
+/// The result of `scan_unquoted()`: the first wanted character, and, for a
+/// scan that read the whole value, what quoting it ended inside, if any.
+struct QuoteScan {
+    found: Option<char>,
+    open: Option<OpenQuoting>,
+}
+
+/// Scans `value` with the rules Sway's `argsep()` uses, which match the
+/// shell's closely enough for this: `"`/`'` quote, a backslash escapes the
+/// next character, and only a character outside both counts. Stops at the
+/// first character outside quotes for which `wanted` is true, given it and
+/// the character before it.
+fn scan_unquoted(value: &str, mut wanted: impl FnMut(char, Option<char>) -> bool) -> QuoteScan {
     let mut in_double_quotes = false;
     let mut in_single_quotes = false;
     let mut escaped = false;
@@ -578,14 +619,71 @@ fn first_unquoted(value: &str, wanted: impl Fn(char, Option<char>) -> bool) -> O
                 && !escaped
                 && wanted(character, previous) =>
             {
-                return Some(character)
+                return QuoteScan {
+                    found: Some(character),
+                    open: None,
+                };
             }
             _ => {}
         }
         escaped = false;
         previous = Some(character);
     }
-    None
+    let open = if escaped {
+        Some(OpenQuoting::Backslash)
+    } else if in_double_quotes {
+        Some(OpenQuoting::DoubleQuote)
+    } else if in_single_quotes {
+        Some(OpenQuoting::SingleQuote)
+    } else {
+        None
+    };
+    QuoteScan { found: None, open }
+}
+
+/// What quoting `value` ends inside, if any: an unclosed quote or a trailing
+/// unpaired backslash, which would carry on into whatever Sway reads after
+/// the value and change how it splits that.
+fn open_quoting(value: &str) -> Option<OpenQuoting> {
+    scan_unquoted(value, |_, _| false).open
+}
+
+/// Why `command` must not be sent as it is, or `None`: Sway's parser would
+/// split it into other than `expected` commands, or it ends inside quoting.
+/// The pre-send check (#123) behind every command built from text a user
+/// supplied — a launch's `exec` (one command) and a batch (one per action):
+/// `validate_exec_command()` and `validate_sway_command()` check each value
+/// on its own, and this checks what they add up to, before Sway has run any
+/// of it. Sway's reply can only show a split after every part already ran.
+/// A newline or NUL counts as a separator even inside quotes, since Sway
+/// rewrites both to `;` before it looks at quoting.
+pub(super) fn sway_command_split_problem(command: &str, expected: usize) -> Option<String> {
+    let mut parts = 1;
+    let scan = scan_unquoted(command, |character, _| {
+        if matches!(character, ',' | ';') {
+            parts += 1;
+        }
+        false
+    });
+    parts += command
+        .chars()
+        .filter(|&character| matches!(character, '\n' | '\0'))
+        .count();
+    if let Some(open) = scan.open {
+        return Some(format!(
+            "Refused to send {:?}: it ends in {}, so Sway would read it differently than it \
+             was built",
+            command,
+            open.describe()
+        ));
+    }
+    (parts != expected).then(|| {
+        format!(
+            "Refused to send {:?}: Sway would split it into {} commands, not the {} it was \
+             built from",
+            command, parts, expected
+        )
+    })
 }
 
 /// The Sway commands `--sway-command`/`sway_commands` may start with: the
@@ -635,6 +733,12 @@ pub const SWAY_WINDOW_COMMANDS: &[&str] = &[
 /// `$`, which Sway replaces with a config variable from the user's own
 /// config. A leading `[` is refused with its own message, since the
 /// criteria are what this tool supplies.
+///
+/// Nor can it end inside an unclosed quote or after an unpaired backslash
+/// (#123): a step's entries reach Sway joined into one command, so an open
+/// quote would carry on into the next entry and turn a `,` quoted there
+/// into a separator, running what follows it free of the allowlist (an
+/// `exec`, reproduced live on Sway 1.11).
 pub fn validate_sway_command(value: &str) -> Result<String, String> {
     let command = value.trim();
     if command.is_empty() {
@@ -659,6 +763,13 @@ pub fn validate_sway_command(value: &str) -> Result<String, String> {
             "Must not contain an unquoted {:?} — Sway would run the rest as a separate command. \
              Give each command its own entry",
             character
+        ));
+    }
+    if let Some(open) = open_quoting(command) {
+        return Err(format!(
+            "Must not end in {} — a step's entries are sent to Sway as one command, so it \
+             would run on into the next entry. Close the quote",
+            open.describe()
         ));
     }
     if command.contains('$') {

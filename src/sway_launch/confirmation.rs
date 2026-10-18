@@ -1127,7 +1127,8 @@ pub(super) fn run_batch(
             escape_control_characters(&command, false)
         );
     }
-    let outcomes = run_sway_commands(&command).map_err(|error| fail(first, error))?;
+    let outcomes =
+        run_sway_commands(&command, sent_actions.len()).map_err(|error| fail(first, error))?;
     let sent_at = time::Instant::now();
     if let Some(error) = batch_failure(&sent_actions, &outcomes) {
         return Err(error.into());
@@ -1390,7 +1391,7 @@ fn hold_geometry(
                 escape_control_characters(&command, false)
             );
         }
-        let outcomes = run_sway_commands(&command)?;
+        let outcomes = run_sway_commands(&command, held_actions.len())?;
         if let Some(error) = batch_failure(&held_actions, &outcomes) {
             return Err(error);
         }
