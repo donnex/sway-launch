@@ -783,13 +783,15 @@ step failure stays the error that's reported. If the compositor stops answering,
 windows are reported as unconfirmed at once rather than each waiting out the same timeout. With
 `--json`, the error object lists what was closed and what couldn't be confirmed closed:
 `"rolled_back": [123, 456], "rollback_failed": [789]` (see [JSON output](#json-output)). A launch
-that times out keeps watching up to 2 more seconds for its window under `--rollback-on-error`, and
-rolls that one back too rather than leaving it to appear after the run has failed.
+that times out or is interrupted keeps watching up to 2 more seconds for its window under
+`--rollback-on-error`, and rolls that one back too rather than leaving it to appear after the run
+has failed.
 
 **Interrupting a run.** Ctrl-C (SIGINT) or SIGTERM (a `timeout(1)` wrapper, a stopped service) ends
 a run within a moment as a failure of the step it was on, so `--rollback-on-error` closes what the
-run launched and `--json` reports its partial progress. The run exits 130 or 143. A second signal
-exits at once, skipping the cleanup.
+run launched and `--json` reports its partial progress. If the step's application is still
+starting, `--rollback-on-error` first waits up to 2 seconds for its window, so that one is closed
+too. The run exits 130 or 143. A second signal exits at once, skipping the cleanup.
 
 **Focus moving away.** A step whose application is still starting when focus moves to another
 workspace (a keybinding, a notification click, another script) fails, naming both workspaces:

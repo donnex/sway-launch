@@ -1808,6 +1808,65 @@ fn a_signal_during_a_layout_fails_it_with_rollback_and_the_signal_s_status() {
 }
 
 #[test]
+fn rollback_closes_a_window_that_opens_just_after_its_launch_was_interrupted() {
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        opens_windows_after(vec![Duration::ZERO, Duration::from_millis(1000)]),
+    );
+    let layout = TempToml::write(
+        "interrupted-late-window",
+        "[[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n\n\
+         [[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\ntimeout = 30\n",
+    );
+    let child = fake
+        .sway_launch()
+        .args([
+            "--layout",
+            layout.to_str().unwrap(),
+            "--rollback-on-error",
+            "--json",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to start sway-launch");
+    // Signalled while the second step's application is still starting.
+    let waiting_since = std::time::Instant::now();
+    while fake
+        .commands()
+        .iter()
+        .filter(|command| command.starts_with("exec "))
+        .count()
+        < 2
+    {
+        assert!(waiting_since.elapsed() < Duration::from_secs(10));
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    let killed = std::process::Command::new("kill")
+        .args(["-INT".to_string(), child.id().to_string()])
+        .status()
+        .expect("failed to run kill");
+    assert!(killed.success());
+
+    let output = child.wait_with_output().expect("sway-launch should exit");
+    assert_eq!(output.status.code(), Some(130), "{output:?}");
+    let error = stderr_error_json(&output);
+    assert!(
+        error["error"].as_str().unwrap().contains(
+            "interrupted by SIGINT while waiting for its window; its window (con_id 101)"
+        ),
+        "{error}"
+    );
+    assert_eq!(
+        error["rolled_back"],
+        serde_json::json!([101, 100]),
+        "{error}"
+    );
+    assert!(!fake.sway().contains(101));
+}
+
+#[test]
 fn rollback_closes_a_window_that_opens_just_after_its_launch_timed_out() {
     let fake = FakeSway::start(
         SwayVersion::V1_11,

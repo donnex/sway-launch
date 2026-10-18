@@ -82,9 +82,9 @@ pub struct SwayLaunch<'a> {
     /// would open on the other workspace, splitting the shape in two.
     pub require_launch_on_focused_workspace: bool,
 
-    /// After a launch times out, keep watching for `LATE_WINDOW_GRACE` for a
-    /// window carrying this launch's marker, and report it as the failed
-    /// run's container (#15). Set by `--rollback-on-error`, whose rollback
+    /// After a launch times out or is interrupted, keep watching for
+    /// `LATE_WINDOW_GRACE` for a window carrying this launch's marker, and
+    /// report it as the failed run's container (#15, #127). Set by `--rollback-on-error`, whose rollback
     /// then closes it rather than leaving it to open after the run gave up.
     pub catch_late_window: bool,
 

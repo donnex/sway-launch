@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it. A window whose process started after the launch is now only adopted, which rollback leaves
   open; a single-instance application handing the request to a copy that was already running is
   still recognised as launched. (#124)
+- Interrupting a layout or template run with Ctrl-C or SIGTERM while a step's application is still
+  starting no longer leaves that application's window open under `--rollback-on-error`. Rollback
+  closed the earlier steps' windows and the run exited, and then the slow application's window
+  appeared and stayed. The run now waits up to 2 seconds for it, as it already did after a launch
+  timeout, and closes it with the rest. (#127)
 
 ## [0.1.0] - 2026-10-18
 

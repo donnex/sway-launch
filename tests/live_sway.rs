@@ -3269,6 +3269,74 @@ fn rollback_on_error_kills_earlier_launched_windows_when_a_later_step_fails() {
 }
 
 #[test]
+fn rollback_on_error_closes_the_window_of_a_launch_a_signal_interrupted() {
+    fresh_workspace();
+    // #127: SIGINT while step 2's application is still starting. Rollback
+    // used to close step 1's window and exit, and step 2's window then
+    // mapped and stayed open; now the run waits briefly for it and closes it
+    // too.
+    let mut connection = connect();
+    connection
+        .run_command("[app_id=foot] kill")
+        .expect("kill should succeed");
+
+    let path = TempToml::write(
+        "rollback-interrupted",
+        "[[step]]\ncommand = \"foot\"\napp_id = \"foot\"\n\n\
+         [[step]]\ncommand = \"sleep 1 && foot\"\napp_id = \"foot\"\n",
+    );
+    let child = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--rollback-on-error",
+            "--json",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to run sway-launch binary");
+    let started = std::time::Instant::now();
+    while count_app_id_windows(
+        &connection.get_tree().expect("get_tree should succeed"),
+        "foot",
+    ) < 1
+    {
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "step 1 never opened its window"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    let killed = Command::new("kill")
+        .args(["-INT".to_string(), child.id().to_string()])
+        .status()
+        .expect("failed to run kill");
+    assert!(killed.success());
+
+    let output = child.wait_with_output().expect("sway-launch should exit");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert_eq!(output.status.code(), Some(130), "{stderr:?}");
+    let error: serde_json::Value =
+        serde_json::from_str(stderr.lines().next_back().unwrap_or_default())
+            .unwrap_or_else(|error| panic!("no JSON error on stderr ({error}): {stderr:?}"));
+    assert_eq!(
+        error["rolled_back"].as_array().map(Vec::len),
+        Some(2),
+        "both windows should be rolled back: {stderr:?}"
+    );
+    // Past the point the interrupted application would have mapped anyway.
+    std::thread::sleep(Duration::from_millis(1500));
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        count_app_id_windows(&tree, "foot"),
+        0,
+        "no window should be left open: {stderr:?}"
+    );
+}
+
+#[test]
 fn rollback_on_error_handles_a_launched_window_that_already_closed_itself() {
     fresh_workspace();
     // Regression test: if step 1's launched window closes on its own before

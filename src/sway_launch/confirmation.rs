@@ -1694,11 +1694,35 @@ impl ExecAction<'_> {
                     return Err("Event stream closed unexpectedly".to_string().into());
                 }
                 Err(WaitEnd::Interrupted(message)) => {
-                    return Err(format!(
-                        "{} while waiting for its window — the launched command may still open one",
-                        message
-                    )
-                    .into());
+                    // The likeliest reason to interrupt a run is an
+                    // application slow to start, so its window gets the same
+                    // grace a timed-out launch's does, for rollback to close.
+                    let late_window = if self.catch_late_window {
+                        late_marked_window(&event_receiver, &token)
+                    } else {
+                        None
+                    };
+                    let message = match late_window {
+                        Some(container_id) => format!(
+                            "{} while waiting for its window; its window (con_id {}) opened \
+                             within {} sec after that",
+                            message,
+                            container_id,
+                            LATE_WINDOW_GRACE.as_secs()
+                        ),
+                        None => format!(
+                            "{} while waiting for its window — the launched command may still \
+                             open one",
+                            message
+                        ),
+                    };
+                    return Err(RunError {
+                        message,
+                        unmatched_windows: Vec::new(),
+                        container_id: late_window,
+                        launch_ownership: late_window.map(|_| LaunchOwnership::Launched),
+                        window_timed_out: false,
+                    });
                 }
             };
 
@@ -1919,15 +1943,19 @@ impl ExecAction<'_> {
     }
 }
 
-/// How long a timed-out launch keeps watching for its window when
-/// `catch_late_window` is set: long enough for an application that was only
-/// just too slow, short enough not to drag out a run that has already failed.
+/// How long a timed-out or interrupted launch keeps watching for its window
+/// when `catch_late_window` is set: long enough for an application that was
+/// only just too slow, short enough not to drag out a run that has already
+/// failed.
 const LATE_WINDOW_GRACE: time::Duration = time::Duration::from_secs(2);
 
 /// The first window to open within `LATE_WINDOW_GRACE` whose process carries
 /// this launch's marker, whatever its app_id/class: carrying the marker is
 /// what makes it this launch's, and it's only being found so it can be
-/// closed. `None` when none does, or a signal cuts the watch short.
+/// closed. `None` when none does.
+///
+/// Not `interrupt::recv()`: after an interrupt that would end the watch at
+/// once, and a signal during it is a second one, which exits on the spot.
 fn late_marked_window(
     events: &mpsc::Receiver<swayipc::Fallible<Event>>,
     token: &str,
@@ -1935,7 +1963,7 @@ fn late_marked_window(
     let end = time::Instant::now() + LATE_WINDOW_GRACE;
     loop {
         let left = end.saturating_duration_since(time::Instant::now());
-        match interrupt::recv(events, left) {
+        match events.recv_timeout(left) {
             Ok(Ok(Event::Window(window)))
                 if window.change == WindowChange::New
                     && window

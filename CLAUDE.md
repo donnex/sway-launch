@@ -361,8 +361,10 @@ checks those by hand, because the derive macro doesn't enforce `requires` reliab
   `interrupt::recv()`/`interrupt::sleep()`, so a signal fails the run through `fail_step()` within
   50ms, and `fail_with_rollback()` exits `128 + signal`. A direct-CLI run installs nothing and
   dies to a signal as before. Under `--rollback-on-error` (and not `--continue-on-timeout`), a
-  launch timeout watches `LATE_WINDOW_GRACE` more for a marked window (`late_marked_window()`) and
-  hands it to rollback as the failed step's `Launched` container.
+  launch timeout or interrupt watches `LATE_WINDOW_GRACE` more for a marked window
+  (`late_marked_window()`, which doesn't use `interrupt::recv()`, since the first signal is still
+  set and a second exits on its own) and hands it to rollback as the failed step's `Launched`
+  container (#127).
 - `--rollback-on-error` closes only windows whose `launch_ownership` is `Launched` — never
   retargeted or `Adopted` ones — most recent first (`rollback()`, `send_rollback_kills()`), waits
   `ROLLBACK_CLOSE_GRACE` for each to actually close, and stops at the first unanswered kill. It
