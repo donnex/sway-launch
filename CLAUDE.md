@@ -300,7 +300,10 @@ own `container_move_in_direction()`), is recorded as `Skipped { reason }` instea
 
 Every IPC call opens its own connection through `new_connection()`, which bounds each round trip
 by `IPC_ROUND_TRIP_TIMEOUT` (independent of `--timeout`) and finds the socket with `socket_path()`:
-`SWAYSOCK`, then `I3SOCK`, as `swaymsg` does. `event_loop()` bounds the subscribe handshake the same
+`SWAYSOCK`, then `I3SOCK`, as `swaymsg` does, with no other fallback (`swayipc`'s
+`Connection::new()` is never used). Only once a connection fails does `running_sway_sockets()`
+look for live `sway-ipc.<uid>.<pid>.sock` sockets in `$XDG_RUNTIME_DIR`, for the error to name
+(#162). `event_loop()` bounds the subscribe handshake the same
 way. A poll cycle and the move guard each share one connection across their reads.
 
 Before a run's first request to the compositor (a direct-CLI run unless

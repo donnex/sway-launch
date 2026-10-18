@@ -219,16 +219,16 @@ fn a_launch_with_an_unreachable_socket_names_sway_ipc_and_the_socket() {
 
 #[test]
 fn a_launch_with_neither_socket_variable_set_says_so() {
-    // With neither variable set, swayipc falls back to `sway --get-socketpath`
-    // and, when that finds nothing, connects to an empty path and reports
-    // "Invalid argument (os error 22)". An empty PATH makes that discovery
-    // fail the same way regardless of whether this machine runs Sway.
+    // With neither variable set, swayipc's own discovery ran
+    // `sway --get-socketpath`, which printed "sway socket not detected." and
+    // left swayipc reporting "Invalid argument (os error 22)" (#162). The
+    // runtime directory `sway_launch()` sets is empty, so no running Sway is
+    // found there either.
     for args in [&["foot"][..], &["--existing", "--app-id", "foot"][..]] {
         let output = sway_launch()
             .args(args)
             .env_remove("SWAYSOCK")
             .env_remove("I3SOCK")
-            .env("PATH", "")
             .output()
             .expect("failed to run sway-launch binary");
 
@@ -239,6 +239,10 @@ fn a_launch_with_neither_socket_variable_set_says_so() {
             "{args:?}: {stderr:?}"
         );
         assert!(stderr.contains("export SWAYSOCK"), "{args:?}: {stderr:?}");
+        assert!(
+            !stderr.contains("sway socket not detected"),
+            "{args:?}: {stderr:?}"
+        );
     }
 }
 

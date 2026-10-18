@@ -7,7 +7,7 @@ fn preferred_socket_path_prefers_swaysock_over_i3sock() {
     assert_eq!(
         preferred_socket_path(Some("/sway.sock".into()), Some("/i3.sock".into())),
         Some(SocketPath {
-            path: std::path::PathBuf::from("/sway.sock"),
+            path: PathBuf::from("/sway.sock"),
             variable: "SWAYSOCK",
         })
     );
@@ -18,7 +18,7 @@ fn preferred_socket_path_falls_back_to_i3sock() {
     assert_eq!(
         preferred_socket_path(None, Some("/i3.sock".into())),
         Some(SocketPath {
-            path: std::path::PathBuf::from("/i3.sock"),
+            path: PathBuf::from("/i3.sock"),
             variable: "I3SOCK",
         })
     );
@@ -31,24 +31,91 @@ fn preferred_socket_path_is_none_when_neither_is_set() {
 
 // connect_error_at / undiscovered_socket_error
 
+fn example_socket(variable: &'static str) -> SocketPath {
+    SocketPath {
+        path: PathBuf::from("/tmp/example-sway.sock"),
+        variable,
+    }
+}
+
 #[test]
 fn connect_error_at_names_sway_ipc_the_path_its_source_and_the_cause() {
-    let socket = SocketPath {
-        path: std::path::PathBuf::from("/tmp/example-sway.sock"),
-        variable: "I3SOCK",
-    };
     let error = std::io::Error::from(std::io::ErrorKind::NotFound);
-    let message = connect_error_at(&socket, &error);
+    let message = connect_error_at(&example_socket("I3SOCK"), &error, &[]);
     assert!(message.starts_with("cannot reach Sway IPC at /tmp/example-sway.sock (from I3SOCK): "));
     assert!(message.contains(&error.to_string()));
     assert!(message.ends_with("is this running inside a Sway session?"));
 }
 
 #[test]
+fn connect_error_at_calls_the_variable_stale_and_names_the_running_sway() {
+    let error = std::io::Error::from(std::io::ErrorKind::NotFound);
+    let running = [PathBuf::from("/run/example/sway-ipc.1000.42.sock")];
+    let message = connect_error_at(&example_socket("SWAYSOCK"), &error, &running);
+    assert!(
+        message.starts_with("cannot reach Sway IPC at /tmp/example-sway.sock (from SWAYSOCK): ")
+    );
+    assert!(message.contains("SWAYSOCK names a socket no Sway is listening on any more"));
+    assert!(message.contains("tmux"));
+    assert!(message.ends_with(
+        "a running Sway is listening at /run/example/sway-ipc.1000.42.sock — \
+         export SWAYSOCK=/run/example/sway-ipc.1000.42.sock"
+    ));
+    assert!(!message.contains("inside a Sway session"));
+}
+
+#[test]
+fn connect_error_at_lists_every_running_sway_when_there_are_several() {
+    let error = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
+    let running = [
+        PathBuf::from("/run/example/sway-ipc.1000.42.sock"),
+        PathBuf::from("/run/example/sway-ipc.1000.43.sock"),
+    ];
+    let message = connect_error_at(&example_socket("SWAYSOCK"), &error, &running);
+    assert!(message.ends_with(
+        "running Sways are listening at /run/example/sway-ipc.1000.42.sock, \
+         /run/example/sway-ipc.1000.43.sock — export SWAYSOCK with the one to use"
+    ));
+}
+
+#[test]
 fn undiscovered_socket_error_names_both_variables_and_how_to_fix_it() {
-    let message = undiscovered_socket_error(swayipc::Error::SocketNotFound);
+    let message = undiscovered_socket_error(&[]);
     assert!(message.starts_with("cannot reach Sway IPC: neither SWAYSOCK nor I3SOCK is set"));
+    assert!(message.contains("no running Sway could be found"));
     assert!(message.contains("export SWAYSOCK"));
+}
+
+#[test]
+fn undiscovered_socket_error_names_a_running_sway_instead_of_denying_one() {
+    let running = [PathBuf::from("/run/example/sway-ipc.1000.42.sock")];
+    let message = undiscovered_socket_error(&running);
+    assert!(message.starts_with("cannot reach Sway IPC: neither SWAYSOCK nor I3SOCK is set; "));
+    assert!(message.ends_with("export SWAYSOCK=/run/example/sway-ipc.1000.42.sock"));
+    assert!(!message.contains("no running Sway"));
+}
+
+// is_sway_socket_name
+
+#[test]
+fn is_sway_socket_name_accepts_sways_own_naming_for_this_user() {
+    assert!(is_sway_socket_name("sway-ipc.1000.4242.sock", 1000));
+}
+
+#[test]
+fn is_sway_socket_name_rejects_other_users_and_other_files() {
+    for name in [
+        "sway-ipc.1001.4242.sock",
+        "sway-ipc.10000.4242.sock",
+        "sway-ipc.1000..sock",
+        "sway-ipc.1000.42x.sock",
+        "sway-ipc.1000.4242.sock.lock",
+        "sway-ipc.sock",
+        "wayland-1",
+        "i3-ipc.1000.4242.sock",
+    ] {
+        assert!(!is_sway_socket_name(name, 1000), "{name:?}");
+    }
 }
 
 // quote_sway_string

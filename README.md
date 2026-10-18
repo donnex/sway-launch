@@ -30,7 +30,9 @@ sway-launch --template quad-grid --apps foot,foot,foot,foot --on-workspace 9   #
   JSON report with `--json`; `--dry-run` and `--validate` work without a running Sway.
 
 Requires Sway 1.9 or newer, running. `sway-launch` talks to it over the same IPC socket `swaymsg`
-uses, found the same way (`SWAYSOCK`, then `I3SOCK`). Every change is tested against Sway 1.9 and
+uses, found the same way (`SWAYSOCK`, then `I3SOCK`); when that socket can't be reached, the error
+names any running Sway it finds in `$XDG_RUNTIME_DIR`, such as after a Sway restart left a tmux
+session with a stale `SWAYSOCK`. Every change is tested against Sway 1.9 and
 the newest Sway release. On an older Sway, or on a compositor that isn't Sway (i3, through
 `I3SOCK`), it still runs but prints a warning first, since results may be wrong there; `--verbose`
 prints the version it found.
@@ -1163,8 +1165,7 @@ $ sway-launch --template quad-grid --apps foot,foot,code,foot --json
 ```
 
 **Errors.** A failure prints a JSON object to stderr instead of the plain message. Read it as the
-**last line** of stderr: with no reachable Sway socket, the IPC library's fallback can print its own
-`sway socket not detected.` line first.
+**last line** of stderr.
 
 ```console
 $ sway-launch --json --con-id 999999 --floating

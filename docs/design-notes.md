@@ -1053,9 +1053,10 @@ same socket, to everything it spawns, so overriding `SWAYSOCK` alone is how a us
 `scripts/run-live-sway-tests`) aims a Sway tool at a different compositor; with `I3SOCK` first that
 override was silently ignored and this tool drove the terminal's own session instead. Pinned by
 `ipc.rs`'s `preferred_socket_path_*` unit tests and `tests/live_sway.rs`'s
-`swaysock_wins_over_a_stale_i3sock`. When neither is set it falls back to `Connection::new()` —
-and its `i3 --get-socketpath`, then `sway --get-socketpath` steps; that fallback is unbounded,
-accepted because it only applies when the environment names no socket at all. A connection that
+`swaysock_wins_over_a_stale_i3sock`. When neither is set it used to fall back to `Connection::new()`
+— and its `i3 --get-socketpath`, then `sway --get-socketpath` steps, unbounded; #162 dropped that,
+since `sway --get-socketpath` only reads `SWAYSOCK` itself, and instead names any live socket
+`running_sway_sockets()` finds in `$XDG_RUNTIME_DIR` in the error. A connection that
 can't be made at all is reported by `connect_error_at()` (the path, which variable it came from,
 and "is this running inside a Sway session?") or, with neither variable set,
 `undiscovered_socket_error()` — both shared by `new_connection()` and `event_loop()`, so a launch

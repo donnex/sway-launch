@@ -5,11 +5,13 @@
 //! to report a failure — but nothing about what any particular command means.
 //! Everything here but the pure helpers (`preferred_socket_path()`,
 //! `ipc_error()`, `connect_error_at()`, `undiscovered_socket_error()`,
-//! `first_outcome_error()` and `quote_sway_string()`, which are unit-tested)
+//! `is_sway_socket_name()`, `first_outcome_error()` and `quote_sway_string()`,
+//! which are unit-tested)
 //! needs a compositor to talk to: `tests/fake_sway.rs` provides a fake one,
 //! and `tests/live_sway.rs` a real one.
 
 use super::values::sway_command_split_problem;
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::{fmt, thread, time};
 use swayipc::{Connection, Event, EventStream, EventType, Fallible};
@@ -44,24 +46,24 @@ pub(super) const IPC_ROUND_TRIP_TIMEOUT: time::Duration = time::Duration::from_s
 ///
 /// `swayipc`'s own `Connection::new()` gives no way to configure the socket,
 /// but it does expose `From<UnixStream>`, so the stream is built here instead.
-/// Socket discovery is `socket_path()` (`SWAYSOCK`, then `I3SOCK`); when
-/// neither is set it falls back to `Connection::new()`, whose remaining
-/// discovery steps shell out to `i3 --get-socketpath` and then
-/// `sway --get-socketpath`. That fallback is unbounded, which is accepted: it
-/// only applies when the environment doesn't name a socket at all, and the
-/// subprocess it runs is not the wedged compositor's IPC socket.
+/// Socket discovery is `socket_path()` (`SWAYSOCK`, then `I3SOCK`), as
+/// `swaymsg` does it. `Connection::new()` isn't used even when neither is set
+/// (#162): its remaining discovery runs `i3 --get-socketpath` and then
+/// `sway --get-socketpath`, unbounded, and the latter only reads `SWAYSOCK`
+/// itself, so it never found anything this didn't, and printed a stray
+/// `sway socket not detected.` line to stderr on the way.
 ///
 /// A connection that can't be made at all is reported through
 /// `connect_error_at()`/`undiscovered_socket_error()`, which name Sway IPC,
-/// the socket and where it came from: outside a Sway session (cron, a
-/// systemd unit, ssh) the raw error is an OS message that never mentions Sway
-/// — `No such file or directory (os error 2)`, or, with neither variable set,
-/// `Invalid argument (os error 22)` from `swayipc` connecting to the empty
-/// path a failed `sway --get-socketpath` printed.
+/// the socket and where it came from, plus any running Sway
+/// `running_sway_sockets()` finds: outside a Sway session (cron, a systemd
+/// unit, ssh) the raw error is an OS message that never mentions Sway, and
+/// with a stale `SWAYSOCK` (a tmux session outliving a Sway restart) the
+/// live socket beside it is the one-line fix.
 pub(super) fn new_connection() -> Result<Connection, String> {
     match socket_path() {
         Some(socket) => connect_stream(&socket, IPC_ROUND_TRIP_TIMEOUT).map(Connection::from),
-        None => Connection::new().map_err(undiscovered_socket_error),
+        None => Err(undiscovered_socket_error(&running_sway_sockets())),
     }
 }
 
@@ -78,8 +80,18 @@ fn connect_stream(
     socket: &SocketPath,
     round_trip_timeout: time::Duration,
 ) -> Result<std::os::unix::net::UnixStream, String> {
-    let stream = std::os::unix::net::UnixStream::connect(&socket.path)
-        .map_err(|error| connect_error_at(socket, &error))?;
+    let stream = std::os::unix::net::UnixStream::connect(&socket.path).map_err(|error| {
+        let nothing_listening = matches!(
+            error.kind(),
+            std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+        );
+        let running = if nothing_listening {
+            running_sway_sockets()
+        } else {
+            Vec::new()
+        };
+        connect_error_at(socket, &error, &running)
+    })?;
     // Applied to both directions: a wedged compositor can stall a write
     // (socket buffer full, nothing draining it) as readily as a read.
     stream
@@ -117,30 +129,116 @@ pub(super) fn ipc_error(error: swayipc::Error) -> String {
 /// The message for a socket named by the environment that couldn't be
 /// connected to: what was being reached, at which path, from which variable,
 /// and the likeliest cause.
-fn connect_error_at(socket: &SocketPath, error: &dyn fmt::Display) -> String {
-    format!(
-        "cannot reach Sway IPC at {} (from {}): {} — is this running inside a Sway session?",
+///
+/// `running` is every live Sway socket `running_sway_sockets()` found, only
+/// looked for when the error says nothing is listening at the path (not found,
+/// or connection refused). With one, the variable is stale, not the session
+/// missing (#162): asking "is this running inside a Sway session?" of a user
+/// who is inside one sends them looking in the wrong place.
+fn connect_error_at(socket: &SocketPath, error: &std::io::Error, running: &[PathBuf]) -> String {
+    let unreachable = format!(
+        "cannot reach Sway IPC at {} (from {}): {}",
         socket.path.display(),
         socket.variable,
         error
-    )
+    );
+    match running_sway_suggestion(running) {
+        Some(suggestion) => format!(
+            "{} — {} names a socket no Sway is listening on any more (a shell or tmux session \
+             started under an earlier Sway session keeps the old value); {}",
+            unreachable, socket.variable, suggestion
+        ),
+        None => format!("{} — is this running inside a Sway session?", unreachable),
+    }
 }
 
 /// The message for a connection attempted with neither `SWAYSOCK` nor
-/// `I3SOCK` set, after `swayipc`'s own `--get-socketpath` discovery failed.
-/// `swayipc`'s error is kept at the end for completeness, but on its own it's
-/// typically `Invalid argument (os error 22)` and says nothing useful.
-fn undiscovered_socket_error(error: swayipc::Error) -> String {
-    format!(
-        "cannot reach Sway IPC: neither SWAYSOCK nor I3SOCK is set, and no running Sway could be \
-         found — run sway-launch from inside a Sway session, or export SWAYSOCK ({})",
-        ipc_error(error)
-    )
+/// `I3SOCK` set, naming any running Sway `running_sway_sockets()` found. A
+/// found socket is named rather than used: `swaymsg` doesn't guess either,
+/// and the export it suggests makes the choice explicit.
+fn undiscovered_socket_error(running: &[PathBuf]) -> String {
+    match running_sway_suggestion(running) {
+        Some(suggestion) => format!(
+            "cannot reach Sway IPC: neither SWAYSOCK nor I3SOCK is set; {}",
+            suggestion
+        ),
+        None => "cannot reach Sway IPC: neither SWAYSOCK nor I3SOCK is set, and no running Sway \
+                 could be found in $XDG_RUNTIME_DIR — run sway-launch from inside a Sway \
+                 session, or export SWAYSOCK"
+            .to_string(),
+    }
+}
+
+/// Where a running Sway is listening, and the export that reaches it: `None`
+/// when none was found.
+fn running_sway_suggestion(running: &[PathBuf]) -> Option<String> {
+    match running {
+        [] => None,
+        [socket] => Some(format!(
+            "a running Sway is listening at {} — export SWAYSOCK={}",
+            socket.display(),
+            socket.display()
+        )),
+        several => Some(format!(
+            "running Sways are listening at {} — export SWAYSOCK with the one to use",
+            several
+                .iter()
+                .map(|socket| socket.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
+/// Whether `file_name` is one of the IPC sockets Sway creates for user `uid`:
+/// `sway-ipc.<uid>.<pid>.sock`, in `$XDG_RUNTIME_DIR`.
+fn is_sway_socket_name(file_name: &str, uid: u32) -> bool {
+    let Some(pid) = file_name
+        .strip_prefix("sway-ipc.")
+        .and_then(|rest| rest.strip_prefix(uid.to_string().as_str()))
+        .and_then(|rest| rest.strip_prefix('.'))
+        .and_then(|rest| rest.strip_suffix(".sock"))
+    else {
+        return false;
+    };
+    !pid.is_empty() && pid.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// The Sway sockets in `$XDG_RUNTIME_DIR` that accept a connection, sorted.
+/// Only asked for once a connection has already failed, to say where a
+/// running Sway is (`connect_error_at()`, `undiscovered_socket_error()`); a
+/// socket file left by a Sway that exited refuses the connection, so only
+/// live ones are named. Empty when the directory isn't set or readable.
+fn running_sway_sockets() -> Vec<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let Some(runtime_directory) = std::env::var_os("XDG_RUNTIME_DIR").filter(|dir| !dir.is_empty())
+    else {
+        return Vec::new();
+    };
+    let Ok(uid) = std::fs::metadata("/proc/self").map(|metadata| metadata.uid()) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&runtime_directory) else {
+        return Vec::new();
+    };
+    let mut running: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| is_sway_socket_name(name, uid))
+        })
+        .map(|entry| entry.path())
+        .filter(|path| std::os::unix::net::UnixStream::connect(path).is_ok())
+        .collect();
+    running.sort();
+    running
 }
 
 /// The Sway IPC socket path from the environment. `None` when neither
-/// variable is set, which is what sends `new_connection()` and `event_loop()`
-/// down their unbounded fallback.
+/// variable is set, which fails `new_connection()` and `event_loop()` with
+/// `undiscovered_socket_error()`.
 fn socket_path() -> Option<SocketPath> {
     preferred_socket_path(std::env::var_os("SWAYSOCK"), std::env::var_os("I3SOCK"))
 }
@@ -194,13 +292,10 @@ fn preferred_socket_path(
 ///
 /// It goes through the same `socket_path()` as `new_connection()`, so the
 /// subscription and the requests around it always reach the same compositor,
-/// and shares its unbounded fallback when the environment names no socket.
+/// and fails the same way when the environment names no socket.
 pub(super) fn event_loop(subscriptions: &[EventType]) -> Result<EventStream, String> {
     let Some(socket) = socket_path() else {
-        return Connection::new()
-            .map_err(undiscovered_socket_error)?
-            .subscribe(subscriptions)
-            .map_err(ipc_error);
+        return Err(undiscovered_socket_error(&running_sway_sockets()));
     };
 
     let stream = connect_stream(&socket, IPC_ROUND_TRIP_TIMEOUT)?;

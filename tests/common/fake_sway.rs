@@ -22,6 +22,7 @@
 use super::TestTempDir;
 use serde_json::{json, Value};
 use std::io::{Read, Write};
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -117,7 +118,12 @@ impl FakeSway {
 
     fn start_with(version: SwayVersion, handler: Option<Handler>) -> Self {
         let directory = TestTempDir::for_sockets();
-        let socket = directory.join("sway-ipc.sock");
+        // Named as Sway names its own, so the binary's search for a running
+        // Sway in `$XDG_RUNTIME_DIR` (#162) finds this one.
+        let uid = std::fs::metadata(&*directory)
+            .expect("the fake Sway's directory should exist")
+            .uid();
+        let socket = directory.join(format!("sway-ipc.{}.{}.sock", uid, std::process::id()));
         let listener = UnixListener::bind(&socket).expect("failed to bind the fake Sway socket");
         let shared = Arc::new_cyclic(|shared| Mutex::new(Sway::load(version, handler, shared)));
         let stopping = Arc::new(AtomicBool::new(false));
@@ -155,6 +161,11 @@ impl FakeSway {
             .env_remove("I3SOCK")
             .env("XDG_RUNTIME_DIR", &*self.directory);
         command
+    }
+
+    /// The server's socket, which `sway_launch()` names in `SWAYSOCK`.
+    pub fn socket(&self) -> &Path {
+        &self.socket
     }
 
     /// The server's state, locked: for a test to inspect, or to change the

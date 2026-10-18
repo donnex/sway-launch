@@ -183,6 +183,60 @@ fn a_command_sway_refuses_fails_with_sways_own_message() {
     );
 }
 
+/// The `--json` error of a run with `SWAYSOCK` replaced (or removed, for
+/// `None`), the fake still listening in the run's `$XDG_RUNTIME_DIR`.
+fn error_with_swaysock(fake: &FakeSway, swaysock: Option<&std::path::Path>) -> String {
+    let mut command = fake.sway_launch();
+    match swaysock {
+        Some(path) => command.env("SWAYSOCK", path),
+        None => command.env_remove("SWAYSOCK"),
+    };
+    let output = command
+        .args(["--existing", "--app-id", "foot", "--json"])
+        .output()
+        .expect("failed to run sway-launch");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert_eq!(stderr.lines().count(), 1, "only the error object: {stderr}");
+    let json: Value = serde_json::from_str(&stderr).expect("a JSON error");
+    json["error"].as_str().expect("an error string").to_string()
+}
+
+#[test]
+fn a_stale_swaysock_names_the_running_sway_beside_it() {
+    // A tmux session started under an earlier Sway keeps its SWAYSOCK after
+    // a restart (#162).
+    let fake = FakeSway::accepting_everything(SwayVersion::V1_11);
+    let stale = fake.socket().with_file_name("sway-ipc.stale.sock");
+    let error = error_with_swaysock(&fake, Some(&stale));
+    let live = fake.socket().display().to_string();
+    assert!(
+        error.contains("SWAYSOCK names a socket no Sway is listening on any more"),
+        "{error}"
+    );
+    assert!(
+        error.ends_with(&format!("export SWAYSOCK={live}")),
+        "{error}"
+    );
+    assert!(!error.contains("inside a Sway session"), "{error}");
+}
+
+#[test]
+fn no_socket_variable_names_the_running_sway_instead_of_denying_one() {
+    // From a systemd unit, cron or ssh, with Sway running (#162).
+    let fake = FakeSway::accepting_everything(SwayVersion::V1_11);
+    let error = error_with_swaysock(&fake, None);
+    let live = fake.socket().display().to_string();
+    assert!(
+        error.starts_with("cannot reach Sway IPC: neither SWAYSOCK nor I3SOCK is set; "),
+        "{error}"
+    );
+    assert!(
+        error.ends_with(&format!("export SWAYSOCK={live}")),
+        "{error}"
+    );
+}
+
 #[test]
 fn a_scratchpad_window_is_already_in_the_scratchpad_on_every_version() {
     // Sway 1.9 leaves scratchpad_state at "none" for a hidden window, so the

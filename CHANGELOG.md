@@ -38,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `SWAYSOCK` left stale by a Sway restart, as a tmux or screen session keeps it, no longer
+  ends in "is this running inside a Sway session?". When the socket it names isn't there, the error
+  now says the variable is out of date and names the running Sway's socket to export instead. With
+  neither `SWAYSOCK` nor `I3SOCK` set (a systemd unit, cron or ssh), the error names a running Sway
+  rather than saying none could be found, and the stray `sway socket not detected.` line before it
+  is gone, so a `--json` error is now always the whole of stderr. (#162)
 - A launch that timed out while some other program opened a window no longer blames
   `--app-id`/`--class`. Any window the filter rejected used to become the whole explanation, so a
   mistyped command was reported as `1 other new window did (...) — check --app-id/--class` when a

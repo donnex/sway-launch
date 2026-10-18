@@ -1691,6 +1691,33 @@ fn swaysock_wins_over_a_stale_i3sock() {
 }
 
 #[test]
+fn a_stale_swaysock_names_the_running_sway_beside_it() {
+    // A tmux session started under an earlier Sway keeps its SWAYSOCK after
+    // a restart (#162). Run here so the name real Sway gives its socket
+    // (`sway-ipc.<uid>.<pid>.sock`) is what the search is checked against.
+    let socket = live_socket();
+    let runtime_directory = socket.parent().expect("the socket has a directory");
+    let stale = runtime_directory.join("sway-ipc.stale.sock");
+    let output = sway_launch_command()
+        .env("SWAYSOCK", &stale)
+        .env_remove("I3SOCK")
+        .env("XDG_RUNTIME_DIR", runtime_directory)
+        .args(["--existing", "--app-id", "foot"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("SWAYSOCK names a socket no Sway is listening on any more"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!("export SWAYSOCK={}", socket.display())),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn sticky_floating_window_follows_a_workspace_switch() {
     let workspace = fresh_workspace();
     let mut connection = connect();
