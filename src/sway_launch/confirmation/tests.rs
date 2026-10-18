@@ -67,6 +67,29 @@ fn exec_timeout_message_lists_several_rejected_windows() {
 }
 
 #[test]
+fn exec_timeout_message_escapes_control_characters_in_an_app_id_or_class() {
+    let message = exec_timeout_message(
+        time::Duration::from_secs(2),
+        filter("notfoot", ""),
+        None,
+        &[
+            unmatched(12, Some("foot\u{1b}]0;x\u{7}"), None),
+            unmatched(13, None, Some("XTerm\r\u{1b}[2K")),
+        ],
+        None,
+    );
+    assert!(!message.chars().any(char::is_control), "{message:?}");
+    assert!(
+        message.contains(r#"(con_id 12, app_id "foot\u{1b}]0;x\u{7}")"#),
+        "{message}"
+    );
+    assert!(
+        message.contains(r#"(con_id 13, class "XTerm\r\u{1b}[2K")"#),
+        "{message}"
+    );
+}
+
+#[test]
 fn exec_timeout_message_names_a_launched_window_that_never_set_its_class() {
     let message = exec_timeout_message(
         time::Duration::from_secs(5),

@@ -1874,8 +1874,8 @@ const LATE_PROPERTY_RECHECK_INTERVAL: time::Duration = time::Duration::from_mill
 /// was matching on one.
 fn describe_unmatched_window(window: &UnmatchedWindow, with_title: bool) -> String {
     let mut identity = match (&window.app_id, &window.class) {
-        (Some(app_id), _) => format!("app_id \"{}\"", app_id),
-        (None, Some(class)) => format!("class \"{}\"", class),
+        (Some(app_id), _) => format!("app_id \"{}\"", escape_control_characters(app_id, false)),
+        (None, Some(class)) => format!("class \"{}\"", escape_control_characters(class, false)),
         (None, None) => "no app_id or class".to_string(),
     };
     if with_title {

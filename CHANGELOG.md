@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   terminal can send, so a captured `foot && rm ...` ran as shell code the next time the layout was
   replayed. An app_id or class that isn't a plain program name is now written as a single quoted
   word (`command = ["..."]`), with a note at the top of the file. (#125)
+- `--verbose` no longer prints a window's app_id or class to the terminal unescaped. Both are set
+  by the window's client, so a window whose app_id carried a terminal escape sequence could act on
+  the terminal through the "Event mismatch" line; control characters in them are now shown as
+  visible escapes (`\u{1b}`), as they already were in a title. (#139)
 
 ### Fixed
 
