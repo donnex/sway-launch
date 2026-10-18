@@ -1,0 +1,123 @@
+#!/bin/sh
+#
+# Check CHANGELOG.md keeps its release shape, and print a release's notes.
+#
+set -eu
+
+readonly CHANGELOG='CHANGELOG.md'
+readonly CARGO_MANIFEST='Cargo.toml'
+
+print_usage() {
+  printf 'Usage: %s [--release-notes]\n' "$(basename "$0")"
+  printf 'Check that %s is ready to release the version %s declares:\n' "$CHANGELOG" "$CARGO_MANIFEST"
+  printf '\n'
+  printf '  - its first "## " heading is "## [Unreleased]", so the next change has\n'
+  printf '    somewhere to go;\n'
+  printf '  - it has exactly one "## [X.Y.Z] - YYYY-MM-DD" section for that version,\n'
+  printf '    with something in it.\n'
+  printf '\n'
+  printf 'Both hold on every commit from a version-bump commit on, so scripts/run-checks\n'
+  printf 'runs this, and a bad bump fails before any release tag is pushed.\n'
+  printf '\n'
+  printf 'Options:\n'
+  printf '  --release-notes  Once the checks pass, print the version'"'"'s section to\n'
+  printf '                   stdout (the release workflow'"'"'s release notes).\n'
+  printf '  -h, --help       Show this help.\n'
+}
+
+die() {
+  printf '✗ %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  if [ "${1:-0}" -ne 0 ]; then
+    print_usage >&2
+  else
+    print_usage
+  fi
+  exit "${1:-0}"
+}
+
+print_release_notes=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+  -h | --help)
+    usage 0
+    ;;
+  --release-notes)
+    print_release_notes=1
+    ;;
+  --)
+    shift
+    break
+    ;;
+  *)
+    usage 1
+    ;;
+  esac
+  shift
+done
+[ "$#" -eq 0 ] || usage 1
+
+cd "$(dirname "$0")/.."
+
+[ -f "$CHANGELOG" ] || die "$CHANGELOG not found."
+[ -f "$CARGO_MANIFEST" ] || die "$CARGO_MANIFEST not found."
+
+version="$(awk '
+  /^\[/ { in_package = ($0 == "[package]"); next }
+  in_package && /^version[[:space:]]*=/ {
+    sub(/^version[[:space:]]*=[[:space:]]*"/, "")
+    sub(/".*$/, "")
+    print
+    exit
+  }
+' "$CARGO_MANIFEST")" || die "Could not read $CARGO_MANIFEST."
+[ -n "$version" ] || die "No [package] version found in $CARGO_MANIFEST."
+
+# The awk program prints the version's section on stdout and each problem it
+# finds on stderr, then exits 1 if there was any.
+release_notes="$(awk -v version="$version" -v changelog="$CHANGELOG" '
+  function problem(message) {
+    print "✗ " changelog ": " message | "cat 1>&2"
+    failed = 1
+  }
+  /^## / {
+    in_section = 0
+    heading_count++
+    if (heading_count == 1 && $0 != "## [Unreleased]")
+      problem("the first \"## \" heading must be \"## [Unreleased]\", not \"" $0 "\".")
+    prefix = "## [" version "]"
+    if (substr($0, 1, length(prefix)) == prefix) {
+      section_count++
+      rest = substr($0, length(prefix) + 1)
+      if (rest !~ /^ - [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/)
+        problem("\"" $0 "\" must read \"" prefix " - YYYY-MM-DD\".")
+      in_section = 1
+    }
+    next
+  }
+  in_section {
+    print
+    if ($0 ~ /[^[:space:]]/) has_content = 1
+  }
+  END {
+    if (heading_count == 0)
+      problem("no \"## \" headings, so no \"## [Unreleased]\" section.")
+    if (section_count == 0)
+      problem("no \"## [" version "] - YYYY-MM-DD\" section for the version in Cargo.toml.")
+    else if (section_count > 1)
+      problem("\"## [" version "]\" appears " section_count " times.")
+    else if (!has_content)
+      problem("the \"## [" version "]\" section is empty.")
+    close("cat 1>&2")
+    exit failed
+  }
+' "$CHANGELOG")" || die "$CHANGELOG is not ready to release $version."
+
+if [ "$print_release_notes" -eq 1 ]; then
+  printf '%s\n' "$release_notes"
+else
+  printf '✓ %s: [Unreleased] first, and a %s section.\n' "$CHANGELOG" "$version"
+fi

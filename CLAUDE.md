@@ -23,9 +23,16 @@ rules both apply in full because of this — there's no "private repo" fallback 
   test, which needs `--features generate-man`), `shellcheck`/`shfmt`
   on every shell script under `scripts/`/`examples/scripts/` (found by shebang), `markdownlint` on
   every tracked Markdown file (tracked only, so an untracked signal file such as `REVIEW.md` isn't
-  linted; stage a new file to include it), and `black`/`ruff` on the Python script. Stops at the
-  first failure. Both workflows run this same script (see CI below), so a new check is added there
-  once (#62). Not included: the coverage gate, the live-Sway tests and the audit.
+  linted; stage a new file to include it), `scripts/check-changelog`, and `black`/`ruff` on the
+  Python script. Stops at the first failure. Both workflows run this same script (see CI below),
+  so a new check is added there once (#62). Not included: the coverage gate, the live-Sway tests
+  and the audit.
+- Changelog shape: `scripts/check-changelog` fails unless `CHANGELOG.md`'s first second-level
+  heading is `## [Unreleased]` and it has exactly one non-empty `## [X.Y.Z] - YYYY-MM-DD` section for
+  `Cargo.toml`'s `version`, which holds on every commit from a version-bump commit on; so a bump
+  that loses `[Unreleased]` or never finalizes its section fails on `dev`, before any tag is
+  pushed. `--release-notes` prints that section, which is how `release.yml` gets its release notes,
+  so the extraction has one copy (#186).
 - Man page: `cargo run --features generate-man -- --generate-man > sway-launch.1`. The optional
   `generate-man` feature (and its `clap_mangen` dependency) exists only for this: `main()` checks
   for `--generate-man` before parsing `Args`, so it never appears in `--help` or in the shipped
@@ -1758,10 +1765,11 @@ copyright notice and conditions — the man page and bash/zsh/fish completions) 
 `actions/upload-artifact`, and only `publish` (no checkout, no build — just a download and
 `gh release create`) holds `contents: write`, because compiling runs every dependency's build
 script and proc-macro, none of which should ever share a job with the write token. Release notes come from `CHANGELOG.md` rather than `gh`'s own
-auto-generated notes: an `awk` script extracts the section matching the tag's version (see the
-Changelog section above) and fails the release outright if that section is missing or empty — a
-release can't ship without the version-bump-and-changelog commit having actually finalized
-`CHANGELOG.md` first. Keep `scripts/run-checks` in sync with this file's Rust/Shell/Python
+auto-generated notes: `scripts/check-changelog --release-notes` extracts the section matching
+`Cargo.toml`'s version (which the `check` job has matched against the tag; see Commands above) and
+fails the release outright if that section is missing or empty. `scripts/run-checks` runs the same
+script on every push, so a version-bump commit that didn't finalize `CHANGELOG.md` fails CI on
+`dev`, before a tag exists; the release-time failure is only a last line of defence. Keep `scripts/run-checks` in sync with this file's Rust/Shell/Python
 conventions above whenever the checks change, and both workflow files with any tool it newly
 needs installed.
 

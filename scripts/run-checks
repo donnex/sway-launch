@@ -16,7 +16,8 @@ print_usage() {
   printf '  denied), cargo build, cargo test (plus the man page test, built with the\n'
   printf '  generate-man feature), shellcheck and shfmt on every shell\n'
   printf '  script (found by shebang), markdownlint on every tracked Markdown file,\n'
-  printf '  and black and ruff on %s.\n' "$PYTHON_SCRIPT"
+  printf '  scripts/check-changelog (CHANGELOG.md is ready to release the version\n'
+  printf '  Cargo.toml declares), and black and ruff on %s.\n' "$PYTHON_SCRIPT"
   printf '\n'
   printf 'Not run here: the coverage gate, the live-Sway tests\n'
   printf '(scripts/run-live-sway-tests) and the dependency audit.\n'
@@ -110,6 +111,7 @@ IFS="$newline"
 set -- $markdown_files
 IFS="$old_field_separator"
 run_check 'markdownlint' markdownlint "$@"
+run_check 'changelog' scripts/check-changelog
 
 run_check 'black --check' uv run --group dev black --check "$PYTHON_SCRIPT"
 run_check 'ruff check' uv run --group dev ruff check "$PYTHON_SCRIPT"

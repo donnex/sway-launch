@@ -63,7 +63,8 @@ jobs:
       # fmt, clippy (--all-targets --all-features: without the feature,
       # tests/live_sway.rs compiles to nothing and goes unlinted), build,
       # test, shellcheck/shfmt on every shell script found by shebang,
-      # markdownlint on every tracked Markdown file, and black/ruff.
+      # markdownlint on every tracked Markdown file, the CHANGELOG.md release
+      # shape (scripts/check-changelog), and black/ruff.
       - name: Run checks
         run: ./scripts/run-checks
 
