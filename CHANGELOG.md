@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--existing --title` with no `--app-id`, `--class` or `--mark-match` no longer resolves to a
+  workspace, an output or the scratchpad. The pattern was tested against every name in the tree,
+  so a title matching a workspace's name returned that workspace's id with exit 0 (and an action on
+  it then failed), counted it as a second match beside a real window, or ended `--wait` at once.
+  It now considers exactly the windows `--list-windows` shows. (#144)
 - `--on-workspace`, `--on-workspace-number` and a template's `[layout] workspace` no longer build
   the layout on the previous workspace when Sway's `workspace_auto_back_and_forth` is on and the
   named workspace already has focus. Sway's back-and-forth switched away from it, and the run then

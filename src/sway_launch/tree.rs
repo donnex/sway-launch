@@ -112,12 +112,25 @@ pub(super) fn recheck_launched_windows(
         .collect()
 }
 
-/// Collects the container ids of every node in `tree` (tiling and floating
-/// children at every level) that `criteria` accepts, used to target an
-/// already-open window instead of launching a new one.
+/// Whether `node` is something `--existing` can choose and `--list-windows`
+/// lists: a window, or a split container carrying a mark (a mark being the one
+/// matcher that can name one). Never a workspace, an output, the root or the
+/// scratchpad's `__i3_scratch`, whose names a title pattern alone would
+/// otherwise match (#144). Both `matching_container_ids()` and
+/// `window_listing()` filter on this, so they can't disagree on a match.
+fn is_listable_candidate(node: &Node) -> bool {
+    is_window(node)
+        || (matches!(node.node_type, NodeType::Con | NodeType::FloatingCon)
+            && !node.marks.is_empty())
+}
+
+/// Collects the container ids of every window, and every marked split
+/// container, in `tree` (tiling and floating children at every level) that
+/// `criteria` accepts, used to target an already-open window instead of
+/// launching a new one.
 pub(super) fn matching_container_ids(tree: &Node, criteria: WindowCriteria) -> Vec<i64> {
     descendants(tree)
-        .filter(|node| criteria.matches(node))
+        .filter(|node| is_listable_candidate(node) && criteria.matches(node))
         .map(|node| node.id)
         .collect()
 }
@@ -148,12 +161,7 @@ pub struct ListedWindow {
 /// this lists exactly what `--existing` would choose between.
 pub(super) fn window_listing(tree: &Node, criteria: WindowCriteria) -> Vec<ListedWindow> {
     descendants(tree)
-        .filter(|node| {
-            let listable = is_window(node)
-                || (matches!(node.node_type, NodeType::Con | NodeType::FloatingCon)
-                    && !node.marks.is_empty());
-            listable && criteria.matches(node)
-        })
+        .filter(|node| is_listable_candidate(node) && criteria.matches(node))
         .map(|node| {
             let path = ancestors_of(tree, node.id).unwrap_or_default();
             let workspace = name_of_nearest(&path, NodeType::Workspace);

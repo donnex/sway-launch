@@ -8367,6 +8367,45 @@ fn launch_titled_foot(title: &str, title_pattern: &str) -> (i64, KillOnDrop) {
     (container_id, KillOnDrop(container_id))
 }
 
+/// A title pattern with no other matcher is tested against windows only, as
+/// `--list-windows` lists them: not the workspace whose name it also matches,
+/// nor the scratchpad's `__i3_scratch` (#144).
+#[test]
+fn existing_title_alone_matches_only_windows() {
+    let workspace = fresh_workspace();
+    let (window, _guard) =
+        launch_titled_foot("live-existing-title-alone", "^live-existing-title-alone$");
+    let pattern = "existing.title.alone";
+    assert!(
+        regex_lite::Regex::new(pattern)
+            .unwrap()
+            .is_match(&workspace),
+        "the pattern should match the workspace name {workspace:?} too"
+    );
+
+    let output = sway_launch_command()
+        .args(["--existing", "--title", pattern])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        window.to_string()
+    );
+
+    let output = sway_launch_command()
+        .args(["--existing", "--title", "__i3_scratch"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("No existing window matches"), "{stderr}");
+}
+
 #[test]
 fn title_matches_a_launch_and_picks_one_of_several_existing_windows() {
     fresh_workspace();

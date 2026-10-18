@@ -235,6 +235,22 @@ fn window_listing_with_a_filter_lists_what_existing_chooses_between() {
     assert_eq!(ids(WindowMatch::AppId("nothing")), Vec::<i64>::new());
 }
 
+#[test]
+fn a_title_alone_never_matches_a_workspace_output_root_or_the_scratchpad() {
+    let pattern = super::super::values::parse_title_pattern("i3|1|HEADLESS|root|shell").unwrap();
+    let criteria = WindowCriteria {
+        matcher: None,
+        title: Some(&pattern),
+    };
+    let tree = listing_tree();
+    let listed: Vec<i64> = window_listing(&tree, criteria)
+        .iter()
+        .map(|window| window.container_id)
+        .collect();
+    assert_eq!(matching_container_ids(&tree, criteria), vec![10]);
+    assert_eq!(listed, vec![10]);
+}
+
 // launch_filter_match / recheck_launched_windows
 
 #[test]

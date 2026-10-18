@@ -313,7 +313,8 @@ one recursion over a tree outside `tree.rs`. Every standalone mode, `--layout` a
 per-window flag is never silently discarded. `--list-windows` alone keeps `LIST_WINDOWS_FILTERS`
 (`-a`/`-c`/`--mark-match`/`--title`, via `per_window_but_filters_and()`): they narrow its listing
 (`tree::window_listing()`) to what `--existing` would choose between, so its rows and
-`matching_container_ids()` must keep agreeing on what a match is.
+`matching_container_ids()` must keep agreeing on what a match is: both filter on
+`is_listable_candidate()` (a window, or a marked split container) before the criteria (#144).
 `per_window_args_conflict_with_every_standalone_mode` and
 `per_window_args_lists_every_flag_a_layout_step_mirrors` keep the list complete. clap's `requires`
 is not used for `--bindings`/`--apps`/`--rollback-on-error`/`--on-workspace`/`--validate`: `main()`
