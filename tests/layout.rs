@@ -5,10 +5,9 @@
 
 mod common;
 
-use common::{assert_conflict_error, run_with_stdin, sway_launch_without_a_compositor, TempToml};
+use common::{assert_conflict_error, run_with_stdin, sway_launch, TempToml};
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 #[test]
 fn layout_plain_output_prints_one_container_id_per_step() {
@@ -17,7 +16,7 @@ fn layout_plain_output_prints_one_container_id_per_step() {
         "[[step]]\ncon_id = 42\n\n[[step]]\ncon_id = 91\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap()])
         .output()
         .expect("failed to run sway-launch binary");
@@ -34,7 +33,7 @@ fn layout_dry_run_prints_a_continuously_numbered_plan() {
         "[[step]]\ncommand = \"code\"\nsplit = \"h\"\n\n[[step]]\ncon_id = 91\nfloating = true\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--dry-run"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -59,7 +58,7 @@ fn layout_dry_run_sends_sway_commands_with_the_other_actions() {
          sway_commands = [\"border none\", \"opacity 0.9\"]\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--dry-run"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -78,7 +77,7 @@ fn layout_dry_run_sends_sway_commands_with_the_other_actions() {
 
 #[test]
 fn a_sway_command_acting_on_the_session_is_refused_on_the_command_line() {
-    let output = sway_launch_without_a_compositor()
+    let output = sway_launch()
         .args(["--con-id", "42", "--sway-command", "exec foot"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -102,7 +101,7 @@ fn layout_dry_run_escapes_control_characters_in_a_command() {
         "[[step]]\ncommand = \"evil\\u001b[1G\\u001b[2Kfoot\"\nmark = \"tab\\tbed\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--dry-run"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -130,7 +129,7 @@ fn layout_dry_run_describes_an_existing_step_matched_by_mark() {
         "[[step]]\nexisting = true\nmark_match = \"dropdown-term\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--dry-run"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -154,7 +153,7 @@ fn layout_rejects_app_id_and_mark_match_together() {
         "[[step]]\nexisting = true\napp_id = \"foot\"\nmark_match = \"dropdown-term\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap()])
         .output()
         .expect("failed to run sway-launch binary");
@@ -181,7 +180,7 @@ fn layout_dry_run_resolves_target_id_without_launching_anything() {
         "[[step]]\ncommand = \"code\"\nid = \"editor\"\n\n[[step]]\ntarget_id = \"editor\"\nwidth = \"70ppt\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--dry-run"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -202,7 +201,7 @@ fn layout_dry_run_resolves_target_id_without_launching_anything() {
 fn layout_dry_run_json_output_is_a_structured_steps_array() {
     let path = TempToml::write("dry-run-json", "[[step]]\ncon_id = 42\nfocus = true\n");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--dry-run", "--json"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -222,7 +221,7 @@ fn layout_dry_run_reports_a_step_error_without_running_earlier_steps() {
         "[[step]]\ncon_id = 42\n\n[[step]]\nheight = \"notasize\"\ncon_id = 91\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--dry-run"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -240,7 +239,7 @@ fn layout_validate_reports_success_without_launching_anything() {
         "[[step]]\ncommand = \"code\"\nid = \"editor\"\n\n[[step]]\ntarget_id = \"editor\"\nwidth = \"70ppt\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--validate"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -261,7 +260,7 @@ fn layout_validate_reports_success_without_launching_anything() {
 fn layout_validate_json_output_is_a_structured_object() {
     let path = TempToml::write("validate-ok-json", "[[step]]\ncon_id = 42\n");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--validate", "--json"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -284,7 +283,7 @@ fn layout_validate_reports_a_step_error() {
         "[[step]]\ncon_id = 42\n\n[[step]]\nheight = \"notasize\"\ncon_id = 91\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--validate"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -302,7 +301,7 @@ fn layout_validate_json_error_output_is_a_structured_object() {
         "[[step]]\nheight = \"notasize\"\ncon_id = 42\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--validate", "--json"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -320,7 +319,7 @@ fn layout_json_output_is_a_single_object() {
         "[[step]]\ncon_id = 42\n\n[[step]]\ncon_id = 91\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--json"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -340,7 +339,7 @@ fn layout_json_output_maps_named_steps_in_containers() {
         "[[step]]\ncon_id = 42\nid = \"editor\"\n\n[[step]]\ncon_id = 91\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--json"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -357,7 +356,7 @@ fn layout_json_output_maps_named_steps_in_containers() {
 fn layout_conflicts_with_a_per_window_flag() {
     let path = TempToml::write("conflicts", "[[step]]\ncon_id = 42\n");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--floating"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -373,7 +372,7 @@ fn layout_conflicts_with_stray_apps_flag() {
     // --list-templates, which already list both for the same reason).
     let path = TempToml::write("stray-apps", "[[step]]\ncon_id = 42\n");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--apps", "foot"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -387,7 +386,7 @@ fn layout_conflicts_with_stray_bindings_flag() {
     let bindings_path =
         TempToml::write("stray-bindings", "[[binding]]\nslot = \"a\"\ncon_id = 1\n");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--layout",
             layout_path.to_str().unwrap(),
@@ -402,7 +401,7 @@ fn layout_conflicts_with_stray_bindings_flag() {
 
 #[test]
 fn layout_missing_file_errors() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", "/nonexistent-sway-launch-test-layout.toml"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -416,7 +415,7 @@ fn layout_missing_file_errors() {
 fn layout_malformed_toml_errors() {
     let path = TempToml::write("malformed", "this is not toml [[[");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap()])
         .output()
         .expect("failed to run sway-launch binary");
@@ -431,7 +430,7 @@ fn layout_with_no_steps_errors() {
     // nothing launched, indistinguishable from a run that worked.
     let path = TempToml::write("no-steps", "");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap()])
         .output()
         .expect("failed to run sway-launch binary");
@@ -450,7 +449,7 @@ fn layout_with_no_steps_errors_under_validate_too() {
     // it must agree with a real run rather than reporting "valid: 0 step(s)".
     let path = TempToml::write("no-steps-validate", "");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--validate"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -464,7 +463,7 @@ fn layout_with_no_steps_errors_under_validate_too() {
 fn layout_step_without_a_target_errors_naming_the_step() {
     let path = TempToml::write("no-target", "[[step]]\n");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap()])
         .output()
         .expect("failed to run sway-launch binary");
@@ -481,7 +480,7 @@ fn layout_rejects_misspelled_field() {
         "[[step]]\ncon_id = 42\nflaoting = true\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap()])
         .output()
         .expect("failed to run sway-launch binary");
@@ -496,7 +495,7 @@ fn layout_rejects_command_and_con_id_together() {
         "[[step]]\ncommand = \"foot\"\ncon_id = 42\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap()])
         .output()
         .expect("failed to run sway-launch binary");
@@ -513,7 +512,7 @@ fn layout_rejects_app_id_and_class_together() {
         "[[step]]\ncon_id = 42\napp_id = \"foot\"\nclass = \"Foot\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap()])
         .output()
         .expect("failed to run sway-launch binary");
@@ -530,7 +529,7 @@ fn layout_target_id_resolves_to_an_earlier_steps_container_id() {
         "[[step]]\nid = \"first\"\ncon_id = 42\n\n[[step]]\ntarget_id = \"first\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap()])
         .output()
         .expect("failed to run sway-launch binary");
@@ -552,7 +551,7 @@ fn layout_rejects_target_id_and_app_id_together() {
          [[step]]\ntarget_id = \"first\"\napp_id = \"foot\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap()])
         .output()
         .expect("failed to run sway-launch binary");
@@ -570,7 +569,7 @@ fn layout_rejects_unresolved_target_id() {
         "[[step]]\ntarget_id = \"missing\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap()])
         .output()
         .expect("failed to run sway-launch binary");
@@ -587,7 +586,7 @@ fn layout_rejects_duplicate_step_ids() {
         "[[step]]\nid = \"first\"\ncon_id = 42\n\n[[step]]\nid = \"first\"\ncon_id = 91\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap()])
         .output()
         .expect("failed to run sway-launch binary");
@@ -605,7 +604,7 @@ fn layout_json_error_output_is_a_structured_object() {
         "[[step]]\nid = \"first\"\ncon_id = 42\n\n[[step]]\nid = \"first\"\ncon_id = 91\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--json"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -634,7 +633,7 @@ fn layout_json_error_output_reports_the_steps_that_already_completed() {
          [[step]]\nid = \"first\"\ncon_id = 7\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--json"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -670,7 +669,7 @@ fn layout_json_error_output_names_the_failing_step_s_container() {
     );
 
     for extra in [&[][..], &["--rollback-on-error"][..]] {
-        let output = sway_launch_without_a_compositor()
+        let output = sway_launch()
             .args(["--layout", path.to_str().unwrap(), "--json"])
             .args(extra)
             .output()
@@ -695,11 +694,10 @@ fn layout_json_error_output_omits_progress_for_a_single_invocation() {
     // an empty array there would suggest a run that got nowhere rather than
     // one the concept never applied to.
     //
-    // Needs the invocation to fail, so it names a socket that cannot exist
-    // rather than assuming none is reachable — see
-    // sway_launch_without_a_compositor()'s doc comment in tests/common/ for
-    // what that assumption cost.
-    let output = sway_launch_without_a_compositor()
+    // Needs the invocation to fail, which sway_launch()'s socket that cannot
+    // exist guarantees — see its doc comment in tests/common/ for what
+    // assuming none is reachable cost.
+    let output = sway_launch()
         .args(["--con-id", "42", "--floating", "--json"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -726,7 +724,7 @@ fn layout_rollback_on_error_reports_empty_rollback_when_nothing_was_launched() {
         "[[step]]\nid = \"first\"\ncon_id = 42\n\n[[step]]\nid = \"first\"\ncon_id = 91\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--layout",
             path.to_str().unwrap(),
@@ -760,7 +758,7 @@ fn layout_validate_rejects_a_command_sway_would_split() {
             &format!("[[step]]\ncon_id = 42\n\n[[step]]\ncommand = \"{command}\"\n"),
         );
 
-        let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        let output = sway_launch()
             .args(["--layout", path.to_str().unwrap(), "--validate"])
             .output()
             .expect("failed to run sway-launch binary");
@@ -780,7 +778,7 @@ fn layout_validate_rejects_a_mark_containing_a_nul() {
         "[[step]]\ncon_id = 42\nmark = \"ab\\u0000cd\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--validate"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -800,7 +798,7 @@ fn layout_validate_rejects_a_workspace_containing_a_dollar_sign() {
         "[[step]]\ncon_id = 42\nworkspace = \"$ws1\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--validate"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -820,7 +818,7 @@ fn layout_validate_rejects_sway_keywords_as_workspace_and_output_names() {
             "keyword-name",
             &format!("[[step]]\ncon_id = 42\n{field} = \"{value}\"\n"),
         );
-        let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        let output = sway_launch()
             .args(["--layout", path.to_str().unwrap(), "--validate"])
             .output()
             .expect("failed to run sway-launch binary");
@@ -836,7 +834,7 @@ fn layout_validate_rejects_sway_keywords_as_workspace_and_output_names() {
 fn layout_validate_rejects_a_zero_timeout() {
     let path = TempToml::write("zero-timeout", "[[step]]\ncon_id = 42\ntimeout = 0\n");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--validate"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -859,7 +857,7 @@ fn every_shipped_example_layout_passes_validate() {
             continue;
         }
 
-        let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        let output = sway_launch()
             .args(["--layout", path.to_str().unwrap(), "--validate"])
             .output()
             .expect("failed to run sway-launch binary");
@@ -893,7 +891,7 @@ fn layout_keeps_running_its_steps_after_stdout_is_closed() {
     let (stdout_reader, stdout_writer) = std::io::pipe().expect("failed to create a pipe");
     drop(stdout_reader);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap()])
         .stdout(stdout_writer)
         .output()
@@ -916,7 +914,7 @@ fn layout_exits_0_after_finishing_every_step_when_stdout_is_closed() {
     let (stdout_reader, stdout_writer) = std::io::pipe().expect("failed to create a pipe");
     drop(stdout_reader);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap()])
         .stdout(stdout_writer)
         .output()
@@ -956,7 +954,7 @@ fn a_second_run_of_a_layout_is_refused_while_the_first_holds_its_lock() {
     let runtime_dir = common::TestTempDir::new();
     let path = TempToml::write("locked", "[[step]]\ncon_id = 42\n");
     let run = |extra: &[&str]| {
-        sway_launch_without_a_compositor()
+        sway_launch()
             .env("XDG_RUNTIME_DIR", &*runtime_dir)
             .args(["--layout", path.to_str().unwrap()])
             .args(extra)
@@ -997,7 +995,7 @@ fn layouts_piped_on_stdin_take_a_lock_of_their_own_contents() {
     use std::io::Write;
     let runtime_dir = common::TestTempDir::new();
     let run = |layout: &str| {
-        let mut child = sway_launch_without_a_compositor()
+        let mut child = sway_launch()
             .env("XDG_RUNTIME_DIR", &*runtime_dir)
             .args(["--layout", "-"])
             .stdin(std::process::Stdio::piped())
@@ -1102,7 +1100,7 @@ fn a_quote_split_across_sway_commands_entries_is_refused_by_validate() {
          sway_commands = ['title_format \"a', 'border \", exec touch /tmp/x, border \"']\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--layout", path.to_str().unwrap(), "--validate"])
         .output()
         .expect("failed to run sway-launch binary");

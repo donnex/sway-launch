@@ -5,8 +5,7 @@
 
 mod common;
 
-use common::{assert_conflict_error, run_with_stdin, TempToml};
-use std::process::Command;
+use common::{assert_conflict_error, run_with_stdin, sway_launch, TempToml};
 
 #[test]
 fn template_resolves_via_bindings_file_end_to_end() {
@@ -20,7 +19,7 @@ fn template_resolves_via_bindings_file_end_to_end() {
          [[binding]]\nslot = \"terminal\"\ncon_id = 91\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -46,7 +45,7 @@ fn template_dry_run_prints_a_continuously_numbered_plan_via_apps() {
         "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\nsplit = \"h\"\n\n[[step]]\nslot = \"terminal\"\nnew_column = true\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -80,7 +79,7 @@ fn template_resolves_a_binding_matched_by_mark_via_dry_run() {
         "[[binding]]\nslot = \"terminal\"\nexisting = true\nmark_match = \"dropdown-term\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -114,7 +113,7 @@ fn template_dry_run_resolves_target_id_without_launching_anything() {
         "[[binding]]\nslot = \"editor\"\ncommand = \"code\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -146,7 +145,7 @@ fn template_layout_context_switches_to_its_output_and_workspace_before_the_first
          [[step]]\nslot = \"editor\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -178,7 +177,7 @@ fn template_layout_context_leaves_a_step_s_own_workspace_move_in_place() {
          [[step]]\nslot = \"editor\"\nworkspace = \"5\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -204,7 +203,7 @@ fn template_dry_run_json_output_is_a_structured_steps_array() {
         "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\nfocus = true\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -231,7 +230,7 @@ fn template_validate_reports_success_without_launching_anything() {
         "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n\n[[step]]\nslot = \"terminal\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -261,7 +260,7 @@ fn template_validate_reports_a_step_error() {
         "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\nheight = \"notasize\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -287,7 +286,7 @@ fn template_validate_rejects_a_control_character_in_a_workspace() {
         "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\nworkspace = \"\\u001b[31mred\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -317,7 +316,7 @@ fn template_validate_blames_the_layout_table_not_a_step_for_its_invalid_workspac
          [[step]]\nslot = \"editor\"\n\n[[step]]\nslot = \"terminal\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -344,7 +343,7 @@ fn template_validate_rejects_a_blank_layout_output_that_every_step_overrides() {
          [[step]]\nslot = \"terminal\"\noutput = \"HDMI-A-1\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -370,7 +369,7 @@ fn template_parse_error_does_not_echo_a_raw_terminal_escape() {
         "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n# hi \u{1b}]0;PWNED\u{7} \u{1b}[2J\n\n[[step]]\nslot = \"editor\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -401,7 +400,7 @@ fn template_target_id_references_an_earlier_slot() {
         "[[binding]]\nslot = \"editor\"\ncon_id = 42\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -427,7 +426,7 @@ fn template_apps_count_mismatch_names_the_missing_slots() {
         "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n\n[[step]]\nslot = \"terminal\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--template", template.to_str().unwrap(), "--apps", "foot"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -454,7 +453,7 @@ fn template_rejects_two_steps_sharing_a_slot_name() {
         "[[binding]]\nslot = \"editor\"\ncon_id = 42\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -483,7 +482,7 @@ fn template_rejects_two_steps_sharing_a_slot_name_before_counting_apps() {
     );
 
     for apps in ["code", "code,foot"] {
-        let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        let output = sway_launch()
             .args([
                 "--template",
                 template.to_str().unwrap(),
@@ -512,7 +511,7 @@ fn template_rejects_missing_binding() {
     let template = TempToml::write("missing-binding-template", "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n");
     let bindings = TempToml::write("missing-binding-bindings", "");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -536,7 +535,7 @@ fn template_rejects_unused_binding() {
          [[binding]]\nslot = \"terminal\"\ncon_id = 91\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -566,7 +565,7 @@ fn template_rejects_unused_binding() {
 fn template_bindings_mistake_for_a_builtin_names_the_bindings_file_not_the_builtin() {
     let bindings = TempToml::write("builtin-missing-binding-bindings", "");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             "quad-grid",
@@ -597,7 +596,7 @@ fn template_step_without_slot_or_target_id_names_the_template_and_step() {
          [[step]]\nslot = \"editor\"\n\n[[step]]\nfloating = true\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -631,7 +630,7 @@ fn template_with_no_steps_errors() {
     );
     let bindings = TempToml::write("no-steps-bindings", "");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -656,7 +655,7 @@ fn template_rejects_misspelled_step_field() {
         "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\nflaoting = true\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--template", template.to_str().unwrap(), "--apps", "foot"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -668,7 +667,7 @@ fn template_rejects_misspelled_step_field() {
 fn template_malformed_toml_errors() {
     let path = TempToml::write("malformed", "this is not toml [[[");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--template", path.to_str().unwrap(), "--apps", "foot"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -678,7 +677,7 @@ fn template_malformed_toml_errors() {
 
 #[test]
 fn template_missing_file_errors() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             "/nonexistent-sway-launch-test-template.toml",
@@ -701,7 +700,7 @@ fn template_bindings_malformed_toml_errors() {
     );
     let bindings = TempToml::write("malformed-bindings-bindings", "this is not toml [[[");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -718,7 +717,7 @@ fn template_bindings_malformed_toml_errors() {
 fn template_bindings_missing_file_errors() {
     let template = TempToml::write("missing-bindings-template", "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -737,7 +736,7 @@ fn template_bindings_missing_file_errors() {
 fn template_requires_bindings_or_apps() {
     let template = TempToml::write("requires-binding-source", "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--template", template.to_str().unwrap()])
         .output()
         .expect("failed to run sway-launch binary");
@@ -753,7 +752,7 @@ fn template_apps_without_template_flag_errors() {
     // Regression test: --apps combined with --con-id (no --template) used to
     // parse cleanly and silently fall through to the ordinary --con-id
     // dispatch, discarding --apps entirely instead of erroring.
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--apps", "foot", "--con-id", "1"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -770,7 +769,7 @@ fn template_bindings_without_template_flag_errors() {
         "[[binding]]\nslot = \"editor\"\ncon_id = 1\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--bindings", bindings.to_str().unwrap(), "--con-id", "1"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -787,7 +786,7 @@ fn template_apps_rejects_an_empty_entry() {
         "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n\n[[step]]\nslot = \"terminal\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--template", template.to_str().unwrap(), "--apps", "foot,"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -808,7 +807,7 @@ fn template_rejects_binding_with_app_id_and_class_together() {
         "[[binding]]\nslot = \"editor\"\ncommand = \"foot\"\napp_id = \"foot\"\nclass = \"Foot\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -833,7 +832,7 @@ fn template_builtin_name_is_found_and_parsed_without_a_toml_extension() {
     // quad-grid.toml content was actually found and parsed via the bare
     // name, proving the lookup itself works, while staying headless-safe:
     // bindings_from_apps() fails before run_steps() ever touches IPC.
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--template", "quad-grid", "--apps", "foot,foot"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -850,7 +849,7 @@ fn template_builtin_name_is_found_and_parsed_without_a_toml_extension() {
 
 #[test]
 fn template_unknown_builtin_name_errors_clearly() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--template", "not-a-real-template", "--apps", "foot"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -868,7 +867,7 @@ fn template_toml_suffixed_name_is_never_treated_as_a_builtin() {
     // opposite direction — a nonexistent .toml path must fail as a file
     // read, not silently fall back to a built-in lookup, even though
     // "quad-grid" itself is a real built-in name.
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--template", "quad-grid.toml", "--apps", "foot"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -884,7 +883,7 @@ fn template_missing_builtin_name_with_toml_suffix_hints_at_the_bare_name() {
     // Still a file read (see the test above), but the error says the name
     // without its extension is a real built-in rather than leaving only a
     // bare "No such file or directory".
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             "quad-grid.toml",
@@ -909,7 +908,7 @@ fn template_file_named_dot_toml_is_read_as_a_file_not_a_builtin_lookup() {
     // instead of a file read, erroring with "no built-in template named
     // \".toml\"" even when the file existed on disk. resolve_template_contents()
     // now checks the string suffix directly instead.
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--template", ".toml", "--apps", "foot"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -922,7 +921,7 @@ fn template_file_named_dot_toml_is_read_as_a_file_not_a_builtin_lookup() {
 
 #[test]
 fn list_templates_prints_known_names_and_descriptions() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--list-templates"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -942,7 +941,7 @@ fn list_templates_prints_known_names_and_descriptions() {
 
 #[test]
 fn list_templates_json_output_is_a_structured_array() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--list-templates", "--json"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -962,7 +961,7 @@ fn list_templates_json_output_is_a_structured_array() {
 
 #[test]
 fn list_templates_json_output_reports_slots_and_slot_names() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--list-templates", "--json"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -992,7 +991,7 @@ fn list_templates_plain_output_includes_slot_count_and_names() {
     // quad-grid's own line specifically (rather than scanning the whole
     // listing for the substring "slot", which would false-positive on
     // retarget-by-slot's name/description).
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--list-templates"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -1008,7 +1007,7 @@ fn list_templates_plain_output_includes_slot_count_and_names() {
 
 #[test]
 fn list_templates_plain_output_uses_singular_slot_for_a_single_slot_template() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--list-templates"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -1025,7 +1024,7 @@ fn list_templates_plain_output_uses_singular_slot_for_a_single_slot_template() {
 
 #[test]
 fn show_template_prints_a_builtin_s_raw_toml() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--show-template", "quad-grid"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -1044,7 +1043,7 @@ fn show_template_prints_a_builtin_s_raw_toml() {
 fn show_template_prints_a_file_s_raw_toml() {
     let template = TempToml::write("show-template-file", "[[step]]\nslot = \"editor\"\n");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--show-template", template.to_str().unwrap()])
         .output()
         .expect("failed to run sway-launch binary");
@@ -1056,7 +1055,7 @@ fn show_template_prints_a_file_s_raw_toml() {
 
 #[test]
 fn show_template_json_output_is_a_structured_object() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--show-template", "quad-grid", "--json"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -1074,7 +1073,7 @@ fn show_template_json_output_is_a_structured_object() {
 
 #[test]
 fn show_template_unknown_builtin_name_errors_clearly() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--show-template", "not-a-real-template"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -1087,7 +1086,7 @@ fn show_template_unknown_builtin_name_errors_clearly() {
 
 #[test]
 fn show_template_missing_builtin_name_with_toml_suffix_hints_at_the_bare_name() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--show-template", "quad-grid.toml"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -1105,7 +1104,7 @@ fn show_template_conflicts_with_a_command() {
     // --show-template is a standalone mode, same as --list-templates: it
     // must never launch/act on any window, so it conflicts with a positional
     // command outright rather than silently ignoring one.
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--show-template", "quad-grid", "foot"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -1115,7 +1114,7 @@ fn show_template_conflicts_with_a_command() {
 
 #[test]
 fn show_template_conflicts_with_template() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--show-template", "quad-grid", "--template", "quad-grid"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -1127,7 +1126,7 @@ fn show_template_conflicts_with_template() {
 fn template_conflicts_with_layout() {
     let template = TempToml::write("conflicts-template", "[template]\ndescription = \"Test template.\"\ncategory = \"Test\"\n\n[[step]]\nslot = \"editor\"\n");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -1153,7 +1152,7 @@ fn template_validate_rejects_a_binding_command_sway_would_split() {
         "[[binding]]\nslot = \"editor\"\ncommand = \"code; kill\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -1183,7 +1182,7 @@ fn on_workspace_overrides_the_template_layout_workspace_in_the_preview() {
          [layout]\nworkspace = \"3\"\n\n[[step]]\nslot = \"editor\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -1214,7 +1213,7 @@ fn workspace_number_reaches_the_preview_from_the_layout_table_and_the_flag() {
          [layout]\nworkspace_number = 3\n\n[[step]]\nslot = \"editor\"\n",
     );
     let setup = |extra: &[&str]| {
-        let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        let output = sway_launch()
             .args(["--template", template.to_str().unwrap(), "--apps", "code"])
             .args(extra)
             .args(["--dry-run", "--json"])
@@ -1248,7 +1247,7 @@ fn template_validate_rejects_a_step_combining_workspace_with_new_column() {
          [[step]]\nslot = \"editor\"\nworkspace = \"3\"\nnew_column = true\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
@@ -1330,7 +1329,7 @@ fn a_binding_places_a_built_in_template_slot_on_its_own_output() {
          [[binding]]\nslot = \"second\"\ncommand = \"foot\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--template",
             "dual-output",
@@ -1366,7 +1365,7 @@ fn a_binding_places_a_built_in_template_slot_on_its_own_output() {
 }
 
 fn dry_run_width_commands(extra: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    sway_launch()
         .args(["--template", "master-dual-stack", "--dry-run", "--json"])
         .args(extra)
         .output()
@@ -1422,7 +1421,7 @@ fn a_bad_param_is_reported_against_the_flag_before_anything_runs() {
             "--param: param \"stack-width\" (used as width)",
         ),
     ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        let output = sway_launch()
             .args([
                 "--template",
                 "master-dual-stack",
@@ -1439,7 +1438,7 @@ fn a_bad_param_is_reported_against_the_flag_before_anything_runs() {
         assert!(stderr.contains(expected), "{stderr}");
     }
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--param", "stack-width=40ppt", "foot"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -1450,7 +1449,7 @@ fn a_bad_param_is_reported_against_the_flag_before_anything_runs() {
 
 #[test]
 fn list_templates_reports_each_template_s_params() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--list-templates", "--json"])
         .output()
         .expect("failed to run sway-launch binary");

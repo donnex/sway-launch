@@ -464,7 +464,12 @@ follow-up:
   `json_output.rs` (stdout/stderr/`--json` shapes, via `--con-id` or an unreachable socket),
   `layout.rs` and `template.rs` (end to end, `--dry-run`, `--validate`, every shipped example and
   built-in), `target_rules.rs` (see Targets). Shared helpers live in `tests/common/mod.rs` (temp
-  files, `sway_launch_without_a_compositor()`, `assert_conflict_error()`); add new ones there. A
+  files, `sway_launch()`, `assert_conflict_error()`); add new ones there. Every one of them runs
+  the binary through `sway_launch()`, which points it at a socket that can't exist and a private
+  `XDG_RUNTIME_DIR`, so no test depends on the code under test happening to make no IPC call, and
+  no run lock lands in the developer's own runtime directory (#137);
+  `integration_tests_run_the_binary_only_through_the_shared_helpers` fails on a direct
+  `CARGO_BIN_EXE_sway-launch` use anywhere under `tests/` but `common/` and `live_sway.rs`. A
   flag-conflict test uses `assert_conflict_error()`, never a bare failure check, which keeps
   passing after the conflict is dropped.
 - **A Unix socket's directory goes under `/tmp`, never `TMPDIR`** (#130): a socket path is

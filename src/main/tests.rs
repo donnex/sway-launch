@@ -651,6 +651,31 @@ fn claude_md_names_only_functions_that_exist() {
     );
 }
 
+#[test]
+fn integration_tests_run_the_binary_only_through_the_shared_helpers() {
+    // A test that builds its own `Command` for the binary inherits the
+    // developer's SWAYSOCK and XDG_RUNTIME_DIR, so only the code under test
+    // keeps it off their real session (#137). tests/common/'s `sway_launch()`
+    // isolates it; the live suite brings its own compositor.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut offenders = Vec::new();
+    for entry in std::fs::read_dir(root.join("tests")).expect("tests/ should be readable") {
+        let path = entry.expect("directory entry should be readable").path();
+        let is_rust_file = path.extension().is_some_and(|extension| extension == "rs");
+        if !is_rust_file || path.file_name().is_some_and(|name| name == "live_sway.rs") {
+            continue;
+        }
+        let contents = std::fs::read_to_string(&path).expect("test file should be readable");
+        if contents.contains("env!(\"CARGO_BIN_EXE_") {
+            offenders.push(path.display().to_string());
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "run the binary through tests/common/'s sway_launch(), not Command::new: {offenders:?}"
+    );
+}
+
 /// Each run of consecutive `//`, `///` or `//!` lines in `source`, joined
 /// into one string with the markers stripped, so a code span or a quoted
 /// section name wrapped onto the next line reads as one.

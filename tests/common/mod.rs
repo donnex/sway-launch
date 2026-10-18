@@ -9,7 +9,7 @@ pub mod fake_sway;
 use std::fs::{self, DirBuilder};
 use std::hash::{BuildHasher, Hasher, RandomState};
 use std::io::ErrorKind;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, Output};
@@ -105,26 +105,64 @@ impl Deref for TempToml {
     }
 }
 
-/// The binary, pointed at a socket path that cannot exist.
+/// The binary, isolated from the session `cargo test` runs in: pointed at a
+/// socket path that cannot exist, and at a private `XDG_RUNTIME_DIR`. Every
+/// test under `tests/` but the live and fake-Sway suites (which aim it at
+/// their own compositor) runs the binary through this, and
+/// `integration_tests_run_the_binary_only_through_the_shared_helpers` in
+/// `src/main/tests.rs` holds them to it (#137).
 ///
-/// Some tests assert that an IPC-touching invocation fails. Left to the
-/// ambient environment, that assertion holds on a bare CI runner and breaks in
-/// a terminal inside a Sway session — which is where this project is developed,
-/// and where CLAUDE.md's own "run `cargo test` before committing" gate runs. It
-/// was worse than a false failure for the `--con-id 42` cases: with a session
-/// reachable, whether the command failed depended on whether container id 42
-/// happened to exist, and if it did, the test floated a real window.
+/// Left to the ambient environment, a test is only kept off the compositor by
+/// details of the code under test: that it passes `--dry-run`, or that a run
+/// of bare `con_id` steps happens to make no IPC call. In a terminal inside a
+/// Sway session -- where this project is developed, and where CLAUDE.md's own
+/// "run `cargo test` before committing" gate runs -- the first change that
+/// reads the tree up front would have those tests act on the developer's real
+/// windows. It was already worse than a false failure for the `--con-id 42`
+/// cases: with a session reachable, whether the command failed depended on
+/// whether container id 42 happened to exist, and if it did, the test floated
+/// a real window.
 ///
 /// `I3SOCK` is removed as well as `SWAYSOCK` set. `socket_path()` reads
 /// `SWAYSOCK` first, so the override alone would do today, but both together
 /// mean the connect attempt fails on a missing path rather than reaching a
-/// compositor no matter what the environment holds or which order wins.
-pub fn sway_launch_without_a_compositor() -> Command {
+/// compositor no matter what the environment holds or which order wins. The
+/// runtime directory keeps a `--layout`/`--template` run's lock file out of
+/// the developer's own `$XDG_RUNTIME_DIR/sway-launch/`; a test may still set
+/// its own, which replaces it.
+pub fn sway_launch() -> SwayLaunchCommand {
+    let runtime_directory = TestTempDir::new();
     let mut command = Command::new(env!("CARGO_BIN_EXE_sway-launch"));
     command
         .env("SWAYSOCK", "/nonexistent/sway-launch-test-socket")
-        .env_remove("I3SOCK");
-    command
+        .env_remove("I3SOCK")
+        .env("XDG_RUNTIME_DIR", &*runtime_directory);
+    SwayLaunchCommand {
+        command,
+        _runtime_directory: runtime_directory,
+    }
+}
+
+/// `sway_launch()`'s `Command`, owning the runtime directory it points at so
+/// the directory lives as long as the command does. It derefs to `Command`,
+/// so a call chained onto `sway_launch()` reads like `Command`'s own API.
+pub struct SwayLaunchCommand {
+    command: Command,
+    _runtime_directory: TestTempDir,
+}
+
+impl Deref for SwayLaunchCommand {
+    type Target = Command;
+
+    fn deref(&self) -> &Command {
+        &self.command
+    }
+}
+
+impl DerefMut for SwayLaunchCommand {
+    fn deref_mut(&mut self) -> &mut Command {
+        &mut self.command
+    }
 }
 
 /// Asserts that `output` is clap's usage error for `flag` conflicting with
@@ -159,7 +197,8 @@ pub fn assert_conflict_error(output: &Output, flag: &str, conflicting: &str) {
 /// accept `-` (#50).
 pub fn run_with_stdin(args: &[&str], stdin: &str) -> std::process::Output {
     use std::io::Write;
-    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let mut command = sway_launch();
+    let mut child = command
         .args(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

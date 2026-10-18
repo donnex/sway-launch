@@ -144,10 +144,9 @@ impl FakeSway {
 
     /// The binary, pointed at this server and nothing else.
     ///
-    /// `I3SOCK` is removed for the same reason
-    /// `sway_launch_without_a_compositor()` removes it, and `XDG_RUNTIME_DIR`
-    /// is this server's own directory, so a layout run's lock file never meets
-    /// another test's.
+    /// `I3SOCK` is removed for the same reason `common::sway_launch()`
+    /// removes it, and `XDG_RUNTIME_DIR` is this server's own directory, so a
+    /// layout run's lock file never meets another test's.
     pub fn sway_launch(&self) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_sway-launch"));
         command

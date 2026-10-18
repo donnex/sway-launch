@@ -6,12 +6,11 @@
 
 mod common;
 
-use common::assert_conflict_error;
-use std::process::Command;
+use common::{assert_conflict_error, sway_launch};
 
 #[test]
 fn completions_bash_prints_something_and_exits_zero() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--completions", "bash"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -28,7 +27,7 @@ fn completions_rejects_json_rather_than_ignoring_it() {
     // `--completions bash --json` printed the ordinary shell script and threw
     // the flag away. Unlike --list-templates/--show-template, a completion
     // script has no JSON shape to take.
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--completions", "bash", "--json"])
         .output()
         .expect("failed to run sway-launch binary");

@@ -3,18 +3,17 @@
 // formatting against the compiled binary without requiring a live Sway
 // session.
 //
-// A test that needs an IPC call to *fail* says so explicitly, via
-// sway_launch_without_a_compositor() (tests/common/), rather than assuming
-// the machine running it has no Sway session.
+// Every test runs the binary through sway_launch() (tests/common/), which
+// points it at a socket that cannot exist, so a test that needs an IPC call
+// to *fail* never depends on the machine running it having no Sway session.
 
 mod common;
 
-use common::{assert_conflict_error, sway_launch_without_a_compositor, TestTempDir};
-use std::process::Command;
+use common::{assert_conflict_error, sway_launch, TestTempDir};
 
 #[test]
 fn con_id_plain_output_is_a_bare_container_id() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--con-id", "42"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -26,7 +25,7 @@ fn con_id_plain_output_is_a_bare_container_id() {
 
 #[test]
 fn con_id_json_output_is_a_clean_json_object() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--con-id", "42", "--json"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -44,7 +43,7 @@ fn con_id_json_error_output_is_a_structured_object() {
     // cannot exist — exercises --json's error-output shape
     // (fail()/fail_with_rollback() in main.rs) deterministically, on a machine
     // with or without a live compositor.
-    let output = sway_launch_without_a_compositor()
+    let output = sway_launch()
         .args(["--con-id", "42", "--floating", "--json"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -71,7 +70,7 @@ fn con_id_json_error_reports_the_resolved_container_id() {
     // used to drop the id, leaving a caller no way to find a window that was
     // really on screen. --con-id resolves without IPC and --floating then
     // fails on the socket, which is the same shape headlessly.
-    let output = sway_launch_without_a_compositor()
+    let output = sway_launch()
         .args(["--con-id", "42", "--floating", "--json"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -86,7 +85,7 @@ fn con_id_json_error_reports_the_resolved_container_id() {
 
 #[test]
 fn con_id_plain_error_names_the_resolved_container_on_stderr_only() {
-    let output = sway_launch_without_a_compositor()
+    let output = sway_launch()
         .args(["--con-id", "42", "--floating"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -116,7 +115,7 @@ fn plain_error_is_labelled_and_uncolored_when_stderr_is_not_a_terminal() {
     // Labelled like clap's own usage errors, so the line that explains why a
     // layout script stopped stands out from --verbose diagnostics. stderr is
     // a pipe here, so the label must carry no escape codes.
-    let output = sway_launch_without_a_compositor()
+    let output = sway_launch()
         .args(["--con-id", "42", "--floating"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -138,7 +137,7 @@ fn plain_error_is_labelled_and_uncolored_when_stderr_is_not_a_terminal() {
 fn json_error_omits_container_id_when_nothing_was_resolved() {
     // --existing fails while resolving, before there is any container to
     // report, so the field must be absent rather than null or a guess.
-    let output = sway_launch_without_a_compositor()
+    let output = sway_launch()
         .args(["--existing", "--app-id", "no-such-app", "--json"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -168,7 +167,7 @@ fn con_id_with_actions_is_looked_up_before_the_first_action() {
         &["--workspace", "web"],
         &["--new-column"],
     ] {
-        let output = sway_launch_without_a_compositor()
+        let output = sway_launch()
             .args(["--con-id", "42"])
             .args(flags)
             .output()
@@ -188,7 +187,7 @@ fn con_id_with_actions_is_looked_up_before_the_first_action() {
 fn bare_con_id_is_not_looked_up() {
     // Documented: with no actions, nothing needs the socket, so the id is
     // printed back unchecked and this works outside a Sway session.
-    let output = sway_launch_without_a_compositor()
+    let output = sway_launch()
         .args(["--con-id", "42"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -202,7 +201,7 @@ fn a_launch_with_an_unreachable_socket_names_sway_ipc_and_the_socket() {
     // A launch subscribes to events before any other IPC call, so it is the
     // path most people hit first outside a Sway session; it used to report
     // only the bare OS error ("No such file or directory (os error 2)").
-    let output = sway_launch_without_a_compositor()
+    let output = sway_launch()
         .arg("foot")
         .output()
         .expect("failed to run sway-launch binary");
@@ -225,7 +224,7 @@ fn a_launch_with_neither_socket_variable_set_says_so() {
     // "Invalid argument (os error 22)". An empty PATH makes that discovery
     // fail the same way regardless of whether this machine runs Sway.
     for args in [&["foot"][..], &["--existing", "--app-id", "foot"][..]] {
-        let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        let output = sway_launch()
             .args(args)
             .env_remove("SWAYSOCK")
             .env_remove("I3SOCK")
@@ -245,7 +244,7 @@ fn a_launch_with_neither_socket_variable_set_says_so() {
 
 #[test]
 fn rollback_on_error_without_layout_or_template_errors() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--con-id", "42", "--rollback-on-error"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -262,7 +261,7 @@ fn zero_timeout_is_rejected_before_touching_the_socket() {
     // parse error, so it fails before anything reaches Sway -- shown by using
     // a binary pointed at no compositor and getting clap's error, not an IPC one.
     for timeout in ["0", "18446744073709551615"] {
-        let output = sway_launch_without_a_compositor()
+        let output = sway_launch()
             .args(["--con-id", "42", "--floating", "--timeout", timeout])
             .output()
             .expect("failed to run sway-launch binary");
@@ -281,7 +280,7 @@ fn dry_run_never_touches_the_socket_even_for_new_column_and_new_row() {
     // --dry-run never runs anything, so it never asks -- confirmed here by
     // combining --con-id (which alone never touches the socket) with
     // --new-column/--new-row, which definitely would without --dry-run.
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--con-id", "42", "--new-column", "--new-row", "--dry-run"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -300,7 +299,7 @@ fn dry_run_never_touches_the_socket_even_for_new_column_and_new_row() {
 
 #[test]
 fn dry_run_plain_output_is_a_numbered_list() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--con-id",
             "42",
@@ -322,7 +321,7 @@ fn dry_run_plain_output_is_a_numbered_list() {
 
 #[test]
 fn dry_run_json_output_is_a_structured_steps_array() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--con-id", "42", "--floating", "--dry-run", "--json"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -341,7 +340,7 @@ fn dry_run_json_names_every_action_by_its_flag_not_its_command() {
     // produced it, never the Sway command text (which carries user data and
     // quoting). Every action flag is set here, so each one's kind is checked
     // to be its own long flag name with '-' as '_'.
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--con-id",
             "42",
@@ -408,7 +407,7 @@ fn dry_run_json_names_every_action_by_its_flag_not_its_command() {
 
     // --workspace can't be combined with --new-column/--new-row (#45), so
     // it's checked on its own, together with --output's combined form.
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args([
             "--con-id",
             "42",
@@ -435,7 +434,7 @@ fn dry_run_json_names_every_action_by_its_flag_not_its_command() {
 #[test]
 fn workspace_conflicts_with_new_column_and_new_row() {
     for flag in ["--new-column", "--new-row"] {
-        let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+        let output = sway_launch()
             .args(["--con-id", "42", "--workspace", "3", flag, "--dry-run"])
             .output()
             .expect("failed to run sway-launch binary");
@@ -445,7 +444,7 @@ fn workspace_conflicts_with_new_column_and_new_row() {
 
 #[test]
 fn concurrent_without_layout_or_template_errors() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--concurrent", "foot"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -459,7 +458,7 @@ fn concurrent_without_layout_or_template_errors() {
 
 #[test]
 fn continue_on_timeout_without_layout_or_template_errors() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--continue-on-timeout", "foot"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -473,7 +472,7 @@ fn continue_on_timeout_without_layout_or_template_errors() {
 
 #[test]
 fn on_output_without_layout_or_template_errors() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--on-output", "DP-1", "foot"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -487,7 +486,7 @@ fn on_output_without_layout_or_template_errors() {
 
 #[test]
 fn on_workspace_without_layout_or_template_errors() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--on-workspace", "9", "foot"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -510,7 +509,7 @@ fn dry_run_never_launches_the_command() {
     let temp_dir = TestTempDir::new();
     let marker_dir = temp_dir.join("marker");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--dry-run", &format!("mkdir {}", marker_dir.display())])
         .output()
         .expect("failed to run sway-launch binary");
@@ -524,7 +523,7 @@ fn dry_run_never_launches_the_command() {
 
 #[test]
 fn dry_run_describes_an_existing_target_matched_by_mark() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--existing", "--mark-match", "dropdown-term", "--dry-run"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -539,7 +538,7 @@ fn dry_run_describes_an_existing_target_matched_by_mark() {
 
 #[test]
 fn existing_without_app_id_class_or_mark_match_errors() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--existing"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -551,7 +550,7 @@ fn existing_without_app_id_class_or_mark_match_errors() {
 
 #[test]
 fn mark_match_without_existing_errors() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--mark-match", "foo", "true"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -574,7 +573,8 @@ fn a_closed_stdout_exits_cleanly_instead_of_panicking() {
     // this passes trivially. It can only ever fail for the right reason.
     // The deterministic version is in tests/live_sway.rs, against
     // --debug-events, the mode that actually writes until killed.
-    let mut child = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let mut command = sway_launch();
+    let mut child = command
         .args(["--list-templates"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -598,12 +598,12 @@ fn a_closed_stdout_exits_cleanly_instead_of_panicking() {
 
 #[test]
 fn capture_conflicts_with_a_per_window_flag_and_json() {
-    let output = sway_launch_without_a_compositor()
+    let output = sway_launch()
         .args(["--capture", "--floating"])
         .output()
         .expect("failed to run sway-launch binary");
     assert_conflict_error(&output, "--capture", "--floating");
-    let output = sway_launch_without_a_compositor()
+    let output = sway_launch()
         .args(["--capture", "--json"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -620,7 +620,7 @@ fn debug_events_conflicts_with_a_command() {
     // the conflict were ever dropped, --debug-events would subscribe and
     // print events forever inside a Sway session, hanging the test instead
     // of failing it.
-    let output = sway_launch_without_a_compositor()
+    let output = sway_launch()
         .args(["--debug-events", "foot"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -633,7 +633,7 @@ fn debug_events_accepts_json() {
     // --debug-events --json prints one JSON object per event (#85). With no
     // compositor it gets as far as subscribing, so the failure is the
     // connection, reported as a --json error object, not a usage error.
-    let output = sway_launch_without_a_compositor()
+    let output = sway_launch()
         .args(["--debug-events", "--json"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -651,7 +651,7 @@ fn debug_events_accepts_json() {
 
 #[test]
 fn debug_events_conflicts_with_a_per_window_flag() {
-    let output = sway_launch_without_a_compositor()
+    let output = sway_launch()
         .args(["--debug-events", "--con-id", "42", "--floating"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -669,7 +669,7 @@ fn debug_events_rejects_the_template_and_layout_only_flags() {
         ["--apps", "foot"].as_slice(),
         ["--rollback-on-error"].as_slice(),
     ] {
-        let output = sway_launch_without_a_compositor()
+        let output = sway_launch()
             .arg("--debug-events")
             .args(flag)
             .output()
@@ -681,7 +681,7 @@ fn debug_events_rejects_the_template_and_layout_only_flags() {
 
 #[test]
 fn validate_without_layout_or_template_errors() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--con-id", "42", "--validate"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -693,7 +693,7 @@ fn validate_without_layout_or_template_errors() {
 
 #[test]
 fn con_id_verbose_diagnostics_go_to_stderr_not_stdout() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--con-id", "42", "--verbose"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -714,7 +714,7 @@ fn a_closed_stderr_does_not_abort_a_verbose_run() {
     let (stderr_reader, stderr_writer) = std::io::pipe().expect("failed to create a pipe");
     drop(stderr_reader);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--con-id", "42", "--verbose"])
         .stderr(stderr_writer)
         .output()
@@ -736,7 +736,7 @@ fn a_command_sway_would_split_is_rejected_before_anything_runs() {
     // ran `mark x` against the focused window. Rejected at parse time, so
     // this never reaches the (missing) compositor.
     for command in ["foot -T a,b", "foot -T x; mark INJECTED", "foot\nmark x"] {
-        let output = sway_launch_without_a_compositor()
+        let output = sway_launch()
             .arg(command)
             .output()
             .expect("failed to run sway-launch binary");
@@ -756,7 +756,7 @@ fn a_command_sway_would_split_is_rejected_before_anything_runs() {
 
 #[test]
 fn a_quoted_separator_in_a_command_is_accepted() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--dry-run", "foot -T 'a,b; c'"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -772,7 +772,7 @@ fn a_quoted_separator_in_a_command_is_accepted() {
 
 #[test]
 fn cli_rejects_a_sway_keyword_as_a_workspace_name_before_running() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--con-id", "42", "--workspace", "NEXT"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -784,14 +784,14 @@ fn cli_rejects_a_sway_keyword_as_a_workspace_name_before_running() {
 
 #[test]
 fn list_windows_conflicts_with_a_per_window_flag_but_not_a_filter() {
-    let output = sway_launch_without_a_compositor()
+    let output = sway_launch()
         .args(["--list-windows", "--floating"])
         .output()
         .expect("failed to run sway-launch binary");
     assert_conflict_error(&output, "--list-windows", "--floating");
 
     // A filter is accepted, so the run gets as far as the socket.
-    let output = sway_launch_without_a_compositor()
+    let output = sway_launch()
         .args(["--list-windows", "--mark-match", "dropdown", "--json"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -807,7 +807,7 @@ fn list_windows_conflicts_with_a_per_window_flag_but_not_a_filter() {
 
 #[test]
 fn workspace_number_moves_by_number_in_the_plan() {
-    let output = Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    let output = sway_launch()
         .args(["--con-id", "42", "--workspace-number", "2", "--dry-run"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -827,7 +827,7 @@ fn workspace_number_conflicts_with_workspace_and_relative_moves() {
         if flag == "--workspace" {
             arguments.push("web");
         }
-        let output = sway_launch_without_a_compositor()
+        let output = sway_launch()
             .args(&arguments)
             .output()
             .expect("failed to run sway-launch binary");
@@ -843,7 +843,7 @@ fn workspace_number_conflicts_with_workspace_and_relative_moves() {
 #[test]
 fn workspace_number_rejects_a_negative_or_non_numeric_value() {
     for value in ["-1", "web"] {
-        let output = sway_launch_without_a_compositor()
+        let output = sway_launch()
             .args(["--con-id", "42", "--workspace-number", value])
             .output()
             .expect("failed to run sway-launch binary");
@@ -853,14 +853,14 @@ fn workspace_number_rejects_a_negative_or_non_numeric_value() {
 
 #[test]
 fn on_workspace_number_requires_layout_or_template_and_conflicts_with_on_workspace() {
-    let output = sway_launch_without_a_compositor()
+    let output = sway_launch()
         .args(["--con-id", "42", "--on-workspace-number", "2"])
         .output()
         .expect("failed to run sway-launch binary");
     assert!(String::from_utf8_lossy(&output.stderr)
         .contains("--on-workspace-number requires --layout or --template"));
 
-    let output = sway_launch_without_a_compositor()
+    let output = sway_launch()
         .args([
             "--template",
             "quad-grid",
@@ -878,7 +878,7 @@ fn on_workspace_number_requires_layout_or_template_and_conflicts_with_on_workspa
 
 #[test]
 fn dry_run_says_an_existing_wait_waits_for_the_window() {
-    let output = sway_launch_without_a_compositor()
+    let output = sway_launch()
         .args(["--existing", "--wait", "-a", "firefox", "--dry-run"])
         .output()
         .expect("failed to run sway-launch binary");
@@ -892,7 +892,7 @@ fn dry_run_says_an_existing_wait_waits_for_the_window() {
 
 #[test]
 fn dry_run_names_a_title_alongside_the_matcher() {
-    let output = sway_launch_without_a_compositor()
+    let output = sway_launch()
         .args([
             "--existing",
             "-a",
@@ -913,7 +913,7 @@ fn dry_run_names_a_title_alongside_the_matcher() {
 
 #[test]
 fn an_invalid_title_regex_is_a_usage_error() {
-    let output = sway_launch_without_a_compositor()
+    let output = sway_launch()
         .args(["--title", "(unclosed", "foot"])
         .output()
         .expect("failed to run sway-launch binary");

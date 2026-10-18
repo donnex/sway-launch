@@ -10,8 +10,7 @@
 
 mod common;
 
-use common::TempToml;
-use std::process::Command;
+use common::{sway_launch, TempToml};
 
 /// One combination of target fields, as each front end spells it.
 struct Case {
@@ -163,7 +162,7 @@ fn cases() -> Vec<Case> {
 }
 
 fn cli_accepts(case: &Case) -> bool {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_sway-launch"));
+    let mut command = sway_launch();
     command.arg("--dry-run");
     if let Some(con_id) = case.con_id {
         command.args(["--con-id", &con_id.to_string()]);
@@ -224,7 +223,7 @@ fn toml_fields(case: &Case) -> String {
 
 fn layout_accepts(case: &Case) -> bool {
     let layout = TempToml::write("rules-layout", &format!("[[step]]\n{}", toml_fields(case)));
-    Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    sway_launch()
         .args(["--layout", layout.to_str().unwrap(), "--validate"])
         .output()
         .expect("failed to run sway-launch binary")
@@ -242,7 +241,7 @@ fn binding_accepts(case: &Case) -> bool {
         "rules-bindings",
         &format!("[[binding]]\nslot = \"only\"\n{}", toml_fields(case)),
     );
-    Command::new(env!("CARGO_BIN_EXE_sway-launch"))
+    sway_launch()
         .args([
             "--template",
             template.to_str().unwrap(),
