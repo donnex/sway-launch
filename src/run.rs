@@ -64,12 +64,7 @@ pub(crate) fn run_steps(
         Vec::new()
     };
 
-    let mut container_ids = Vec::new();
-    let mut resolved_ids = HashMap::new();
-    // Only ids this invocation itself launched via `command` (Target::Exec),
-    // not ones it merely retargeted via con_id/existing/target_id — see
-    // fail_step()'s doc comment.
-    let mut launched_container_ids = Vec::new();
+    let mut progress = RunProgress::default();
     // Every action across every step, each tagged with its 1-based step
     // number (steps.len() can be several, unlike a single direct-CLI
     // invocation) — see step_action_records_json()'s doc comment.
@@ -106,48 +101,20 @@ pub(crate) fn run_steps(
         // one its filter rejected that carries its marker, is its progress,
         // brought back from the staging workspace and rolled back when it's
         // this run's.
-        for (container_id, ownership) in failed_launch_windows(&error) {
+        for container_id in progress.record_failed(&steps[index], &error) {
             if let Some(staged) = staged.as_ref() {
                 bring_back(&staged.staging, container_id, args.verbose);
             }
-            container_ids.push(container_id);
-            if ownership == sway_launch::LaunchOwnership::Launched {
-                launched_container_ids.push(container_id);
-            }
         }
-        release_staged(
-            &mut staged,
-            steps,
-            args.verbose,
-            &mut launched_container_ids,
-            &mut container_ids,
-            &mut resolved_ids,
-        );
-        fail_step(
-            args,
-            &launched_container_ids,
-            &container_ids,
-            &resolved_ids,
-            index,
-            error,
-        );
+        progress.fail(&mut staged, steps, args, index, error);
     }
 
     for (index, step) in steps.iter().enumerate() {
         if let Err(message) = sway_launch::interrupt::check() {
-            release_staged(
+            progress.fail(
                 &mut staged,
                 steps,
-                args.verbose,
-                &mut launched_container_ids,
-                &mut container_ids,
-                &mut resolved_ids,
-            );
-            fail_step(
                 args,
-                &launched_container_ids,
-                &container_ids,
-                &resolved_ids,
                 index,
                 format!("{} before it started", message).into(),
             );
@@ -180,7 +147,7 @@ pub(crate) fn run_steps(
             continue;
         }
 
-        let sway_launch = match plan_step(step, args, &resolved_ids) {
+        let sway_launch = match plan_step(step, args, &progress.resolved_ids) {
             Ok(sway_launch) => sway_launch::SwayLaunch {
                 require_launch_on_focused_workspace: true,
                 warn_on_misplaced_launch: step.command.is_some(),
@@ -195,24 +162,7 @@ pub(crate) fn run_steps(
                     .collect(),
                 ..sway_launch
             },
-            Err(error) => {
-                release_staged(
-                    &mut staged,
-                    steps,
-                    args.verbose,
-                    &mut launched_container_ids,
-                    &mut container_ids,
-                    &mut resolved_ids,
-                );
-                fail_step(
-                    args,
-                    &launched_container_ids,
-                    &container_ids,
-                    &resolved_ids,
-                    index,
-                    error.into(),
-                )
-            }
+            Err(error) => progress.fail(&mut staged, steps, args, index, error.into()),
         };
 
         let staged_window = staged
@@ -242,25 +192,17 @@ pub(crate) fn run_steps(
                         &mut stdout_failure,
                     );
                 }
-                container_ids.push(outcome.container_id);
-                // Only a window this run can prove it launched is eligible for
-                // --rollback-on-error's kill. A step that retargets an existing
-                // window (con_id/existing/target_id) reports no ownership at
-                // all, and neither does one whose window was adopted via the
-                // PID-marker fallback rather than confirmed — see
-                // sway_launch::LaunchOwnership.
-                if outcome.launch_ownership == Some(sway_launch::LaunchOwnership::Launched) {
-                    launched_container_ids.push(outcome.container_id);
-                } else if args.verbose && step.command.is_some() {
+                progress.record(step, outcome.container_id, outcome.launch_ownership);
+                if outcome.launch_ownership != Some(sway_launch::LaunchOwnership::Launched)
+                    && args.verbose
+                    && step.command.is_some()
+                {
                     diagnostic!(
                         "step {}: container {} was adopted rather than confirmed as launched by \
                          this run, so --rollback-on-error will leave it open",
                         index + 1,
                         outcome.container_id
                     );
-                }
-                if let Some(id) = step.id.as_deref() {
-                    resolved_ids.insert(id.to_string(), outcome.container_id);
                 }
                 for warning in &outcome.warnings {
                     let warning = step_error(args, index, warning);
@@ -301,41 +243,16 @@ pub(crate) fn run_steps(
                 // failure), so listing it among the open windows would assert
                 // something this run never saw. error.container_id still
                 // names it either way.
-                for (position, (container_id, ownership)) in
-                    failed_launch_windows(&error).into_iter().enumerate()
-                {
-                    container_ids.push(container_id);
-                    if let (0, Some(id)) = (position, step.id.as_deref()) {
-                        resolved_ids.insert(id.to_string(), container_id);
-                    }
-                    if ownership == sway_launch::LaunchOwnership::Launched {
-                        launched_container_ids.push(container_id);
-                    }
-                }
-                release_staged(
-                    &mut staged,
-                    steps,
-                    args.verbose,
-                    &mut launched_container_ids,
-                    &mut container_ids,
-                    &mut resolved_ids,
-                );
-                fail_step(
-                    args,
-                    &launched_container_ids,
-                    &container_ids,
-                    &resolved_ids,
-                    index,
-                    error,
-                )
+                progress.record_failed(step, &error);
+                progress.fail(&mut staged, steps, args, index, error)
             }
         }
     }
 
     if args.json {
         let mut result = serde_json::json!({
-            "container_ids": container_ids,
-            "containers": resolved_ids,
+            "container_ids": progress.container_ids,
+            "containers": progress.resolved_ids,
             "actions": actions,
         });
         if !warnings.is_empty() {
@@ -798,6 +715,126 @@ fn arrange_staged(
     .map_err(with_window)
 }
 
+/// What a run has resolved so far: every window, the named ones by `id`
+/// (`--json`'s `containers`), and the ones `--rollback-on-error` may close.
+/// Every step records through `record()`, so the three can't disagree about
+/// a window, and every failure goes through `fail()`, so none leaves a
+/// staged window behind.
+#[derive(Debug, Default, PartialEq)]
+struct RunProgress {
+    container_ids: Vec<i64>,
+    resolved_ids: HashMap<String, i64>,
+    /// Only ids this invocation itself launched via `command`
+    /// (`Target::Exec`), not ones it merely retargeted via
+    /// con_id/existing/target_id — see `fail_step()`'s doc comment.
+    launched_container_ids: Vec<i64>,
+}
+
+impl RunProgress {
+    /// Records a window `step` resolved: as progress, under the step's `id`
+    /// when it has one, and for rollback only when this run can prove it
+    /// launched it. A step that retargets an existing window reports no
+    /// ownership at all, and neither does one whose window was adopted via
+    /// the PID-marker fallback rather than confirmed — see
+    /// `sway_launch::LaunchOwnership`.
+    fn record(
+        &mut self,
+        step: &layout::LayoutStep,
+        container_id: i64,
+        ownership: Option<sway_launch::LaunchOwnership>,
+    ) {
+        if let Some(id) = step.id.as_deref() {
+            self.resolved_ids.insert(id.to_string(), container_id);
+        }
+        self.record_unnamed(container_id, ownership);
+    }
+
+    fn record_unnamed(
+        &mut self,
+        container_id: i64,
+        ownership: Option<sway_launch::LaunchOwnership>,
+    ) {
+        self.container_ids.push(container_id);
+        if ownership == Some(sway_launch::LaunchOwnership::Launched) {
+            self.launched_container_ids.push(container_id);
+        }
+    }
+
+    /// Records every window a failed step is known to have opened or
+    /// resolved (`failed_launch_windows()`), the first under the step's
+    /// `id`, and returns their ids.
+    fn record_failed(
+        &mut self,
+        step: &layout::LayoutStep,
+        error: &sway_launch::RunError,
+    ) -> Vec<i64> {
+        let windows = failed_launch_windows(error);
+        for (position, &(container_id, ownership)) in windows.iter().enumerate() {
+            if position == 0 {
+                self.record(step, container_id, Some(ownership));
+            } else {
+                self.record_unnamed(container_id, Some(ownership));
+            }
+        }
+        windows
+            .into_iter()
+            .map(|(container_id, _)| container_id)
+            .collect()
+    }
+
+    /// Records a staged launch's result, a success or a failure, the same way
+    /// a sequential step's would be, and returns the windows it holds.
+    fn record_staged(
+        &mut self,
+        step: &layout::LayoutStep,
+        result: &Result<sway_launch::RunOutcome, sway_launch::RunError>,
+    ) -> Vec<i64> {
+        match result {
+            Ok(outcome) => {
+                self.record(step, outcome.container_id, outcome.launch_ownership);
+                vec![outcome.container_id]
+            }
+            Err(error) => self.record_failed(step, error),
+        }
+    }
+
+    /// The progress a failed run reports as still open, leaving out anything
+    /// rollback touched, whether it closed or not: a rolled-back window is
+    /// gone, and one whose kill failed or that ignored its close request is
+    /// in a state this run can't vouch for. The failed ones are still
+    /// reported, under their own field — see `RollbackOutcome`.
+    fn left_open(&self, attempted: &[i64]) -> PartialProgress {
+        PartialProgress {
+            container_ids: self
+                .container_ids
+                .iter()
+                .copied()
+                .filter(|id| !attempted.contains(id))
+                .collect(),
+            containers: self
+                .resolved_ids
+                .iter()
+                .filter(|(_, id)| !attempted.contains(id))
+                .map(|(name, id)| (name.clone(), *id))
+                .collect(),
+        }
+    }
+
+    /// Fails the run at step `index`: brings every staged window back first
+    /// (`release_staged()`), then reports and rolls back (`fail_step()`).
+    fn fail(
+        mut self,
+        staged: &mut Option<StagedLaunches>,
+        steps: &[layout::LayoutStep],
+        args: &Args,
+        index: usize,
+        error: sway_launch::RunError,
+    ) -> ! {
+        release_staged(staged, steps, args.verbose, &mut self);
+        fail_step(args, &self, index, error)
+    }
+}
+
 /// Before a `--concurrent` run fails, moves every staged window its turn
 /// never came for to the build workspace, rather than leaving it on the
 /// staging workspace out of sight, and counts it as progress: reported, and
@@ -806,28 +843,12 @@ fn release_staged(
     staged: &mut Option<StagedLaunches>,
     steps: &[layout::LayoutStep],
     verbose: bool,
-    launched_container_ids: &mut Vec<i64>,
-    container_ids: &mut Vec<i64>,
-    resolved_ids: &mut HashMap<String, i64>,
+    progress: &mut RunProgress,
 ) {
     let Some(staged) = staged.take() else { return };
-    for (index, result) in staged.windows {
-        let windows = match result {
-            Ok(outcome) => vec![(outcome.container_id, outcome.launch_ownership)],
-            Err(error) => failed_launch_windows(&error)
-                .into_iter()
-                .map(|(container_id, ownership)| (container_id, Some(ownership)))
-                .collect(),
-        };
-        for (position, (container_id, ownership)) in windows.into_iter().enumerate() {
+    for (index, result) in &staged.windows {
+        for container_id in progress.record_staged(&steps[*index], result) {
             bring_back(&staged.staging, container_id, verbose);
-            container_ids.push(container_id);
-            if let (0, Some(id)) = (position, steps[index].id.as_deref()) {
-                resolved_ids.insert(id.to_string(), container_id);
-            }
-            if ownership == Some(sway_launch::LaunchOwnership::Launched) {
-                launched_container_ids.push(container_id);
-            }
         }
     }
 }
@@ -915,14 +936,14 @@ fn steps_source(args: &Args) -> String {
 /// is caught *before* that step's own `SwayLaunch::run()` ever executes, but
 /// earlier steps may already have launched real windows needing the same
 /// `--rollback-on-error` cleanup as a later step's own `run()` failure.
-/// `launched_container_ids` is only ever ids a `Target::Exec` step resolved
+/// `RunProgress.launched_container_ids` is only ever ids a `Target::Exec` step resolved
 /// *and* could prove it launched (`LaunchOwnership::Launched`) — windows this
 /// invocation retargeted via con_id/existing/target_id were already open before
 /// this invocation started, and a window merely adopted through the PID-marker
 /// fallback was never confirmed to be ours either, so rolling either back would
 /// close something this run didn't create.
 ///
-/// `container_ids`/`resolved_ids` are every step that completed before this
+/// Its `container_ids`/`resolved_ids` are every step that completed before this
 /// failure, plus the failing step's own window if it launched one, reported
 /// under `--json` so a caller can identify the windows left open — see
 /// `PartialProgress`. They're the full set, not just the launched ones: a
@@ -935,35 +956,17 @@ fn steps_source(args: &Args) -> String {
 /// for the same reason the lists are filtered.
 fn fail_step(
     args: &Args,
-    launched_container_ids: &[i64],
-    container_ids: &[i64],
-    resolved_ids: &HashMap<String, i64>,
+    run_progress: &RunProgress,
     index: usize,
     error: sway_launch::RunError,
 ) -> ! {
     let rollback_outcome = if args.rollback_on_error {
-        rollback(launched_container_ids)
+        rollback(&run_progress.launched_container_ids)
     } else {
         RollbackOutcome::default()
     };
-    // Anything rollback touched is filtered out, whether it closed or not: a
-    // rolled-back window is gone, and one whose kill failed or that ignored
-    // its close request is in a state this run can't vouch for. Reporting either as still-open partial
-    // progress would assert something it doesn't know. The failed ones are
-    // still reported, under their own field — see RollbackOutcome.
     let attempted: Vec<i64> = rollback_outcome.attempted().copied().collect();
-    let progress = PartialProgress {
-        container_ids: container_ids
-            .iter()
-            .copied()
-            .filter(|id| !attempted.contains(id))
-            .collect(),
-        containers: resolved_ids
-            .iter()
-            .filter(|(_, id)| !attempted.contains(id))
-            .map(|(name, id)| (name.clone(), *id))
-            .collect(),
-    };
+    let progress = run_progress.left_open(&attempted);
     let container_id = error.container_id.filter(|id| !attempted.contains(id));
     fail_with_rollback(
         args.json,

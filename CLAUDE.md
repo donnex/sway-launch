@@ -87,7 +87,10 @@ instruction set: where it disagrees with this file or the code, it's stale. The 
 - `src/run.rs` — the `--layout`/`--template` run (#134): `run_steps()`'s per-step loop
   (`--continue-on-timeout`, `target_id` skipping), `plan_step()`/`plan_steps_offline()`,
   `--concurrent`'s staging (`stage_launches()`/`arrange_staged()`/`release_staged()`), the run
-  lock (`acquire_run_lock()`) and `--rollback-on-error` (`rollback()`). A child of `main.rs`, so it
+  lock (`acquire_run_lock()`) and `--rollback-on-error` (`rollback()`). A run's progress is one
+  `RunProgress` (#135): every window goes in through `record()`/`record_failed()`, so `--json`'s
+  `container_ids`/`containers` and the rollback list can't disagree, and every failure through
+  its `fail()`, which runs `release_staged()` before `fail_step()`. A child of `main.rs`, so it
   uses the printing helpers and `Args` directly; measured by the coverage gate like any module.
 - `src/layout.rs` — `--layout`'s TOML schema (`Layout`/`LayoutStep`) and
   `LayoutStep::to_sway_launch()`, which turns one step into a `SwayLaunch`.
@@ -369,8 +372,8 @@ checks those by hand, because the derive macro doesn't enforce `requires` reliab
   has. Then each step runs in order as before, a staged one through `arrange_staged()`: the window
   is moved to the build workspace and focused (where a new window would open; every template's
   shape matches, `every_shipped_template_builds_the_same_shape_with_concurrent`), then the step
-  runs against `Target::ConId` with the launch's ownership carried over. Every failure path first
-  calls `release_staged()`, so no window is left on the staging workspace and each counts as
+  runs against `Target::ConId` with the launch's ownership carried over. Every failure path goes
+  through `RunProgress::fail()`, which calls `release_staged()` first, so no window is left on the staging workspace and each counts as
   progress and for rollback. While staged windows wait, a step's `SwayLaunch.excluded_containers`
   holds them (`staged_window_owners()`), so `Existing` resolution (`tree::existing_candidates()`)
   sees what a sequential run would; a `ConId` naming one fails before acting (#190).

@@ -252,3 +252,57 @@ fn plan_step_rejects_an_id_already_resolved_by_a_real_run() {
         Some("id \"main\" was already used by an earlier step".to_string())
     );
 }
+
+fn named_step(id: &str) -> layout::LayoutStep {
+    layout_steps(&format!("[[step]]\nid = {id:?}\ncommand = \"foot\"\n"))
+        .pop()
+        .expect("one step")
+}
+
+fn failed_launch() -> sway_launch::RunError {
+    sway_launch::RunError {
+        container_id: Some(12),
+        launch_ownership: Some(sway_launch::LaunchOwnership::Launched),
+        also_launched: vec![13],
+        ..sway_launch::RunError::from("timed out".to_string())
+    }
+}
+
+#[test]
+fn a_failed_staged_step_and_a_failed_sequential_step_record_the_same_progress() {
+    // #135: the --concurrent staging failure used to leave the failed step's
+    // window out of `containers`.
+    let step = named_step("editor");
+    let mut sequential = RunProgress::default();
+    assert_eq!(sequential.record_failed(&step, &failed_launch()), [12, 13]);
+    let mut staged = RunProgress::default();
+    assert_eq!(staged.record_staged(&step, &Err(failed_launch())), [12, 13]);
+    assert_eq!(staged, sequential);
+    let left_open = sequential.left_open(&[]);
+    assert_eq!(left_open.container_ids, [12, 13]);
+    assert_eq!(
+        left_open.containers,
+        HashMap::from([("editor".to_string(), 12)])
+    );
+    assert_eq!(sequential.launched_container_ids, [12, 13]);
+}
+
+#[test]
+fn run_progress_rolls_back_only_launched_windows_but_reports_every_one() {
+    let mut progress = RunProgress::default();
+    progress.record(
+        &named_step("adopted"),
+        10,
+        Some(sway_launch::LaunchOwnership::Adopted),
+    );
+    progress.record(&named_step("retargeted"), 11, None);
+    progress.record_staged(&named_step("launched"), &staged(12));
+    assert_eq!(progress.container_ids, [10, 11, 12]);
+    assert_eq!(progress.launched_container_ids, [12]);
+    let left_open = progress.left_open(&[12]);
+    assert_eq!(left_open.container_ids, [10, 11]);
+    assert_eq!(
+        left_open.containers,
+        HashMap::from([("adopted".to_string(), 10), ("retargeted".to_string(), 11)])
+    );
+}
