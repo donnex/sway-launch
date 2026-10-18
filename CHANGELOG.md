@@ -279,6 +279,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   distribution-packaged Rust — gets a clear message naming `sway-launch` and the version it needs,
   instead of a dependency error about `clap`. The README's Installation section says so up front,
   and shows `cargo install --path . --locked` for building and installing in one step. (#55, #67)
+- `--help` is grouped into sections (launching, matching, acting on the window, size and position,
+  moving it, layouts and templates, run options, inspecting, general), with a usage line for each
+  way to run the tool and a few examples at the end. `-h` gives a one-line summary per flag and
+  `--help` the full detail; the man page follows the same sections. (#119)
 - Prebuilt Linux x86_64 release binaries, statically linked against musl, so they run on any
   distribution whatever its glibc version. The archive also includes `LICENSE`, a `sway-launch(1)`
   man page generated from the same definition as `--help`, and ready-made bash, zsh and fish

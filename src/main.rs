@@ -117,158 +117,399 @@ fn per_window_but_filters_and(extras: &[&'static str]) -> Vec<&'static str> {
         .collect()
 }
 
+const HEADING_LAUNCH: &str = "Launch a window";
+const HEADING_MATCH: &str = "Match the window";
+const HEADING_OPEN_WINDOW: &str = "Use an open window instead";
+const HEADING_ACT: &str = "Act on the window";
+const HEADING_GEOMETRY: &str = "Size and position";
+const HEADING_MOVE: &str = "Move the window";
+const HEADING_LAYOUTS: &str = "Layouts and templates";
+const HEADING_RUN: &str = "Run and output";
+const HEADING_INSPECT: &str = "Inspect";
+const HEADING_GENERAL: &str = "General";
+
+const USAGE: &str = "sway-launch [OPTIONS] <COMMAND>
+       sway-launch [OPTIONS] --existing <-a APP_ID|-c CLASS|--mark-match MARK|--title REGEX>
+       sway-launch [OPTIONS] --con-id <ID>
+       sway-launch --layout <FILE> [OPTIONS]
+       sway-launch --template <NAME|FILE> <--apps APPS|--bindings FILE> [OPTIONS]
+       sway-launch <--list-windows|--capture [WORKSPACE]|--list-templates|--debug-events>";
+
+const EXAMPLES: &str = "Examples:
+  # Launch foot and print its container id
+  sway-launch foot
+  # Launch htop in foot as a floating window, half the screen wide
+  sway-launch -a foot -f --width 50ppt 'foot -e htop'
+  # Move the open Firefox window to workspace 2
+  sway-launch --existing -a firefox --workspace 2
+  # Fill a 2x2 grid with four terminals
+  sway-launch --template quad-grid --apps foot,foot,foot,foot
+  # List the built-in layout templates
+  sway-launch --list-templates
+
+The full guide, with layout files and templates, is in README.md.";
+
 #[derive(Parser, Debug)]
-#[clap(author, version, about, long_about = None)]
+#[clap(author, version, about, long_about = None, override_usage = USAGE,
+    after_help = EXAMPLES, disable_help_flag = true, disable_version_flag = true)]
 struct Args {
-    /// app_id match (exact and case-sensitive, not a regex). With --existing,
-    /// matches an already-open window instead of the newly launched one
-    #[clap(short, long, conflicts_with_all = ["class", "con_id", "mark_match"],
-        value_parser = sway_launch::validate_non_blank_argument)]
-    app_id: Option<String>,
+    /// The command to launch, as one string: quote it if it has arguments
+    ///
+    /// Run the way Sway's own exec runs it. sway-launch waits for the
+    /// command's window to appear, prints its container id and then applies
+    /// the actions below to it. An unquoted , or ; is refused, since Sway
+    /// would split the command on it.
+    #[clap(value_parser = sway_launch::validate_exec_command, help_heading = HEADING_LAUNCH,
+        display_order = 0, verbatim_doc_comment)]
+    command: Option<String>,
 
-    /// class match (exact and case-sensitive, not a regex). With --existing,
-    /// matches an already-open window instead of the newly launched one
-    #[clap(short, long, conflicts_with_all = ["con_id", "mark_match"],
-        value_parser = sway_launch::validate_non_blank_argument)]
-    class: Option<String>,
-
-    /// Find the window to act on by this mark (exact and case-sensitive).
-    /// Requires --existing or --list-windows
-    #[clap(long, conflicts_with_all = ["class", "con_id"],
-        value_parser = sway_launch::validate_sway_string_argument)]
-    mark_match: Option<String>,
-
-    /// Match only a window whose title matches this regular expression
-    /// (unanchored, like Sway's title= criteria). Narrows --app-id/--class,
-    /// or works alone; a launch waits past a non-matching splash window
-    #[clap(long, value_name = "REGEX", conflicts_with = "con_id",
-        value_parser = sway_launch::parse_title_pattern)]
-    title: Option<sway_launch::TitlePattern>,
-
-    /// Act on an already-open window with this container id, instead of
-    /// launching a new one
-    #[clap(long, conflicts_with = "command")]
-    con_id: Option<i64>,
-
-    /// Act on an already-open window found via --app-id/--class/--mark-match,
-    /// instead of launching a new one
-    #[clap(long, conflicts_with_all = ["command", "con_id"])]
-    existing: bool,
-
-    /// With --existing, wait up to --timeout for a matching window to open
-    /// instead of failing when none is open yet, e.g. one an autostart entry
-    /// is still starting
-    #[clap(long)]
-    wait: bool,
-
-    /// Start the launched command in this directory instead of Sway's. A
-    /// relative path is relative to the current directory
-    #[clap(long, value_name = "DIR", conflicts_with_all = ["con_id", "existing"])]
+    /// Start the command in this directory
+    ///
+    /// Instead of Sway's working directory. A relative path is relative to
+    /// the current directory, and ~ is the home directory.
+    #[clap(long, value_name = "DIR", conflicts_with_all = ["con_id", "existing"],
+        help_heading = HEADING_LAUNCH, display_order = 1, verbatim_doc_comment)]
     cwd: Option<String>,
 
-    /// Set this variable for the launched command (repeatable)
+    /// Set a variable for the command (repeatable)
     #[clap(long, value_name = "KEY=VALUE", value_parser = sway_launch::parse_env_assignment,
-        conflicts_with_all = ["con_id", "existing"])]
+        conflicts_with_all = ["con_id", "existing"], help_heading = HEADING_LAUNCH,
+        display_order = 2)]
     env: Vec<(String, String)>,
 
-    /// Change split for the window
-    #[clap(value_enum, short, long)]
+    /// Match the window by app_id (exact, case-sensitive)
+    ///
+    /// For a launch, only a window with this app_id counts as the command's
+    /// window. With --existing, finds an already-open window instead. Not a
+    /// regular expression. Wayland applications have an app_id; see
+    /// --list-windows for the values in use.
+    #[clap(short, long, conflicts_with_all = ["class", "con_id", "mark_match"],
+        value_parser = sway_launch::validate_non_blank_argument,
+        help_heading = HEADING_MATCH, verbatim_doc_comment)]
+    app_id: Option<String>,
+
+    /// Match the window by X11 class (exact, case-sensitive)
+    ///
+    /// The same as --app-id, for applications running under XWayland, which
+    /// have a class instead of an app_id.
+    #[clap(short, long, conflicts_with_all = ["con_id", "mark_match"],
+        value_parser = sway_launch::validate_non_blank_argument,
+        help_heading = HEADING_MATCH, verbatim_doc_comment)]
+    class: Option<String>,
+
+    /// Match the window by title (a regular expression)
+    ///
+    /// Unanchored, like Sway's title= criteria. Narrows --app-id/--class, or
+    /// works alone. A launch waits past a splash window whose title doesn't
+    /// match.
+    #[clap(long, value_name = "REGEX", conflicts_with = "con_id",
+        value_parser = sway_launch::parse_title_pattern,
+        help_heading = HEADING_MATCH, verbatim_doc_comment)]
+    title: Option<sway_launch::TitlePattern>,
+
+    /// Match an open window by one of its marks (exact, case-sensitive)
+    ///
+    /// Requires --existing or --list-windows.
+    #[clap(long, value_name = "MARK", conflicts_with_all = ["class", "con_id"],
+        value_parser = sway_launch::validate_sway_string_argument,
+        help_heading = HEADING_MATCH, verbatim_doc_comment)]
+    mark_match: Option<String>,
+
+    /// Act on an open window found by the match flags, launching nothing
+    ///
+    /// Exactly one window must match --app-id, --class, --mark-match or
+    /// --title; several matches are an error.
+    #[clap(long, conflicts_with_all = ["command", "con_id"],
+        help_heading = HEADING_OPEN_WINDOW, verbatim_doc_comment)]
+    existing: bool,
+
+    /// With --existing, wait for the window to open
+    ///
+    /// Waits up to --timeout for a matching window instead of failing when
+    /// none is open yet, e.g. one an autostart entry is still starting.
+    #[clap(long, help_heading = HEADING_OPEN_WINDOW, verbatim_doc_comment)]
+    wait: bool,
+
+    /// Act on the open window with this container id
+    #[clap(long, value_name = "ID", conflicts_with = "command",
+        help_heading = HEADING_OPEN_WINDOW)]
+    con_id: Option<i64>,
+
+    /// Split the window, so the next one opens beside (h) or below (v) it
+    #[clap(value_enum, short, long, help_heading = HEADING_ACT)]
     split: Option<sway_launch::Split>,
 
     /// Make the window floating
-    #[clap(short, long)]
+    #[clap(short, long, help_heading = HEADING_ACT)]
     floating: bool,
 
-    /// Make the window sticky (once floating, shows on every workspace)
-    #[clap(long)]
+    /// Make the window sticky (a floating window shows on every workspace)
+    #[clap(long, help_heading = HEADING_ACT)]
     sticky: bool,
 
     /// Make the window fullscreen
-    #[clap(long)]
+    #[clap(long, help_heading = HEADING_ACT)]
     fullscreen: bool,
 
     /// Focus the window
-    #[clap(long)]
+    #[clap(long, help_heading = HEADING_ACT)]
     focus: bool,
 
-    /// Mark the window, replacing its existing marks (a mark another window
-    /// holds moves to this one)
-    #[clap(short, long, value_parser = sway_launch::validate_sway_string_argument)]
+    /// Mark the window, replacing its marks
+    ///
+    /// A mark another window holds moves to this one.
+    #[clap(short, long, value_parser = sway_launch::validate_sway_string_argument,
+        help_heading = HEADING_ACT, verbatim_doc_comment)]
     mark: Option<String>,
+
+    /// Move the window to the scratchpad, after every other action
+    #[clap(long, help_heading = HEADING_ACT)]
+    scratchpad: bool,
+
+    /// Send a Sway command to the window, for what no flag sets (repeatable)
+    ///
+    /// Sent as "[con_id=N] COMMAND", e.g. "border none" or "opacity 0.9".
+    /// Only commands that act on one window are accepted, and their effect is
+    /// reported as unconfirmed.
+    #[clap(long = "sway-command", value_name = "COMMAND",
+        value_parser = sway_launch::validate_sway_command,
+        help_heading = HEADING_ACT, verbatim_doc_comment)]
+    sway_commands: Vec<String>,
+
+    /// Set the window's height: <n>px or <n>ppt (percent)
+    #[clap(long, value_name = "SIZE", value_parser = sway_launch::parse_size,
+        help_heading = HEADING_GEOMETRY)]
+    height: Option<sway_launch::Size>,
+
+    /// Set the window's width: <n>px or <n>ppt (percent)
+    #[clap(long, value_name = "SIZE", value_parser = sway_launch::parse_size,
+        help_heading = HEADING_GEOMETRY)]
+    width: Option<sway_launch::Size>,
+
+    /// Move a floating window to "center" or "<x>,<y>"
+    ///
+    /// Pixels relative to the window's workspace, as Sway's own move position
+    /// is; x and y may be negative.
+    #[clap(long, value_parser = sway_launch::parse_position, allow_hyphen_values = true,
+        help_heading = HEADING_GEOMETRY, verbatim_doc_comment)]
+    position: Option<sway_launch::Position>,
+
+    /// Hold the px size and position for MS ms, reapplying them if changed
+    ///
+    /// For applications that resize themselves just after opening, as
+    /// browsers do: once --height/--width (in px) and --position are
+    /// confirmed, keep watching for MS milliseconds and apply them again if
+    /// the application undoes them.
+    #[clap(long, value_name = "MS", value_parser = sway_launch::validate_settle_argument,
+        help_heading = HEADING_GEOMETRY, verbatim_doc_comment)]
+    settle: Option<u64>,
 
     // Can't be combined with --workspace: the relative move would act on
     // the workspace the window opened on, and the workspace move then drops
     // it into the target as an ordinary sibling (#45).
-    /// Move window to new column (move right)
-    #[clap(short, long, conflicts_with_all = ["workspace", "workspace_number"])]
+    /// Move the window into a new column (move right)
+    #[clap(short, long, conflicts_with_all = ["workspace", "workspace_number"],
+        help_heading = HEADING_MOVE)]
     new_column: bool,
 
-    /// Set height on the window
-    #[clap(long, value_parser = sway_launch::parse_size)]
-    height: Option<sway_launch::Size>,
-
-    /// Set width on the window
-    #[clap(long, value_parser = sway_launch::parse_size)]
-    width: Option<sway_launch::Size>,
-
-    /// Move window to new row (move down)
-    #[clap(long, short = 'r', conflicts_with_all = ["workspace", "workspace_number"])]
+    /// Move the window into a new row (move down)
+    #[clap(long, short = 'r', conflicts_with_all = ["workspace", "workspace_number"],
+        help_heading = HEADING_MOVE)]
     new_row: bool,
 
-    /// Move the window to workspace
-    #[clap(long, value_parser = sway_launch::validate_workspace_argument)]
+    /// Move the window to this workspace
+    #[clap(long, value_parser = sway_launch::validate_workspace_argument,
+        help_heading = HEADING_MOVE)]
     workspace: Option<String>,
 
-    /// Move the window to the workspace with this number, the way Sway's
-    /// "workspace number N" finds it: 2 matches a workspace named "2: web"
+    /// Move the window to the workspace with this number
+    ///
+    /// Found the way Sway's "workspace number N" finds it: 2 matches a
+    /// workspace named "2: web".
     #[clap(long, value_name = "N", conflicts_with = "workspace",
-        value_parser = sway_launch::parse_workspace_number)]
+        value_parser = sway_launch::parse_workspace_number,
+        help_heading = HEADING_MOVE, verbatim_doc_comment)]
     workspace_number: Option<i32>,
 
-    /// Move the window to output (monitor)
-    #[clap(long, value_parser = sway_launch::validate_output_argument)]
+    /// Move the window to this output (monitor)
+    #[clap(long, value_parser = sway_launch::validate_output_argument,
+        help_heading = HEADING_MOVE)]
     output: Option<String>,
 
-    /// Set position on the window. Either "center" or "<x>,<y>" in pixels, relative to its workspace (x/y may be negative)
-    #[clap(long, value_parser = sway_launch::parse_position, allow_hyphen_values = true)]
-    position: Option<sway_launch::Position>,
+    /// Build the windows a TOML layout file describes (- reads stdin)
+    ///
+    /// Each step is the equivalent of one sway-launch call's flags, so the
+    /// per-window flags above can't be combined with it. See README.md for
+    /// the format.
+    #[clap(long, value_name = "FILE",
+        conflicts_with_all = per_window_and(&["debug_events", "bindings", "apps", "param"]),
+        help_heading = HEADING_LAYOUTS, verbatim_doc_comment)]
+    layout: Option<PathBuf>,
 
-    /// Move window to the scratchpad
-    #[clap(long)]
-    scratchpad: bool,
+    /// Build a template's shape: a built-in name or a .toml file
+    ///
+    /// A template describes a shape with slots instead of applications; fill
+    /// them with --apps or --bindings. A name without .toml is a built-in
+    /// (see --list-templates), a path ending in .toml is a file, and - reads
+    /// stdin. The per-window flags above can't be combined with it.
+    #[clap(long, value_name = "NAME|FILE",
+        conflicts_with_all = per_window_and(&["debug_events", "layout"]),
+        help_heading = HEADING_LAYOUTS, verbatim_doc_comment)]
+    template: Option<PathBuf>,
 
-    /// Also send COMMAND to the window as "[con_id=N] COMMAND", for what no flag sets
-    /// ("border none", "opacity 0.9"); repeatable. Only commands that act on one window are
-    /// accepted, and their effect is reported as unconfirmed
-    #[clap(long = "sway-command", value_name = "COMMAND",
-        value_parser = sway_launch::validate_sway_command)]
-    sway_commands: Vec<String>,
+    /// Commands for the template's slots, comma-separated, in slot order
+    ///
+    /// Requires --template; conflicts with --bindings.
+    #[clap(long, conflicts_with = "bindings", help_heading = HEADING_LAYOUTS,
+        verbatim_doc_comment)]
+    apps: Option<String>,
 
-    /// Keep holding --height/--width (in px) and --position for MS ms after they are confirmed,
-    /// applying them again if the application changes them, as browsers do just after opening
-    #[clap(long, value_name = "MS", value_parser = sway_launch::validate_settle_argument)]
-    settle: Option<u64>,
+    /// Bindings file filling the template's slots (- reads stdin)
+    ///
+    /// Gives each slot its command and, optionally, the app_id or class to
+    /// match, placement and timeouts. Requires --template.
+    #[clap(long, value_name = "FILE", help_heading = HEADING_LAYOUTS, verbatim_doc_comment)]
+    bindings: Option<PathBuf>,
 
-    /// Print the planned sequence of Sway commands instead of running them —
-    /// works with a direct command or --layout/--template. Never touches
-    /// Sway IPC or launches anything
-    #[clap(long, conflicts_with_all = ["debug_events", "validate"])]
-    dry_run: bool,
+    /// Set one of the template's params (repeatable)
+    ///
+    /// Overrides the param's default and a --bindings file's [params]; see
+    /// --list-templates for each template's params. Requires --template.
+    #[clap(long, value_name = "NAME=VALUE", value_parser = template::parse_param_override,
+        help_heading = HEADING_LAYOUTS, verbatim_doc_comment)]
+    param: Vec<(String, String)>,
 
-    /// Validate a --layout/--template file (and, for --template,
-    /// --bindings/--apps resolution) without launching anything or touching
-    /// Sway IPC. Requires --layout or --template
-    #[clap(long, conflicts_with = "debug_events")]
-    validate: bool,
+    /// Build the run on this workspace
+    ///
+    /// Switches to it once before the first step, so every window opens
+    /// there. Overrides a template's own [layout] workspace.
+    #[clap(long, value_name = "WORKSPACE",
+        value_parser = sway_launch::validate_workspace_argument,
+        help_heading = HEADING_LAYOUTS, verbatim_doc_comment)]
+    on_workspace: Option<String>,
 
-    /// Seconds to wait for the launched window, and for each event-confirmed
-    /// action, to be confirmed
-    #[clap(short, long, default_value_t = 5, value_parser = sway_launch::validate_timeout_argument)]
+    /// Build the run on the workspace with this number
+    ///
+    /// --on-workspace by number, the way Sway's "workspace number N" finds
+    /// it: 2 matches a workspace named "2: web".
+    #[clap(long, value_name = "N", conflicts_with = "on_workspace",
+        value_parser = sway_launch::parse_workspace_number,
+        help_heading = HEADING_LAYOUTS, verbatim_doc_comment)]
+    on_workspace_number: Option<i32>,
+
+    /// Build the run on this output (monitor)
+    ///
+    /// Focuses it once before the first step, so a new workspace is created
+    /// there. Overrides a template's own [layout] output.
+    #[clap(long, value_name = "OUTPUT",
+        value_parser = sway_launch::validate_output_argument,
+        help_heading = HEADING_LAYOUTS, verbatim_doc_comment)]
+    on_output: Option<String>,
+
+    /// Start every step's application at once, then arrange them in order
+    ///
+    /// The applications open on a workspace of their own and are moved into
+    /// place in step order, so the run takes about as long as its slowest
+    /// application rather than all of them together. Fails if two steps'
+    /// launches end up with the same window, as single-instance applications
+    /// can.
+    #[clap(long, help_heading = HEADING_LAYOUTS, verbatim_doc_comment)]
+    concurrent: bool,
+
+    /// Carry on past a step whose window doesn't appear in time
+    ///
+    /// The step is reported and the run goes on with the next one; later
+    /// steps that target the missing window are skipped. The run still exits
+    /// non-zero.
+    #[clap(long, help_heading = HEADING_LAYOUTS, verbatim_doc_comment)]
+    continue_on_timeout: bool,
+
+    /// Close the windows this run launched if a step fails
+    ///
+    /// Only windows this run opened itself, by an earlier step or by the
+    /// failing one, never ones it retargeted through con_id, existing or
+    /// target_id.
+    #[clap(long, help_heading = HEADING_LAYOUTS, verbatim_doc_comment)]
+    rollback_on_error: bool,
+
+    /// Run even if the same layout is already being built on this workspace
+    #[clap(long, help_heading = HEADING_LAYOUTS)]
+    no_lock: bool,
+
+    /// Seconds to wait for the window, and for each action to be confirmed
+    #[clap(short, long, value_name = "SECONDS", default_value_t = 5,
+        value_parser = sway_launch::validate_timeout_argument, help_heading = HEADING_RUN)]
     timeout: u64,
 
-    /// Wait time in ms. Used for actions that do not have a corresponding Sway IPC event.
-    #[clap(short, long, default_value_t = 20)]
+    /// Milliseconds to wait before checking actions Sway sends no event for
+    #[clap(short, long, value_name = "MS", default_value_t = 20, help_heading = HEADING_RUN)]
     wait_time: u64,
+
+    /// Print the Sway commands a run would send, without running them
+    ///
+    /// Works with a command or --layout/--template. Never touches Sway or
+    /// launches anything.
+    #[clap(long, conflicts_with_all = ["debug_events", "validate"],
+        help_heading = HEADING_RUN, verbatim_doc_comment)]
+    dry_run: bool,
+
+    /// Check a --layout/--template run's files without running it
+    ///
+    /// For --template, also checks the --bindings/--apps resolution. Never
+    /// touches Sway or launches anything.
+    #[clap(long, conflicts_with = "debug_events", help_heading = HEADING_RUN,
+        verbatim_doc_comment)]
+    validate: bool,
+
+    /// Print the result as a JSON object instead of a bare container id
+    #[clap(long, help_heading = HEADING_RUN)]
+    json: bool,
+
+    /// Explain what the run is doing on stderr
+    #[clap(short, long, help_heading = HEADING_RUN)]
+    verbose: bool,
+
+    /// List every open window and exit
+    ///
+    /// Shows each window's container id, app_id, class, workspace, marks and
+    /// title. --app-id, --class, --mark-match and --title narrow it to the
+    /// windows --existing would choose between.
+    #[clap(long, conflicts_with_all = per_window_but_filters_and(&[
+        "debug_events", "layout", "template", "completions", "list_templates", "show_template",
+        "bindings", "apps", "param", "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent", "dry_run", "validate",
+    ]), help_heading = HEADING_INSPECT, verbatim_doc_comment)]
+    list_windows: bool,
+
+    /// Print a layout file that rebuilds a workspace, and exit
+    ///
+    /// The focused workspace if none is named: its windows' splits, sizes and
+    /// marks, and floating windows' size and position. Each window's command
+    /// is a guess from its app_id or class. Tabbed and stacked containers
+    /// can't be captured.
+    #[clap(long, value_name = "WORKSPACE", num_args = 0..=1, conflicts_with_all = per_window_and(&[
+        "debug_events", "layout", "template", "completions", "list_templates", "list_windows",
+        "show_template", "bindings", "apps", "param", "rollback_on_error", "continue_on_timeout",
+        "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent", "dry_run",
+        "validate", "json",
+    ]), help_heading = HEADING_INSPECT, verbatim_doc_comment)]
+    capture: Option<Option<String>>,
+
+    /// List the built-in templates and exit
+    #[clap(long, conflicts_with_all = per_window_and(&[
+        "debug_events", "layout", "template", "completions", "bindings", "apps", "param",
+        "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent", "dry_run", "validate", "show_template",
+    ]), help_heading = HEADING_INSPECT)]
+    list_templates: bool,
+
+    /// Print a template's TOML and exit
+    ///
+    /// A built-in name or a path ending in .toml, as for --template. With
+    /// --json, prints {"name": ..., "contents": "..."}.
+    #[clap(long, value_name = "NAME|FILE", conflicts_with_all = per_window_and(&[
+        "debug_events", "layout", "template", "completions", "bindings", "apps", "param",
+        "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent", "dry_run", "validate",
+    ]), help_heading = HEADING_INSPECT, verbatim_doc_comment)]
+    show_template: Option<PathBuf>,
 
     // A standalone mode like --completions/--list-templates: it never acts
     // on a window, so a command or per-window flag alongside it could only
@@ -281,166 +522,67 @@ struct Args {
     //
     // Kept as `//` rather than `///`: clap renders every doc-comment
     // paragraph into `--help`, where these notes mean nothing to a user.
-    /// Print every Sway IPC event until interrupted, one JSON object per line
-    /// with --json. Can't be combined with a command or per-window flags
+    /// Print every Sway event until interrupted
+    ///
+    /// One JSON object per line with --json. Can't be combined with a command
+    /// or per-window flags.
     #[clap(short, long, conflicts_with_all = per_window_and(&[
         "bindings", "apps", "param", "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent",
-    ]))]
+    ]), help_heading = HEADING_INSPECT, verbatim_doc_comment)]
     debug_events: bool,
 
     // Conflicts with --json, unlike the other standalone modes: a completion
     // script is shell source, so there is no JSON shape for it to take, and
     // accepting the flag could only discard it. --list-templates and
     // --show-template both do have one, which is why they don't conflict.
-    /// Generate a shell completion script and print it to stdout
-    #[clap(long, value_enum, conflicts_with_all = per_window_and(&[
+    /// Print a shell completion script and exit
+    #[clap(long, value_enum, value_name = "SHELL", conflicts_with_all = per_window_and(&[
         "debug_events", "layout", "template", "list_templates", "bindings", "apps", "param",
         "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent", "dry_run", "validate", "show_template", "json",
-    ]))]
+    ]), help_heading = HEADING_GENERAL)]
     completions: Option<clap_complete::Shell>,
 
-    /// Verbose output
-    #[clap(short, long)]
-    verbose: bool,
+    // Declared by hand only to list them under "General", last, instead of
+    // clap's own "Options" heading at the top.
+    /// Print help (see more with --help)
+    #[clap(short, long, action = clap::ArgAction::Help, help_heading = HEADING_GENERAL)]
+    help: Option<bool>,
 
-    /// Print the result as a JSON object instead of a bare container id
-    #[clap(long)]
-    json: bool,
-
-    /// Run a declarative TOML layout file instead of a single command (-
-    /// reads it from stdin); see README.md for the schema. Each step is the
-    /// equivalent of one sway-launch invocation's flags, so this conflicts
-    /// with every per-window flag, which would otherwise apply to no specific
-    /// step
-    #[clap(long, conflicts_with_all = per_window_and(&["debug_events", "bindings", "apps", "param"]))]
-    layout: Option<PathBuf>,
-
-    /// Run a reusable declarative TOML layout template instead of a single
-    /// command; see README.md for the schema. Steps declare a slot instead
-    /// of an application, resolved via --bindings or --apps. Either a path
-    /// to a template file ending in .toml, - to read it from stdin, or a
-    /// built-in template name with no extension (see --list-templates).
-    /// Conflicts with --layout and every per-window flag, same reasoning as
-    /// --layout
-    #[clap(long, conflicts_with_all = per_window_and(&["debug_events", "layout"]))]
-    template: Option<PathBuf>,
-
-    /// List built-in --template names and exit
-    #[clap(long, conflicts_with_all = per_window_and(&[
-        "debug_events", "layout", "template", "completions", "bindings", "apps", "param",
-        "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent", "dry_run", "validate", "show_template",
-    ]))]
-    list_templates: bool,
-
-    /// List every open window (container id, app_id, class, workspace,
-    /// marks, title) and exit. --app-id/--class/--mark-match narrow it to the
-    /// windows --existing would choose between
-    #[clap(long, conflicts_with_all = per_window_but_filters_and(&[
-        "debug_events", "layout", "template", "completions", "list_templates", "show_template",
-        "bindings", "apps", "param", "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent", "dry_run", "validate",
-    ]))]
-    list_windows: bool,
-
-    /// Print a --layout file that rebuilds WORKSPACE (the focused one if not
-    /// given) and exit: its windows' splits, sizes, marks, and floating
-    /// windows' size and position. Each window's command is a guess from its
-    /// app_id or class. Tabbed and stacked containers can't be captured
-    #[clap(long, value_name = "WORKSPACE", num_args = 0..=1, conflicts_with_all = per_window_and(&[
-        "debug_events", "layout", "template", "completions", "list_templates", "list_windows",
-        "show_template", "bindings", "apps", "param", "rollback_on_error", "continue_on_timeout",
-        "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent", "dry_run",
-        "validate", "json",
-    ]))]
-    capture: Option<Option<String>>,
-
-    /// Print a --template's raw TOML and exit, without running it. Same
-    /// NAME_OR_PATH resolution as --template: a built-in name (see
-    /// --list-templates), or a path ending in .toml. With --json, prints
-    /// {"name": ..., "contents": "..."}
-    #[clap(long, value_name = "NAME_OR_PATH", conflicts_with_all = per_window_and(&[
-        "debug_events", "layout", "template", "completions", "bindings", "apps", "param",
-        "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent", "dry_run", "validate",
-    ]))]
-    show_template: Option<PathBuf>,
-
-    /// Bindings file supplying each --template slot's application identity
-    /// (- reads it from stdin). Requires --template; conflicts with --apps
-    #[clap(long, conflicts_with = "apps")]
-    bindings: Option<PathBuf>,
-
-    /// Comma-separated list of commands to launch into --template's slots,
-    /// in the order the template's slot steps appear. Requires --template;
-    /// conflicts with --bindings
-    #[clap(long)]
-    apps: Option<String>,
-
-    /// Set one of --template's params (see --list-templates), overriding its
-    /// default and a --bindings file's [params]. Repeatable. Requires
-    /// --template
-    #[clap(long, value_name = "NAME=VALUE", value_parser = template::parse_param_override)]
-    param: Vec<(String, String)>,
-
-    /// If a --layout/--template step fails, kill every window this
-    /// invocation itself launched, by an earlier step or by the failing step
-    /// before it failed (not one it merely retargeted via
-    /// con_id/existing/target_id), rather than leaving them open. Requires
-    /// --layout or --template
-    #[clap(long)]
-    rollback_on_error: bool,
-
-    /// If a --layout/--template step's window doesn't appear within its
-    /// timeout, report it and carry on with the next step instead of stopping
-    /// the run. Later steps that target the missing window are skipped. The
-    /// run still exits non-zero. Requires --layout or --template
-    #[clap(long)]
-    continue_on_timeout: bool,
-
-    /// Build a --layout/--template run on this workspace: switch to it once
-    /// before the first step, so every window opens there. Overrides a
-    /// template's own [layout] workspace. Requires --layout or --template
-    #[clap(long, value_name = "WORKSPACE",
-        value_parser = sway_launch::validate_workspace_argument)]
-    on_workspace: Option<String>,
-
-    /// --on-workspace by number, the way Sway's "workspace number N" finds
-    /// it: 2 matches a workspace named "2: web". Requires --layout or
-    /// --template
-    #[clap(long, value_name = "N", conflicts_with = "on_workspace",
-        value_parser = sway_launch::parse_workspace_number)]
-    on_workspace_number: Option<i32>,
-
-    /// Build a --layout/--template run on this output: focus it once before
-    /// the first step, so a new workspace is created there. Overrides a
-    /// template's own [layout] output. Requires --layout or --template
-    #[clap(long, value_name = "OUTPUT",
-        value_parser = sway_launch::validate_output_argument)]
-    on_output: Option<String>,
-
-    /// Run a --layout/--template even if another run of the same file or
-    /// template on the same workspace is still in progress. Requires
-    /// --layout or --template
-    #[clap(long)]
-    no_lock: bool,
-
-    /// Start every --layout/--template step's application at once, on a
-    /// workspace of its own, then arrange the windows in step order, so the
-    /// run takes about as long as its slowest application rather than all of
-    /// them together. Fails if two steps' launches end up with the same window,
-    /// as single-instance applications can. Requires --layout or --template
-    #[clap(long)]
-    concurrent: bool,
-
-    /// Command to execute
-    #[clap(value_parser = sway_launch::validate_exec_command)]
-    command: Option<String>,
+    /// Print the version
+    #[clap(short = 'V', long, action = clap::ArgAction::Version, help_heading = HEADING_GENERAL)]
+    version: Option<bool>,
 }
 
 /// The man page, rendered from the same `Args` definition `--help` comes
 /// from, so it can't drift from the real flags. Built only with the
 /// `generate-man` feature, which the release job uses (#109).
+///
+/// Rendered section by section so the examples get an EXAMPLES heading:
+/// `Man::render()` files `after_help` under a generic "EXTRA".
 #[cfg(feature = "generate-man")]
 fn render_man_page(out: &mut dyn std::io::Write) -> std::io::Result<()> {
-    clap_mangen::Man::new(Args::command()).render(out)
+    let man = clap_mangen::Man::new(Args::command());
+    man.render_title(out)?;
+    man.render_name_section(out)?;
+    man.render_synopsis_section(out)?;
+    man.render_description_section(out)?;
+    man.render_options_section(out)?;
+    out.write_all(man_examples_section().as_bytes())?;
+    man.render_version_section(out)
+}
+
+/// `EXAMPLES` as a roff section, its own "Examples:" line replaced by the
+/// heading and every line kept as written.
+#[cfg(feature = "generate-man")]
+fn man_examples_section() -> String {
+    let body = EXAMPLES.split_once('\n').map_or(EXAMPLES, |(_, body)| body);
+    let mut section = String::from(".SH EXAMPLES\n.nf\n");
+    for line in body.lines() {
+        section.push_str(&line.replace('\\', "\\e").replace('-', "\\-"));
+        section.push('\n');
+    }
+    section.push_str(".fi\n");
+    section
 }
 
 fn main() {

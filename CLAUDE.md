@@ -384,7 +384,12 @@ follow-up:
   rather than `#[serde(flatten)]`, which weakens `deny_unknown_fields`.
 - **README.md's help block** is `Args::command().render_help()` verbatim
   (`readme_help_block_matches_the_rendered_help`). `Args`' `///` comments are user-facing help;
-  maintainer notes go in `//` comments (`long_help_carries_no_maintainer_notes`).
+  maintainer notes go in `//` comments (`long_help_carries_no_maintainer_notes`). Every field
+  sets `help_heading` to one of the `HEADING_*` sections (#119); its first doc line is the `-h`
+  summary (short, no full stop) and any further paragraphs are `--help`'s detail, kept as
+  written by `verbatim_doc_comment`, so wrap them by hand to fit 80 columns. `USAGE` and
+  `EXAMPLES` are the usage and examples blocks, and `render_man_page()` puts `EXAMPLES` under
+  the man page's own EXAMPLES heading.
 - **Templates**: README.md's "Templates" table, `screenshots/`, `tests/template-shapes/` and each
   file's header comment, pinned by the tests described under "Screenshots" below.
 - **`tests/live_sway.rs`**: see "Tests" below.

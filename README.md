@@ -97,64 +97,99 @@ sway-launch --completions bash | sudo tee /usr/share/bash-completion/completions
 ```shell
 Launch an application, wait for its Sway window, then run follow-up actions against it
 
-Usage: sway-launch [OPTIONS] [COMMAND]
+Usage: sway-launch [OPTIONS] <COMMAND>
+       sway-launch [OPTIONS] --existing <-a APP_ID|-c CLASS|--mark-match MARK|--title REGEX>
+       sway-launch [OPTIONS] --con-id <ID>
+       sway-launch --layout <FILE> [OPTIONS]
+       sway-launch --template <NAME|FILE> <--apps APPS|--bindings FILE> [OPTIONS]
+       sway-launch <--list-windows|--capture [WORKSPACE]|--list-templates|--debug-events>
 
-Arguments:
-  [COMMAND]  Command to execute
+Launch a window:
+  [COMMAND]              The command to launch, as one string: quote it if it has arguments
+      --cwd <DIR>        Start the command in this directory
+      --env <KEY=VALUE>  Set a variable for the command (repeatable)
 
-Options:
-  -a, --app-id <APP_ID>               app_id match (exact and case-sensitive, not a regex). With --existing, matches an already-open window instead of the newly launched one
-  -c, --class <CLASS>                 class match (exact and case-sensitive, not a regex). With --existing, matches an already-open window instead of the newly launched one
-      --mark-match <MARK_MATCH>       Find the window to act on by this mark (exact and case-sensitive). Requires --existing or --list-windows
-      --title <REGEX>                 Match only a window whose title matches this regular expression (unanchored, like Sway's title= criteria). Narrows --app-id/--class, or works alone; a launch waits past a non-matching splash window
-      --con-id <CON_ID>               Act on an already-open window with this container id, instead of launching a new one
-      --existing                      Act on an already-open window found via --app-id/--class/--mark-match, instead of launching a new one
-      --wait                          With --existing, wait up to --timeout for a matching window to open instead of failing when none is open yet, e.g. one an autostart entry is still starting
-      --cwd <DIR>                     Start the launched command in this directory instead of Sway's. A relative path is relative to the current directory
-      --env <KEY=VALUE>               Set this variable for the launched command (repeatable)
-  -s, --split <SPLIT>                 Change split for the window [possible values: v, h]
-  -f, --floating                      Make the window floating
-      --sticky                        Make the window sticky (once floating, shows on every workspace)
-      --fullscreen                    Make the window fullscreen
-      --focus                         Focus the window
-  -m, --mark <MARK>                   Mark the window, replacing its existing marks (a mark another window holds moves to this one)
-  -n, --new-column                    Move window to new column (move right)
-      --height <HEIGHT>               Set height on the window
-      --width <WIDTH>                 Set width on the window
-  -r, --new-row                       Move window to new row (move down)
-      --workspace <WORKSPACE>         Move the window to workspace
-      --workspace-number <N>          Move the window to the workspace with this number, the way Sway's "workspace number N" finds it: 2 matches a workspace named "2: web"
-      --output <OUTPUT>               Move the window to output (monitor)
-      --position <POSITION>           Set position on the window. Either "center" or "<x>,<y>" in pixels, relative to its workspace (x/y may be negative)
-      --scratchpad                    Move window to the scratchpad
-      --sway-command <COMMAND>        Also send COMMAND to the window as "[con_id=N] COMMAND", for what no flag sets ("border none", "opacity 0.9"); repeatable. Only commands that act on one window are accepted, and their effect is reported as unconfirmed
-      --settle <MS>                   Keep holding --height/--width (in px) and --position for MS ms after they are confirmed, applying them again if the application changes them, as browsers do just after opening
-      --dry-run                       Print the planned sequence of Sway commands instead of running them — works with a direct command or --layout/--template. Never touches Sway IPC or launches anything
-      --validate                      Validate a --layout/--template file (and, for --template, --bindings/--apps resolution) without launching anything or touching Sway IPC. Requires --layout or --template
-  -t, --timeout <TIMEOUT>             Seconds to wait for the launched window, and for each event-confirmed action, to be confirmed [default: 5]
-  -w, --wait-time <WAIT_TIME>         Wait time in ms. Used for actions that do not have a corresponding Sway IPC event [default: 20]
-  -d, --debug-events                  Print every Sway IPC event until interrupted, one JSON object per line with --json. Can't be combined with a command or per-window flags
-      --completions <COMPLETIONS>     Generate a shell completion script and print it to stdout [possible values: bash, elvish, fish, powershell, zsh]
-  -v, --verbose                       Verbose output
-      --json                          Print the result as a JSON object instead of a bare container id
-      --layout <LAYOUT>               Run a declarative TOML layout file instead of a single command (- reads it from stdin); see README.md for the schema. Each step is the equivalent of one sway-launch invocation's flags, so this conflicts with every per-window flag, which would otherwise apply to no specific step
-      --template <TEMPLATE>           Run a reusable declarative TOML layout template instead of a single command; see README.md for the schema. Steps declare a slot instead of an application, resolved via --bindings or --apps. Either a path to a template file ending in .toml, - to read it from stdin, or a built-in template name with no extension (see --list-templates). Conflicts with --layout and every per-window flag, same reasoning as --layout
-      --list-templates                List built-in --template names and exit
-      --list-windows                  List every open window (container id, app_id, class, workspace, marks, title) and exit. --app-id/--class/--mark-match narrow it to the windows --existing would choose between
-      --capture [<WORKSPACE>]         Print a --layout file that rebuilds WORKSPACE (the focused one if not given) and exit: its windows' splits, sizes, marks, and floating windows' size and position. Each window's command is a guess from its app_id or class. Tabbed and stacked containers can't be captured
-      --show-template <NAME_OR_PATH>  Print a --template's raw TOML and exit, without running it. Same NAME_OR_PATH resolution as --template: a built-in name (see --list-templates), or a path ending in .toml. With --json, prints {"name": ..., "contents": "..."}
-      --bindings <BINDINGS>           Bindings file supplying each --template slot's application identity (- reads it from stdin). Requires --template; conflicts with --apps
-      --apps <APPS>                   Comma-separated list of commands to launch into --template's slots, in the order the template's slot steps appear. Requires --template; conflicts with --bindings
-      --param <NAME=VALUE>            Set one of --template's params (see --list-templates), overriding its default and a --bindings file's [params]. Repeatable. Requires --template
-      --rollback-on-error             If a --layout/--template step fails, kill every window this invocation itself launched, by an earlier step or by the failing step before it failed (not one it merely retargeted via con_id/existing/target_id), rather than leaving them open. Requires --layout or --template
-      --continue-on-timeout           If a --layout/--template step's window doesn't appear within its timeout, report it and carry on with the next step instead of stopping the run. Later steps that target the missing window are skipped. The run still exits non-zero. Requires --layout or --template
-      --on-workspace <WORKSPACE>      Build a --layout/--template run on this workspace: switch to it once before the first step, so every window opens there. Overrides a template's own [layout] workspace. Requires --layout or --template
-      --on-workspace-number <N>       --on-workspace by number, the way Sway's "workspace number N" finds it: 2 matches a workspace named "2: web". Requires --layout or --template
-      --on-output <OUTPUT>            Build a --layout/--template run on this output: focus it once before the first step, so a new workspace is created there. Overrides a template's own [layout] output. Requires --layout or --template
-      --no-lock                       Run a --layout/--template even if another run of the same file or template on the same workspace is still in progress. Requires --layout or --template
-      --concurrent                    Start every --layout/--template step's application at once, on a workspace of its own, then arrange the windows in step order, so the run takes about as long as its slowest application rather than all of them together. Fails if two steps' launches end up with the same window, as single-instance applications can. Requires --layout or --template
-  -h, --help                          Print help
-  -V, --version                       Print version
+Match the window:
+  -a, --app-id <APP_ID>    Match the window by app_id (exact, case-sensitive)
+  -c, --class <CLASS>      Match the window by X11 class (exact, case-sensitive)
+      --title <REGEX>      Match the window by title (a regular expression)
+      --mark-match <MARK>  Match an open window by one of its marks (exact, case-sensitive)
+
+Use an open window instead:
+      --existing     Act on an open window found by the match flags, launching nothing
+      --wait         With --existing, wait for the window to open
+      --con-id <ID>  Act on the open window with this container id
+
+Act on the window:
+  -s, --split <SPLIT>           Split the window, so the next one opens beside (h) or below (v) it [possible values: v, h]
+  -f, --floating                Make the window floating
+      --sticky                  Make the window sticky (a floating window shows on every workspace)
+      --fullscreen              Make the window fullscreen
+      --focus                   Focus the window
+  -m, --mark <MARK>             Mark the window, replacing its marks
+      --scratchpad              Move the window to the scratchpad, after every other action
+      --sway-command <COMMAND>  Send a Sway command to the window, for what no flag sets (repeatable)
+
+Size and position:
+      --height <SIZE>        Set the window's height: <n>px or <n>ppt (percent)
+      --width <SIZE>         Set the window's width: <n>px or <n>ppt (percent)
+      --position <POSITION>  Move a floating window to "center" or "<x>,<y>"
+      --settle <MS>          Hold the px size and position for MS ms, reapplying them if changed
+
+Move the window:
+  -n, --new-column             Move the window into a new column (move right)
+  -r, --new-row                Move the window into a new row (move down)
+      --workspace <WORKSPACE>  Move the window to this workspace
+      --workspace-number <N>   Move the window to the workspace with this number
+      --output <OUTPUT>        Move the window to this output (monitor)
+
+Layouts and templates:
+      --layout <FILE>             Build the windows a TOML layout file describes (- reads stdin)
+      --template <NAME|FILE>      Build a template's shape: a built-in name or a .toml file
+      --apps <APPS>               Commands for the template's slots, comma-separated, in slot order
+      --bindings <FILE>           Bindings file filling the template's slots (- reads stdin)
+      --param <NAME=VALUE>        Set one of the template's params (repeatable)
+      --on-workspace <WORKSPACE>  Build the run on this workspace
+      --on-workspace-number <N>   Build the run on the workspace with this number
+      --on-output <OUTPUT>        Build the run on this output (monitor)
+      --concurrent                Start every step's application at once, then arrange them in order
+      --continue-on-timeout       Carry on past a step whose window doesn't appear in time
+      --rollback-on-error         Close the windows this run launched if a step fails
+      --no-lock                   Run even if the same layout is already being built on this workspace
+
+Run and output:
+  -t, --timeout <SECONDS>  Seconds to wait for the window, and for each action to be confirmed [default: 5]
+  -w, --wait-time <MS>     Milliseconds to wait before checking actions Sway sends no event for [default: 20]
+      --dry-run            Print the Sway commands a run would send, without running them
+      --validate           Check a --layout/--template run's files without running it
+      --json               Print the result as a JSON object instead of a bare container id
+  -v, --verbose            Explain what the run is doing on stderr
+
+Inspect:
+      --list-windows               List every open window and exit
+      --capture [<WORKSPACE>]      Print a layout file that rebuilds a workspace, and exit
+      --list-templates             List the built-in templates and exit
+      --show-template <NAME|FILE>  Print a template's TOML and exit
+  -d, --debug-events               Print every Sway event until interrupted
+
+General:
+      --completions <SHELL>  Print a shell completion script and exit [possible values: bash, elvish, fish, powershell, zsh]
+  -h, --help                 Print help (see more with --help)
+  -V, --version              Print the version
+
+Examples:
+  # Launch foot and print its container id
+  sway-launch foot
+  # Launch htop in foot as a floating window, half the screen wide
+  sway-launch -a foot -f --width 50ppt 'foot -e htop'
+  # Move the open Firefox window to workspace 2
+  sway-launch --existing -a firefox --workspace 2
+  # Fill a 2x2 grid with four terminals
+  sway-launch --template quad-grid --apps foot,foot,foot,foot
+  # List the built-in layout templates
+  sway-launch --list-templates
+
+The full guide, with layout files and templates, is in README.md.
 ```
 
 ## Quickstart
