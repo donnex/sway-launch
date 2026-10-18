@@ -7,7 +7,7 @@
 //! the executor draws while working (observed versus merely sent) is finer
 //! than the one worth publishing.
 
-use super::tree::WindowIdentity;
+use super::tree::{SkipReason, WindowIdentity};
 use std::fmt;
 
 /// `SwayLaunch::run()`'s result: the resolved container id, plus every
@@ -159,20 +159,18 @@ pub struct ActionRecord {
     pub status: ActionStatus,
 }
 
-/// What actually happened to one planned action. `reason` on `Skipped` is a
-/// short, stable, machine-readable identifier (not prose) — the same spirit
-/// as `SwayAction::sway_command_verb()`'s stable text, not a human-facing
-/// message (that's what the existing `--verbose` `diagnostic!` next to each
-/// skip is for). Only one skip mechanism exists today (the `NewColumn`/
-/// `NewRow` guard, whose reasons are `"floating"`, `"fullscreen"` and
-/// `"trailing_workspace_edge"`), so `reason` is a plain `&'static str` rather
-/// than a nested enum — revisit if a second one ever appears.
+/// What actually happened to one planned action. `reason` on `Skipped` is
+/// the `NewColumn`/`NewRow` guard's `SkipReason`, the one skip mechanism:
+/// `--json` publishes its `as_str()`, a short, stable, machine-readable
+/// identifier in the same spirit as `SwayAction::sway_command_verb()`'s
+/// stable text, and `--verbose` its `explanation()`. An enum rather than a
+/// bare string so the name and the prose can't drift apart (#183).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionStatus {
     Changed,
     AlreadySatisfied,
     Unconfirmed,
-    Skipped { reason: &'static str },
+    Skipped { reason: SkipReason },
 }
 
 /// What `run_batch()` observed, before `SwayLaunch::run()` folds it

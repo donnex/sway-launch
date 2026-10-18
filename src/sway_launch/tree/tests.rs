@@ -1213,7 +1213,7 @@ fn move_skip_reason_flags_a_floating_window_even_with_a_single_output() {
         for direction in [MoveDirection::Right, MoveDirection::Down] {
             assert_eq!(
                 move_skip_reason(&workspace, 10, direction, multiple_outputs),
-                Some("floating")
+                Some(SkipReason::Floating)
             );
         }
     }
@@ -1225,7 +1225,7 @@ fn move_skip_reason_flags_a_fullscreen_window_with_more_than_one_output() {
         let workspace = leading_window_with_fullscreen_mode(fullscreen_mode);
         assert_eq!(
             move_skip_reason(&workspace, 10, MoveDirection::Right, true),
-            Some("fullscreen")
+            Some(SkipReason::Fullscreen)
         );
     }
 }
@@ -1254,7 +1254,7 @@ fn move_skip_reason_flags_the_trailing_edge_only_with_more_than_one_output() {
         workspace_node_tree_with_layout(2, "main", "splith", vec![leaf_node_value(10, None, None)]);
     assert_eq!(
         move_skip_reason(&workspace, 10, MoveDirection::Right, true),
-        Some("trailing_workspace_edge")
+        Some(SkipReason::TrailingWorkspaceEdge)
     );
     assert_eq!(
         move_skip_reason(&workspace, 10, MoveDirection::Right, false),
@@ -1549,4 +1549,38 @@ fn position_shows_compares_the_window_against_its_own_workspace() {
         43,
         &Position::Coordinates { x: 10, y: 20 }
     ));
+}
+
+// SkipReason
+
+#[test]
+fn skip_reason_as_str_pins_every_published_json_reason() {
+    let reasons = [
+        SkipReason::Floating,
+        SkipReason::Fullscreen,
+        SkipReason::TrailingWorkspaceEdge,
+    ];
+    assert_eq!(
+        reasons.map(SkipReason::as_str),
+        ["floating", "fullscreen", "trailing_workspace_edge"]
+    );
+}
+
+#[test]
+fn skip_reason_explanation_names_the_reason_and_the_move_it_refused() {
+    let cases = [
+        (SkipReason::Floating, "is floating"),
+        (SkipReason::Fullscreen, "is fullscreen"),
+        (SkipReason::TrailingWorkspaceEdge, "is at the trailing edge"),
+    ];
+    for (reason, opening) in cases {
+        for (direction, command) in [
+            (MoveDirection::Right, "\"move right\""),
+            (MoveDirection::Down, "\"move down\""),
+        ] {
+            let explanation = reason.explanation(direction);
+            assert!(explanation.starts_with(opening), "{explanation}");
+            assert!(explanation.contains(command), "{explanation}");
+        }
+    }
 }

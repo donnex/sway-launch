@@ -22,7 +22,7 @@ use super::query::{
     launch_placement_problems_now, workspace_now,
 };
 use super::target::Target;
-use super::tree::{MoveDirection, WorkspaceIdentity, WorkspaceLookup};
+use super::tree::{MoveDirection, SkipReason, WorkspaceIdentity, WorkspaceLookup};
 use super::values::{Position, Size, Split, WorkspaceTarget};
 use std::io::Write;
 use std::time;
@@ -447,7 +447,7 @@ impl<'a> SwayLaunch<'a> {
     fn execute_plan(
         &self,
         plan: Vec<SwayAction<'a>>,
-        mut move_skip_reason: impl FnMut(MoveDirection) -> Result<Option<&'static str>, String>,
+        mut move_skip_reason: impl FnMut(MoveDirection) -> Result<Option<SkipReason>, String>,
         mut run_actions: impl FnMut(&[SwayAction<'a>]) -> Result<Vec<ActionOutcome>, RunError>,
     ) -> Result<Vec<ActionRecord>, RunError> {
         let mut records = Vec::new();
@@ -465,7 +465,7 @@ impl<'a> SwayLaunch<'a> {
                                 "Skipping {}: container id {} {}",
                                 action.kind_name(),
                                 action.container_id,
-                                skip_explanation(reason, direction)
+                                reason.explanation(direction)
                             );
                         }
                         records.push(ActionRecord {
@@ -623,32 +623,6 @@ fn focus_moved_during_launch(
             "focus left workspace {:?} while this step's window was opening",
             expected.name
         )),
-    }
-}
-
-/// The `--verbose` prose for one of `tree::move_skip_reason()`'s reasons,
-/// completing "container id N ...".
-fn skip_explanation(reason: &str, direction: MoveDirection) -> String {
-    let command = match direction {
-        MoveDirection::Right => "move right",
-        MoveDirection::Down => "move down",
-    };
-    match reason {
-        "floating" => format!(
-            "is floating — \"{}\" would only nudge it 10 px, not give it a new column or row",
-            command
-        ),
-        "fullscreen" => format!(
-            "is fullscreen and more than one output exists — \"{}\" would send it to a \
-             different output",
-            command
-        ),
-        _ => format!(
-            "is at the trailing edge of its workspace along that axis, and more than one output \
-             exists — \"{}\" would relocate it to a different output instead of moving it \
-             within the workspace",
-            command
-        ),
     }
 }
 

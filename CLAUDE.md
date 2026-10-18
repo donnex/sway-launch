@@ -305,6 +305,8 @@ batching actions over together (`plan_groups()`) and each to `run_batch()`. Imme
 `tree::move_skip_reason()`: a floating window, or (with several outputs) a fullscreen window or one
 Sway would escalate to the next output (`is_at_the_trailing_workspace_edge()`, a replay of Sway's
 own `container_move_in_direction()`), is recorded as `Skipped { reason }` instead of being sent.
+`reason` is a `SkipReason` (in `tree.rs`), whose `as_str()` is the published `--json` value and
+`explanation()` the `--verbose` line, each an exhaustive match, so a new reason needs both (#183).
 
 Every IPC call opens its own connection through `new_connection()`, which bounds each round trip
 by `IPC_ROUND_TRIP_TIMEOUT` (independent of `--timeout`) and finds the socket with `socket_path()`:

@@ -16,7 +16,7 @@ use super::tree::{
     focused_workspace, launch_placement_problems, move_skip_reason, position_shows, present_ids,
     recheck_launched_windows, resolve_awaited_matches, resolve_matches, tiled_window_count,
     unnamed_build_workspace, window_listing, workspace_named, ContainerState, ListedWindow,
-    MoveDirection, RecheckedWindow, WorkspaceIdentity, WorkspaceLookup,
+    MoveDirection, RecheckedWindow, SkipReason, WorkspaceIdentity, WorkspaceLookup,
 };
 use super::values::{Position, TitlePattern};
 use swayipc::{Connection, Node, NodeLayout};
@@ -113,7 +113,7 @@ pub(super) fn container_state(container_id: i64) -> Result<Option<ContainerState
 pub(super) fn current_move_skip_reason(
     container_id: i64,
     direction: MoveDirection,
-) -> Result<Option<&'static str>, String> {
+) -> Result<Option<SkipReason>, String> {
     // One connection for both reads: they answer halves of a single question.
     let mut connection = new_connection()?;
 

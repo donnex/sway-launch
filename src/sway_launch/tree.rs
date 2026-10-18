@@ -630,20 +630,69 @@ pub(super) fn is_at_the_trailing_workspace_edge(
     }
 }
 
+/// Why `move_skip_reason()` refused a `NewColumn`/`NewRow`, carried by
+/// `ActionStatus::Skipped`. `as_str()` is the published `--json` `reason`
+/// value and `explanation()` the `--verbose` prose; both match every variant,
+/// so a new reason doesn't compile until it has a stable name and its own
+/// explanation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkipReason {
+    Floating,
+    Fullscreen,
+    TrailingWorkspaceEdge,
+}
+
+impl SkipReason {
+    /// The stable, machine-readable `--json` `reason` value: part of the
+    /// output contract, so never renamed.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SkipReason::Floating => "floating",
+            SkipReason::Fullscreen => "fullscreen",
+            SkipReason::TrailingWorkspaceEdge => "trailing_workspace_edge",
+        }
+    }
+
+    /// The `--verbose` prose for this reason, completing "container id N ...".
+    pub(super) fn explanation(self, direction: MoveDirection) -> String {
+        let command = match direction {
+            MoveDirection::Right => "move right",
+            MoveDirection::Down => "move down",
+        };
+        match self {
+            SkipReason::Floating => format!(
+                "is floating — \"{}\" would only nudge it 10 px, not give it a new column or row",
+                command
+            ),
+            SkipReason::Fullscreen => format!(
+                "is fullscreen and more than one output exists — \"{}\" would send it to a \
+                 different output",
+                command
+            ),
+            SkipReason::TrailingWorkspaceEdge => format!(
+                "is at the trailing edge of its workspace along that axis, and more than one \
+                 output exists — \"{}\" would relocate it to a different output instead of \
+                 moving it within the workspace",
+                command
+            ),
+        }
+    }
+}
+
 /// Why `NewColumn`/`NewRow` must not send its `move right`/`move down` to
-/// `container_id` right now, as `ActionStatus::Skipped`'s machine-readable
-/// reason — or `None` when the move is safe to send. Follows the order of
-/// Sway's own `cmd_move_in_direction()`/`container_move_in_direction()`
+/// `container_id` right now — or `None` when the move is safe to send.
+/// Follows the order of Sway's own
+/// `cmd_move_in_direction()`/`container_move_in_direction()`
 /// (`sway/commands/move.c`), which check two things before the tree walk
 /// `is_at_the_trailing_workspace_edge()` replays:
 ///
-/// - `"floating"`, on any setup: Sway nudges a floating window by 10 px and
+/// - `Floating`, on any setup: Sway nudges a floating window by 10 px and
 ///   returns, which is never a new column or row — and the rect change would
 ///   otherwise read as a confirmed move.
-/// - `"fullscreen"`, with more than one output: a fullscreen window's move
+/// - `Fullscreen`, with more than one output: a fullscreen window's move
 ///   goes straight to the next output in that direction, whatever its tree
 ///   position. With a single output there's nowhere to go and Sway no-ops.
-/// - `"trailing_workspace_edge"`, with more than one output: the tree walk.
+/// - `TrailingWorkspaceEdge`, with more than one output: the tree walk.
 ///
 /// A container that isn't in the tree yields `None`: the move's own
 /// existence check is what reports a closed window.
@@ -652,19 +701,19 @@ pub(super) fn move_skip_reason(
     container_id: i64,
     direction: MoveDirection,
     multiple_outputs: bool,
-) -> Option<&'static str> {
+) -> Option<SkipReason> {
     let node = find_node(tree, container_id)?;
     if node_is_floating(node) {
-        return Some("floating");
+        return Some(SkipReason::Floating);
     }
     if !multiple_outputs {
         return None;
     }
     if node.fullscreen_mode.is_some_and(|mode| mode != 0) {
-        return Some("fullscreen");
+        return Some(SkipReason::Fullscreen);
     }
     is_at_the_trailing_workspace_edge(tree, container_id, direction)
-        .then_some("trailing_workspace_edge")
+        .then_some(SkipReason::TrailingWorkspaceEdge)
 }
 
 fn is_parallel(layout: NodeLayout, direction: MoveDirection) -> bool {

@@ -972,8 +972,8 @@ fn exit_on_write_failure_with_status(error: &io::Error, status: i32) -> ! {
 /// action's stable flag name (`"new_column"`, `"mark"`), the field to match
 /// on; `"command"` is the Sway command text it ran, absent for a skip, which
 /// never rendered one. A `"reason"` field is added only for `"skipped"`: the
-/// machine-readable `ActionStatus::Skipped` reason (`"floating"`,
-/// `"fullscreen"`, `"trailing_workspace_edge"`), not prose.
+/// machine-readable `ActionStatus::Skipped` reason (`SkipReason::as_str()`),
+/// not prose.
 ///
 /// `"unconfirmed"` is deliberately its own status rather than folded into
 /// `"changed"`: the command was sent and the wait elapsed, but the change was
@@ -992,7 +992,7 @@ fn action_record_json(record: &sway_launch::ActionRecord) -> serde_json::Value {
         value["command"] = serde_json::json!(command);
     }
     if let sway_launch::ActionStatus::Skipped { reason } = record.status {
-        value["reason"] = serde_json::json!(reason);
+        value["reason"] = serde_json::json!(sway_launch::SkipReason::as_str(reason));
     }
     value
 }

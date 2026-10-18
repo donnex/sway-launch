@@ -194,7 +194,7 @@ fn execute_plan_judges_new_row_only_after_new_column_has_run() {
                 });
                 Ok(match direction {
                     MoveDirection::Right => None,
-                    MoveDirection::Down => Some("trailing_workspace_edge"),
+                    MoveDirection::Down => Some(SkipReason::TrailingWorkspaceEdge),
                 })
             },
             |group| {
@@ -220,7 +220,7 @@ fn execute_plan_judges_new_row_only_after_new_column_has_run() {
                 kind: "new_row",
                 command: None,
                 status: ActionStatus::Skipped {
-                    reason: "trailing_workspace_edge",
+                    reason: SkipReason::TrailingWorkspaceEdge,
                 },
             },
             ActionRecord {

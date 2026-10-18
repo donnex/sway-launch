@@ -1215,7 +1215,7 @@ fn actions_json_renders_changed_already_satisfied_and_skipped() {
             kind: "new_column",
             command: None,
             status: sway_launch::ActionStatus::Skipped {
-                reason: "trailing_workspace_edge",
+                reason: sway_launch::SkipReason::TrailingWorkspaceEdge,
             },
         },
     ];
@@ -1244,7 +1244,7 @@ fn step_action_records_json_tags_each_entry_with_a_1_based_step_number() {
         kind: "new_row",
         command: None,
         status: sway_launch::ActionStatus::Skipped {
-            reason: "trailing_workspace_edge",
+            reason: sway_launch::SkipReason::TrailingWorkspaceEdge,
         },
     }];
     assert_eq!(
