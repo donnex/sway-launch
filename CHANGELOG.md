@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--capture` now rebuilds a workspace holding a fullscreen window in the right shape. Sway keeps
+  focus on a fullscreen window when another opens beside it, so the captured file, which made the
+  window fullscreen as it launched, opened every later window behind it in reverse order, and a
+  later focus step took it out of fullscreen again, all with exit status 0. Sway also reports a
+  fullscreen window as filling its whole split, so an even split was written with a 100% width
+  step. The file now makes the window fullscreen in a final step of its own and sizes it from its
+  siblings, and the README explains how to place fullscreen in a layout file of your own. (#189)
 - A `--layout` or `--template` run now works alongside a daemon that renames workspaces as windows
   open on them (workspace-icon helpers that turn `1` into `1: <icons>`). A step could fail with a
   "focus moved" error although focus never left the workspace, and a

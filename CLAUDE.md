@@ -304,8 +304,10 @@ way. A poll cycle and the move guard each share one connection across their read
 `--debug-events` are dispatched first in `main()`, before any target is resolved. `--capture`'s
 `capture()` builds each split level by level, since splitting a container's only child changes its
 layout instead of nesting one: every child's first window opens beside its siblings first, then each
-nested child's is split and focused. Sizes come last, through each child's first window, in the
-order its module doc explains (`every_shipped_template_round_trips_through_capture` holds it to
+nested child's is split and focused. Sizes come next, through each child's first window, in the
+order its module doc explains, then fullscreen, as a retarget step of its own (#189: Sway keeps
+focus on a fullscreen window, so later launches open behind it, and `share_of()` ignores the
+`1.0` percent it reports) (`every_shipped_template_round_trips_through_capture` holds it to
 every template's shape). A command guessed from an app_id or class that isn't a plain program name
 (`is_plain_program_name()`) is written in the list form, since the client sets it (#125). It's the
 one recursion over a tree outside `tree.rs`. Every standalone mode, `--layout` and

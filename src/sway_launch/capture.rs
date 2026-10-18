@@ -9,7 +9,13 @@
 //! every child side by side, then goes back to each child that is itself a
 //! split, splits its first window (which now has siblings, so Sway wraps it in
 //! a new container) and focuses it, and builds that child the same way.
-//! Sizes come last, once every window exists; see `size_steps()`.
+//! Sizes come next, once every window exists; see `size_steps()`.
+//!
+//! Fullscreen comes last of all, on a step of its own. Sway leaves focus on a
+//! fullscreen window when another opens on its workspace and places the new
+//! one next to it, so a window made fullscreen at launch would have every
+//! later window open after it, in reverse order; and focusing another window
+//! takes it out of fullscreen.
 //!
 //! Every built-in template round-trips through it (the live suite captures
 //! each one and rebuilds it), so this is the one place outside `tree.rs` that
@@ -51,10 +57,9 @@ impl<'a> Shape<'a> {
                         ))
                     }
                 };
-                let even = 1.0 / children.len() as f64;
                 let children = children
                     .iter()
-                    .map(|child| Ok((child.percent.unwrap_or(even), Shape::of(child)?)))
+                    .map(|child| Ok((share_of(child, children), Shape::of(child)?)))
                     .collect::<Result<_, String>>()?;
                 Ok(Shape::Split {
                     horizontal,
@@ -70,6 +75,29 @@ impl<'a> Shape<'a> {
             Shape::Split { children, .. } => children[0].1.first_window(),
         }
     }
+}
+
+/// `child`'s share of the split holding it among `siblings` (`child`
+/// included). Sway reports a fullscreen container's `percent` as `1.0`, not
+/// its share of the split, so a fullscreen child takes what the others leave,
+/// or the even share when that isn't known.
+fn share_of(child: &Node, siblings: &[Node]) -> f64 {
+    let even = 1.0 / siblings.len() as f64;
+    if !is_fullscreen(child) {
+        return child.percent.unwrap_or(even);
+    }
+    siblings
+        .iter()
+        .filter(|sibling| sibling.id != child.id)
+        .map(|sibling| sibling.percent.filter(|_| !is_fullscreen(sibling)))
+        .sum::<Option<f64>>()
+        .map(|others| 1.0 - others)
+        .filter(|share| *share > 0.0 && *share < 1.0)
+        .unwrap_or(even)
+}
+
+fn is_fullscreen(node: &Node) -> bool {
+    node.fullscreen_mode == Some(1)
 }
 
 /// One `[[step]]` of the captured file, as the lines that render it.
@@ -90,6 +118,7 @@ struct Capture<'a> {
     steps: Vec<Step>,
     names: Vec<(i64, String)>,
     notes: Vec<String>,
+    fullscreen: Vec<&'a Node>,
     workspace: &'a Node,
 }
 
@@ -113,7 +142,7 @@ impl<'a> Capture<'a> {
 
     /// A step launching `window`, guessing its command from its app_id or
     /// class, and carrying its marks and state.
-    fn launch(&mut self, window: &Node, split: Option<bool>) -> Result<(), String> {
+    fn launch(&mut self, window: &'a Node, split: Option<bool>) -> Result<(), String> {
         let (key, value) = identity(window).ok_or_else(|| {
             format!(
                 "window {} has no app_id or class to guess a command from",
@@ -139,8 +168,8 @@ impl<'a> Capture<'a> {
                 ));
             }
         }
-        if window.fullscreen_mode == Some(1) {
-            fields.push(("fullscreen", "true".to_string()));
+        if is_fullscreen(window) {
+            self.fullscreen.push(window);
         }
         if window.node_type == NodeType::FloatingCon {
             fields.push(("floating", "true".to_string()));
@@ -363,6 +392,7 @@ pub(super) fn capture(workspace: &Node) -> Result<String, String> {
         steps: Vec::new(),
         names: Vec::new(),
         notes: Vec::new(),
+        fullscreen: Vec::new(),
         workspace,
     };
     match &tiled {
@@ -384,6 +414,9 @@ pub(super) fn capture(workspace: &Node) -> Result<String, String> {
     }
     if let Some(shape) = &tiled {
         capture.size_steps(shape);
+    }
+    for window in std::mem::take(&mut capture.fullscreen) {
+        capture.retarget(window, vec![("fullscreen", "true".to_string())]);
     }
 
     let mut rendered = format!(

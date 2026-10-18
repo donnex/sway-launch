@@ -5810,6 +5810,109 @@ fn capture_keeps_a_floating_windows_geometry_and_mark() {
     );
 }
 
+/// Runs a layout file with `--json` on the focused workspace, asserting it
+/// succeeded, and returns its windows' ids, each closed again on drop.
+fn run_layout_for_ids(file: &TempToml) -> (Vec<i64>, Vec<KillOnDrop>) {
+    let output = sway_launch_command()
+        .args([
+            "--layout",
+            file.to_str().unwrap(),
+            "--timeout",
+            "10",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        std::fs::read_to_string(file.to_str().unwrap()).unwrap_or_default()
+    );
+    let result: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout is the --json result");
+    let ids: Vec<i64> = result["container_ids"]
+        .as_array()
+        .expect("container_ids is a list")
+        .iter()
+        .map(|id| id.as_i64().expect("an id"))
+        .collect();
+    let mut unique = ids.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    let guards = unique.into_iter().map(KillOnDrop).collect();
+    (ids, guards)
+}
+
+#[test]
+fn capture_rebuilds_a_workspace_holding_a_fullscreen_window() {
+    let built = fresh_workspace();
+    // #189: Sway leaves focus on a fullscreen window when another opens on
+    // its workspace and places the new one next to it, and reports its
+    // percent as 1.0. A capture that made the window fullscreen at launch, or
+    // sized it from that percent, rebuilt one | [three / four] | two, with
+    // nothing fullscreen at the end.
+    let layout = TempToml::write(
+        "capture-fullscreen-source",
+        r#"
+[[step]]
+command = "foot"
+app_id = "foot"
+split = "h"
+
+[[step]]
+command = "foot"
+app_id = "foot"
+
+[[step]]
+id = "three"
+command = "foot"
+app_id = "foot"
+
+[[step]]
+target_id = "three"
+split = "v"
+focus = true
+
+[[step]]
+command = "foot"
+app_id = "foot"
+"#,
+    );
+    let mut connection = connect();
+    let (ids, built_guards) = run_layout_for_ids(&layout);
+    let shape = anonymous_shape(&mut connection, &built);
+    run_command_ok(
+        &mut connection,
+        &format!("[con_id={}] fullscreen enable", ids[0]),
+    );
+    let file = capture_to_file(&built, "capture-fullscreen");
+    let captured = std::fs::read_to_string(file.to_str().unwrap()).unwrap_or_default();
+    assert!(
+        !captured.contains("ppt"),
+        "an even split is left unsized:\n{captured}"
+    );
+    assert!(
+        captured.trim_end().ends_with("fullscreen = true"),
+        "fullscreen comes last:\n{captured}"
+    );
+    drop(built_guards);
+
+    let replayed = fresh_workspace();
+    let (replayed_ids, _replayed_guards) = run_layout_for_ids(&file);
+    let first = get_settled_node(&mut connection, replayed_ids[0]);
+    assert_eq!(first.fullscreen_mode, Some(1), "{captured}");
+    run_command_ok(
+        &mut connection,
+        &format!("[con_id={}] fullscreen disable", replayed_ids[0]),
+    );
+    assert_eq!(
+        anonymous_shape(&mut connection, &replayed),
+        shape,
+        "{captured}"
+    );
+}
+
 #[test]
 fn capture_never_replays_an_app_id_as_shell_code() {
     fresh_workspace();

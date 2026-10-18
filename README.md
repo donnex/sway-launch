@@ -466,7 +466,9 @@ one `--sway-command` per entry). Each is validated the same way as its flag, and
 own `timeout`/`wait_time` takes the command line's `--timeout`/`--wait-time`. A step's `command` is
 checked against the same Sway-parsing rules as the command line's (see
 [Launching a command](#launching-a-command)), so `--validate` catches an unquoted `,`/`;` or an
-embedded newline before anything launches.
+embedded newline before anything launches. Steps launch next to the focused window, which a
+fullscreen window keeps, so put `fullscreen = true` on a `target_id` step after the last launch
+(see [Fullscreen](#fullscreen)).
 
 Exactly one of `command`, `con_id`, `existing = true` or `target_id` is required per step, and only
 one of `app_id`, `class` and `mark_match`, as on the command line. Two keys exist only in files:
@@ -711,7 +713,7 @@ sway-launch --layout my-workspace.toml --on-workspace 4
 
 The file opens each window where it has to open to rebuild the same splits, then sets the sizes,
 and finishes with the floating windows' size and position. Marks, sticky and fullscreen are kept
-too. It can't know how a window was started, so each step's `command` is a guess from the window's
+too, fullscreen on a step of its own at the very end (see [Fullscreen](#fullscreen) for why). It can't know how a window was started, so each step's `command` is a guess from the window's
 app_id (or its class, lowercased): check and edit the commands before running the file. A client
 sets its own app_id, so one that isn't a plain program name (letters, digits, `.`, `_`, `+`, `-`) is
 written in the list form, `command = ["..."]`, which runs it as a single word rather than as shell
@@ -854,6 +856,12 @@ Makes the window fullscreen.
 ```shell
 sway-launch --fullscreen foot
 ```
+
+Sway keeps focus on a fullscreen window when another window opens on its workspace, and places the
+new window right after it, so windows launched after it open behind it, unfocused and in reverse
+order. Focusing another window on the workspace also takes it out of fullscreen. In a layout file,
+make a window fullscreen last, on a step of its own with `target_id`, once every other window is
+open and sized.
 
 ### Focus
 

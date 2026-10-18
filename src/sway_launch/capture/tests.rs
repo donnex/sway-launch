@@ -305,3 +305,65 @@ fn plain_program_names_are_letters_digits_and_a_few_punctuation_marks() {
         assert!(!is_plain_program_name(unsafe_name), "{unsafe_name}");
     }
 }
+
+#[test]
+fn capture_makes_a_fullscreen_window_fullscreen_last_and_ignores_its_reported_percent() {
+    // one | two | [three / four], even, with one fullscreen: Sway reports
+    // one's percent as 1.0, which isn't its share of the split.
+    let mut fullscreen = window(10, "one", 1.0);
+    fullscreen["fullscreen_mode"] = serde_json::json!(1);
+    let workspace = workspace(
+        "splith",
+        vec![
+            fullscreen,
+            window(11, "two", 1.0 / 3.0),
+            split(
+                12,
+                "splitv",
+                1.0 / 3.0,
+                vec![window(13, "three", 0.5), window(14, "four", 0.5)],
+            ),
+        ],
+        vec![],
+    );
+    let captured = capture(&workspace).expect("captures");
+    assert_eq!(
+        steps(&captured),
+        [
+            r#"id = "one"; command = "one"; app_id = "one"; split = "h""#,
+            r#"id = "two"; command = "two"; app_id = "two""#,
+            r#"id = "three"; command = "three"; app_id = "three""#,
+            r#"target_id = "three"; split = "v"; focus = true"#,
+            r#"id = "four"; command = "four"; app_id = "four""#,
+            r#"target_id = "one"; fullscreen = true"#,
+        ]
+    );
+    assert!(!captured.contains("# Note"), "{captured}");
+}
+
+#[test]
+fn capture_gives_a_fullscreen_window_what_its_siblings_leave() {
+    let mut fullscreen = window(11, "b", 1.0);
+    fullscreen["fullscreen_mode"] = serde_json::json!(1);
+    let workspace = workspace("splith", vec![window(10, "a", 0.3), fullscreen], vec![]);
+    assert_eq!(
+        steps(&capture(&workspace).expect("captures"))[2..],
+        [
+            r#"target_id = "b"; width = "70ppt""#,
+            r#"target_id = "b"; fullscreen = true"#,
+        ]
+    );
+}
+
+#[test]
+fn capture_makes_a_floating_fullscreen_window_fullscreen_after_its_geometry() {
+    let mut floating = leaf_node_value(20, Some("foot"), None);
+    floating["type"] = serde_json::json!("floating_con");
+    floating["fullscreen_mode"] = serde_json::json!(1);
+    floating["rect"] = serde_json::json!({"x": 0, "y": 0, "width": 400, "height": 300});
+    let workspace = workspace("splith", vec![], vec![floating]);
+    let captured = steps(&capture(&workspace).expect("captures"));
+    assert_eq!(captured.len(), 2);
+    assert!(!captured[0].contains("fullscreen"), "{captured:?}");
+    assert_eq!(captured[1], r#"target_id = "foot"; fullscreen = true"#);
+}
