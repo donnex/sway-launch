@@ -535,6 +535,7 @@ pub fn resolve(
     template: &Template,
     bindings: &Bindings,
     overrides: &[(String, String)],
+    directory_check: sway_launch::DirectoryCheck,
 ) -> Result<Vec<LayoutStep>, ResolveError> {
     let mut params: HashMap<&str, &str> = template
         .params
@@ -642,12 +643,23 @@ pub fn resolve(
                 ResolveError::Bindings(format!("binding for slot {:?}: {}", slot, error))
             })?;
 
-            if binding.command.is_none() && (binding.cwd.is_some() || !binding.env.is_empty()) {
-                return Err(ResolveError::Bindings(format!(
-                    "binding for slot {:?}: cwd and env only apply to a launched command",
-                    slot
-                )));
-            }
+            // A template step has no cwd/env, so a mistake in either is
+            // always the binding's (#157); `to_sway_launch()` checks them
+            // again, which can then no longer fail.
+            let env: Vec<(String, String)> = binding
+                .env
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect();
+            sway_launch::launch_setup(
+                binding.command.is_some(),
+                binding.cwd.as_deref(),
+                &env,
+                directory_check,
+            )
+            .map_err(|error| {
+                ResolveError::Bindings(format!("binding for slot {:?}: {}", slot, error))
+            })?;
 
             used_slots.insert(slot);
             (

@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A mistake in a template binding's `cwd` or `env` (a missing directory, a bad variable name, a `$`
+  in a value) is now reported against the bindings file, like every other binding mistake. It was
+  blamed on the template's step instead, which with a built-in template such as `dual-column` read
+  as a fault in the shipped file. (#157)
 - A launch command with `\'` inside single quotes (`foot -T 'a\' #x'`) is now refused before
   anything runs. Sway reads it as an escaped quote, but the shell that runs the command ends the
   quote there, so the rest could become a comment that cut off the command: nothing launched, and

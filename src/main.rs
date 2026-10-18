@@ -1747,7 +1747,12 @@ fn run_template(path: &Path, bindings_source: BindingsSource, args: &Args) -> ! 
     // A binding mistake is named after the file it's in (or --apps), not the
     // template: with a built-in, the template's name would read as a fault
     // in the shipped file rather than in the user's bindings.
-    let resolved_steps = match template::resolve(&parsed_template, &bindings, &args.param) {
+    let resolved_steps = match template::resolve(
+        &parsed_template,
+        &bindings,
+        &args.param,
+        sway_launch::DirectoryCheck::for_offline(args.dry_run || args.validate),
+    ) {
         Ok(resolved_steps) => resolved_steps,
         Err(error @ template::ResolveError::Bindings(_)) => {
             let bindings_label = match bindings_source {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::sway_launch::DirectoryCheck;
 
 fn minimal_step() -> TemplateStep {
     TemplateStep {
@@ -73,7 +74,7 @@ fn resolve_rejects_step_without_slot_or_target_id() {
         binding: vec![],
         ..Default::default()
     };
-    assert!(resolve(&template, &bindings, &[]).is_err());
+    assert!(resolve(&template, &bindings, &[], DirectoryCheck::Exists).is_err());
 }
 
 #[test]
@@ -85,7 +86,7 @@ fn resolve_reports_a_template_step_error_with_its_1_based_step_number() {
         binding: vec![minimal_binding()],
         ..Default::default()
     };
-    let error = resolve(&template, &bindings, &[])
+    let error = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
         .err()
         .expect("a step with neither slot nor target_id should be rejected");
     assert_eq!(
@@ -112,7 +113,7 @@ fn resolve_reports_a_blank_target_id_as_a_step_error() {
         ..Default::default()
     };
     assert!(matches!(
-        resolve(&template, &bindings, &[]),
+        resolve(&template, &bindings, &[], DirectoryCheck::Exists),
         Err(ResolveError::Step { index: 0, .. })
     ));
 }
@@ -138,6 +139,7 @@ fn resolve_reports_binding_mistakes_as_bindings_errors_without_a_step_number() {
                 ..Default::default()
             },
             &[],
+            DirectoryCheck::Exists,
         )
         .err()
         .expect("a binding mistake should be rejected");
@@ -150,6 +152,79 @@ fn resolve_reports_binding_mistakes_as_bindings_errors_without_a_step_number() {
 }
 
 #[test]
+fn resolve_reports_a_binding_s_cwd_and_env_mistakes_against_the_bindings() {
+    let template = minimal_template(vec![minimal_step()]);
+    let missing_directory = std::env::temp_dir().join("sway-launch-no-such-dir-example");
+    let missing_directory = missing_directory.to_str().unwrap().to_string();
+    let mut without_command = minimal_binding();
+    without_command.command = None;
+    without_command.existing = true;
+    without_command.app_id = Some("foot".to_string());
+    without_command.cwd = Some("/".to_string());
+    let cases = [
+        (
+            Binding {
+                cwd: Some(missing_directory.clone()),
+                ..minimal_binding()
+            },
+            "cwd: ",
+        ),
+        (
+            Binding {
+                env: [("1BAD".to_string(), "x".to_string())].into(),
+                ..minimal_binding()
+            },
+            "env: \"1BAD\"",
+        ),
+        (
+            Binding {
+                env: [("A".to_string(), "has $dollar".to_string())].into(),
+                ..minimal_binding()
+            },
+            "env A: '$'",
+        ),
+        (
+            without_command,
+            "cwd and env only apply to a launched command",
+        ),
+    ];
+    for (binding, expected) in cases {
+        let error = resolve(
+            &template,
+            &Bindings {
+                binding: vec![binding],
+                ..Default::default()
+            },
+            &[],
+            DirectoryCheck::Exists,
+        )
+        .err()
+        .expect("a bad cwd or env should be rejected");
+        let ResolveError::Bindings(message) = &error else {
+            panic!("a binding's cwd/env mistake belongs to the bindings: {error:?}");
+        };
+        assert!(
+            message.starts_with("binding for slot \"editor\": ") && message.contains(expected),
+            "{message}"
+        );
+    }
+
+    let format_only = resolve(
+        &template,
+        &Bindings {
+            binding: vec![Binding {
+                cwd: Some(missing_directory),
+                ..minimal_binding()
+            }],
+            ..Default::default()
+        },
+        &[],
+        DirectoryCheck::FormatOnly,
+    );
+    assert!(format_only.is_ok(), "{:?}", format_only.err());
+}
+
+#[test]
 fn resolve_rejects_slot_and_target_id_together() {
     let mut step = minimal_step();
     step.target_id = Some("editor".to_string());
@@ -158,7 +233,7 @@ fn resolve_rejects_slot_and_target_id_together() {
         binding: vec![minimal_binding()],
         ..Default::default()
     };
-    assert!(resolve(&template, &bindings, &[]).is_err());
+    assert!(resolve(&template, &bindings, &[], DirectoryCheck::Exists).is_err());
 }
 
 #[test]
@@ -170,7 +245,7 @@ fn resolve_rejects_blank_slot() {
         binding: vec![],
         ..Default::default()
     };
-    let error = resolve(&template, &bindings, &[])
+    let error = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
         .map_err(|error| error.to_string())
         .err()
         .expect("blank slot should be rejected");
@@ -190,7 +265,7 @@ fn resolve_rejects_blank_target_id() {
         binding: vec![],
         ..Default::default()
     };
-    let error = resolve(&template, &bindings, &[])
+    let error = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
         .map_err(|error| error.to_string())
         .err()
         .expect("blank target_id should be rejected");
@@ -209,7 +284,7 @@ fn resolve_rejects_blank_binding_slot() {
         binding: vec![binding],
         ..Default::default()
     };
-    let error = resolve(&template, &bindings, &[])
+    let error = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
         .map_err(|error| error.to_string())
         .err()
         .expect("blank binding slot should be rejected");
@@ -228,7 +303,7 @@ fn resolve_rejects_blank_binding_command_naming_the_slot() {
         binding: vec![binding],
         ..Default::default()
     };
-    let error = resolve(&template, &bindings, &[])
+    let error = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
         .map_err(|error| error.to_string())
         .err()
         .expect("blank binding command should be rejected");
@@ -266,7 +341,8 @@ fn resolve_fills_in_the_binding_and_sets_id_to_the_slot_name() {
         ..Default::default()
     };
 
-    let resolved = resolve(&template, &bindings, &[]).expect("valid template should resolve");
+    let resolved = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
+        .expect("valid template should resolve");
     assert_eq!(resolved.len(), 1);
     assert_eq!(resolved[0].id, Some("editor".to_string()));
     assert_eq!(resolved[0].command, Some("foot".to_string()));
@@ -299,7 +375,8 @@ fn resolve_leaves_the_template_layout_context_to_the_run_rather_than_each_step()
         ..Default::default()
     };
 
-    let resolved = resolve(&template, &bindings, &[]).expect("valid template should resolve");
+    let resolved = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
+        .expect("valid template should resolve");
     assert_eq!(resolved[0].workspace, None);
     assert_eq!(resolved[0].output, None);
 }
@@ -317,7 +394,8 @@ fn resolve_keeps_a_step_s_own_workspace_and_output_alongside_a_layout_context() 
         ..Default::default()
     };
 
-    let resolved = resolve(&template, &bindings, &[]).expect("valid template should resolve");
+    let resolved = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
+        .expect("valid template should resolve");
     assert_eq!(resolved[0].workspace, Some("5".to_string()));
     assert_eq!(resolved[0].output, Some("DP-1".to_string()));
 }
@@ -330,7 +408,8 @@ fn resolve_leaves_workspace_and_output_unset_without_a_layout_context() {
         ..Default::default()
     };
 
-    let resolved = resolve(&template, &bindings, &[]).expect("valid template should resolve");
+    let resolved = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
+        .expect("valid template should resolve");
     assert_eq!(resolved[0].workspace, None);
     assert_eq!(resolved[0].output, None);
 }
@@ -342,7 +421,7 @@ fn resolve_errors_on_missing_binding() {
         binding: vec![],
         ..Default::default()
     };
-    let error = resolve(&template, &bindings, &[])
+    let error = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
         .map_err(|error| error.to_string())
         .err()
         .expect("missing binding should error");
@@ -374,7 +453,7 @@ fn resolve_errors_on_binding_with_no_target_field_naming_the_slot() {
         }],
         ..Default::default()
     };
-    let error = resolve(&template, &bindings, &[])
+    let error = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
         .map_err(|error| error.to_string())
         .err()
         .expect("binding with no target field should error");
@@ -415,7 +494,7 @@ fn resolve_errors_on_binding_with_command_and_con_id_together() {
         }],
         ..Default::default()
     };
-    let error = resolve(&template, &bindings, &[])
+    let error = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
         .map_err(|error| error.to_string())
         .err()
         .expect("binding with command and con_id together should error");
@@ -447,7 +526,7 @@ fn resolve_errors_on_binding_with_app_id_and_class_together() {
         }],
         ..Default::default()
     };
-    let error = resolve(&template, &bindings, &[])
+    let error = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
         .map_err(|error| error.to_string())
         .err()
         .expect("binding with app_id and class together should error");
@@ -466,7 +545,7 @@ fn resolve_errors_on_binding_with_class_and_mark_match_together() {
         binding: vec![binding],
         ..Default::default()
     };
-    let error = resolve(&template, &bindings, &[])
+    let error = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
         .map_err(|error| error.to_string())
         .err()
         .expect("binding with class and mark_match together should error");
@@ -484,7 +563,7 @@ fn resolve_rejects_a_blank_binding_app_id_naming_the_slot() {
         binding: vec![binding],
         ..Default::default()
     };
-    let error = resolve(&template, &bindings, &[])
+    let error = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
         .map_err(|error| error.to_string())
         .err()
         .expect("a blank binding app_id should be rejected");
@@ -505,7 +584,7 @@ fn resolve_rejects_a_blank_binding_class_naming_the_slot() {
         binding: vec![binding],
         ..Default::default()
     };
-    let error = resolve(&template, &bindings, &[])
+    let error = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
         .map_err(|error| error.to_string())
         .err()
         .expect("a blank binding class should be rejected");
@@ -524,7 +603,7 @@ fn resolve_rejects_binding_mark_match_without_existing() {
         binding: vec![binding],
         ..Default::default()
     };
-    let error = resolve(&template, &bindings, &[])
+    let error = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
         .map_err(|error| error.to_string())
         .err()
         .expect("binding mark_match without existing should be rejected");
@@ -542,7 +621,7 @@ fn resolve_rejects_binding_existing_without_a_matcher_naming_the_slot() {
         binding: vec![binding],
         ..Default::default()
     };
-    let error = resolve(&template, &bindings, &[])
+    let error = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
         .map_err(|error| error.to_string())
         .err()
         .expect("existing without a matcher should be rejected");
@@ -564,7 +643,8 @@ fn resolve_fills_in_a_binding_s_mark_match() {
         binding: vec![binding],
         ..Default::default()
     };
-    let resolved = resolve(&template, &bindings, &[]).expect("valid binding should resolve");
+    let resolved = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
+        .expect("valid binding should resolve");
     assert_eq!(resolved[0].mark_match, Some("dropdown-term".to_string()));
 }
 
@@ -575,7 +655,7 @@ fn resolve_errors_on_unused_binding() {
         binding: vec![minimal_binding()],
         ..Default::default()
     };
-    let error = resolve(&template, &bindings, &[])
+    let error = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
         .map_err(|error| error.to_string())
         .err()
         .expect("unused binding should error");
@@ -589,7 +669,7 @@ fn resolve_errors_on_duplicate_slot_within_bindings() {
         binding: vec![minimal_binding(), minimal_binding()],
         ..Default::default()
     };
-    let error = resolve(&template, &bindings, &[])
+    let error = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
         .map_err(|error| error.to_string())
         .err()
         .expect("duplicate binding slot should error");
@@ -607,7 +687,8 @@ fn resolve_target_id_step_has_no_id_and_no_target_fields() {
         ..Default::default()
     };
 
-    let resolved = resolve(&template, &bindings, &[]).expect("valid template should resolve");
+    let resolved = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
+        .expect("valid template should resolve");
     assert_eq!(resolved.len(), 1);
     assert_eq!(resolved[0].id, None);
     assert_eq!(resolved[0].target_id, Some("editor".to_string()));
@@ -1016,7 +1097,7 @@ fn builtin_templates_reports_slots_and_slot_names_matching_the_apps_ordering() {
 fn every_builtin_template_resolves_and_converts_without_a_compositor() {
     // parse() only checks TOML shape and the [template] table; the
     // height/width/position formats, sway-string fields, target rules
-    // and target_id references are checked by resolve(, &[]) and
+    // and target_id references are checked by resolve(, &[], DirectoryCheck::Exists) and
     // to_sway_launch(). Running both here, the way --validate does,
     // means a broken built-in fails cargo test (and the release gate)
     // instead of only the separate live-Sway job.
@@ -1035,7 +1116,7 @@ fn every_builtin_template_resolves_and_converts_without_a_compositor() {
                 .collect(),
             ..Default::default()
         };
-        let steps = resolve(&template, &bindings, &[])
+        let steps = resolve(&template, &bindings, &[], DirectoryCheck::Exists)
             .unwrap_or_else(|error| panic!("{name} failed to resolve: {error}"));
 
         let mut resolved_ids = HashMap::new();
@@ -1258,6 +1339,7 @@ fn resolve_lets_a_binding_replace_the_step_placement() {
             ..Default::default()
         },
         &[],
+        DirectoryCheck::Exists,
     )
     .expect("a binding without placement should resolve");
     assert_eq!(resolved[0].workspace.as_deref(), Some("1"));
@@ -1274,6 +1356,7 @@ fn resolve_lets_a_binding_replace_the_step_placement() {
             ..Default::default()
         },
         &[],
+        DirectoryCheck::Exists,
     )
     .expect("a binding with placement should resolve");
     // The workspace pair is replaced as a whole, so the step's name doesn't
@@ -1331,6 +1414,7 @@ fn resolve_reports_a_bad_binding_placement_against_the_bindings() {
                 ..Default::default()
             },
             &[],
+            DirectoryCheck::Exists,
         )
         .err()
         .expect("a bad placement should be rejected");
@@ -1404,7 +1488,7 @@ fn resolve_takes_param_overrides_in_order_of_precedence() {
         ..Default::default()
     };
     let width = |bindings: &Bindings, overrides: &[(String, String)]| {
-        resolve(&template, bindings, overrides).expect("should resolve")[1]
+        resolve(&template, bindings, overrides, DirectoryCheck::Exists).expect("should resolve")[1]
             .width
             .clone()
     };
@@ -1439,7 +1523,7 @@ fn resolve_reports_a_bad_param_override_against_its_source() {
         ..Default::default()
     };
     assert!(matches!(
-        resolve(&template, &bindings, &[]),
+        resolve(&template, &bindings, &[], DirectoryCheck::Exists),
         Err(ResolveError::Bindings(message)) if message.contains("[params]: param \"stack-width\"")
     ));
 
@@ -1449,7 +1533,7 @@ fn resolve_reports_a_bad_param_override_against_its_source() {
     };
     let unknown = [("stack".to_string(), "40ppt".to_string())];
     assert!(matches!(
-        resolve(&template, &bindings, &unknown),
+        resolve(&template, &bindings, &unknown, DirectoryCheck::Exists),
         Err(ResolveError::Param(message))
             if message.contains("unknown param \"stack\" (this template's params: stack-width)")
     ));
@@ -1502,6 +1586,7 @@ fn resolve_lets_a_binding_set_its_slot_s_timeout_and_wait_time() {
             ..Default::default()
         },
         &[],
+        DirectoryCheck::Exists,
     )
     .expect("a binding timeout should resolve");
     assert_eq!(resolved[0].timeout, Some(30));
@@ -1517,6 +1602,7 @@ fn resolve_lets_a_binding_set_its_slot_s_timeout_and_wait_time() {
             ..Default::default()
         },
         &[],
+        DirectoryCheck::Exists,
     )
     .err()
     .expect("a zero timeout should be rejected");
@@ -1538,10 +1624,11 @@ fn resolve_lets_a_binding_set_its_slot_s_settle() {
         }],
         ..Default::default()
     };
-    let resolved = resolve(&template, &with_settle(300), &[]).expect("a binding settle resolves");
+    let resolved = resolve(&template, &with_settle(300), &[], DirectoryCheck::Exists)
+        .expect("a binding settle resolves");
     assert_eq!(resolved[0].settle, Some(300));
 
-    let error = resolve(&template, &with_settle(0), &[])
+    let error = resolve(&template, &with_settle(0), &[], DirectoryCheck::Exists)
         .err()
         .expect("a zero settle should be rejected");
     assert!(
@@ -1550,9 +1637,14 @@ fn resolve_lets_a_binding_set_its_slot_s_settle() {
     );
 
     let geometry_free = minimal_template(vec![minimal_step()]);
-    let error = resolve(&geometry_free, &with_settle(300), &[])
-        .err()
-        .expect("a settle with nothing to hold should be rejected");
+    let error = resolve(
+        &geometry_free,
+        &with_settle(300),
+        &[],
+        DirectoryCheck::Exists,
+    )
+    .err()
+    .expect("a settle with nothing to hold should be rejected");
     assert!(
         matches!(&error, ResolveError::Bindings(message) if message.contains("sets no height, width or position")),
         "{error:?}"

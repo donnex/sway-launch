@@ -589,6 +589,56 @@ fn template_bindings_mistake_for_a_builtin_names_the_bindings_file_not_the_built
 }
 
 #[test]
+fn template_binding_cwd_and_env_mistakes_name_the_bindings_file_not_the_builtin() {
+    let missing_directory = std::env::temp_dir().join("sway-launch-no-such-dir-example");
+    let cases = [
+        (
+            format!("cwd = {:?}", missing_directory.to_str().unwrap()),
+            false,
+            "binding for slot \"top\": cwd: ".to_string(),
+        ),
+        (
+            "env = { \"1BAD\" = \"x\" }".to_string(),
+            true,
+            "binding for slot \"top\": env: \"1BAD\"".to_string(),
+        ),
+        (
+            "env = { A = \"has $dollar\" }".to_string(),
+            true,
+            "binding for slot \"top\": env A: '$'".to_string(),
+        ),
+    ];
+    for (field, validate, expected) in cases {
+        let bindings = TempToml::write(
+            "binding-cwd-env-bindings",
+            &format!(
+                "[[binding]]\nslot = \"top\"\ncommand = \"foot\"\n{field}\n\n\
+                 [[binding]]\nslot = \"bottom\"\ncommand = \"foot\"\n"
+            ),
+        );
+        let mut command = sway_launch();
+        command.args([
+            "--template",
+            "dual-column",
+            "--bindings",
+            bindings.to_str().unwrap(),
+        ]);
+        if validate {
+            command.arg("--validate");
+        }
+        let output = command.output().expect("failed to run sway-launch binary");
+
+        assert!(!output.status.success(), "{field}");
+        let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+        assert!(
+            stderr.contains(&format!("{}: {}", bindings.display(), expected)),
+            "{stderr:?}"
+        );
+        assert!(!stderr.contains("dual-column:"), "{stderr:?}");
+    }
+}
+
+#[test]
 fn template_step_without_slot_or_target_id_names_the_template_and_step() {
     let template = TempToml::write(
         "step-number-template",

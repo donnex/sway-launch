@@ -170,7 +170,9 @@ what it rejects and why:
   `--validate`/`--dry-run` skips only the existence check, #146), then both are rendered as a
   `cd '…' && export NAME='…'` prefix with `render_argv()`'s quoting, carried as
   `SwayLaunch.launch_setup` and put between the PID marker and the command by
-  `ExecAction::sway_command()`. Only for a launch; `--dry-run` shows the prefix.
+  `ExecAction::sway_command()`. Only for a launch; `--dry-run` shows the prefix. A binding's
+  `cwd`/`env` is checked by the template's `resolve()` too, with the run's `DirectoryCheck`, so its
+  mistakes are the bindings file's, not the template step's (#157).
 - `validate_sway_command()` — `--sway-command`/`sway_commands` (#90), checked for files by
   `layout::deserialize_sway_commands()` at parse time: the first word must be in
   `SWAY_WINDOW_COMMANDS`, since Sway runs any command behind `[con_id=N]`, `exec`/`bindsym`/`exit`
