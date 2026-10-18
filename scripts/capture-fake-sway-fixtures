@@ -15,6 +15,10 @@ print_usage() {
   printf '  outputs.json                 get_outputs\n'
   printf '  missing-container-reply.json a command for a container that does not exist\n'
   printf '\n'
+  printf 'Every reply is recorded into a temporary directory inside OUTPUT_DIR first,\n'
+  printf 'and only moved over the existing files once all four were captured, so a\n'
+  printf 'failed or interrupted run leaves the previous recording untouched.\n'
+  printf '\n'
   printf 'tests/fake-sway/ holds one such directory per supported Sway version.\n'
   printf 'Requires sway, swaymsg and foot on PATH.\n'
 }
@@ -82,6 +86,7 @@ mkdir -p "$output_dir" || die "Could not create $output_dir."
 sway_pid=''
 foot_pids=''
 runtime_dir=''
+staging_dir=''
 
 cleanup() {
   for foot_pid in $foot_pids; do
@@ -90,6 +95,7 @@ cleanup() {
   [ -n "$sway_pid" ] && kill "$sway_pid" >/dev/null 2>&1
   [ -n "$sway_pid" ] && wait "$sway_pid" 2>/dev/null
   [ -n "$runtime_dir" ] && rm -rf "$runtime_dir"
+  [ -n "$staging_dir" ] && rm -rf "$staging_dir"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -156,11 +162,22 @@ swaymsg '[app_id="fixture-scratchpad"] move scratchpad' >/dev/null ||
   die 'Could not move the scratchpad fixture window.'
 sleep 0.3
 
-swaymsg -r -t get_version >"$output_dir/version.json" || die 'get_version failed.'
-swaymsg -r -t get_tree >"$output_dir/tree.json" || die 'get_tree failed.'
-swaymsg -r -t get_outputs >"$output_dir/outputs.json" || die 'get_outputs failed.'
-# swaymsg exits non-zero when Sway reports the command failed, which is the
-# answer being recorded.
-swaymsg -r '[con_id=2147480000] floating enable' >"$output_dir/missing-container-reply.json" || true
+staging_dir="$(mktemp -d "$output_dir/.capture.XXXXXX")" ||
+  die "Could not create a temporary directory in $output_dir."
+
+swaymsg -r -t get_version >"$staging_dir/version.json" || die 'get_version failed.'
+swaymsg -r -t get_tree >"$staging_dir/tree.json" || die 'get_tree failed.'
+swaymsg -r -t get_outputs >"$staging_dir/outputs.json" || die 'get_outputs failed.'
+# swaymsg exits non-zero both when Sway reports the command failed, which is
+# the answer being recorded, and when it never reached Sway at all, so the
+# reply itself has to show which one happened.
+swaymsg -r '[con_id=2147480000] floating enable' >"$staging_dir/missing-container-reply.json" || true
+grep -q '"success": false' "$staging_dir/missing-container-reply.json" ||
+  die 'The command for a missing container got no failure reply from Sway.'
+
+for fixture_name in version.json tree.json outputs.json missing-container-reply.json; do
+  mv "$staging_dir/$fixture_name" "$output_dir/$fixture_name" ||
+    die "Could not move $fixture_name into $output_dir."
+done
 
 printf '✓ Wrote %s fixtures to %s\n' "$(sway --version)" "$output_dir"
