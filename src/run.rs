@@ -6,10 +6,10 @@ use std::path::Path;
 use std::{process, time};
 
 use crate::{
-    dry_run_step, exit_on_write_failure, fail, fail_with_rollback, input_label, is_stdin, join_ids,
-    layout, print_dry_run_steps, print_line, print_line_deferring_failure, stderr_label,
-    step_action_records_json, sway_launch, unmatched_windows_json, Args, DryRunStep,
-    PartialProgress, RollbackOutcome, Severity,
+    check_compositor_version, dry_run_step, exit_on_write_failure, fail, fail_with_rollback,
+    input_label, is_stdin, join_ids, layout, print_dry_run_steps, print_line,
+    print_line_deferring_failure, stderr_label, step_action_records_json, sway_launch,
+    unmatched_windows_json, Args, DryRunStep, PartialProgress, RollbackOutcome, Severity,
 };
 
 /// Runs every step sequentially, in the order they appear, stopping at the
@@ -52,6 +52,14 @@ pub(crate) fn run_steps(
         Ok(lock) => lock,
         Err(error) => fail(args.json, &format!("{}: {}", steps_source(args), error)),
     };
+
+    // Asked once, before whatever first talks to the compositor: here when
+    // the run launches or moves focus, else before the first step that
+    // needs it (a run of bare con_id steps never does).
+    let mut version_checked = launches || !build.commands().is_empty();
+    if version_checked {
+        check_compositor_version(args.verbose);
+    }
 
     if let Err(error) = build.apply(args.verbose) {
         fail(args.json, &format!("{}: {}", steps_source(args), error));
@@ -164,6 +172,10 @@ pub(crate) fn run_steps(
             },
             Err(error) => progress.fail(&mut staged, steps, args, index, error.into()),
         };
+        if !version_checked && sway_launch.needs_compositor() {
+            version_checked = true;
+            check_compositor_version(args.verbose);
+        }
 
         let staged_window = staged
             .as_mut()

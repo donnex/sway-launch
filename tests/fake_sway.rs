@@ -2553,3 +2553,105 @@ fn a_layout_warns_about_a_window_its_users_config_rules_placed_elsewhere() {
         );
     }
 }
+
+/// The `GET_VERSION` reply of a Sway release older than the supported 1.9,
+/// as Debian 12 and Ubuntu 22.04 ship it.
+fn sway_1_7_version_reply() -> Value {
+    serde_json::json!({
+        "human_readable": "1.7",
+        "variant": "sway",
+        "major": 1,
+        "minor": 7,
+        "patch": 0,
+        "loaded_config_file_name": "/dev/null"
+    })
+}
+
+const OLD_SWAY_WARNING: &str =
+    "warning: Sway 1.7.0 is older than 1.9, the oldest version sway-launch supports";
+
+#[test]
+fn a_supported_sway_runs_without_a_version_warning_and_names_itself_under_verbose() {
+    for (version, number) in [(SwayVersion::V1_9, "1.9.0"), (SwayVersion::V1_11, "1.11.0")] {
+        let fake = FakeSway::start(version, floats_on_command);
+        let run = run(&fake, &["--con-id", "5", "--floating", "--verbose"]);
+        assert!(run.succeeded(), "{version:?}: {}", run.stderr());
+        assert!(
+            !run.stderr().contains("warning:"),
+            "{version:?}: {}",
+            run.stderr()
+        );
+        assert!(
+            run.stderr().contains(&format!("Sway version: {number}")),
+            "{version:?}: {}",
+            run.stderr()
+        );
+    }
+}
+
+#[test]
+fn an_older_sway_gets_a_warning_and_the_run_still_goes_ahead() {
+    let fake = FakeSway::start(SwayVersion::V1_9, floats_on_command);
+    fake.sway().set_version_reply(sway_1_7_version_reply());
+    let run = run(&fake, &["--con-id", "5", "--floating"]);
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert_eq!(run.action_status(), "changed");
+    assert_eq!(
+        run.stderr().matches(OLD_SWAY_WARNING).count(),
+        1,
+        "{}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn a_compositor_that_is_not_sway_gets_a_warning() {
+    let fake = FakeSway::start(SwayVersion::V1_11, floats_on_command);
+    fake.sway().set_version_reply(serde_json::json!({
+        "human_readable": "4.23 (2023-10-29)",
+        "major": 4,
+        "minor": 23,
+        "patch": 0,
+        "loaded_config_file_name": "/dev/null"
+    }));
+    let run = run(&fake, &["--con-id", "5", "--floating"]);
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert!(
+        run.stderr().contains(
+            "warning: the compositor on the IPC socket is not Sway (it reports version \
+             \"4.23 (2023-10-29)\", no variant)"
+        ),
+        "{}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn a_layout_run_on_an_older_sway_warns_once() {
+    let fake = FakeSway::start(SwayVersion::V1_11, floats_on_command);
+    fake.sway().set_version_reply(sway_1_7_version_reply());
+    let layout = TempToml::write(
+        "old-sway",
+        "[[step]]\ncon_id = 5\nfloating = true\n\n[[step]]\ncon_id = 6\nfloating = true\n",
+    );
+    let run = run(&fake, &["--layout", layout.to_str().unwrap(), "--no-lock"]);
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert_eq!(
+        run.stderr().matches(OLD_SWAY_WARNING).count(),
+        1,
+        "{}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn a_bare_con_id_layout_step_asks_the_compositor_nothing() {
+    // With no actions, a con_id step only reports its id (#107), so a run of
+    // them needs no compositor and never asks its version.
+    let fake = FakeSway::accepting_everything(SwayVersion::V1_11);
+    fake.sway().set_version_reply(sway_1_7_version_reply());
+    let layout = TempToml::write("bare-con-id", "[[step]]\ncon_id = 5\n");
+    let run = run(&fake, &["--layout", layout.to_str().unwrap(), "--no-lock"]);
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert!(!run.stderr().contains("warning:"), "{}", run.stderr());
+}

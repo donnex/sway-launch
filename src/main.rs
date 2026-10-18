@@ -839,6 +839,10 @@ fn main() {
         process::exit(0);
     }
 
+    if sway_launch.needs_compositor() {
+        check_compositor_version(args.verbose);
+    }
+
     match sway_launch.run() {
         Ok(outcome) => {
             if args.json {
@@ -855,6 +859,32 @@ fn main() {
         }
         Err(error) => fail_run(args.json, &error),
     };
+}
+
+/// Asks the compositor its version ahead of a run's first request to it,
+/// printing it under `verbose` and warning when it isn't a supported Sway
+/// (#147): on Sway 1.7 or i3 a run still goes ahead, and otherwise fails
+/// however the difference surfaces, usually as a timeout that sends the user
+/// to `--timeout` instead of to their Sway version. The warning goes to
+/// stderr under `--json` too, like the other warnings about the environment
+/// rather than about the run's result, so it's there when the run then fails.
+/// A compositor that can't be reached is left for the run's own first request
+/// to report.
+fn check_compositor_version(verbose: bool) {
+    match sway_launch::check_compositor_version() {
+        Ok((line, warning)) => {
+            if verbose {
+                diagnostic!("{}", line);
+            }
+            if let Some(warning) = warning {
+                diagnostic!("{}{}", stderr_label(Severity::Warning), warning);
+            }
+        }
+        Err(error) if verbose => {
+            diagnostic!("Couldn't ask the compositor its version: {}", error);
+        }
+        Err(_) => {}
+    }
 }
 
 /// Writes one line to stdout, exiting cleanly if stdout has already been

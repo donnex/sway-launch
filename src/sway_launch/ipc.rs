@@ -370,6 +370,174 @@ pub(super) fn first_outcome_error<E: fmt::Display>(
     Ok(())
 }
 
+/// The oldest Sway release sway-launch supports, as `(major, minor)`: what
+/// README.md's "Requires Sway 1.9 or newer" and the `live-sway-1-9` CI job
+/// stand for. `version_report()` warns below it.
+pub(super) const OLDEST_SUPPORTED_SWAY: (i64, i64) = (1, 9);
+
+/// How long `compositor_version()` waits for its answer: far shorter than
+/// `IPC_ROUND_TRIP_TIMEOUT`, since a stalled compositor fails the run's own
+/// first request after that anyway, and the version check shouldn't double
+/// the wait. A healthy Sway answers in well under a millisecond.
+const VERSION_REQUEST_TIMEOUT: time::Duration = time::Duration::from_secs(1);
+
+/// The largest `GET_VERSION` reply `compositor_version()` reads. Sway's is a
+/// few hundred bytes; a length past this comes from something that isn't
+/// speaking Sway IPC, and isn't worth allocating for.
+const MAX_VERSION_REPLY_BYTES: usize = 64 * 1024;
+
+/// The fields of a `GET_VERSION` reply `version_report()` reads. Read here
+/// rather than through `swayipc`'s own version request, whose `Version` drops
+/// `variant`: Sway sets it to `"sway"`, and i3, which answers the same
+/// request on the `I3SOCK` that `socket_path()` falls back to, has none.
+#[derive(Debug, PartialEq, serde::Deserialize)]
+pub(super) struct VersionReply {
+    pub(super) major: i64,
+    pub(super) minor: i64,
+    pub(super) patch: i64,
+    #[serde(default)]
+    pub(super) human_readable: String,
+    #[serde(default)]
+    pub(super) variant: Option<String>,
+}
+
+/// What the compositor said when asked its version.
+#[derive(Debug, PartialEq)]
+pub(super) enum CompositorVersion {
+    /// A well-formed `GET_VERSION` reply, from Sway or not.
+    Reply(VersionReply),
+    /// An answer that isn't a `GET_VERSION` reply at all (no i3-ipc framing,
+    /// the wrong message type, JSON without the version fields, or the
+    /// connection closed instead), with why.
+    Unrecognized(String),
+}
+
+/// Asks the compositor its version, with one `GET_VERSION` request on a
+/// connection of its own (#147). Nothing else checks the version, and a run
+/// on an unsupported one fails however the difference happens to surface,
+/// typically as a timeout.
+///
+/// `Err` when the compositor can't be reached or doesn't answer within
+/// `VERSION_REQUEST_TIMEOUT`, for the caller to skip the check: the run's own
+/// first request then reports the problem in the shape a run's failure
+/// always has. Any other answer, including the connection closing on a
+/// request the server doesn't know, is `Unrecognized`.
+pub(super) fn compositor_version() -> Result<CompositorVersion, String> {
+    use std::io::{Read, Write};
+    let mut stream = std::os::unix::net::UnixStream::from(new_connection()?);
+    stream
+        .set_read_timeout(Some(VERSION_REQUEST_TIMEOUT))
+        .and_then(|()| stream.set_write_timeout(Some(VERSION_REQUEST_TIMEOUT)))
+        .map_err(|error| format!("failed to set a Sway IPC socket timeout: {}", error))?;
+    let transport_error = |error: std::io::Error| ipc_error(swayipc::Error::Io(error));
+    let unrecognized = |error: std::io::Error| {
+        if matches!(
+            error.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ) {
+            Err(transport_error(error))
+        } else {
+            Ok(CompositorVersion::Unrecognized(error.to_string()))
+        }
+    };
+    stream
+        .write_all(&swayipc::CommandType::GetVersion.encode())
+        .map_err(transport_error)?;
+    let mut header = [0_u8; 14];
+    if let Err(error) = stream.read_exact(&mut header) {
+        return unrecognized(error);
+    }
+    let length = match version_reply_length(&header) {
+        Ok(length) => length,
+        Err(reason) => return Ok(CompositorVersion::Unrecognized(reason)),
+    };
+    let mut payload = vec![0_u8; length];
+    if let Err(error) = stream.read_exact(&mut payload) {
+        return unrecognized(error);
+    }
+    Ok(parse_version_reply(&payload))
+}
+
+/// The payload length an i3-ipc reply header announces, once it's checked to
+/// be a `GET_VERSION` reply of a plausible size.
+pub(super) fn version_reply_length(header: &[u8; 14]) -> Result<usize, String> {
+    if header[..6] != swayipc::MAGIC {
+        return Err("the reply has no i3-ipc header".to_string());
+    }
+    let length = u32::from_ne_bytes([header[6], header[7], header[8], header[9]]) as usize;
+    let message_type = u32::from_ne_bytes([header[10], header[11], header[12], header[13]]);
+    let expected = u32::from(swayipc::CommandType::GetVersion);
+    if message_type != expected {
+        return Err(format!(
+            "the reply is message type {}, not GET_VERSION ({})",
+            message_type, expected
+        ));
+    }
+    if length > MAX_VERSION_REPLY_BYTES {
+        return Err(format!("the reply announces {} bytes", length));
+    }
+    Ok(length)
+}
+
+/// A `GET_VERSION` payload, read into the fields `version_report()` needs.
+pub(super) fn parse_version_reply(payload: &[u8]) -> CompositorVersion {
+    match serde_json::from_slice(payload) {
+        Ok(reply) => CompositorVersion::Reply(reply),
+        Err(error) => CompositorVersion::Unrecognized(format!("not a version reply: {}", error)),
+    }
+}
+
+/// What `compositor_version()` found, as a `--verbose` line and, when it
+/// isn't a supported Sway, a warning (#147). A warning rather than an error:
+/// a build reporting an odd version may well work, and refusing it would
+/// leave its user nothing to do.
+pub(super) fn version_report(version: &CompositorVersion) -> (String, Option<String>) {
+    let (oldest_major, oldest_minor) = OLDEST_SUPPORTED_SWAY;
+    let supported = format!(
+        "sway-launch supports Sway {}.{} and newer, so results may be wrong",
+        oldest_major, oldest_minor
+    );
+    match version {
+        CompositorVersion::Reply(reply) if reply.variant.as_deref() == Some("sway") => {
+            let number = format!("{}.{}.{}", reply.major, reply.minor, reply.patch);
+            let line = format!("Sway version: {} ({:?})", number, reply.human_readable);
+            let warning = ((reply.major, reply.minor) < OLDEST_SUPPORTED_SWAY).then(|| {
+                format!(
+                    "Sway {} is older than {}.{}, the oldest version sway-launch supports; \
+                     results may be wrong",
+                    number, oldest_major, oldest_minor
+                )
+            });
+            (line, warning)
+        }
+        CompositorVersion::Reply(reply) => {
+            let variant = match &reply.variant {
+                Some(variant) => format!("variant {:?}", variant),
+                None => "no variant".to_string(),
+            };
+            (
+                format!(
+                    "Compositor version: {:?} ({}), not Sway",
+                    reply.human_readable, variant
+                ),
+                Some(format!(
+                    "the compositor on the IPC socket is not Sway (it reports version {:?}, {}); \
+                     {}",
+                    reply.human_readable, variant, supported
+                )),
+            )
+        }
+        CompositorVersion::Unrecognized(reason) => (
+            format!("Compositor version: unrecognized reply ({})", reason),
+            Some(format!(
+                "the compositor on the IPC socket didn't answer a version request as Sway does \
+                 ({}); {}",
+                reason, supported
+            )),
+        ),
+    }
+}
+
 /// Quotes a value for safe interpolation into a Sway IPC command string.
 /// Sway's command parser splits on `,`/`;` and whitespace outside quotes, so
 /// an unquoted value containing one of those could inject additional

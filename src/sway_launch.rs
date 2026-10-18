@@ -63,6 +63,15 @@ pub use values::{
     TitlePattern, WorkspaceTarget,
 };
 
+/// The compositor's version, checked against the oldest supported Sway
+/// (#147): a `--verbose` line, plus a warning when it's an older Sway or not
+/// Sway at all. `Err` when the compositor can't be reached or doesn't
+/// answer, which the check leaves to the run itself to report (see
+/// `ipc::compositor_version()`).
+pub fn check_compositor_version() -> Result<(String, Option<String>), String> {
+    ipc::compositor_version().map(|version| ipc::version_report(&version))
+}
+
 /// The upper bound `run_batch()` polls `get_tree()` for a
 /// wait-time action's own confirmation before giving up and falling back to
 /// the original blind sleep-the-rest-of-`--wait-time` behavior — capped at

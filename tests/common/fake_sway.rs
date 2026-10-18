@@ -227,6 +227,12 @@ impl Sway {
         find_mut(&mut self.tree, id).unwrap_or_else(|| panic!("no node {id} in the fake tree"))
     }
 
+    /// Replaces the recorded `GET_VERSION` reply, standing in for a
+    /// compositor the fixtures weren't recorded from: an older Sway, or i3.
+    pub fn set_version_reply(&mut self, reply: Value) {
+        self.version_reply = reply;
+    }
+
     pub fn contains(&self, id: i64) -> bool {
         find(&self.tree, id).is_some()
     }

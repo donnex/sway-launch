@@ -402,6 +402,15 @@ impl<'a> SwayLaunch<'a> {
             .collect()
     }
 
+    /// Whether `run()` talks to the compositor at all: everything but a bare
+    /// `--con-id N` with no actions, which only prints the id (#107).
+    pub fn needs_compositor(&self) -> bool {
+        match self.target {
+            Target::ConId(container_id) => !self.build_actions(container_id).is_empty(),
+            _ => true,
+        }
+    }
+
     /// The `--dry-run` entry point: every `SwayAction` this `SwayLaunch`
     /// would apply, in order, without a real `container_id` (nothing has
     /// launched) and without touching Sway IPC at all. A preview always

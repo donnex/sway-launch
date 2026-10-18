@@ -31,7 +31,9 @@ sway-launch --template quad-grid --apps foot,foot,foot,foot --on-workspace 9   #
 
 Requires Sway 1.9 or newer, running. `sway-launch` talks to it over the same IPC socket `swaymsg`
 uses, found the same way (`SWAYSOCK`, then `I3SOCK`). Every change is tested against Sway 1.9 and
-the newest Sway release.
+the newest Sway release. On an older Sway, or on a compositor that isn't Sway (i3, through
+`I3SOCK`), it still runs but prints a warning first, since results may be wrong there; `--verbose`
+prints the version it found.
 
 ## Contents
 
@@ -1329,6 +1331,9 @@ error: launch "footx": no window appeared within 2 sec: the launched command exi
 - The command exited without a window: it probably isn't on `PATH` in Sway's environment, or
   failed; its own error is in Sway's log (see [Launching a command](#launching-a-command)).
 - The application is just slow to start: raise `--timeout`, or a binding's `timeout` for its slot.
+- A `warning: Sway 1.7.0 is older than 1.9` (or `... is not Sway`) line came first: the
+  compositor is one `sway-launch` doesn't support, and the timeout may be that difference
+  showing. Debian 12 and Ubuntu 22.04 ship Sway 1.7.
 
 **An action lands on the wrong window.** The application was probably already running and the
 launch fell back to the first new window; pass `-a`/`-c` (see

@@ -27,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the terminal through the "Event mismatch" line; control characters in them are now shown as
   visible escapes (`\u{1b}`), as they already were in a title. (#139)
 
+### Added
+
+- `sway-launch` now warns when the compositor it talks to is older than Sway 1.9, the oldest
+  supported version, or isn't Sway at all (i3, reached through `I3SOCK`). Such a run used to go
+  ahead silently and fail however the difference surfaced, typically as a timeout, which pointed
+  at `--timeout` or `--app-id` rather than at the compositor; Debian 12 and Ubuntu 22.04 both ship
+  Sway 1.7. The run still goes ahead after the warning, and `--verbose` now prints the version it
+  found. (#147)
+
 ### Fixed
 
 - `--completions` no longer crashes when its output can't be written. Piped into a reader that

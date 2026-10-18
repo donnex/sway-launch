@@ -293,6 +293,15 @@ by `IPC_ROUND_TRIP_TIMEOUT` (independent of `--timeout`) and finds the socket wi
 `SWAYSOCK`, then `I3SOCK`, as `swaymsg` does. `event_loop()` bounds the subscribe handshake the same
 way. A poll cycle and the move guard each share one connection across their reads.
 
+Before a run's first request to the compositor (a direct-CLI run unless
+`SwayLaunch::needs_compositor()` says it's a bare `--con-id`; a `--layout`/`--template` run once,
+before `BuildLocation::apply()` or its first step that needs one), `check_compositor_version()`
+sends one `GET_VERSION` (#147): `ipc::compositor_version()` reads the reply itself, since
+`swayipc`'s `Version` drops `variant`, bounded by the shorter `VERSION_REQUEST_TIMEOUT`, and the
+pure `version_report()` turns it into a `--verbose` line plus a stderr warning (every mode,
+`--json` included) for a Sway older than `OLDEST_SUPPORTED_SWAY` or a compositor that isn't Sway.
+Never an error: an unreachable compositor skips the check and is left for the run to report.
+
 ### Output contract
 
 - stdout carries exactly one value: the container id, or the `--json` object. The exceptions are

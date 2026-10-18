@@ -200,3 +200,155 @@ fn single_outcome_error_fails_when_sway_split_the_command_even_if_all_succeeded(
     let error = single_outcome_error(outcomes, "cmd").expect_err("a split must fail");
     assert!(error.contains("2 separate commands"), "{error:?}");
 }
+
+// version_reply_length / parse_version_reply / version_report
+
+fn version_header(length: u32, message_type: u32) -> [u8; 14] {
+    let mut header = [0_u8; 14];
+    header[..6].copy_from_slice(&swayipc::MAGIC);
+    header[6..10].copy_from_slice(&length.to_ne_bytes());
+    header[10..14].copy_from_slice(&message_type.to_ne_bytes());
+    header
+}
+
+fn sway_reply(major: i64, minor: i64, patch: i64) -> CompositorVersion {
+    CompositorVersion::Reply(VersionReply {
+        major,
+        minor,
+        patch,
+        human_readable: format!("{}.{}", major, minor),
+        variant: Some("sway".to_string()),
+    })
+}
+
+#[test]
+fn version_reply_length_reads_a_get_version_header() {
+    assert_eq!(version_reply_length(&version_header(120, 7)), Ok(120));
+}
+
+#[test]
+fn version_reply_length_rejects_a_header_without_the_magic() {
+    let mut header = version_header(120, 7);
+    header[0] = b'x';
+    assert!(version_reply_length(&header)
+        .unwrap_err()
+        .contains("no i3-ipc header"));
+}
+
+#[test]
+fn version_reply_length_rejects_another_message_type() {
+    assert!(version_reply_length(&version_header(120, 4))
+        .unwrap_err()
+        .contains("message type 4, not GET_VERSION (7)"));
+}
+
+#[test]
+fn version_reply_length_rejects_an_implausible_length() {
+    assert!(version_reply_length(&version_header(u32::MAX, 7))
+        .unwrap_err()
+        .contains("announces"));
+}
+
+#[test]
+fn parse_version_reply_reads_sways_reply() {
+    let payload = br#"{"human_readable": "1.9", "variant": "sway", "major": 1, "minor": 9,
+        "patch": 0, "loaded_config_file_name": "/dev/null"}"#;
+    assert_eq!(
+        parse_version_reply(payload),
+        CompositorVersion::Reply(VersionReply {
+            major: 1,
+            minor: 9,
+            patch: 0,
+            human_readable: "1.9".to_string(),
+            variant: Some("sway".to_string()),
+        })
+    );
+}
+
+#[test]
+fn parse_version_reply_reads_a_reply_without_a_variant() {
+    let payload = br#"{"human_readable": "4.23", "major": 4, "minor": 23, "patch": 0}"#;
+    assert!(matches!(
+        parse_version_reply(payload),
+        CompositorVersion::Reply(VersionReply { variant: None, .. })
+    ));
+}
+
+#[test]
+fn parse_version_reply_is_unrecognized_without_the_version_fields() {
+    assert!(matches!(
+        parse_version_reply(br#"{"success": false}"#),
+        CompositorVersion::Unrecognized(reason) if reason.starts_with("not a version reply")
+    ));
+}
+
+#[test]
+fn version_report_is_silent_from_the_oldest_supported_sway_on() {
+    for (major, minor) in [(1, 9), (1, 11), (1, 12), (2, 0)] {
+        let (line, warning) = version_report(&sway_reply(major, minor, 0));
+        assert_eq!(warning, None, "{major}.{minor}");
+        assert!(
+            line.starts_with(&format!("Sway version: {major}.{minor}.0")),
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn version_report_warns_about_an_older_sway() {
+    let (_, warning) = version_report(&sway_reply(1, 7, 0));
+    assert_eq!(
+        warning.as_deref(),
+        Some(
+            "Sway 1.7.0 is older than 1.9, the oldest version sway-launch supports; results may \
+             be wrong"
+        )
+    );
+    assert!(version_report(&sway_reply(0, 15, 0)).1.is_some());
+}
+
+#[test]
+fn version_report_warns_about_a_compositor_that_is_not_sway() {
+    let reply = CompositorVersion::Reply(VersionReply {
+        major: 4,
+        minor: 23,
+        patch: 0,
+        human_readable: "4.23 (2023-10-29)".to_string(),
+        variant: None,
+    });
+    let (line, warning) = version_report(&reply);
+    assert!(line.contains("not Sway"), "{line}");
+    let warning = warning.unwrap();
+    assert!(warning.contains("is not Sway"), "{warning}");
+    assert!(
+        warning.contains("\"4.23 (2023-10-29)\", no variant"),
+        "{warning}"
+    );
+    assert!(warning.contains("Sway 1.9 and newer"), "{warning}");
+}
+
+#[test]
+fn version_report_escapes_a_reported_version_s_control_characters() {
+    let reply = CompositorVersion::Reply(VersionReply {
+        major: 4,
+        minor: 0,
+        patch: 0,
+        human_readable: "4.0\u{1b}[2J".to_string(),
+        variant: Some("other\r".to_string()),
+    });
+    let (line, warning) = version_report(&reply);
+    for text in [line, warning.unwrap()] {
+        assert!(!text.chars().any(char::is_control), "{text:?}");
+    }
+}
+
+#[test]
+fn version_report_warns_about_an_unrecognized_reply() {
+    let (line, warning) = version_report(&CompositorVersion::Unrecognized(
+        "the reply has no i3-ipc header".to_string(),
+    ));
+    assert!(line.contains("unrecognized reply"), "{line}");
+    assert!(warning
+        .unwrap()
+        .contains("didn't answer a version request as Sway does (the reply has no i3-ipc header)"));
+}

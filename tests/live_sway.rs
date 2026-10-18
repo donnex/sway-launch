@@ -956,6 +956,41 @@ fn exec_matches_by_app_id_and_returns_its_container_id() {
 }
 
 #[test]
+fn the_live_compositor_is_recognized_as_a_supported_sway() {
+    fresh_workspace();
+    // The version check (#147) reads GET_VERSION's `variant` itself, which
+    // swayipc's own Version drops, so this checks real Sway sets it the way
+    // the check expects: no warning, and --verbose names the version that
+    // `sway --version` reports.
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&[]);
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--focus",
+            "--verbose",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "sway-launch failed: {stderr}");
+    assert!(!stderr.contains("warning:"), "{stderr}");
+
+    let version = connection
+        .get_version()
+        .expect("get_version should succeed");
+    let expected = format!(
+        "Sway version: {}.{}.{}",
+        version.major, version.minor, version.patch
+    );
+    assert!(
+        stderr.contains(&expected),
+        "expected {expected:?} in {stderr}"
+    );
+}
+
+#[test]
 fn exec_runs_a_command_that_starts_with_a_shell_builtin() {
     fresh_workspace();
     // The PID marker used to be prepended as `env VAR=value <command>`, and
