@@ -168,27 +168,9 @@ impl LayoutStep {
         if let Some(target_id) = self.target_id.as_deref() {
             sway_launch::require_non_blank("target_id", target_id)?;
         }
-        if self.workspace.is_some() && self.workspace_number.is_some() {
-            return Err(
-                "workspace and workspace_number can't both be set — pick the workspace by name \
-                 or by number"
-                    .to_string(),
-            );
-        }
-        // A relative move only ever acts on the workspace the window opened
-        // on; the workspace move after it then drops the window into the
-        // target as an ordinary new sibling, so the new row/column never
-        // takes effect there.
-        if (self.workspace.is_some() || self.workspace_number.is_some())
-            && (self.new_column || self.new_row)
-        {
-            return Err(
-                "workspace can't be combined with new_column/new_row — the relative move would \
-                 apply on the workspace the window opened on, not the target; build on the target \
-                 workspace instead (a template's [layout] table, or --on-workspace)"
-                    .to_string(),
-            );
-        }
+        let workspace =
+            sway_launch::workspace_choice(self.workspace.as_deref(), self.workspace_number)?;
+        sway_launch::check_relative_move(workspace.is_some(), self.new_column, self.new_row)?;
         let target_id = self
             .target_id
             .as_deref()
@@ -232,11 +214,6 @@ impl LayoutStep {
                 sway_launch::validate_sway_string_argument,
             ),
             (
-                "workspace",
-                self.workspace.as_deref(),
-                sway_launch::validate_workspace_argument,
-            ),
-            (
                 "output",
                 self.output.as_deref(),
                 sway_launch::validate_output_argument,
@@ -246,12 +223,6 @@ impl LayoutStep {
                 validate(value).map_err(|error| format!("{}: {}", field, error))?;
             }
         }
-
-        let workspace_number = self
-            .workspace_number
-            .map(sway_launch::validate_workspace_number)
-            .transpose()
-            .map_err(|error| format!("workspace_number: {}", error))?;
 
         if let Some(timeout) = self.timeout {
             sway_launch::validate_timeout_seconds(timeout)
@@ -300,11 +271,7 @@ impl LayoutStep {
             mark: self.mark.as_deref(),
             new_column: self.new_column,
             new_row: self.new_row,
-            workspace: self
-                .workspace
-                .as_deref()
-                .map(sway_launch::WorkspaceTarget::Name)
-                .or(workspace_number.map(sway_launch::WorkspaceTarget::Number)),
+            workspace,
             output: self.output.as_deref(),
             height,
             width,

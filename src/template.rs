@@ -209,21 +209,21 @@ pub struct TemplateLayoutContext {
     /// The workspace by number instead of by name (#43).
     pub workspace_number: Option<i64>,
     pub output: Option<String>,
+    /// `workspace_number` as `parse()` validated it, so `workspace_target()`
+    /// never has to check it again.
+    #[serde(skip)]
+    validated_workspace_number: Option<i32>,
 }
 
 impl TemplateLayoutContext {
-    /// The workspace this table names, by name or by number. Expects a
-    /// table `parse()` has validated, which rejects both at once and a
-    /// number out of range.
+    /// The workspace this table names, by name or by number, as `parse()`
+    /// checked it: a table that didn't come through `parse()` names a
+    /// workspace by name only.
     pub fn workspace_target(&self) -> Option<sway_launch::WorkspaceTarget<'_>> {
-        self.workspace
-            .as_deref()
-            .map(sway_launch::WorkspaceTarget::Name)
-            .or_else(|| {
-                self.workspace_number
-                    .and_then(|number| sway_launch::validate_workspace_number(number).ok())
-                    .map(sway_launch::WorkspaceTarget::Number)
-            })
+        sway_launch::WorkspaceTarget::from_pair(
+            self.workspace.as_deref(),
+            self.validated_workspace_number,
+        )
     }
 }
 
@@ -357,33 +357,12 @@ impl Binding {
                 );
             }
         }
-        if self.workspace.is_some() && self.workspace_number.is_some() {
-            return Err(
-                "workspace and workspace_number can't both be set — pick the workspace by name \
-                 or by number"
-                    .to_string(),
-            );
-        }
-        if let Some(workspace) = self.workspace.as_deref() {
-            sway_launch::validate_workspace_argument(workspace)
-                .map_err(|error| format!("workspace: {}", error))?;
-        }
-        if let Some(number) = self.workspace_number {
-            sway_launch::validate_workspace_number(number)
-                .map_err(|error| format!("workspace_number: {}", error))?;
-        }
+        sway_launch::workspace_choice(self.workspace.as_deref(), self.workspace_number)?;
         if let Some(output) = self.output.as_deref() {
             sway_launch::validate_output_argument(output)
                 .map_err(|error| format!("output: {}", error))?;
         }
-        if self.sets_workspace() && (step.new_column || step.new_row) {
-            return Err(
-                "workspace can't be set for a slot whose step uses new_column/new_row — the \
-                 relative move would apply on the workspace the window opened on; build the whole \
-                 template there instead (--on-workspace)"
-                    .to_string(),
-            );
-        }
+        sway_launch::check_relative_move(self.sets_workspace(), step.new_column, step.new_row)?;
         Ok(())
     }
 }
@@ -419,24 +398,18 @@ pub struct Bindings {
 /// `--validate`, `resolve()` — only ever sees a template whose slots are
 /// already distinct. A later step acts on the same window via `target_id`.
 pub fn parse(contents: &str) -> Result<Template, String> {
-    let template: Template = toml::from_str(contents).map_err(|error| error.to_string())?;
+    let mut template: Template = toml::from_str(contents).map_err(|error| error.to_string())?;
     sway_launch::require_non_blank("template.description", &template.template.description)?;
     sway_launch::require_non_blank("template.category", &template.template.category)?;
-    if let Some(workspace) = template.layout.workspace.as_deref() {
-        sway_launch::validate_workspace_argument(workspace)
-            .map_err(|error| format!("[layout] workspace: {}", error))?;
-    }
-    if let Some(number) = template.layout.workspace_number {
-        if template.layout.workspace.is_some() {
-            return Err(
-                "[layout]: workspace and workspace_number can't both be set — pick the workspace \
-                 by name or by number"
-                    .to_string(),
-            );
-        }
-        sway_launch::validate_workspace_number(number)
-            .map_err(|error| format!("[layout] workspace_number: {}", error))?;
-    }
+    let validated_workspace_number = match sway_launch::workspace_choice(
+        template.layout.workspace.as_deref(),
+        template.layout.workspace_number,
+    )
+    .map_err(|error| format!("[layout] {}", error))?
+    {
+        Some(sway_launch::WorkspaceTarget::Number(number)) => Some(number),
+        _ => None,
+    };
     if let Some(output) = template.layout.output.as_deref() {
         sway_launch::validate_output_argument(output)
             .map_err(|error| format!("[layout] output: {}", error))?;
@@ -473,6 +446,7 @@ pub fn parse(contents: &str) -> Result<Template, String> {
             return Err(format!("template: slot {:?} is used more than once", slot));
         }
     }
+    template.layout.validated_workspace_number = validated_workspace_number;
     Ok(template)
 }
 

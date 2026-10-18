@@ -811,13 +811,10 @@ fn main() {
         mark: args.mark.as_deref(),
         new_column: args.new_column,
         new_row: args.new_row,
-        workspace: args
-            .workspace
-            .as_deref()
-            .map(sway_launch::WorkspaceTarget::Name)
-            .or(args
-                .workspace_number
-                .map(sway_launch::WorkspaceTarget::Number)),
+        workspace: sway_launch::WorkspaceTarget::from_pair(
+            args.workspace.as_deref(),
+            args.workspace_number,
+        ),
         output: args.output.as_deref(),
         height: args.height,
         width: args.width,
@@ -1799,12 +1796,7 @@ fn run_template(path: &Path, bindings_source: BindingsSource, args: &Args) -> ! 
 
 /// `--on-workspace`/`--on-workspace-number` (clap allows at most one).
 fn on_workspace(args: &Args) -> Option<sway_launch::WorkspaceTarget<'_>> {
-    args.on_workspace
-        .as_deref()
-        .map(sway_launch::WorkspaceTarget::Name)
-        .or(args
-            .on_workspace_number
-            .map(sway_launch::WorkspaceTarget::Number))
+    sway_launch::WorkspaceTarget::from_pair(args.on_workspace.as_deref(), args.on_workspace_number)
 }
 
 /// Builds `Bindings` from `--apps`' comma-separated command list, mapping

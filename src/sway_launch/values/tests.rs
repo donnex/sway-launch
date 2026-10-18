@@ -729,6 +729,52 @@ fn parse_workspace_number_rejects_anything_else() {
 }
 
 #[test]
+fn workspace_choice_names_the_workspace_by_either_half() {
+    assert_eq!(workspace_choice(None, None), Ok(None));
+    assert_eq!(
+        workspace_choice(Some("web"), None),
+        Ok(Some(WorkspaceTarget::Name("web")))
+    );
+    assert_eq!(
+        workspace_choice(None, Some(3)),
+        Ok(Some(WorkspaceTarget::Number(3)))
+    );
+}
+
+#[test]
+fn workspace_choice_rejects_both_halves_and_names_the_field_at_fault() {
+    let both = workspace_choice(Some("web"), Some(3)).unwrap_err();
+    assert!(both.starts_with("workspace and workspace_number"), "{both}");
+    let name = workspace_choice(Some("next"), None).unwrap_err();
+    assert!(name.starts_with("workspace: "), "{name}");
+    for number in [-1, i64::from(i32::MAX) + 1] {
+        let error = workspace_choice(None, Some(number)).unwrap_err();
+        assert!(error.starts_with("workspace_number: "), "{error}");
+    }
+}
+
+#[test]
+fn workspace_target_from_pair_prefers_the_name() {
+    assert_eq!(WorkspaceTarget::from_pair(None, None), None);
+    assert_eq!(
+        WorkspaceTarget::from_pair(None, Some(2)),
+        Some(WorkspaceTarget::Number(2))
+    );
+    assert_eq!(
+        WorkspaceTarget::from_pair(Some("web"), Some(2)),
+        Some(WorkspaceTarget::Name("web"))
+    );
+}
+
+#[test]
+fn check_relative_move_refuses_a_workspace_move_after_new_column_or_new_row() {
+    assert!(check_relative_move(false, true, true).is_ok());
+    assert!(check_relative_move(true, false, false).is_ok());
+    assert!(check_relative_move(true, true, false).is_err());
+    assert!(check_relative_move(true, false, true).is_err());
+}
+
+#[test]
 fn workspace_target_matches_a_name_ignoring_case_and_a_number_by_num() {
     assert!(WorkspaceTarget::Name("web").matches(Some("Web"), Some(-1)));
     assert!(!WorkspaceTarget::Name("2").matches(Some("2: web"), Some(2)));

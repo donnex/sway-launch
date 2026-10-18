@@ -54,13 +54,13 @@ pub use query::{
 pub use target::{FieldStyle, Target, TargetError, TargetFields, WindowCriteria, WindowMatch};
 pub use tree::ListedWindow;
 pub use values::{
-    escape_control_characters, launch_setup, parse_env_assignment, parse_position, parse_size,
-    parse_title_pattern, parse_workspace_number, render_argv, require_non_blank, settle_duration,
-    validate_exec_command, validate_non_blank_argument, validate_output_argument,
-    validate_settle_argument, validate_settle_milliseconds, validate_sway_command,
-    validate_sway_string_argument, validate_timeout_argument, validate_timeout_seconds,
-    validate_workspace_argument, validate_workspace_number, DirectoryCheck, Position, Size, Split,
-    TitlePattern, WorkspaceTarget,
+    check_relative_move, escape_control_characters, launch_setup, parse_env_assignment,
+    parse_position, parse_size, parse_title_pattern, parse_workspace_number, render_argv,
+    require_non_blank, settle_duration, validate_exec_command, validate_non_blank_argument,
+    validate_output_argument, validate_settle_argument, validate_settle_milliseconds,
+    validate_sway_command, validate_sway_string_argument, validate_timeout_argument,
+    validate_timeout_seconds, validate_workspace_argument, workspace_choice, DirectoryCheck,
+    Position, Size, Split, TitlePattern, WorkspaceTarget,
 };
 
 /// The compositor's version, checked against the oldest supported Sway

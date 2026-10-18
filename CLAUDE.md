@@ -153,6 +153,12 @@ what it rejects and why:
   `Number`), the one type `ActionKind::Workspace`/`WorkspaceToOutput` and `BuildLocation` carry:
   `sway_argument()` renders it (a number unquoted after `number`, or Sway reads it as a name) and
   `WorkspaceTarget::matches()` decides it against a workspace's name and `num` (#43).
+- `workspace_choice()`/`check_relative_move()` — the two cross-field placement rules, for every
+  file schema (a layout step, a binding, a template's `[layout]` table): a workspace by name or by
+  number, not both, turned into the `WorkspaceTarget` (`WorkspaceTarget::from_pair()`, which the
+  CLI uses too), and no workspace move alongside `new_column`/`new_row` (#45). The CLI keeps clap's
+  `conflicts_with` for them; `tests/placement_rules.rs` checks every front end gives the same
+  answer.
 - `validate_exec_command()` — the launch command is sent raw, so it rejects what Sway's own parser
   would split on (an unquoted `,`/`;`, any newline/CR/NUL), and a shell comment, an unclosed
   quote or a `\'` inside single quotes (where Sway's quoting and sh's disagree, #151), any of which
@@ -491,8 +497,9 @@ follow-up:
   (`CARGO_BIN_EXE_sway-launch`, only set for files under `tests/`): `completions.rs`,
   `json_output.rs` (stdout/stderr/`--json` shapes, via `--con-id` or an unreachable socket),
   `layout.rs` and `template.rs` (end to end, `--dry-run`, `--validate`, every shipped example and
-  built-in), `target_rules.rs` (see Targets). Shared helpers live in `tests/common/mod.rs` (temp
-  files, `sway_launch()`, `assert_conflict_error()`); add new ones there. Every one of them runs
+  built-in), `target_rules.rs` (see Targets), `placement_rules.rs` (see Input validation).
+  Shared helpers live in `tests/common/mod.rs` (temp files, `sway_launch()`,
+  `assert_conflict_error()`); add new ones there. Every one of them runs
   the binary through `sway_launch()`, which points it at a socket that can't exist and a private
   `XDG_RUNTIME_DIR`, so no test depends on the code under test happening to make no IPC call, and
   no run lock lands in the developer's own runtime directory (#137);

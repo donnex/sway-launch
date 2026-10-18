@@ -351,6 +351,17 @@ pub enum WorkspaceTarget<'a> {
     Number(i32),
 }
 
+impl<'a> WorkspaceTarget<'a> {
+    /// The workspace a name-or-number pair names, the name winning. Every
+    /// front end has rejected a pair with both halves by the time it calls
+    /// this: clap's `conflicts_with` on the CLI, `workspace_choice()` for
+    /// the files.
+    pub fn from_pair(name: Option<&'a str>, number: Option<i32>) -> Option<Self> {
+        name.map(WorkspaceTarget::Name)
+            .or(number.map(WorkspaceTarget::Number))
+    }
+}
+
 impl WorkspaceTarget<'_> {
     /// The workspace argument of a Sway `workspace`/`move workspace` command.
     /// A number is sent unquoted after the `number` keyword; quoted, `number
@@ -449,6 +460,50 @@ pub fn validate_workspace_number(number: i64) -> Result<i32, String> {
                 i32::MAX
             )
         })
+}
+
+/// A file's `workspace`/`workspace_number` pair (a layout step, a binding,
+/// a template's `[layout]` table) as the workspace it names: each half
+/// validated as `--workspace`/`--workspace-number` are, and both at once
+/// refused, as clap's `conflicts_with` refuses them on the CLI. An error
+/// names the field at fault; the caller adds where the field is.
+pub fn workspace_choice(
+    name: Option<&str>,
+    number: Option<i64>,
+) -> Result<Option<WorkspaceTarget<'_>>, String> {
+    if name.is_some() && number.is_some() {
+        return Err(
+            "workspace and workspace_number can't both be set — pick the workspace \
+                    by name or by number"
+                .to_string(),
+        );
+    }
+    if let Some(name) = name {
+        validate_workspace_argument(name).map_err(|error| format!("workspace: {}", error))?;
+    }
+    let number = number
+        .map(validate_workspace_number)
+        .transpose()
+        .map_err(|error| format!("workspace_number: {}", error))?;
+    Ok(WorkspaceTarget::from_pair(name, number))
+}
+
+/// Refuses a move to another workspace alongside `new_column`/`new_row`
+/// (#45), for a layout step and for a binding placing a step's window; the
+/// CLI refuses it with clap's `conflicts_with_all`. A relative move only
+/// ever acts on the workspace the window opened on; the workspace move
+/// after it then drops the window into the target as an ordinary new
+/// sibling, so the new row/column never takes effect there.
+pub fn check_relative_move(workspace: bool, new_column: bool, new_row: bool) -> Result<(), String> {
+    if workspace && (new_column || new_row) {
+        return Err(
+            "workspace can't be combined with new_column/new_row — the relative move would \
+             apply on the workspace the window opened on, not the target; build on the target \
+             workspace instead (a template's [layout] table, or --on-workspace)"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 /// Values `move container to output` reads as directions or the current
