@@ -6389,6 +6389,134 @@ fn concurrent_retarget_by_id_layout_resolves_a_staged_window_by_name() {
     no_staging_workspace_is_left(&mut connection);
 }
 
+/// Every container in `node` (scratchpad included) whose app_id is `app_id`.
+fn containers_with_app_id(node: &Node, app_id: &str) -> Vec<i64> {
+    let own = (node.app_id.as_deref() == Some(app_id)).then_some(node.id);
+    own.into_iter()
+        .chain(
+            node.nodes
+                .iter()
+                .chain(node.floating_nodes.iter())
+                .flat_map(|child| containers_with_app_id(child, app_id)),
+        )
+        .collect()
+}
+
+/// The container ids a successful run printed, one per line.
+fn run_ids(arguments: &[&str]) -> Vec<i64> {
+    let output = sway_launch_command()
+        .args(arguments)
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "{arguments:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| line.parse().expect("each line should be a container id"))
+        .collect()
+}
+
+#[test]
+fn an_existing_step_ahead_of_a_launch_of_the_same_app_works_with_and_without_concurrent() {
+    // #190: with --concurrent, step 2's window is already open on the
+    // staging workspace when step 1 looks for the one window it names.
+    let path = TempToml::write(
+        "existing-before-launch",
+        "[[step]]\nexisting = true\napp_id = \"live-existing-190\"\n\
+         mark = \"live-existing-190\"\n\n\
+         [[step]]\ncommand = \"foot --app-id=live-existing-190\"\napp_id = \"live-existing-190\"\n",
+    );
+    for concurrent in [false, true] {
+        fresh_workspace();
+        let mut connection = connect();
+        let opened = run_ids(&[
+            "-a",
+            "live-existing-190",
+            "--timeout",
+            "10",
+            "foot --app-id=live-existing-190",
+        ]);
+        let _opened_guard = KillOnDrop(opened[0]);
+        let mut arguments = vec!["--layout", path.to_str().unwrap(), "--timeout", "10"];
+        if concurrent {
+            arguments.push("--concurrent");
+        }
+        let ids = run_ids(&arguments);
+        let _launched_guard = KillOnDrop(ids[1]);
+        assert_eq!(ids[0], opened[0], "concurrent {concurrent}");
+        assert_ne!(ids[1], opened[0], "concurrent {concurrent}");
+        assert_eq!(
+            get_node(&mut connection, opened[0]).marks,
+            vec!["live-existing-190".to_string()],
+            "concurrent {concurrent}"
+        );
+        no_staging_workspace_is_left(&mut connection);
+    }
+}
+
+#[test]
+fn an_existing_wait_step_ahead_of_a_launch_waits_for_the_autostarted_window() {
+    // #190: the window step 1 waits for is started by Sway's own exec 1.5s
+    // in. With --concurrent, step 2's staged window matches it first, and
+    // must not be taken in its place.
+    let path = TempToml::write(
+        "existing-wait-before-launch",
+        "[[step]]\nexisting = true\nwait = true\napp_id = \"live-wait-190\"\n\
+         mark = \"live-wait-190\"\n\n\
+         [[step]]\ncommand = \"foot --app-id=live-wait-190\"\napp_id = \"live-wait-190\"\n",
+    );
+    for concurrent in [false, true] {
+        fresh_workspace();
+        let mut connection = connect();
+        let mut command = sway_launch_command();
+        command.args(["--layout", path.to_str().unwrap(), "--timeout", "10"]);
+        if concurrent {
+            command.arg("--concurrent");
+        }
+        let running = command
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to start sway-launch binary");
+        std::thread::sleep(Duration::from_millis(1500));
+        let tree = connection.get_tree().expect("get_tree should succeed");
+        let before_autostart = containers_with_app_id(&tree, "live-wait-190");
+        run_command_ok(&mut connection, "exec foot --app-id=live-wait-190");
+        let output = running
+            .wait_with_output()
+            .expect("sway-launch should finish");
+        assert!(
+            output.status.success(),
+            "concurrent {concurrent}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let ids: Vec<i64> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| line.parse().expect("each line should be a container id"))
+            .collect();
+        let _guards: Vec<_> = ids.iter().map(|&id| KillOnDrop(id)).collect();
+        assert_eq!(ids.len(), 2, "concurrent {concurrent}");
+        assert_ne!(ids[0], ids[1], "concurrent {concurrent}");
+        assert!(
+            !before_autostart.contains(&ids[0]),
+            "concurrent {concurrent}: step 1 took step 2's window {ids:?}"
+        );
+        assert_eq!(
+            get_node(&mut connection, ids[0]).marks,
+            vec!["live-wait-190".to_string()],
+            "concurrent {concurrent}"
+        );
+        assert!(
+            get_node(&mut connection, ids[1]).marks.is_empty(),
+            "concurrent {concurrent}"
+        );
+        no_staging_workspace_is_left(&mut connection);
+    }
+}
+
 #[test]
 fn concurrent_rollback_closes_every_staged_window_a_later_step_fails_after() {
     fresh_workspace();

@@ -1817,6 +1817,7 @@ fn exec_timeout_message(
 /// waiting longer can't make the choice less ambiguous.
 pub(super) fn run_wait_for_existing_window(
     criteria: WindowCriteria,
+    excluded: &[i64],
     timeout: time::Duration,
     verbose: bool,
 ) -> Result<i64, RunError> {
@@ -1826,7 +1827,9 @@ pub(super) fn run_wait_for_existing_window(
     let mut announced = false;
 
     loop {
-        if let Some(container_id) = awaited_existing_container_id(&mut connection, criteria)? {
+        if let Some(container_id) =
+            awaited_existing_container_id(&mut connection, criteria, excluded)?
+        {
             return Ok(container_id);
         }
         if verbose && !announced {

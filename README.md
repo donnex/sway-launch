@@ -738,11 +738,13 @@ window is in place, so it takes as long as all of its applications' startups add
 then moves each window to the build workspace in step order and applies its step's actions there,
 so it lands exactly where it would have opened. A four-window grid of applications taking about a
 second each to start drops from about 4 seconds to just over 1. The whole file is checked before
-anything starts, and a failure never leaves a window on the staging workspace. Focus visibly jumps
-to the staging workspace while the applications start. A single-instance application can't be
-told apart this way: when two steps' launches end up with the same window, the run fails, so run
-such layouts without `--concurrent`. A layout file or a bindings file can ask for it itself with a
-top-level `concurrent = true`, so its callers needn't remember the flag:
+anything starts, and a failure never leaves a window on the staging workspace. An `existing` step
+sees the same windows it would in a sequential run: a later step's window, already open on the
+staging workspace, is never one it chooses between or waits for. Focus visibly jumps to the
+staging workspace while the applications start. A single-instance application can't be told apart
+this way: when two steps' launches end up with the same window, the run fails, so run such layouts
+without `--concurrent`. A layout file or a bindings file can ask for it itself with a top-level
+`concurrent = true`, so its callers needn't remember the flag:
 
 ```toml
 concurrent = true

@@ -135,6 +135,21 @@ pub(super) fn matching_container_ids(tree: &Node, criteria: WindowCriteria) -> V
         .collect()
 }
 
+/// `matching_container_ids()` without `excluded`, for `Target::Existing`:
+/// a `--concurrent` run's windows staged for a later step (#190), which a
+/// sequential run wouldn't have opened yet, so counting them would fail a
+/// match that works without the flag, or let `--wait` take the wrong window.
+pub(super) fn existing_candidates(
+    tree: &Node,
+    criteria: WindowCriteria,
+    excluded: &[i64],
+) -> Vec<i64> {
+    matching_container_ids(tree, criteria)
+        .into_iter()
+        .filter(|container_id| !excluded.contains(container_id))
+        .collect()
+}
+
 /// One row of `--list-windows`: what a user needs to write a matcher, a
 /// `--con-id` or a bindings file for an open window.
 #[derive(Debug, Clone, PartialEq, Eq)]

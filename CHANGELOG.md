@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An `existing = true` step ahead of a step launching the same application now works the same with
+  `--concurrent` (or `concurrent = true`) as without it. The later step's window, already open on
+  the staging workspace, counted as a match: a plain `existing` step failed with "2 windows match",
+  and one with `wait = true` took that window at once instead of waiting for the one being
+  autostarted, marking and arranging the wrong window with exit status 0. A step's `existing`
+  search now leaves out every window a later step launched ahead of its turn, and a `con_id` naming
+  one fails the run. (#190)
 - `--capture` now rebuilds a workspace holding a fullscreen window in the right shape. Sway keeps
   focus on a fullscreen window when another opens beside it, so the captured file, which made the
   window fullscreen as it launched, opened every later window behind it in reverse order, and a

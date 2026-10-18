@@ -96,6 +96,25 @@ fn matching_container_ids_finds_tiling_and_floating_matches() {
 }
 
 #[test]
+fn existing_candidates_leaves_out_the_excluded_containers() {
+    let tree = node_tree(
+        1,
+        vec![
+            leaf_node_value(10, Some("foot"), None),
+            leaf_node_value(11, Some("foot"), None),
+        ],
+        vec![leaf_node_value(20, Some("foot"), None)],
+    );
+    let mut ids = existing_candidates(&tree, by(WindowMatch::AppId("foot")), &[11, 99]);
+    ids.sort();
+    assert_eq!(ids, vec![10, 20]);
+    assert_eq!(
+        existing_candidates(&tree, by(WindowMatch::AppId("foot")), &[]).len(),
+        3
+    );
+}
+
+#[test]
 fn matching_container_ids_empty_when_no_match() {
     let tree = node_tree(1, vec![leaf_node_value(10, Some("foot"), None)], vec![]);
     assert_eq!(

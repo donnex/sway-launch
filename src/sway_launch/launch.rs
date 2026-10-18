@@ -98,6 +98,12 @@ pub struct SwayLaunch<'a> {
     /// (#113), already rendered by `render_launch_setup()`. Only meaningful
     /// with `Target::Exec`; the front ends refuse it otherwise.
     pub launch_setup: Option<String>,
+
+    /// Containers `Target::Existing` never resolves to, whatever they match:
+    /// a `--concurrent` run's windows still waiting on the staging workspace
+    /// for a later step (#190), which a sequential run wouldn't have opened
+    /// yet.
+    pub excluded_containers: Vec<i64>,
 }
 
 /// Where a `--layout`/`--template` run builds: a workspace and/or output
@@ -321,14 +327,19 @@ impl<'a> SwayLaunch<'a> {
             Target::Existing {
                 criteria,
                 wait: false,
-            } => find_existing_container_id(criteria)
+            } => find_existing_container_id(criteria, &self.excluded_containers)
                 .map(|container_id| (container_id, None))
                 .map_err(RunError::from),
             Target::Existing {
                 criteria,
                 wait: true,
-            } => run_wait_for_existing_window(criteria, self.timeout, self.verbose)
-                .map(|container_id| (container_id, None)),
+            } => run_wait_for_existing_window(
+                criteria,
+                &self.excluded_containers,
+                self.timeout,
+                self.verbose,
+            )
+            .map(|container_id| (container_id, None)),
         }
     }
 

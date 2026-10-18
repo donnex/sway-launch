@@ -12,8 +12,8 @@ use super::capture::capture;
 use super::ipc::{ipc_error, new_connection};
 use super::target::{LaunchFilter, WindowCriteria};
 use super::tree::{
-    con_id_target_problem, expected_position, find_node, find_parent_layout, find_workspace,
-    find_workspace_node, focused_workspace, launch_placement_problems, matching_container_ids,
+    con_id_target_problem, existing_candidates, expected_position, find_node, find_parent_layout,
+    find_workspace, find_workspace_node, focused_workspace, launch_placement_problems,
     move_skip_reason, node_position, present_ids, recheck_launched_windows,
     resolve_awaited_matches, resolve_matches, tiled_window_count, window_listing, workspace_named,
     ContainerState, ListedWindow, MoveDirection, RecheckedWindow, WorkspaceIdentity,
@@ -27,14 +27,18 @@ use swayipc::{Connection, Node, NodeLayout};
 /// Errors — rather than silently picking one — if zero or more than one
 /// window matches, since guessing which of several matches the caller meant
 /// would be a worse default than asking them to retarget with `--con-id`.
-pub(super) fn find_existing_container_id(criteria: WindowCriteria) -> Result<i64, String> {
+/// `excluded` are never candidates (see `existing_candidates()`).
+pub(super) fn find_existing_container_id(
+    criteria: WindowCriteria,
+    excluded: &[i64],
+) -> Result<i64, String> {
     let tree = match new_connection()?.get_tree() {
         Ok(tree) => tree,
         Err(error) => return Err(ipc_error(error)),
     };
 
     resolve_matches(
-        matching_container_ids(&tree, criteria),
+        existing_candidates(&tree, criteria, excluded),
         &criteria.to_string(),
     )
 }
@@ -67,10 +71,11 @@ pub fn capture_workspace(name: Option<&str>) -> Result<String, String> {
 pub(super) fn awaited_existing_container_id(
     connection: &mut Connection,
     criteria: WindowCriteria,
+    excluded: &[i64],
 ) -> Result<Option<i64>, String> {
     let tree = connection.get_tree().map_err(ipc_error)?;
     resolve_awaited_matches(
-        matching_container_ids(&tree, criteria),
+        existing_candidates(&tree, criteria, excluded),
         &criteria.to_string(),
     )
 }

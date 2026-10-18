@@ -359,7 +359,9 @@ checks those by hand, because the derive macro doesn't enforce `requires` reliab
   shape matches, `every_shipped_template_builds_the_same_shape_with_concurrent`), then the step
   runs against `Target::ConId` with the launch's ownership carried over. Every failure path first
   calls `release_staged()`, so no window is left on the staging workspace and each counts as
-  progress and for rollback.
+  progress and for rollback. While staged windows wait, a step's `SwayLaunch.excluded_containers`
+  holds them (`staged_window_owners()`), so `Existing` resolution (`tree::existing_candidates()`)
+  sees what a sequential run would; a `ConId` naming one fails before acting (#190).
 - A run tracks a workspace by its node id (`tree::WorkspaceIdentity`, read through
   `query::workspace_now()` with a `WorkspaceLookup`), never by a name read earlier: workspace-icon
   daemons rename a workspace whenever a window opens on it, keeping its id (#178). So

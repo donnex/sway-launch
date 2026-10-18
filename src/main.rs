@@ -840,6 +840,7 @@ fn main() {
         require_launch_on_focused_workspace: false,
         warn_on_misplaced_launch: false,
         catch_late_window: false,
+        excluded_containers: Vec::new(),
     };
 
     if args.dry_run {
@@ -2001,6 +2002,12 @@ fn run_steps(
                 // A timeout that --continue-on-timeout carries on past isn't
                 // rolled back, so a late window would only be left open.
                 catch_late_window: args.rollback_on_error && !args.continue_on_timeout,
+                excluded_containers: staged
+                    .as_ref()
+                    .map(|staged| staged_window_owners(&staged.windows, Some(index)))
+                    .unwrap_or_default()
+                    .into_keys()
+                    .collect(),
                 ..sway_launch
             },
             Err(error) => {
@@ -2030,6 +2037,15 @@ fn run_steps(
             (Some(window), Some(staged)) => {
                 arrange_staged(&staged.staging, window, sway_launch, args.verbose)
             }
+            (None, Some(staged)) => match sway_launch.target {
+                sway_launch::Target::ConId(container_id) => {
+                    match staged_window_owners(&staged.windows, None).get(&container_id) {
+                        Some(owner) => Err(staged_window_taken_error(container_id, *owner)),
+                        None => sway_launch.run(),
+                    }
+                }
+                _ => sway_launch.run(),
+            },
             _ => sway_launch.run(),
         };
 
@@ -2415,6 +2431,43 @@ fn reject_shared_windows(windows: &mut StagedWindows) {
             claimed.insert(outcome.container_id, *index);
         }
     }
+}
+
+/// Every window still waiting on the staging workspace, mapped to the step
+/// whose launch opened it, leaving out `except`'s own: a failed launch's
+/// windows too, since its step may not have been reached yet.
+fn staged_window_owners(windows: &StagedWindows, except: Option<usize>) -> HashMap<i64, usize> {
+    let mut owners = HashMap::new();
+    for (index, result) in windows {
+        if Some(*index) == except {
+            continue;
+        }
+        let container_ids = match result {
+            Ok(outcome) => vec![outcome.container_id],
+            Err(error) => failed_launch_windows(error)
+                .into_iter()
+                .map(|(container_id, _)| container_id)
+                .collect(),
+        };
+        for container_id in container_ids {
+            owners.entry(container_id).or_insert(*index);
+        }
+    }
+    owners
+}
+
+/// The error for a step that resolved to a window a later step's launch
+/// opened (#190), refused before it acts on it: `Target::Existing` leaves
+/// those out, so only a `con_id` naming one gets here, and both steps would
+/// otherwise report it.
+fn staged_window_taken_error(container_id: i64, owner: usize) -> sway_launch::RunError {
+    format!(
+        "container {} is step {}'s window, launched ahead of its turn by --concurrent: a step \
+         can't target a window a later step opens",
+        container_id,
+        owner + 1
+    )
+    .into()
 }
 
 /// Launches every `command` step at once (#73), without its actions, on a
@@ -3239,6 +3292,28 @@ mod tests {
             "{}",
             error.message
         );
+    }
+
+    #[test]
+    fn staged_window_owners_maps_every_waiting_window_to_its_step_but_the_excepted_one() {
+        let caught_late = Err(sway_launch::RunError {
+            container_id: Some(12),
+            launch_ownership: Some(sway_launch::LaunchOwnership::Launched),
+            ..sway_launch::RunError::from("timed out".to_string())
+        });
+        let windows: StagedWindows = [
+            (1, staged(10)),
+            (2, staged(11)),
+            (3, timed_out()),
+            (5, caught_late),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            staged_window_owners(&windows, Some(2)),
+            HashMap::from([(10, 1), (12, 5)])
+        );
+        assert_eq!(staged_window_owners(&windows, None).get(&11), Some(&2));
     }
 
     fn field_names<T: serde::Serialize>(value: &T) -> std::collections::BTreeSet<String> {

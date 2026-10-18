@@ -1786,6 +1786,131 @@ fn concurrent_launches_that_end_up_with_the_same_window_fail() {
     );
 }
 
+/// A handler that opens a window with `app_id` for each launch and marks
+/// whatever window a `[con_id=N] mark` names.
+fn launches_and_marks(
+    app_id: &'static str,
+) -> impl FnMut(&mut Sway, &str) -> Result<(), String> + Send + 'static {
+    let mut launches = opens_a_window_for_each_launch(app_id);
+    move |sway, command| {
+        if command.starts_with("exec ") {
+            launches(sway, command)
+        } else if command.starts_with("[con_id=") {
+            arranges_on_command(sway, command)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[test]
+fn an_existing_step_ahead_of_a_launch_of_the_same_app_ignores_its_staged_window() {
+    // #190: with --concurrent, step 2's window is open before step 1 runs.
+    // Step 1 must still find only the window that was already there, as it
+    // does without the flag, rather than failing on two matches.
+    let layout = TempToml::write(
+        "existing-before-launch",
+        "[[step]]\nexisting = true\napp_id = \"fixture-tiled\"\nmark = \"kept\"\n\n\
+         [[step]]\ncommand = \"sleep 30\"\napp_id = \"fixture-tiled\"\n",
+    );
+    for concurrent in [false, true] {
+        let fake = FakeSway::start(SwayVersion::V1_11, launches_and_marks("fixture-tiled"));
+        let mut arguments = vec!["--layout", layout.to_str().unwrap()];
+        if concurrent {
+            arguments.push("--concurrent");
+        }
+        let run = run(&fake, &arguments);
+        assert!(run.succeeded(), "concurrent {concurrent}: {}", run.stderr());
+        assert_eq!(
+            run.json["container_ids"],
+            serde_json::json!([TILED, 100]),
+            "concurrent {concurrent}: {}",
+            run.json
+        );
+        assert_eq!(
+            fake.sway().node(TILED)["marks"],
+            serde_json::json!(["kept"]),
+            "concurrent {concurrent}"
+        );
+    }
+}
+
+#[test]
+fn an_existing_wait_step_ahead_of_a_launch_waits_for_the_autostarted_window() {
+    // #190: the window step 1 waits for is started by something else 1.5s
+    // in. With --concurrent, step 2's staged window matches too, and must
+    // not be taken in its place.
+    let layout = TempToml::write(
+        "existing-wait-before-launch",
+        "[[step]]\nexisting = true\nwait = true\napp_id = \"autostarted\"\n\
+         mark = \"autostarted\"\ntimeout = 10\n\n\
+         [[step]]\ncommand = \"sleep 30\"\napp_id = \"autostarted\"\n",
+    );
+    for concurrent in [false, true] {
+        let fake = FakeSway::start(SwayVersion::V1_11, launches_and_marks("autostarted"));
+        fake.sway().after(Duration::from_millis(1500), |sway| {
+            let id = sway.open_window(Some("autostarted"), None);
+            sway.emit("new", id);
+        });
+        let mut arguments = vec!["--layout", layout.to_str().unwrap()];
+        if concurrent {
+            arguments.push("--concurrent");
+        }
+        let run = run(&fake, &arguments);
+        assert!(run.succeeded(), "concurrent {concurrent}: {}", run.stderr());
+        let ids = &run.json["container_ids"];
+        let (waited, launched) = (ids[0].as_i64().unwrap(), ids[1].as_i64().unwrap());
+        assert_ne!(waited, launched, "concurrent {concurrent}: {}", run.json);
+        let sway = fake.sway();
+        assert!(
+            sway.node(waited)["pid"].is_null(),
+            "concurrent {concurrent}: step 1 took a launched window: {}",
+            run.json
+        );
+        assert_eq!(
+            sway.node(waited)["marks"],
+            serde_json::json!(["autostarted"]),
+            "concurrent {concurrent}"
+        );
+        assert_eq!(
+            sway.node(launched)["marks"],
+            serde_json::json!([]),
+            "concurrent {concurrent}"
+        );
+    }
+}
+
+#[test]
+fn a_concurrent_step_naming_a_later_step_s_staged_window_fails_before_acting() {
+    // #190's backstop: a con_id can still name a window a later step's
+    // launch opened ahead of its turn; both steps would then report it.
+    let fake = FakeSway::start(SwayVersion::V1_11, launches_and_marks("fake-app"));
+    let layout = TempToml::write(
+        "con-id-names-staged-window",
+        "[[step]]\ncon_id = 100\nmark = \"taken\"\n\n\
+         [[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n",
+    );
+    let run = run(
+        &fake,
+        &["--layout", layout.to_str().unwrap(), "--concurrent"],
+    );
+    assert!(!run.succeeded());
+    assert!(
+        run.error()
+            .contains("step 1: container 100 is step 2's window"),
+        "{}",
+        run.error()
+    );
+    assert!(
+        !fake
+            .commands()
+            .iter()
+            .any(|command| command.contains("mark \"taken\"")),
+        "{:?}",
+        fake.commands()
+    );
+}
+
 #[test]
 fn continue_on_timeout_also_covers_an_existing_wait_that_sees_no_window() {
     let fake = FakeSway::start(

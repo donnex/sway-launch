@@ -316,6 +316,7 @@ impl LayoutStep {
             require_launch_on_focused_workspace: false,
             warn_on_misplaced_launch: false,
             catch_late_window: false,
+            excluded_containers: Vec::new(),
             settle,
         })
     }
