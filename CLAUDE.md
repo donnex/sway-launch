@@ -333,7 +333,13 @@ checks those by hand, because the derive macro doesn't enforce `requires` reliab
 - `run_steps()` applies the run's `BuildLocation` (a template's `[layout]` table, or
   `--on-workspace`/`--on-output`, each overriding its half of it) once before the first step, so the shape is built in place. Every workspace switch goes through `focus_command()`, whose `--no-auto-back-and-forth` keeps Sway's `workspace_auto_back_and_forth` from switching to the previous workspace instead (#142). It warns when that
   workspace already holds tiled windows, and sets `require_launch_on_focused_workspace`, which
-  fails a launch if focus moved while it waited (`focus_moved_during_launch()`, #45/#105).
+  fails a launch if focus moved while it waited (`focus_moved_during_launch()`, #45/#105), and
+  `warn_on_misplaced_launch` for a launching step: before its actions, `SwayLaunch::run()` reads
+  the tree once and `tree::launch_placement_problems()` says whether a config rule (`assign`,
+  `for_window`) put the window off the focused workspace or floated it, unless the step moves or
+  floats it itself. Each problem is a `RunOutcome::warnings` entry, printed and added to `--json`'s
+  `"warnings"` by `run_steps()` (#160). `launch_only()` clears it, so a staged window is judged
+  after `arrange_staged()` has moved it.
 - `run_steps()` takes a run lock (`acquire_run_lock()`, #55) before `BuildLocation::apply()`: an
   exclusive `File::try_lock()` on `$XDG_RUNTIME_DIR/sway-launch/<hash>.lock`, keyed on the
   canonical file or template name plus the build workspace (the focused one only for a launching

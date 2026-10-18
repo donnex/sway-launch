@@ -13,9 +13,10 @@ use super::ipc::{ipc_error, new_connection};
 use super::target::{LaunchFilter, WindowCriteria};
 use super::tree::{
     con_id_target_problem, expected_position, find_node, find_parent_layout, find_workspace_node,
-    focused_workspace, matching_container_ids, move_skip_reason, node_position, present_ids,
-    recheck_launched_windows, resolve_awaited_matches, resolve_matches, tiled_window_count,
-    window_listing, workspace_named, ContainerState, ListedWindow, MoveDirection, RecheckedWindow,
+    focused_workspace, launch_placement_problems, matching_container_ids, move_skip_reason,
+    node_position, present_ids, recheck_launched_windows, resolve_awaited_matches, resolve_matches,
+    tiled_window_count, window_listing, workspace_named, ContainerState, ListedWindow,
+    MoveDirection, RecheckedWindow,
 };
 use super::values::{Position, TitlePattern};
 use swayipc::{Connection, Node, NodeLayout};
@@ -230,6 +231,25 @@ pub(super) fn focused_workspace_name() -> Result<Option<String>, String> {
         Err(error) => return Err(ipc_error(error)),
     };
     Ok(focused_workspace(&tree).and_then(|workspace| workspace.name.clone()))
+}
+
+/// `launch_placement_problems()` over a fresh tree: what a user's config
+/// rules did to a step's freshly opened window, if anything (#160).
+pub(super) fn launch_placement_problems_now(
+    container_id: i64,
+    moves_itself: bool,
+    floats_itself: bool,
+) -> Result<Vec<String>, String> {
+    let tree = match new_connection()?.get_tree() {
+        Ok(tree) => tree,
+        Err(error) => return Err(ipc_error(error)),
+    };
+    Ok(launch_placement_problems(
+        &tree,
+        container_id,
+        moves_itself,
+        floats_itself,
+    ))
 }
 
 /// The focused workspace's name and how many tiled windows it already holds,

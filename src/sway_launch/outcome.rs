@@ -26,6 +26,10 @@ pub struct RunOutcome {
     /// means this invocation can prove the window is its own, which is what
     /// `main.rs`'s `--rollback-on-error` keys its destructive cleanup off.
     pub launch_ownership: Option<LaunchOwnership>,
+    /// What went wrong with where the window opened, when
+    /// `SwayLaunch::warn_on_misplaced_launch` asked (#160): each a complete
+    /// sentence, for `main.rs` to print and put in `--json`'s `"warnings"`.
+    pub warnings: Vec<String>,
 }
 
 /// Whether a launched window is one this invocation can prove it created.

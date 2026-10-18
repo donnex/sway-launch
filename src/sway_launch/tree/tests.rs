@@ -1272,3 +1272,101 @@ fn matching_container_ids_narrows_by_title() {
     };
     assert_eq!(matching_container_ids(&tree, criteria), vec![11]);
 }
+
+// launch_placement_problems
+
+/// Workspace "4" (focused, through its empty sibling being unfocused) holding
+/// window 10, workspace "8" holding `elsewhere`, and the scratchpad holding
+/// `in_scratchpad`, so each placement a config rule can cause is reachable.
+fn placement_tree(
+    on_build_workspace: Vec<serde_json::Value>,
+    floating_on_build_workspace: Vec<serde_json::Value>,
+    elsewhere: Vec<serde_json::Value>,
+    in_scratchpad: Vec<serde_json::Value>,
+) -> Node {
+    let mut focused = leaf_node_value(9, Some("terminal"), None);
+    focused["focused"] = serde_json::json!(true);
+    let mut build_nodes = vec![focused];
+    build_nodes.extend(on_build_workspace);
+    let mut build = named_node_value(2, "workspace", "4", build_nodes);
+    build["floating_nodes"] = serde_json::json!(floating_on_build_workspace);
+    let other = named_node_value(3, "workspace", "8", elsewhere);
+    let output = named_node_value(1, "output", "HEADLESS-1", vec![build, other]);
+    let mut scratchpad = named_node_value(5, "workspace", "__i3_scratch", vec![]);
+    scratchpad["floating_nodes"] = serde_json::json!(in_scratchpad);
+    let hidden = named_node_value(4, "output", "__i3", vec![scratchpad]);
+    serde_json::from_value(named_node_value(0, "root", "root", vec![hidden, output]))
+        .expect("valid Node test fixture")
+}
+
+fn floating(container_id: i64) -> serde_json::Value {
+    let mut value = leaf_node_value(container_id, Some("app"), None);
+    value["type"] = serde_json::json!("floating_con");
+    value
+}
+
+#[test]
+fn a_window_opened_tiled_on_the_build_workspace_has_no_placement_problem() {
+    let tree = placement_tree(
+        vec![leaf_node_value(10, Some("app"), None)],
+        vec![],
+        vec![],
+        vec![],
+    );
+    assert!(launch_placement_problems(&tree, 10, false, false).is_empty());
+}
+
+#[test]
+fn a_window_a_rule_sent_to_another_workspace_names_both_workspaces() {
+    let tree = placement_tree(
+        vec![],
+        vec![],
+        vec![leaf_node_value(10, Some("app"), None)],
+        vec![],
+    );
+    let problems = launch_placement_problems(&tree, 10, false, false);
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems[0].starts_with("container 10 opened on workspace \"8\", not on workspace \"4\""),
+        "{problems:?}"
+    );
+    assert!(problems[0].contains("assign or for_window"), "{problems:?}");
+}
+
+#[test]
+fn a_window_a_rule_sent_to_the_scratchpad_says_so_once() {
+    let tree = placement_tree(vec![], vec![], vec![], vec![floating(10)]);
+    let problems = launch_placement_problems(&tree, 10, false, false);
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems[0].starts_with("container 10 opened in the scratchpad, not on workspace \"4\""),
+        "{problems:?}"
+    );
+}
+
+#[test]
+fn a_window_a_rule_floated_is_reported_unless_the_step_floats_it() {
+    let tree = placement_tree(vec![], vec![floating(10)], vec![], vec![]);
+    let problems = launch_placement_problems(&tree, 10, false, false);
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems[0].starts_with("container 10 opened floating"),
+        "{problems:?}"
+    );
+    assert!(launch_placement_problems(&tree, 10, false, true).is_empty());
+}
+
+#[test]
+fn a_step_that_moves_its_window_anyway_skips_the_workspace_check_only() {
+    let tree = placement_tree(vec![], vec![], vec![floating(10)], vec![]);
+    let problems = launch_placement_problems(&tree, 10, true, false);
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(problems[0].contains("opened floating"), "{problems:?}");
+    assert!(launch_placement_problems(&tree, 10, true, true).is_empty());
+}
+
+#[test]
+fn a_window_no_longer_in_the_tree_has_no_placement_problem() {
+    let tree = placement_tree(vec![], vec![], vec![], vec![]);
+    assert!(launch_placement_problems(&tree, 10, false, false).is_empty());
+}

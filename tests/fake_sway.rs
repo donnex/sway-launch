@@ -2138,3 +2138,79 @@ fn existing_and_list_windows_narrow_by_title() {
         .collect();
     assert_eq!(ids, [left, right]);
 }
+
+/// Adds an empty workspace named `name` with id `id` beside the fixture's
+/// own, on the same output (id 3 in every fixture), standing in for one an
+/// `assign` rule names.
+fn add_workspace(sway: &mut Sway, id: i64, name: &str) {
+    let mut workspace = sway.node(WORKSPACE).clone();
+    workspace["id"] = serde_json::json!(id);
+    workspace["name"] = serde_json::json!(name);
+    workspace["num"] = serde_json::json!(name.parse::<i64>().unwrap_or(-1));
+    workspace["focused"] = serde_json::json!(false);
+    workspace["nodes"] = serde_json::json!([]);
+    workspace["floating_nodes"] = serde_json::json!([]);
+    workspace["focus"] = serde_json::json!([]);
+    sway.node_mut(3)["nodes"]
+        .as_array_mut()
+        .expect("nodes is an array")
+        .push(workspace);
+}
+
+#[test]
+fn a_layout_warns_about_a_window_its_users_config_rules_placed_elsewhere() {
+    // #160: an `assign` rule sends the first step's window to another
+    // workspace as it maps, and a `for_window ... floating enable` floats the
+    // second's. The run still succeeds, but says what happened to each.
+    for version in SwayVersion::ALL {
+        let mut launches = 0;
+        let fake = FakeSway::start(version, move |sway, command| {
+            if command.starts_with("exec ") {
+                launches += 1;
+                let launch = launches;
+                let token = sway.launch(command);
+                sway.when_marked(token, move |sway, pid| {
+                    let id = sway.open_window(Some("fake-app"), Some(pid));
+                    if launch == 1 {
+                        add_workspace(sway, 50, "8");
+                        let window = sway.remove(id);
+                        sway.node_mut(50)["nodes"]
+                            .as_array_mut()
+                            .expect("nodes is an array")
+                            .push(window);
+                    } else if launch == 2 {
+                        sway.float(id);
+                    }
+                    sway.emit("new", id);
+                });
+            }
+            Ok(())
+        });
+        let layout = TempToml::write(
+            "misplaced",
+            "[[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n\n\
+             [[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n\n\
+             [[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n",
+        );
+        let run = run(&fake, &["--layout", layout.to_str().unwrap(), "--no-lock"]);
+        assert!(run.succeeded(), "{version:?}: {}", run.stderr());
+        let warnings: Vec<&str> = run.json["warnings"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{version:?}: no warnings in {}", run.json))
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|warning| warning.contains(": step "))
+            .collect();
+        assert_eq!(warnings.len(), 2, "{version:?}: {}", run.json);
+        assert!(
+            warnings[0].contains(
+                "step 1: container 100 opened on workspace \"8\", not on workspace \"1\""
+            ),
+            "{version:?}: {warnings:?}"
+        );
+        assert!(
+            warnings[1].contains("step 2: container 101 opened floating"),
+            "{version:?}: {warnings:?}"
+        );
+    }
+}

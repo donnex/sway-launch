@@ -280,6 +280,63 @@ impl ContainerState {
     }
 }
 
+/// What's wrong with where a `--layout`/`--template` step's window opened, or
+/// nothing (#160). A run builds its shape on the assumption that each window
+/// opens tiled on the workspace focus is on, but a user's own `assign` or
+/// `for_window` rules apply to these windows like any other, and can send one
+/// to another workspace, the scratchpad, or float it. Judged before the
+/// step's own actions run: `moves_itself` skips the workspace check for a
+/// step that moves its window anyway (`workspace`/`output`/`scratchpad`),
+/// `floats_itself` the tiling one for a step that floats it. A window that
+/// isn't in `tree` reports nothing; the step's next action will.
+pub(super) fn launch_placement_problems(
+    tree: &Node,
+    container_id: i64,
+    moves_itself: bool,
+    floats_itself: bool,
+) -> Vec<String> {
+    let Some(path) = ancestors_of(tree, container_id) else {
+        return Vec::new();
+    };
+    let Some(&node) = path.last() else {
+        return Vec::new();
+    };
+    let opened_on = nearest_of_kind(&path, NodeType::Workspace);
+    let expected = focused_workspace(tree);
+    let consequence = "the layout's shape will be wrong";
+    let mut problems = Vec::new();
+    let in_scratchpad = is_scratchpad_workspace(opened_on.and_then(|node| node.name.as_deref()));
+
+    if !moves_itself {
+        if let (Some(opened_on), Some(expected)) = (opened_on, expected) {
+            if opened_on.id != expected.id {
+                let expected_name = expected.name.as_deref().unwrap_or_default();
+                let place = if in_scratchpad {
+                    "in the scratchpad".to_string()
+                } else {
+                    format!(
+                        "on workspace {:?}",
+                        opened_on.name.as_deref().unwrap_or_default()
+                    )
+                };
+                problems.push(format!(
+                    "container {} opened {}, not on workspace {:?} — an assign or for_window \
+                     rule in your Sway config probably moved it; {}",
+                    container_id, place, expected_name, consequence
+                ));
+            }
+        }
+    }
+    if !floats_itself && !in_scratchpad && node_is_floating(node) {
+        problems.push(format!(
+            "container {} opened floating, though this step doesn't float it — a for_window \
+             rule in your Sway config, or the application itself, probably floated it; {}",
+            container_id, consequence
+        ));
+    }
+    problems
+}
+
 /// The workspace holding Sway's focus: the focused node's own workspace, or
 /// the focused node itself when it's an empty workspace.
 pub(super) fn focused_workspace(tree: &Node) -> Option<&Node> {

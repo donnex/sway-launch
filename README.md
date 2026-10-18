@@ -579,7 +579,11 @@ one-sentence `description` and a `category` (`Grid`, `Master/stack`, `Sidebar`, 
 **Where it's built.** A template's shape is built wherever focus is when it runs, and assumes that
 workspace is empty. Run from a terminal, the terminal is on that workspace, so the shape is built
 around it: `sway-launch` warns when the workspace already holds tiled windows (on stderr, and as a
-`"warnings"` list under `--json`) but still runs. To build somewhere specific, pass
+`"warnings"` list under `--json`) but still runs. Your own Sway config applies to the windows a
+template opens like to any other: an `assign` or `for_window` rule can send one to another
+workspace or float it, and a `no_focus` rule leaves focus where it was, so the next step opens
+beside the wrong window. `sway-launch` warns, naming the step, when a step's window didn't open
+tiled on the build workspace. To build somewhere specific, pass
 `--on-workspace <WORKSPACE>` (or `--on-workspace-number <N>`, see [Workspace](#workspace)) and
 `--on-output <OUTPUT>`, which work for `--layout` files too, or declare it in the template:
 
@@ -1125,7 +1129,8 @@ $ sway-launch --json --floating --mark pinned foot
 For a layout or template, `container_ids` lists every step's container id in order, `containers`
 maps each *named* step (one with an `id`, or a template `slot`) to its id, and `actions` covers
 every step, each action tagged with its 1-based `step`. A run that built on a workspace already
-holding tiled windows adds a `warnings` list:
+holding tiled windows, or one with a window your Sway config placed elsewhere (see
+[Templates](#templates)), adds a `warnings` list:
 
 ```console
 $ sway-launch --template quad-grid --apps foot,foot,code,foot --json
@@ -1317,6 +1322,13 @@ and `--verbose` say which one applied.
 
 **A template was built around the terminal you ran it from.** Pass `--on-workspace` to build it on
 an empty workspace (see [Templates](#templates)).
+
+**A layout's shape comes out wrong, or a warning says a window opened elsewhere.** Your Sway config's
+`assign`, `for_window` and `no_focus` rules apply to the windows a layout opens. A warning like
+`step 2: container 14 opened on workspace "8", not on workspace "4"` (or `opened floating`) names
+the step whose window a rule moved or floated; a `no_focus` rule gives no warning, but shows as the
+next step's window opening beside the wrong one. Narrow the rule, or give the step's application an
+app_id the rule doesn't match.
 
 **A layout run says another run is still in progress.** The same layout is already being built on
 that workspace; wait for it, or pass `--no-lock`.

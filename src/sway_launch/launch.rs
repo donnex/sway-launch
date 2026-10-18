@@ -19,7 +19,7 @@ use super::outcome::{
 };
 use super::query::{
     current_move_skip_reason, ensure_con_id_target, find_existing_container_id,
-    focused_workspace_name,
+    focused_workspace_name, launch_placement_problems_now,
 };
 use super::target::Target;
 use super::tree::MoveDirection;
@@ -81,6 +81,12 @@ pub struct SwayLaunch<'a> {
     /// are built where focus is, and every step launched after such a switch
     /// would open on the other workspace, splitting the shape in two.
     pub require_launch_on_focused_workspace: bool,
+
+    /// Before the first action, check that the window opened tiled on the
+    /// focused workspace, and report in `RunOutcome::warnings` when a config
+    /// rule put it elsewhere (#160) — `--layout`/`--template` set this for a
+    /// step that launches, since the rest of the shape is built around it.
+    pub warn_on_misplaced_launch: bool,
 
     /// After a launch times out or is interrupted, keep watching for
     /// `LATE_WINDOW_GRACE` for a window carrying this launch's marker, and
@@ -461,6 +467,17 @@ impl<'a> SwayLaunch<'a> {
             }
         }
 
+        let warnings = if self.warn_on_misplaced_launch {
+            launch_placement_problems_now(
+                container_id,
+                self.workspace.is_some() || self.output.is_some() || self.scratchpad,
+                self.floating || self.scratchpad,
+            )
+            .map_err(|error| resolved(error.into()))?
+        } else {
+            Vec::new()
+        };
+
         // A bare `--con-id N` stays unchecked, so it still works without a
         // compositor; with actions to apply, the socket is needed anyway and
         // a wrong id fails here, before the first one, with a clear reason.
@@ -481,6 +498,7 @@ impl<'a> SwayLaunch<'a> {
             container_id,
             actions,
             launch_ownership,
+            warnings,
         })
     }
 }

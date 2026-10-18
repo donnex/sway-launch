@@ -314,6 +314,7 @@ impl LayoutStep {
                 .unwrap_or(default_wait_time),
             verbose,
             require_launch_on_focused_workspace: false,
+            warn_on_misplaced_launch: false,
             catch_late_window: false,
             settle,
         })

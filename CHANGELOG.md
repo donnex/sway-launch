@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `--layout` or `--template` run now warns when your own Sway config put a step's window
+  somewhere other than where the layout builds it: an `assign` or `for_window` rule that sent it to
+  another workspace or the scratchpad, or floated it. The run reported success with nothing said
+  while the shape it built was split across workspaces. The warning names the step and where the
+  window went, on stderr and in `--json`'s `warnings`; the Troubleshooting section covers these
+  rules, `no_focus` included. (#160)
 - `--existing --title` with no `--app-id`, `--class` or `--mark-match` no longer resolves to a
   workspace, an output or the scratchpad. The pattern was tested against every name in the tree,
   so a title matching a workspace's name returned that workspace's id with exit 0 (and an action on

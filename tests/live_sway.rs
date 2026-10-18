@@ -3705,6 +3705,10 @@ fn rollback_on_error_still_kills_a_window_matched_after_its_launcher_exited() {
         .into_iter()
         .collect::<Result<Vec<_>, _>>()
         .expect("exec should succeed");
+    // Start times are compared in clock ticks (10ms), and a tie reads as a
+    // process started after the launch, so the stand-in instance must be
+    // running a few ticks before step 1's command starts.
+    std::thread::sleep(Duration::from_millis(50));
 
     let output = sway_launch_command()
         .args([
@@ -4425,6 +4429,85 @@ fn a_launch_whose_window_opens_on_another_workspace_fails_its_step() {
         error["rolled_back"].as_array().map(Vec::len),
         Some(2),
         "both launched windows should be rolled back: {error}"
+    );
+}
+
+#[test]
+fn a_layout_warns_when_config_rules_place_its_windows_elsewhere() {
+    let home = fresh_workspace();
+    // #160: a user's `assign`/`for_window` rules apply to the windows a
+    // layout opens. The run used to report success with nothing said while
+    // one window sat on another workspace and another floated; each is now
+    // named in a warning. The app_ids are this test's own, so the rules
+    // (which stay in the compositor) match nothing else.
+    let mut connection = connect();
+    run_command_ok(
+        &mut connection,
+        "assign [app_id=\"live-placement-assigned\"] workspace live-placement-assigned",
+    );
+    run_command_ok(
+        &mut connection,
+        "for_window [app_id=\"live-placement-floated\"] floating enable",
+    );
+    let path = TempToml::write(
+        "placement-rules",
+        "[[step]]\nid = \"assigned\"\ncommand = \"foot --app-id=live-placement-assigned\"\n\
+         app_id = \"live-placement-assigned\"\n\n\
+         [[step]]\nid = \"floated\"\ncommand = \"foot --app-id=live-placement-floated\"\n\
+         app_id = \"live-placement-floated\"\n\n\
+         [[step]]\nid = \"floated-on-purpose\"\n\
+         command = \"foot --app-id=live-placement-floated\"\n\
+         app_id = \"live-placement-floated\"\nfloating = true\n\n\
+         [[step]]\nid = \"plain\"\ncommand = \"foot --app-id=live-placement-plain\"\n\
+         app_id = \"live-placement-plain\"\n",
+    );
+
+    let output = sway_launch_command()
+        .args(["--layout", path.to_str().unwrap(), "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
+        panic!(
+            "--json output should be valid JSON: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
+    let _guards: Vec<KillOnDrop> = parsed["container_ids"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_i64)
+        .map(KillOnDrop)
+        .collect();
+    run_command_ok(&mut connection, &format!("workspace \"{home}\""));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let id = |slot: &str| parsed["containers"][slot].as_i64().expect("a container id");
+    let warnings: Vec<&str> = parsed["warnings"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no warnings in {parsed}"))
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    assert_eq!(warnings.len(), 2, "{parsed}");
+    assert!(
+        warnings[0].contains(&format!(
+            "step 1: container {} opened on workspace \"live-placement-assigned\", not on \
+             workspace {home:?}",
+            id("assigned")
+        )),
+        "{warnings:?}"
+    );
+    assert!(
+        warnings[1].contains(&format!(
+            "step 2: container {} opened floating",
+            id("floated")
+        )),
+        "{warnings:?}"
     );
 }
 

@@ -838,6 +838,7 @@ fn main() {
         settle,
         verbose: args.verbose,
         require_launch_on_focused_workspace: false,
+        warn_on_misplaced_launch: false,
         catch_late_window: false,
     };
 
@@ -1871,7 +1872,7 @@ fn run_steps(
     }
     // Only a run that launches windows builds a shape; one that only
     // retargets existing windows never needs to read the tree here.
-    let warnings = if launches {
+    let mut warnings = if launches {
         occupied_workspace_warning(args)
     } else {
         Vec::new()
@@ -1992,6 +1993,7 @@ fn run_steps(
         let sway_launch = match plan_step(step, args, &resolved_ids) {
             Ok(sway_launch) => sway_launch::SwayLaunch {
                 require_launch_on_focused_workspace: true,
+                warn_on_misplaced_launch: step.command.is_some(),
                 // A timeout that --continue-on-timeout carries on past isn't
                 // rolled back, so a late window would only be left open.
                 catch_late_window: args.rollback_on_error && !args.continue_on_timeout,
@@ -2054,6 +2056,17 @@ fn run_steps(
                 }
                 if let Some(id) = step.id.as_deref() {
                     resolved_ids.insert(id.to_string(), outcome.container_id);
+                }
+                for warning in &outcome.warnings {
+                    let warning = step_error(args, index, warning);
+                    if !args.json {
+                        diagnostic!(
+                            "{}{}",
+                            stderr_label(Severity::Warning),
+                            sway_launch::escape_control_characters(&warning, true)
+                        );
+                    }
+                    warnings.push(warning);
                 }
                 actions.extend(step_action_records_json(index, outcome.actions));
             }
@@ -2486,6 +2499,7 @@ fn launch_only<'a>(
         settle: None,
         // The window opens on the staging workspace wherever focus goes.
         require_launch_on_focused_workspace: false,
+        warn_on_misplaced_launch: false,
         catch_late_window: args.rollback_on_error && !args.continue_on_timeout,
         ..planned
     }
@@ -3139,6 +3153,7 @@ mod tests {
             container_id,
             actions: Vec::new(),
             launch_ownership: Some(sway_launch::LaunchOwnership::Launched),
+            warnings: Vec::new(),
         })
     }
 
