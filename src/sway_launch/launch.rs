@@ -19,10 +19,10 @@ use super::outcome::{
 };
 use super::query::{
     current_move_skip_reason, ensure_con_id_target, find_existing_container_id,
-    focused_workspace_name, launch_placement_problems_now,
+    launch_placement_problems_now, workspace_now,
 };
 use super::target::Target;
-use super::tree::MoveDirection;
+use super::tree::{MoveDirection, WorkspaceIdentity, WorkspaceLookup};
 use super::values::{Position, Size, Split, WorkspaceTarget};
 use std::io::Write;
 use std::time;
@@ -142,8 +142,14 @@ impl BuildLocation<'_> {
 /// opened. Sway puts a window on the workspace its `exec` ran on, whatever
 /// has focus by the time it maps, so the staging workspace holds them even
 /// if focus moves meanwhile.
+///
+/// The build workspace is tracked by its node id, and each command naming it
+/// uses the name it has right then (`build_workspace_name()`): a
+/// workspace-renaming daemon renames it as the windows arrive, and moving the
+/// next one by the old name would make Sway create a second workspace under
+/// that name and build the rest of the shape there (#178).
 pub struct Staging {
-    build_workspace: String,
+    build_workspace: std::cell::RefCell<WorkspaceIdentity>,
     staging_workspace: String,
 }
 
@@ -151,10 +157,10 @@ impl Staging {
     /// Remembers the focused workspace as the build workspace and switches
     /// to a staging workspace unique to this process.
     pub fn enter(verbose: bool) -> Result<Staging, String> {
-        let build_workspace = focused_workspace_name()?
+        let build_workspace = workspace_now(WorkspaceLookup::Focused)?
             .ok_or_else(|| "no workspace is focused to build on".to_string())?;
         let staging = Staging {
-            build_workspace,
+            build_workspace: std::cell::RefCell::new(build_workspace),
             staging_workspace: format!("sway-launch-staging-{}", std::process::id()),
         };
         staging.send(
@@ -164,12 +170,31 @@ impl Staging {
         Ok(staging)
     }
 
-    /// Focuses the build workspace again.
+    /// Focuses the build workspace again. Sway destroys an empty workspace
+    /// once focus leaves it, so the one focused here can be a new workspace
+    /// under the old name; it is the build workspace from now on.
     pub fn leave(&self, verbose: bool) -> Result<(), String> {
-        self.send(
-            &WorkspaceTarget::Name(&self.build_workspace).focus_command(),
-            verbose,
-        )
+        let name = self.build_workspace_name()?;
+        self.send(&WorkspaceTarget::Name(&name).focus_command(), verbose)?;
+        self.remember(WorkspaceLookup::Named(&name))
+    }
+
+    /// The build workspace's name as of now: the current name of the
+    /// workspace with the remembered id, or the remembered name once that
+    /// workspace is gone (an empty one Sway destroyed when focus left it).
+    fn build_workspace_name(&self) -> Result<String, String> {
+        let remembered = self.build_workspace.borrow().clone();
+        Ok(workspace_now(WorkspaceLookup::Id(remembered.id))?
+            .map_or(remembered.name, |workspace| workspace.name))
+    }
+
+    /// Makes the workspace `lookup` finds the build workspace, when there is
+    /// one.
+    fn remember(&self, lookup: WorkspaceLookup) -> Result<(), String> {
+        if let Some(workspace) = workspace_now(lookup)? {
+            *self.build_workspace.borrow_mut() = workspace;
+        }
+        Ok(())
     }
 
     /// Moves a staged window to the build workspace, and focuses it when
@@ -178,14 +203,16 @@ impl Staging {
     /// workspace's focused one, where it would have opened (every built-in
     /// template builds its recorded shape this way, checked live).
     pub fn bring(&self, container_id: i64, focus: bool, verbose: bool) -> Result<(), String> {
+        let name = self.build_workspace_name()?;
         self.send(
             &format!(
                 "[con_id={}] move container to workspace {}",
                 container_id,
-                WorkspaceTarget::Name(&self.build_workspace).sway_argument()
+                WorkspaceTarget::Name(&name).sway_argument()
             ),
             verbose,
         )?;
+        self.remember(WorkspaceLookup::Holding(container_id))?;
         if focus {
             self.send(&format!("[con_id={}] focus", container_id), verbose)?;
         }
@@ -441,7 +468,7 @@ impl<'a> SwayLaunch<'a> {
     pub fn run(&self) -> Result<RunOutcome, RunError> {
         let launching = matches!(self.target, Target::Exec { .. });
         let expected_workspace = if launching && self.require_launch_on_focused_workspace {
-            focused_workspace_name()?
+            workspace_now(WorkspaceLookup::Focused)?
         } else {
             None
         };
@@ -461,9 +488,19 @@ impl<'a> SwayLaunch<'a> {
         };
 
         if let Some(expected) = expected_workspace {
-            let focused_now = focused_workspace_name().map_err(|error| resolved(error.into()))?;
-            if let Some(message) = focus_moved_during_launch(&expected, focused_now.as_deref()) {
-                return Err(resolved(RunError::from(message)));
+            let focused_now =
+                workspace_now(WorkspaceLookup::Focused).map_err(|error| resolved(error.into()))?;
+            if focused_now.as_ref().map(|workspace| workspace.id) != Some(expected.id) {
+                // Only for the message: the workspace may have been renamed since.
+                let expected_now = workspace_now(WorkspaceLookup::Id(expected.id))
+                    .ok()
+                    .flatten()
+                    .unwrap_or(expected);
+                if let Some(message) =
+                    focus_moved_during_launch(&expected_now, focused_now.as_ref())
+                {
+                    return Err(resolved(RunError::from(message)));
+                }
             }
         }
 
@@ -533,17 +570,24 @@ fn plan_groups<'p, 'a>(plan: &'p [SwayAction<'a>]) -> Vec<&'p [SwayAction<'a>]> 
 /// (confirmed live). What a switch breaks is every step after it: those are
 /// launched on the new workspace. Checking where the window opened therefore
 /// can't see the problem; checking where focus went can.
-fn focus_moved_during_launch(expected: &str, focused_now: Option<&str>) -> Option<String> {
+///
+/// The two are compared by node id, never by name: a workspace-renaming
+/// daemon renames the workspace as the window opens, and focus hasn't moved
+/// (#178). The message names each workspace as it is called now.
+fn focus_moved_during_launch(
+    expected: &WorkspaceIdentity,
+    focused_now: Option<&WorkspaceIdentity>,
+) -> Option<String> {
     match focused_now {
-        Some(workspace) if workspace == expected => None,
+        Some(workspace) if workspace.id == expected.id => None,
         Some(workspace) => Some(format!(
             "focus moved from workspace {:?} to {:?} while this step's window was opening, so \
              later steps would build on the wrong workspace",
-            expected, workspace
+            expected.name, workspace.name
         )),
         None => Some(format!(
             "focus left workspace {:?} while this step's window was opening",
-            expected
+            expected.name
         )),
     }
 }

@@ -443,21 +443,45 @@ fn debug_event_subscriptions_cover_every_sway_ipc_event_type_once() {
 
 // focus_moved_during_launch
 
+fn workspace(id: i64, name: &str) -> WorkspaceIdentity {
+    WorkspaceIdentity {
+        id,
+        name: name.to_string(),
+    }
+}
+
 #[test]
 fn focus_moved_during_launch_is_silent_while_focus_stays_put() {
-    assert_eq!(focus_moved_during_launch("1", Some("1")), None);
+    assert_eq!(
+        focus_moved_during_launch(&workspace(5, "1"), Some(&workspace(5, "1"))),
+        None
+    );
+}
+
+#[test]
+fn focus_moved_during_launch_ignores_a_rename_of_the_same_workspace() {
+    assert_eq!(
+        focus_moved_during_launch(&workspace(5, "1"), Some(&workspace(5, "1: foot"))),
+        None
+    );
 }
 
 #[test]
 fn focus_moved_during_launch_names_both_workspaces() {
-    let message = focus_moved_during_launch("1", Some("21")).expect("focus moved");
+    let message = focus_moved_during_launch(&workspace(5, "1"), Some(&workspace(6, "21")))
+        .expect("focus moved");
     assert!(
         message.contains("focus moved from workspace \"1\" to \"21\""),
         "{message}"
     );
-    assert!(focus_moved_during_launch("1", None)
+    assert!(focus_moved_during_launch(&workspace(5, "1"), None)
         .expect("focus left")
         .contains("left workspace \"1\""));
+}
+
+#[test]
+fn focus_moved_during_launch_tells_a_new_workspace_under_the_same_name_apart() {
+    assert!(focus_moved_during_launch(&workspace(5, "1"), Some(&workspace(9, "1"))).is_some());
 }
 
 #[test]

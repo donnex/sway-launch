@@ -12,11 +12,12 @@ use super::capture::capture;
 use super::ipc::{ipc_error, new_connection};
 use super::target::{LaunchFilter, WindowCriteria};
 use super::tree::{
-    con_id_target_problem, expected_position, find_node, find_parent_layout, find_workspace_node,
-    focused_workspace, launch_placement_problems, matching_container_ids, move_skip_reason,
-    node_position, present_ids, recheck_launched_windows, resolve_awaited_matches, resolve_matches,
-    tiled_window_count, window_listing, workspace_named, ContainerState, ListedWindow,
-    MoveDirection, RecheckedWindow,
+    con_id_target_problem, expected_position, find_node, find_parent_layout, find_workspace,
+    find_workspace_node, focused_workspace, launch_placement_problems, matching_container_ids,
+    move_skip_reason, node_position, present_ids, recheck_launched_windows,
+    resolve_awaited_matches, resolve_matches, tiled_window_count, window_listing, workspace_named,
+    ContainerState, ListedWindow, MoveDirection, RecheckedWindow, WorkspaceIdentity,
+    WorkspaceLookup,
 };
 use super::values::{Position, TitlePattern};
 use swayipc::{Connection, Node, NodeLayout};
@@ -218,19 +219,14 @@ pub(super) fn recheck_launched_windows_now(
     ))
 }
 
-/// The tree node with id `container_id`, or `None` if it can't be read
-/// (transient IPC error, or the container's gone) — used by
-/// `SwayAction::poll_matches()`'s `Height`/`Width`/`Position` arms to read
-/// a window's own current geometry, as opposed to `parent_node_layout()`,
-/// which reads its *parent's* state for `Split`.
-/// The name of the workspace Sway's focus is on, or `None` when the tree has
-/// none focused.
-pub(super) fn focused_workspace_name() -> Result<Option<String>, String> {
+/// `find_workspace()` over a fresh tree: the workspace `lookup` names, by id
+/// and current name, or `None` when there is none.
+pub(super) fn workspace_now(lookup: WorkspaceLookup) -> Result<Option<WorkspaceIdentity>, String> {
     let tree = match new_connection()?.get_tree() {
         Ok(tree) => tree,
         Err(error) => return Err(ipc_error(error)),
     };
-    Ok(focused_workspace(&tree).and_then(|workspace| workspace.name.clone()))
+    Ok(find_workspace(&tree, lookup))
 }
 
 /// `launch_placement_problems()` over a fresh tree: what a user's config
@@ -276,6 +272,11 @@ pub(super) fn container_state_on(
     ContainerState::from_tree(&tree, container_id)
 }
 
+/// The tree node with id `container_id`, or `None` if it can't be read
+/// (transient IPC error, or the container's gone) — used by
+/// `SwayAction::poll_matches()`'s `Height`/`Width`/`Position` arms to read
+/// a window's own current geometry, as opposed to `parent_node_layout()`,
+/// which reads its *parent's* state for `Split`.
 pub(super) fn node_by_id(connection: &mut Connection, container_id: i64) -> Option<Node> {
     let tree = connection.get_tree().ok()?;
     find_node(&tree, container_id).cloned()

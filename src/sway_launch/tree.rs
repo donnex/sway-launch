@@ -348,6 +348,46 @@ pub(super) fn focused_workspace(tree: &Node) -> Option<&Node> {
     nearest_of_kind(&path, NodeType::Workspace)
 }
 
+/// A workspace as a run tracks it: by its node id, which Sway keeps across a
+/// rename, and the name it had when it was read. Workspace-renaming daemons
+/// (icon helpers that rewrite `1` to `1: <icons>` whenever a window opens)
+/// change the name while a layout builds, so only the id identifies the
+/// workspace from one read to the next (#178).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct WorkspaceIdentity {
+    pub(super) id: i64,
+    pub(super) name: String,
+}
+
+/// Which workspace `find_workspace()` looks for.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum WorkspaceLookup<'a> {
+    /// The one holding Sway's focus (`focused_workspace()`).
+    Focused,
+    /// The one with this node id.
+    Id(i64),
+    /// The one with this name, ignoring case (`workspace_named()`).
+    Named(&'a str),
+    /// The one holding this container.
+    Holding(i64),
+}
+
+/// The workspace `lookup` names in `tree`, or `None` when there is none.
+pub(super) fn find_workspace(tree: &Node, lookup: WorkspaceLookup) -> Option<WorkspaceIdentity> {
+    let workspace = match lookup {
+        WorkspaceLookup::Focused => focused_workspace(tree),
+        WorkspaceLookup::Id(id) => {
+            descendants(tree).find(|node| node.node_type == NodeType::Workspace && node.id == id)
+        }
+        WorkspaceLookup::Named(name) => workspace_named(tree, name),
+        WorkspaceLookup::Holding(container_id) => find_workspace_node(tree, container_id),
+    }?;
+    Some(WorkspaceIdentity {
+        id: workspace.id,
+        name: workspace.name.clone().unwrap_or_default(),
+    })
+}
+
 /// The workspace named `name`, compared ignoring case as Sway does.
 pub(super) fn workspace_named<'a>(tree: &'a Node, name: &str) -> Option<&'a Node> {
     descendants(tree).find(|node| {

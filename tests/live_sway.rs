@@ -8540,3 +8540,143 @@ fn title_matches_a_launch_and_picks_one_of_several_existing_windows() {
     assert_eq!(ids.len(), 2, "{rows:?}");
     assert!(ids.contains(&left) && ids.contains(&right), "{rows:?}");
 }
+
+/// A stand-in for a workspace-icon daemon (sworkstyle, swaywsr and the
+/// like): on every new or moved window, renames that window's workspace to
+/// `<base>: <one "f" per window>`, which keeps its id. Only workspaces named
+/// `base` or `base: ...` are touched, and it stops acting once dropped, so it
+/// never reaches another test's workspace.
+struct RenamingDaemon(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl RenamingDaemon {
+    fn start(base: &str) -> Self {
+        let stopped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (ready, subscribed) = mpsc::channel();
+        let base = base.to_string();
+        let thread_stopped = stopped.clone();
+        std::thread::spawn(move || {
+            let events = connect()
+                .subscribe([swayipc::EventType::Window])
+                .expect("the renaming daemon should subscribe");
+            let _ = ready.send(());
+            let mut connection = connect();
+            for event in events {
+                if thread_stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                let Ok(swayipc::Event::Window(event)) = event else {
+                    continue;
+                };
+                if !matches!(
+                    event.change,
+                    swayipc::WindowChange::New | swayipc::WindowChange::Move
+                ) {
+                    continue;
+                }
+                let Ok(tree) = connection.get_tree() else {
+                    continue;
+                };
+                let Some(workspace) = workspace_node_containing(&tree, event.container.id) else {
+                    continue;
+                };
+                let name = workspace.name.clone().unwrap_or_default();
+                if name != base && !name.starts_with(&format!("{base}: ")) {
+                    continue;
+                }
+                let renamed = format!("{base}: {}", "f".repeat(view_count(workspace)));
+                if renamed != name {
+                    let _ = connection
+                        .run_command(format!("rename workspace \"{name}\" to \"{renamed}\""));
+                }
+            }
+        });
+        subscribed
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the renaming daemon should be subscribed");
+        RenamingDaemon(stopped)
+    }
+}
+
+impl Drop for RenamingDaemon {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+fn workspace_node_containing(node: &Node, con_id: i64) -> Option<&Node> {
+    node.nodes
+        .iter()
+        .chain(node.floating_nodes.iter())
+        .find_map(|child| {
+            if child.node_type == NodeType::Workspace {
+                find_node(child, con_id).map(|_| child)
+            } else {
+                workspace_node_containing(child, con_id)
+            }
+        })
+}
+
+fn view_count(node: &Node) -> usize {
+    let own = usize::from(node.pid.is_some());
+    own + node
+        .nodes
+        .iter()
+        .chain(node.floating_nodes.iter())
+        .map(view_count)
+        .sum::<usize>()
+}
+
+/// Runs a two-foot layout with a renaming daemon on its workspace, and
+/// checks both windows end up together on that workspace, renamed (#178).
+fn assert_a_renamed_workspace_holds_the_whole_layout(extra_arguments: &[&str]) {
+    let base = fresh_workspace();
+    let mut connection = connect();
+    let _daemon = RenamingDaemon::start(&base);
+    let path = TempToml::write(
+        "renamed-workspace",
+        "[[step]]\ncommand = \"foot\"\napp_id = \"foot\"\nsplit = \"h\"\n\n\
+         [[step]]\ncommand = \"foot\"\napp_id = \"foot\"\n",
+    );
+    let output = sway_launch_command()
+        .args(["--layout", path.to_str().unwrap()])
+        .args(extra_arguments)
+        .output()
+        .expect("failed to run sway-launch binary");
+    let ids: Vec<i64> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.parse().ok())
+        .collect();
+    let _guards: Vec<_> = ids.iter().map(|&id| KillOnDrop(id)).collect();
+    assert!(
+        output.status.success(),
+        "the layout failed under a renaming daemon: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(ids.len(), 2, "{ids:?}");
+    let first = workspace_of(&mut connection, ids[0]);
+    assert!(
+        first.starts_with(&format!("{base}: ")),
+        "the daemon never renamed {base:?}: the window is on {first:?}"
+    );
+    assert_eq!(
+        workspace_of(&mut connection, ids[1]),
+        first,
+        "the layout was split across two workspaces"
+    );
+    no_staging_workspace_is_left(&mut connection);
+}
+
+#[test]
+fn a_layout_survives_a_daemon_renaming_its_workspace() {
+    // #178: a rename landing while a step's window opens used to fail the
+    // step with "focus moved". Here it usually lands just after; the
+    // fake-Sway suite pins the ordering where it lands during.
+    assert_a_renamed_workspace_holds_the_whole_layout(&[]);
+}
+
+#[test]
+fn a_concurrent_layout_survives_a_daemon_renaming_its_workspace() {
+    // #178: moving the second staged window by the old name used to create
+    // a second workspace under it, splitting the layout and exiting 0.
+    assert_a_renamed_workspace_holds_the_whole_layout(&["--concurrent"]);
+}

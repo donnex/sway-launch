@@ -1370,3 +1370,59 @@ fn a_window_no_longer_in_the_tree_has_no_placement_problem() {
     let tree = placement_tree(vec![], vec![], vec![], vec![]);
     assert!(launch_placement_problems(&tree, 10, false, false).is_empty());
 }
+
+// find_workspace
+
+/// Two workspaces on one output: `1: web` (id 2, holding window 10, focused)
+/// and `2` (id 3, empty).
+fn two_workspace_tree() -> Node {
+    let mut window = leaf_node_value(10, Some("foot"), None);
+    window["focused"] = serde_json::json!(true);
+    let first = named_node_value(2, "workspace", "1: web", vec![window]);
+    let second = named_node_value(3, "workspace", "2", vec![]);
+    let output = named_node_value(1, "output", "HEADLESS-1", vec![first, second]);
+    serde_json::from_value(named_node_value(0, "root", "root", vec![output]))
+        .expect("valid Node test fixture")
+}
+
+fn identity(id: i64, name: &str) -> WorkspaceIdentity {
+    WorkspaceIdentity {
+        id,
+        name: name.to_string(),
+    }
+}
+
+#[test]
+fn find_workspace_finds_the_focused_one_by_id_and_current_name() {
+    let tree = two_workspace_tree();
+    assert_eq!(
+        find_workspace(&tree, WorkspaceLookup::Focused),
+        Some(identity(2, "1: web"))
+    );
+}
+
+#[test]
+fn find_workspace_by_id_reports_the_name_it_has_now() {
+    let tree = two_workspace_tree();
+    assert_eq!(
+        find_workspace(&tree, WorkspaceLookup::Id(2)),
+        Some(identity(2, "1: web"))
+    );
+    assert_eq!(find_workspace(&tree, WorkspaceLookup::Id(10)), None);
+    assert_eq!(find_workspace(&tree, WorkspaceLookup::Id(99)), None);
+}
+
+#[test]
+fn find_workspace_by_name_ignores_case_and_by_container_finds_its_workspace() {
+    let tree = two_workspace_tree();
+    assert_eq!(
+        find_workspace(&tree, WorkspaceLookup::Named("1: WEB")),
+        Some(identity(2, "1: web"))
+    );
+    assert_eq!(find_workspace(&tree, WorkspaceLookup::Named("1")), None);
+    assert_eq!(
+        find_workspace(&tree, WorkspaceLookup::Holding(10)),
+        Some(identity(2, "1: web"))
+    );
+    assert_eq!(find_workspace(&tree, WorkspaceLookup::Holding(99)), None);
+}

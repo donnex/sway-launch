@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `--layout` or `--template` run now works alongside a daemon that renames workspaces as windows
+  open on them (workspace-icon helpers that turn `1` into `1: <icons>`). A step could fail with a
+  "focus moved" error although focus never left the workspace, and a
+  `--concurrent` run built the rest of the layout on a second, new workspace under the old name
+  while reporting success. The build workspace is now followed through a rename. (#178)
 - `--rollback-on-error` now closes a launched window that timed out only because it opened under a
   different app_id, class or title than the step names, the commonest way a launch times out. The
   run already knew the window was its own, and reported it as `launched_by_this_run`, but left it

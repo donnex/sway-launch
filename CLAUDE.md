@@ -358,6 +358,13 @@ checks those by hand, because the derive macro doesn't enforce `requires` reliab
   runs against `Target::ConId` with the launch's ownership carried over. Every failure path first
   calls `release_staged()`, so no window is left on the staging workspace and each counts as
   progress and for rollback.
+- A run tracks a workspace by its node id (`tree::WorkspaceIdentity`, read through
+  `query::workspace_now()` with a `WorkspaceLookup`), never by a name read earlier: workspace-icon
+  daemons rename a workspace whenever a window opens on it, keeping its id (#178). So
+  `focus_moved_during_launch()` compares ids, and `Staging` keeps the build workspace's id and
+  sends each `bring()`/`leave()` the name it has right then, re-reading which workspace that is
+  after each, since Sway destroys an empty build workspace when focus leaves for the staging one.
+  The run lock's key still uses the name (#129).
 - `--continue-on-timeout` (#19) carries `run_steps()` past a step whose `RunError` has
   `window_timed_out` (set only where no window was resolved: a launch's timeout and
   `--existing --wait`'s), recording it in `timed_out_steps`; a later `target_id` naming its id is

@@ -1610,6 +1610,92 @@ fn concurrent_launches_every_step_on_a_staging_workspace_then_arranges_in_order(
     assert!(position(&format!("[con_id={second}] mark \"second\"")) > second_moved);
 }
 
+/// Renames workspace `1` the way a workspace-icon daemon does, one letter
+/// per window it holds, keeping its id: what such a daemon does each time a
+/// window opens there (#178).
+fn rename_like_an_icon_daemon(sway: &mut Sway) {
+    let windows = sway.node(WORKSPACE)["nodes"]
+        .as_array()
+        .expect("nodes is an array")
+        .len();
+    sway.node_mut(WORKSPACE)["name"] = format!("1: {}", "f".repeat(windows)).into();
+}
+
+#[test]
+fn a_layout_survives_its_workspace_being_renamed_as_each_window_opens() {
+    // #178: the build workspace is renamed between the launch's start and
+    // its window appearing. Focus never left it, so the step must not fail
+    // with "focus moved".
+    let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {
+        if command.starts_with("exec ") {
+            let token = sway.launch(command);
+            sway.when_marked(token, |sway, pid| {
+                let id = sway.open_window(Some("fake-app"), Some(pid));
+                rename_like_an_icon_daemon(sway);
+                sway.emit("new", id);
+            });
+        }
+        Ok(())
+    });
+    let layout = TempToml::write(
+        "renamed-workspace",
+        "[[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n\n\
+         [[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n",
+    );
+    let run = run(&fake, &["--layout", layout.to_str().unwrap()]);
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert_eq!(
+        run.json["container_ids"],
+        serde_json::json!([100, 101]),
+        "{}",
+        run.json
+    );
+}
+
+#[test]
+fn a_concurrent_run_moves_each_window_to_its_workspace_under_its_current_name() {
+    // #178: once the first window arrives the daemon renames the build
+    // workspace. Moving the next one by the old name would make Sway create
+    // a second workspace under it and split the shape across the two.
+    let mut launches = opens_a_window_for_each_launch("fake-app");
+    let fake = FakeSway::start(SwayVersion::V1_11, move |sway, command| {
+        if command.starts_with("exec ") {
+            launches(sway, command)
+        } else if command.contains("] move container to workspace ") {
+            rename_like_an_icon_daemon(sway);
+            Ok(())
+        } else {
+            Ok(())
+        }
+    });
+    let layout = TempToml::write(
+        "concurrent-renamed-workspace",
+        "[[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n\n\
+         [[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n",
+    );
+    let run = run(
+        &fake,
+        &["--layout", layout.to_str().unwrap(), "--concurrent"],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    let commands = fake.commands();
+    let moves: Vec<&String> = commands
+        .iter()
+        .filter(|command| command.contains("] move container to workspace "))
+        .collect();
+    assert_eq!(moves.len(), 2, "{commands:?}");
+    // The fake opens every window on workspace 1, so by the first move it
+    // holds the fixture's tiled window and both launched ones.
+    assert!(
+        moves[0].ends_with("move container to workspace \"1\""),
+        "{commands:?}"
+    );
+    assert!(
+        moves[1].ends_with("move container to workspace \"1: fff\""),
+        "{commands:?}"
+    );
+}
+
 #[test]
 fn a_concurrent_launch_never_adopts_a_sibling_launchs_window() {
     // Seen on Sway 1.9 in CI: one launch's window took longer than the
