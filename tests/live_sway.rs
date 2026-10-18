@@ -802,7 +802,7 @@ fn event_reader_threads_stay_bounded_across_a_long_layout() {
     // rather than only described.
     //
     // Mark is used for every step because it is the one event-confirmed action
-    // with no already_at_target() short-circuit: re-applying a mark still
+    // is_skipped_when_already_in_effect() excludes: re-applying a mark still
     // fires WindowChange::Mark, so all 120 steps genuinely wait on an event
     // and spawn a reader, rather than short-circuiting into a no-op.
     let (container_id, _guard) = launch_foot(&[]);
@@ -1928,7 +1928,7 @@ fn workspace_is_a_no_op_when_already_on_the_target_workspace() {
     fresh_workspace();
     // Regression test: Sway doesn't fire WindowChange::Move for a "move
     // workspace" that doesn't actually change anything, so without
-    // SwayAction::already_at_target()'s short-circuit this would hang until
+    // run_batch()'s already-in-effect short-circuit this would hang until
     // --timeout instead of completing immediately.
     let mut connection = connect();
     let (container_id, _guard) = launch_foot(&[]);
@@ -2054,7 +2054,7 @@ fn floating_is_a_no_op_when_already_floating() {
     // for Floating/Fullscreen/Focus too — confirmed live (manual testing
     // during development: re-running --floating on an already-floating
     // window hung the full 5s --timeout and then errored, before
-    // SwayAction::already_at_target()'s Floating arm was added). Without
+    // the already-in-effect check covered Floating). Without
     // that short-circuit, this would fail this assertion or the process
     // would exit non-zero.
     let (container_id, _guard) = launch_foot(&["--floating"]);
@@ -2086,11 +2086,11 @@ fn floating_is_a_no_op_when_already_floating() {
 #[test]
 fn floating_still_succeeds_when_another_client_wins_the_race() {
     fresh_workspace();
-    // Regression test for a TOCTOU race between already_at_target()'s no-op
+    // Regression test for a TOCTOU race between the already-in-effect no-op
     // check and the subscription that waits for the confirming event. When the
     // check ran first, another client satisfying the state in between left this
     // invocation's own command a no-op — which Sway fires no window event for
-    // (the very reason already_at_target() exists) — so it waited out the full
+    // (the very reason the check exists) — so it waited out the full
     // --timeout and then errored, having asked for a state that was in effect
     // the whole time.
     //
@@ -2262,8 +2262,8 @@ fn scratchpad_is_a_no_op_when_already_in_the_scratchpad() {
     fresh_workspace();
     // Same as floating_is_a_no_op_when_already_floating, for --scratchpad:
     // re-running "move scratchpad" on a window already there fires no event
-    // at all, confirmed live, so SwayAction::already_at_target()'s
-    // Scratchpad arm must short-circuit rather than hang the full --timeout.
+    // at all, confirmed live, so run_batch()'s already-in-effect check for
+    // Scratchpad must short-circuit rather than hang the full --timeout.
     let (container_id, _guard) = launch_foot(&["--scratchpad"]);
 
     let started = Instant::now();
@@ -3221,7 +3221,7 @@ fn rollback_on_error_kills_earlier_launched_windows_when_a_later_step_fails() {
     // run_steps() kills every window this invocation itself launched
     // before reporting the failure. The second step targets a con_id that
     // was never opened, so --mark against it fails reliably and immediately
-    // -- via run_wait_matching_events()'s own container_exists() check on
+    // -- via run_batch()'s own existence check on
     // every Sway version (before that check existed this failed only
     // incidentally, through Sway 1.11's "No matching node."; on Sway 1.9 it
     // instead waited out the full --timeout first) -- without launching
@@ -3349,7 +3349,7 @@ fn rollback_on_error_handles_a_launched_window_that_already_closed_itself() {
     // Step 1 launches a foot window running a shell that exits after a
     // short sleep, closing the window on its own. Step 2 retargets that
     // same window (via target_id) with a NewColumn action and a large
-    // wait_time. run_wait_time() checks container_exists() twice, on either
+    // wait_time. run_batch() checks the container exists twice, on either
     // side of that wait: step 2's window is still alive for the first,
     // fast-fail check, and reliably gone by the *second*, which is what fails
     // step 2 deterministically -- no race against an external kill needed.
@@ -4645,7 +4645,7 @@ fn new_column_does_not_credit_a_geometry_change_that_arrives_after_its_poll_wind
     // workspace's axis doesn't match the move, so is_at_the_trailing_workspace
     // _edge() returns false and the action runs.
     //
-    // run_wait_time() sleeps --wait-time (2000ms) before sending the command,
+    // run_batch() sleeps --wait-time (2000ms) before sending the command,
     // so the poll window runs from ~2000ms to ~2025ms after spawn. The
     // competing change lands at ~2100ms: after the poll has stopped looking,
     // but comfortably inside the old 200ms window -- so this reports
@@ -4868,7 +4868,7 @@ fn wait_time_action_errors_clearly_when_its_container_already_closed() {
     // containers is treated as success, not an error, so a wait-time action
     // (Split/NewColumn/NewRow/Height/Width/Position) used to silently no-op
     // instead of erroring if the container closed between an earlier action
-    // resolving it and this one running. run_wait_time()'s container_exists()
+    // resolving it and this one running. run_batch()'s existence
     // check is what's under test here — still required on 1.9, though
     // confirmed live to be redundant on Sway 1.11, which already errors
     // clearly ("No matching node.") on its own; see container_exists()'s doc
@@ -4883,7 +4883,7 @@ fn wait_time_action_errors_clearly_when_its_container_already_closed() {
         .expect("kill should succeed");
     std::mem::forget(guard); // already closed — nothing left for KillOnDrop to clean up
                              // Deterministic rather than incidental: this test only ever passed
-                             // because run_wait_time() sleeps --wait-time *before* its own
+                             // because run_batch() sleeps --wait-time *before* its own
                              // container_exists() check, which happened to give Sway long enough to
                              // process the kill. Waiting explicitly removes that dependency.
     wait_for_container_gone(&mut connection, container_id);
@@ -4907,7 +4907,7 @@ fn wait_time_action_errors_clearly_when_its_container_already_closed() {
 #[test]
 fn wait_time_action_does_not_sleep_out_the_wait_before_noticing_its_container_is_gone() {
     fresh_workspace();
-    // run_wait_time() sleeps --wait-time before sending its command, to let
+    // run_batch() sleeps --wait-time before sending its command, to let
     // other IPC clients finish theirs. That sleep used to come before the
     // container_exists() check, so an action whose target had already closed
     // waited out the entire wait before reporting a foregone answer -- with a
@@ -4956,7 +4956,7 @@ fn event_confirmed_action_errors_clearly_when_its_container_already_closed() {
     // Companion to wait_time_action_errors_clearly_when_its_container_already_closed
     // above, for the other dispatch half. Until this check was added, only
     // the wait-time actions pre-checked that their container still exists;
-    // an event-confirmed one (here --mark, which has no already_at_target()
+    // an event-confirmed one (here --mark, which has no already-in-effect
     // arm) sent its command and then waited out the full --timeout for a
     // confirmation event that could never arrive, reporting "N sec timeout
     // reached" instead of naming the closed window. On Sway 1.11
@@ -6394,7 +6394,7 @@ fn split_confirms_via_poll_well_under_a_large_wait_time() {
     // SwayAction::poll_matches() (a get_tree() poll of the container's
     // *parent* layout field — see parent_node_layout()'s doc comment for
     // why it's the parent, not the container's own node) rather than always
-    // sleeping the full --wait-time after the command too. run_wait_time()
+    // sleeping the full --wait-time after the command too. run_batch()
     // still sleeps the full --wait-time *before* sending the command
     // unconditionally (unrelated to this feature), so the total can never
     // go below that — a --wait-time well above the poll grace period, with
@@ -6705,7 +6705,7 @@ fn fallback_path_stays_bounded_at_the_default_wait_time() {
     fresh_workspace();
     // Regression test found during a code-review bug hunt: WAIT_TIME_POLL_GRACE
     // (200ms) is 10x the CLI's own --wait-time default (20ms), so before
-    // run_poll_then_fallback() capped its grace period at
+    // the poll grace period was capped at
     // WAIT_TIME_POLL_GRACE.min(wait_time), any fallback case at default
     // settings (confirmed live: this exact scenario) took ~220ms instead of
     // the ~40ms (2 * wait_time) it cost before polling existed at all —
@@ -6965,7 +6965,7 @@ fn json_output_reports_already_satisfied_when_re_applying_an_unchanged_state() {
     fresh_workspace();
     // Companion to the test above: re-running --floating against a window
     // that's already floating should report "already_satisfied", not
-    // "changed" — SwayAction::already_at_target() already computes this
+    // "changed" — run_batch()'s already-in-effect check computes this
     // distinction internally; this confirms it actually reaches --json.
     let (container_id, _guard) = launch_foot(&["--floating"]);
 

@@ -385,7 +385,7 @@ impl<'a> SwayLaunch<'a> {
     ///
     /// Both the guard and the action runner are parameters only so the order
     /// of checks and runs can be pinned headlessly; `run()` passes the real
-    /// `current_move_skip_reason()` and `run_plan_group()`. `run_actions`
+    /// `current_move_skip_reason()` and `run_batch()`. `run_actions`
     /// returns one outcome per action it was given.
     fn execute_plan(
         &self,
@@ -481,7 +481,7 @@ impl<'a> SwayLaunch<'a> {
             .execute_plan(
                 plan,
                 |direction| current_move_skip_reason(container_id, direction),
-                |group| run_plan_group(group, self.settle),
+                |group| run_batch(group, self.settle),
             )
             .map_err(resolved)?;
 
@@ -513,19 +513,6 @@ fn plan_groups<'p, 'a>(plan: &'p [SwayAction<'a>]) -> Vec<&'p [SwayAction<'a>]> 
         start = end;
     }
     groups
-}
-
-/// Runs one of `plan_groups()`'s groups for real: a batch through
-/// `run_batch()`, which holds its geometry for `settle`, and a lone
-/// non-batching action through `SwayAction::run()`.
-fn run_plan_group(
-    group: &[SwayAction<'_>],
-    settle: Option<time::Duration>,
-) -> Result<Vec<ActionOutcome>, RunError> {
-    match group {
-        [action] if !action.kind.joins_batch() => action.run().map(|outcome| vec![outcome]),
-        _ => run_batch(group, settle),
-    }
 }
 
 /// Why a launch fails when focus was on `expected` as it started and is on

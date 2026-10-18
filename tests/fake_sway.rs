@@ -624,7 +624,8 @@ fn a_batch_with_nothing_left_to_send_sends_nothing() {
 
 #[test]
 fn a_new_column_is_confirmed_once_the_window_has_moved() {
-    // Sent on its own, outside the batch, so it's polled by run_wait_time().
+    // Sent on its own, outside any batch, and polled against the rect
+    // poll_baseline() took before the move.
     let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {
         if command == format!("[con_id={TILED}] move right") {
             sway.node_mut(TILED)["rect"]["x"] = 640.into();
@@ -636,7 +637,7 @@ fn a_new_column_is_confirmed_once_the_window_has_moved() {
     assert_eq!(run.action_status(), "changed");
     assert!(
         run.stderr()
-            .contains("Confirmed via poll (container id: 5)"),
+            .contains("Confirmed via poll: move right (container id: 5)"),
         "{}",
         run.stderr()
     );
@@ -650,7 +651,7 @@ fn a_new_column_that_never_moves_the_window_is_unconfirmed() {
     assert_eq!(run.action_status(), "unconfirmed");
     assert!(
         run.stderr()
-            .contains("Poll grace period elapsed without confirmation, falling back"),
+            .contains("Poll grace period elapsed without confirmation: move right"),
         "{}",
         run.stderr()
     );
@@ -658,7 +659,7 @@ fn a_new_column_that_never_moves_the_window_is_unconfirmed() {
 
 #[test]
 fn a_move_whose_event_arrives_before_its_state_keeps_waiting() {
-    // The lone-action counterpart of the batch's same rule.
+    // A lone action keeps the batch's rule: the event is only a wake-up.
     let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {
         if command.ends_with("move workspace \"2\"") {
             sway.emit("move", TILED);

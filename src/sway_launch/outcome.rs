@@ -141,7 +141,7 @@ pub struct UnmatchedWindow {
 /// name than a run one.
 ///
 /// Folding skips into the same list as the actions that ran, alongside the
-/// `Changed`/`AlreadySatisfied`/`Unconfirmed` distinction `SwayAction::run()`
+/// `Changed`/`AlreadySatisfied`/`Unconfirmed` distinction `run_batch()`
 /// computes (`ActionOutcome`), is what lets a `--json` caller tell every
 /// outcome apart in its actual run order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,10 +167,10 @@ pub enum ActionStatus {
     Skipped { reason: &'static str },
 }
 
-/// What `SwayAction::run()` observed, before `SwayLaunch::run()` folds it
+/// What `run_batch()` observed, before `SwayLaunch::run()` folds it
 /// together with the skip case into an `ActionStatus`. Separate from
 /// `ActionStatus` because a skipped action is never sent, so
-/// `SwayAction::run()` never sees it.
+/// `run_batch()` never sees it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ActionOutcome {
     /// The change was observed: a confirmation event arrived and the requested

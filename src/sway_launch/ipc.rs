@@ -190,7 +190,7 @@ fn preferred_socket_path(
 /// clone shares the original's open socket, and socket options belong to the
 /// socket rather than to a descriptor. Only the reader thread can be left
 /// blocked, which is the bounded, measured behaviour documented at
-/// `run_wait_matching_events()`'s `spawn_event_forwarder()` call.
+/// `run_batch()`'s `spawn_event_forwarder()` call.
 ///
 /// It goes through the same `socket_path()` as `new_connection()`, so the
 /// subscription and the requests around it always reach the same compositor,
@@ -220,7 +220,7 @@ pub(super) fn event_loop(subscriptions: &[EventType]) -> Result<EventStream, Str
 /// returned channel, so a caller can wait on it with `recv_timeout()` — a
 /// blocking `EventStream` has no way to time out on its own. The thread exits
 /// the next time an event arrives after the receiver is dropped; see
-/// `run_wait_matching_events()`'s call for why that stays bounded.
+/// `run_batch()`'s call for why that stays bounded.
 pub(super) fn spawn_event_forwarder(events: EventStream) -> mpsc::Receiver<Fallible<Event>> {
     let (event_sender, event_receiver) = mpsc::channel();
     thread::spawn(move || {

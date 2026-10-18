@@ -39,7 +39,7 @@ fn con_id_json_output_is_a_clean_json_object() {
 #[test]
 fn con_id_json_error_output_is_a_structured_object() {
     // --con-id alone never touches the socket, but combining it with an
-    // action flag does (the container-state read behind already_at_target()),
+    // action flag does (the container-state read behind the already-in-effect check),
     // which is made to fail here by pointing the binary at a socket that
     // cannot exist — exercises --json's error-output shape
     // (fail()/fail_with_rollback() in main.rs) deterministically, on a machine

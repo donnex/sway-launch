@@ -251,18 +251,6 @@ impl<'a> SwayAction<'a> {
         }
     }
 
-    /// The full `swaymsg` command string, `[con_id=N] <verb>`. Just wraps
-    /// `sway_command_verb()` with the target prefix; kept as a separate method
-    /// (rather than inlining that wrap at every `run_sway_command()` call site)
-    /// so there's exactly one place that does it.
-    pub(super) fn sway_command(&self) -> String {
-        format!(
-            "[con_id={}] {}",
-            self.container_id,
-            self.sway_command_verb()
-        )
-    }
-
     /// This action's stable kind name — see `ActionKind::flag_name()`.
     pub fn kind_name(&self) -> &'static str {
         self.kind.flag_name()
@@ -274,8 +262,9 @@ impl<'a> SwayAction<'a> {
         self.kind.joins_batch()
     }
 
-    /// The `swaymsg` command *without* the `[con_id=N]` target prefix —
-    /// `sway_command()`'s own building block, and also what `--dry-run`
+    /// The `swaymsg` command *without* the `[con_id=N]` target prefix — the
+    /// one place an action is serialized, which `batch_command()` puts the
+    /// prefix in front of, and also what `--dry-run`
     /// prints for a planned action whose container id isn't resolved yet
     /// (a not-yet-launched window has no id to show).
     pub fn sway_command_verb(&self) -> String {

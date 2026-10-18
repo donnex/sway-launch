@@ -544,7 +544,7 @@ pub(super) fn find_node(tree: &Node, container_id: i64) -> Option<&Node> {
 /// candidates are accepted rather than picking one and risking a resize
 /// that's actually done never being recognized as such.
 ///
-/// Accepted residual risk: `run_poll_then_fallback()`'s very first poll
+/// Accepted residual risk: `run_batch()`'s very first poll
 /// runs immediately after the command is sent, with no minimum settle
 /// time, so if the window's *pre-resize* width already happens to satisfy
 /// either formula for the *newly requested* width (the old and new widths

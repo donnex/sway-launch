@@ -1,3 +1,4 @@
+use super::super::confirmation::batch_command;
 use super::*;
 
 // SwayLaunch::build_actions
@@ -144,7 +145,7 @@ fn build_actions_moves_the_workspace_to_the_output_when_both_are_set() {
         }
     );
     assert_eq!(
-        both[1].sway_command(),
+        batch_command(42, &[&both[1]]),
         "[con_id=42] move workspace to output \"HDMI-A-1\""
     );
     assert_eq!(both[1].kind.flag_name(), "output");

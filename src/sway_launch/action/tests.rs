@@ -1,3 +1,4 @@
+use super::super::confirmation::batch_command;
 use super::super::test_support::{exec_action, targeted};
 use super::*;
 
@@ -81,7 +82,7 @@ fn flag_name_is_the_snake_case_cli_flag_and_ignores_the_value() {
     }
 }
 
-// SwayAction::sway_command
+// batch_command, for one action
 
 #[test]
 fn sway_command_renders_every_kind() {
@@ -117,14 +118,14 @@ fn sway_command_renders_every_kind() {
         (ActionKind::Scratchpad, "[con_id=42] move scratchpad"),
     ];
     for (kind, expected) in cases {
-        assert_eq!(targeted(kind).sway_command(), expected, "{kind:?}");
+        assert_eq!(sway_command(targeted(kind)), expected, "{kind:?}");
     }
 }
 
 #[test]
 fn sway_command_mark_quotes_the_mark() {
     assert_eq!(
-        targeted(ActionKind::Mark("foo, exec evil")).sway_command(),
+        sway_command(targeted(ActionKind::Mark("foo, exec evil"))),
         "[con_id=42] mark \"foo, exec evil\""
     );
 }
@@ -132,10 +133,9 @@ fn sway_command_mark_quotes_the_mark() {
 #[test]
 fn sway_command_workspace_quotes_the_workspace() {
     assert_eq!(
-        targeted(ActionKind::Workspace(WorkspaceTarget::Name(
+        sway_command(targeted(ActionKind::Workspace(WorkspaceTarget::Name(
             "web, exec evil"
-        )))
-        .sway_command(),
+        )))),
         "[con_id=42] move workspace \"web, exec evil\""
     );
 }
@@ -143,7 +143,7 @@ fn sway_command_workspace_quotes_the_workspace() {
 #[test]
 fn sway_command_workspace_number_uses_sway_s_number_keyword() {
     assert_eq!(
-        targeted(ActionKind::Workspace(WorkspaceTarget::Number(2))).sway_command(),
+        sway_command(targeted(ActionKind::Workspace(WorkspaceTarget::Number(2)))),
         "[con_id=42] move workspace number 2"
     );
 }
@@ -151,7 +151,7 @@ fn sway_command_workspace_number_uses_sway_s_number_keyword() {
 #[test]
 fn sway_command_output_quotes_the_output() {
     assert_eq!(
-        targeted(ActionKind::Output("HDMI-A-1, exec evil")).sway_command(),
+        sway_command(targeted(ActionKind::Output("HDMI-A-1, exec evil"))),
         "[con_id=42] move container to output \"HDMI-A-1, exec evil\""
     );
 }
@@ -160,11 +160,11 @@ fn sway_command_output_quotes_the_output() {
 
 #[test]
 fn sway_command_verb_omits_the_con_id_prefix() {
-    // Regression test for the sway_command()/sway_command_verb() split
-    // (--dry-run's foundation): the verb-only form is exactly
-    // sway_command() with the "[con_id=N] " prefix stripped.
+    // Regression test for the batch_command()/sway_command_verb() split
+    // (--dry-run's foundation): the verb-only form is exactly the command
+    // sent with the "[con_id=N] " prefix stripped.
     let floating = targeted(ActionKind::Floating);
-    assert_eq!(floating.sway_command(), "[con_id=42] floating enable");
+    assert_eq!(sway_command(floating), "[con_id=42] floating enable");
     assert_eq!(floating.sway_command_verb(), "floating enable");
 
     let position = targeted(ActionKind::Position(Position::Coordinates {
@@ -172,7 +172,7 @@ fn sway_command_verb_omits_the_con_id_prefix() {
         y: -200,
     }));
     assert_eq!(
-        position.sway_command(),
+        sway_command(position),
         "[con_id=42] move position -1920 -200"
     );
     assert_eq!(position.sway_command_verb(), "move position -1920 -200");
@@ -231,4 +231,9 @@ fn display_names_every_kind_with_the_same_container_id_wording() {
     for (kind, expected) in cases {
         assert_eq!(targeted(kind).to_string(), expected);
     }
+}
+
+/// The command `run_batch()` sends for `action` alone.
+fn sway_command(action: SwayAction<'_>) -> String {
+    batch_command(action.container_id, &[&action])
 }

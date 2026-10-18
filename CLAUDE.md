@@ -199,26 +199,28 @@ compositor (#107).
 
 `ExecAction` launches a window; `SwayAction` acts on a resolved container and holds a
 `kind: ActionKind`, one variant per flag, plus `WorkspaceToOutput`, which no single flag produces.
-`sway_command()` is each action's one serialization point; `flag_name()` is its stable identity in
-`--json`. Every action is confirmed one of three ways, and `ActionKind::is_event_confirmed()`
-decides which:
+`sway_command_verb()` is each action's one serialization point (`batch_command()` puts
+`[con_id=N]` in front); `flag_name()` is its stable identity in `--json`. Every `SwayAction` is
+confirmed by one engine, `run_batch()` (#133), whether it is sent in a batch or alone; within it,
+`ActionKind::is_event_confirmed()` decides which of two ways:
 
 - **Event-confirmed** (`Floating`, `Fullscreen`, `Focus`, `Workspace`, `Output`, `Mark`,
-  `Scratchpad`) — `run_wait_matching_events()`. Order matters and is explained in its doc comment:
-  existence check, subscribe, `already_at_target()`, send, then wait until an event for the
-  container arrives **and** `state_satisfied()` confirms the requested state (an event alone proves
-  something happened, not that our state applied). `state_satisfied()` fetches;
-  `state_satisfies()` decides, purely. `Mark` is excluded from the pre-command short-circuit. A
-  split container is refused up front for the kinds Sway only reports for views
-  (`ActionKind::needs_a_window()`, #93).
+  `Scratchpad`) — wait until an event for the container arrives **and** `state_satisfies()`
+  confirms the requested state on a fresh tree read (an event alone proves something happened,
+  not that our state applied). Before sending, a kind `is_skipped_when_already_in_effect()`
+  (every one but `Mark`) whose state already holds is left out of the command, read only once the
+  subscription is open; both doc comments explain why. A split container is refused up front for
+  the kinds Sway only reports for views (`ActionKind::needs_a_window()`, #93).
 - **Polled** (`Split`, `Sticky`, `NewColumn`, `NewRow`, `Height`, `Width`, `Position`,
-  `WorkspaceToOutput`, and `SwayCommand`, which `polls()` never confirms) — `run_wait_time()`: `ensure_container_exists()` before *and* after the
-  `--wait-time` sleep (both are load-bearing: fast failure, and Sway 1.9 treating a missing
-  `[con_id=N]` as success), send, then `run_poll_then_fallback()`. `polls()` decides whether a kind
-  can be confirmed at all; `poll_matches()` reads the tree on one shared connection; the grace is
-  `poll_grace()` (`WAIT_TIME_POLL_GRACE`, or the shorter `MOVE_POLL_GRACE` for the
-  `poll_baseline()`-based `NewColumn`/`NewRow` check). A kind that can't be confirmed reports
-  `Unconfirmed`, never an error.
+  `WorkspaceToOutput`, and `SwayCommand`, which `polls()` never confirms) — the container's
+  existence is checked before *and* after the `--wait-time` sleep (both are load-bearing: fast
+  failure, and Sway 1.9 treating a missing `[con_id=N]` as success), `poll_baseline()` is taken,
+  then the command is sent and polled for. `polls()` decides whether a kind can be confirmed at
+  all; `poll_matches()` reads the tree on one shared connection; the grace is `poll_grace()`
+  (`WAIT_TIME_POLL_GRACE`, or the shorter `MOVE_POLL_GRACE` for the `poll_baseline()`-based
+  `NewColumn`/`NewRow` check). A kind that can't be confirmed reports `Unconfirmed`, never an
+  error.
+
 - **Exec** — `run_wait_matching_exec_event()`. The command runs as `exec export
   SWAY_LAUNCH_PID_MARKER=<token> && ( <command> )` and a `New` window is ours once
   `launch_evidence()` finds the marker in its process's environment, or an ancestor that is this
@@ -236,16 +238,16 @@ decides which:
   timeout, with `exec_timeout_message()` explaining what was seen. With a title, a `Title` event
   re-runs `matches_window()` too, but only for a window whose `New` arrived during this run
   (`opened_this_run`): an older window renaming itself is never this launch's.
-- **Batched** (#32) — every kind `ActionKind::joins_batch()` accepts (`Split`, `Floating`,
-  `Sticky`, `Fullscreen`, `Focus`, `Mark`, `Height`, `Width`, `Position`, `SwayCommand`) goes through
-  `run_batch()` instead of `SwayAction::run()`: one `[con_id=N] a, b, c` command
-  (`batch_command()`), confirmed per action by the rules above merged into one loop. Existence
-  check, subscribe, one state read for the already-there check (an action already in effect is
-  left out of the command), `--wait-time` once if anything polled is sent, send, then
-  `batch_failure()` maps Sway's per-part replies back to actions (Sway runs every part even after
-  one fails, and stops only at a parse error; confirmed live). Each event wakes one state read for
-  every action whose event arrived; polled actions are polled in the same loop. Moves and
-  `Scratchpad` stay out: each changes what the next action is judged against. With `--settle`
+- **Batched** (#32) — consecutive kinds `ActionKind::joins_batch()` accepts (`Split`,
+  `Floating`, `Sticky`, `Fullscreen`, `Focus`, `Mark`, `Height`, `Width`, `Position`,
+  `SwayCommand`) go to `run_batch()` together as one `[con_id=N] a, b, c` command
+  (`batch_command()`), every other kind alone, and both are confirmed per action by the rules
+  above in one loop. Existence check, subscribe, one state read for the already-there check,
+  `--wait-time` once if anything polled is sent, send, then `batch_failure()` maps Sway's per-part
+  replies back to actions (Sway runs every part even after one fails, and stops only at a parse
+  error; confirmed live). Each event wakes one state read for every action whose event arrived;
+  polled actions are polled in the same loop. Moves and `Scratchpad` stay out of a batch: each
+  changes what the next action is judged against. With `--settle`
   (#17, `settle_duration()`), `hold_geometry()` then holds the confirmed pixel sizes and position,
   sending them again together when the client undoes them (at most `MAX_GEOMETRY_REAPPLIES`
   times, then `Unconfirmed`).
@@ -265,7 +267,7 @@ doesn't compile until both its confirmation path and its state/poll arms are dec
 can't be combined with `Workspace` (#45).
 
 `execute_plan()` runs the plan and records an `ActionRecord` per action, handing consecutive
-batching actions over together (`plan_groups()`, `run_plan_group()`). Immediately before each
+batching actions over together (`plan_groups()`) and each to `run_batch()`. Immediately before each
 `NewColumn`/`NewRow` it asks `current_move_skip_reason()`, which delegates to
 `tree::move_skip_reason()`: a floating window, or (with several outputs) a fullscreen window or one
 Sway would escalate to the next output (`is_at_the_trailing_workspace_edge()`, a replay of Sway's
@@ -356,7 +358,7 @@ checks those by hand, because the derive macro doesn't enforce `requires` reliab
   still goes to stdout, then the run exits 1. A binding's `timeout`/`wait_time` override the step's
   like its placement does.
 - `run_steps()` installs the signal handlers (`interrupt::install()`, #15) before its first step
-  and checks them before each one; every wait that can run long (`run_wait_matching_events()`,
+  and checks them before each one; every wait that can run long (`run_batch()`,
   the exec and `--existing --wait` loops, `--wait-time`'s sleeps) goes through
   `interrupt::recv()`/`interrupt::sleep()`, so a signal fails the run through `fail_step()` within
   50ms, and `fail_with_rollback()` exits `128 + signal`. A direct-CLI run installs nothing and
@@ -760,7 +762,7 @@ comments, name things clearly instead" style). Two rule-specific overrides:
     (a `get_tree()` that fails mid-run) and `--debug-events`' event loop.
 
     **Keep the decision pure and let the IPC layer fetch** — the shape `expected_position`/
-    `position_matches` and `state_satisfies`/`state_satisfied` already use — rather than burying a
+    `position_matches` and `state_satisfies`/`container_state` already use — rather than burying a
     comparison behind a `&mut Connection`. A fake-Sway test can reach it there, but only by
     scripting a whole compositor exchange for each case a unit test would cover in one line.
 

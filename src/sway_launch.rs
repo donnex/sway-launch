@@ -60,11 +60,11 @@ pub use values::{
     WorkspaceTarget,
 };
 
-/// The upper bound `run_poll_then_fallback()` polls `get_tree()` for a
+/// The upper bound `run_batch()` polls `get_tree()` for a
 /// wait-time action's own confirmation before giving up and falling back to
 /// the original blind sleep-the-rest-of-`--wait-time` behavior — capped at
-/// the actual `--wait-time` in play (`run_poll_then_fallback()` computes
-/// `self.poll_grace().min(wait_time)`), not used directly, and not the bound
+/// the actual `--wait-time` in play (`run_batch()` computes
+/// `action.poll_grace().min(action.timing)`), not used directly, and not the bound
 /// every variant gets — `NewColumn`/`NewRow` use the much shorter
 /// `MOVE_POLL_GRACE` instead, for the reason documented there. Several of
 /// these actions have legitimate no-op outcomes (e.g. resizing a solo
@@ -107,7 +107,7 @@ const WAIT_TIME_POLL_GRACE: time::Duration = time::Duration::from_millis(200);
 /// result is described.
 const MOVE_POLL_GRACE: time::Duration = time::Duration::from_millis(25);
 
-/// How often `run_wait_time()`'s poll loop re-queries `get_tree()` while
+/// How often `run_batch()`'s poll loop re-queries `get_tree()` while
 /// inside `WAIT_TIME_POLL_GRACE`. Cheap enough on a local Unix socket to run
 /// this often without meaningfully loading the compositor, while still
 /// avoiding a zero-sleep busy loop.

@@ -753,7 +753,7 @@ fn state_satisfies_is_false_for_an_action_with_no_state_to_check() {
 
 #[test]
 fn every_event_confirmed_kind_can_recognise_its_own_end_state() {
-    // run_wait_matching_events() accepts a matching event only once
+    // run_batch() accepts a matching event only once
     // state_satisfies() agrees, so an event-confirmed kind it can never
     // satisfy would time out after every successful command.
     let state = ContainerState {

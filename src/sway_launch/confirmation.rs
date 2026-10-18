@@ -16,8 +16,7 @@
 use super::action::{ActionKind, ExecAction, SwayAction};
 use super::interrupt::{self, WaitEnd};
 use super::ipc::{
-    event_loop, new_connection, run_single_sway_command, run_sway_command, run_sway_commands,
-    spawn_event_forwarder,
+    event_loop, new_connection, run_single_sway_command, run_sway_commands, spawn_event_forwarder,
 };
 use super::outcome::{ActionOutcome, LaunchOwnership, RunError, UnmatchedWindow};
 use super::process_marker::{
@@ -35,7 +34,7 @@ use super::tree::{height_matches, is_window, width_matches, ContainerState};
 use super::values::{escape_control_characters, Size, Split, TitlePattern};
 use super::{MOVE_POLL_GRACE, WAIT_TIME_POLL_GRACE, WAIT_TIME_POLL_INTERVAL};
 use std::sync::mpsc;
-use std::{fmt, thread, time};
+use std::{fmt, time};
 use swayipc::{Connection, Event, EventType, NodeLayout, WindowChange, WindowEvent};
 
 enum WindowEventMatch {
@@ -100,8 +99,8 @@ impl ActionKind<'_> {
     /// instead.
     ///
     /// Answering `Some` here commits a kind to recognising its own end state
-    /// in `state_satisfies()`: `run_wait_matching_events()` accepts a matching
-    /// event only once that returns `true`, so a kind without a real arm there
+    /// in `state_satisfies()`: `run_batch()` accepts a matching event only
+    /// once that returns `true`, so a kind without a real arm there
     /// sees its event arrive, rejects it every time, and times out after a
     /// command that worked. Answering `None` commits it to a `polls()`/
     /// `poll_matches()` arm instead, or to being reported unconfirmed on every
@@ -120,10 +119,10 @@ impl ActionKind<'_> {
             // showed they *do* have an "already there" no-op case after
             // all (moving to the workspace/output the window is already
             // on doesn't reparent anything, so no Move event fires either):
-            // `already_at_target()` below checks for and short-circuits
-            // that case inside run_wait_matching_events(), once the
+            // run_batch() checks for and short-circuits that case once the
             // subscription is open but before the command is sent (that
-            // ordering is load-bearing — see its doc comment), rather than
+            // ordering is load-bearing — see
+            // is_skipped_when_already_in_effect()'s doc comment), rather than
             // hanging until --timeout for a move that was never going to
             // happen.
             ActionKind::Workspace(_) | ActionKind::Output(_) => Some(WindowChange::Move),
@@ -172,10 +171,9 @@ impl ActionKind<'_> {
             // simply doesn't match that one (its change type isn't the one
             // returned here) and the loop keeps waiting for the Move that follows.
             // Re-scratchpadding an already-scratchpadded window is a no-op
-            // that fires no event at all (confirmed live), so
-            // already_at_target() below checks for and short-circuits that
-            // case the same way it does for Workspace/Output/Floating/
-            // Fullscreen/Focus.
+            // that fires no event at all (confirmed live), so run_batch()
+            // short-circuits that case the same way it does for
+            // Workspace/Output/Floating/Fullscreen/Focus.
             ActionKind::Scratchpad => Some(WindowChange::Move),
         }
     }
@@ -210,114 +208,62 @@ impl ActionKind<'_> {
     pub(super) fn is_event_confirmed(&self) -> bool {
         self.matching_window_change_event().is_some()
     }
+
+    /// Whether `run_batch()` leaves this kind out of the command when its
+    /// state already holds, reporting it `AlreadySatisfied`. Sway fires no
+    /// event for a command that turns out to be a no-op, so without the check
+    /// the action would wait out `--timeout` for an event that was never
+    /// coming.
+    ///
+    /// `Workspace`/`Output` were the first two found needing this (moving to
+    /// the workspace or output the window is already on reparents nothing).
+    /// `Floating`/`Fullscreen`/`Focus` have the identical failure mode,
+    /// confirmed live: re-running `--floating`/`--fullscreen`/`--focus` on a
+    /// window already in that state hung 5s and then errored out. `Scratchpad`
+    /// needs it as well: `[con_id] move scratchpad` on a window already in the
+    /// scratchpad fires no event at all, confirmed live, and is checked
+    /// against the ancestor workspace rather than `floating`, since a
+    /// scratchpad window also reports as floating (see
+    /// `matching_window_change_event()`).
+    ///
+    /// `Mark` is the one event-confirmed kind deliberately excluded even
+    /// though `state_satisfies()` can answer for it: re-applying a mark the
+    /// container already has *does* fire `WindowChange::Mark`, confirmed live,
+    /// so there's no hang to avoid, and short-circuiting would report it as
+    /// `AlreadySatisfied` when the command genuinely does re-apply. A polled
+    /// kind has nothing to hang on, and is always sent.
+    ///
+    /// **The check runs only once the subscription is open.** It reads state
+    /// another client can change a moment later, and the no-op it exists to
+    /// detect is precisely the case Sway fires no event for, so if the state
+    /// flipped between the read and the subscription, the command would be a
+    /// no-op, no event would arrive, and the action would wait out the full
+    /// `--timeout`. Subscribing first closes the window completely rather than
+    /// narrowing it: a change landing before the read is caught by the read,
+    /// one landing after it by the subscription. Measured against a live
+    /// compositor while the check still ran ahead of the subscription:
+    /// sweeping a competing `floating enable` across a 0-20ms window after
+    /// spawn, 5 of 40 trials hung the full timeout, clustered 2.5-4ms in.
+    pub(super) fn is_skipped_when_already_in_effect(&self) -> bool {
+        self.is_event_confirmed() && !matches!(self, ActionKind::Mark(_))
+    }
 }
 
 impl SwayAction<'_> {
-    /// Runs this action for real, returning how confidently it can say what
-    /// happened — which `SwayLaunch::run()` turns into the `ActionStatus`
-    /// reported in `RunOutcome`/`--json`.
+    /// Whether `state` is the state this action asked for. `None` — the
+    /// container isn't in the tree at all — is never satisfied: a window that
+    /// has closed isn't floating, focused or on the target workspace, and
+    /// reporting it as already-there would short-circuit an action into
+    /// claiming success over a container that no longer exists. `false` for
+    /// every kind that confirms by polling instead, whatever the state, except
+    /// `WorkspaceToOutput`, whose `poll_matches()` arm asks it.
     ///
-    /// The three outcomes are genuinely different claims, and collapsing them
-    /// was misleading: an event-confirmed action that observed its state, an
-    /// action that short-circuited because the state already held, and a
-    /// wait-time action that sent its command and never saw the change appear
-    /// are not equally strong results.
-    ///
-    /// `already_at_target()`'s no-op short-circuit is deliberately *not* run
-    /// here, ahead of the dispatch below: it belongs inside
-    /// `run_wait_matching_events()`, after that function has subscribed. See
-    /// its doc comment for why the ordering is load-bearing. The seven kinds
-    /// that confirm by polling answer `false` from `state_satisfied()`
-    /// unconditionally, so they're unaffected by where it runs.
-    ///
-    /// Every error is prefixed with the Sway command verb, so that a timeout in
-    /// an invocation with several actions, or a layout's `step N: ...`, says
-    /// which one failed rather than only how long it waited.
-    pub(super) fn run(&self) -> Result<ActionOutcome, RunError> {
-        if self.verbose {
-            diagnostic!(
-                "Sway action: {}",
-                escape_control_characters(&self.to_string(), false)
-            );
-        }
-
-        let outcome = if self.kind.is_event_confirmed() {
-            self.run_wait_matching_events()
-        } else {
-            self.run_wait_time().map(|confirmed| {
-                if confirmed {
-                    ActionOutcome::Changed
-                } else {
-                    ActionOutcome::Unconfirmed
-                }
-            })
-        };
-        outcome.map_err(|error| format!("{}: {}", self.sway_command_verb(), error).into())
-    }
-
-    /// Checks whether the container is already where/how a given action
-    /// would put it — Sway doesn't fire the event each of these actions
-    /// waits on when the command turns out to be a no-op, so
-    /// `run_wait_matching_events()` would otherwise hang until `--timeout`
-    /// for an event that was never coming. Returns `true` to
-    /// short-circuit `run_wait_matching_events()` with success, or `false`
-    /// to proceed normally.
-    ///
-    /// `Workspace`/`Output` were the first two found needing this (checked
-    /// against the containing workspace/output name). `Floating`/
-    /// `Fullscreen`/`Focus` were found to have the identical failure mode —
-    /// confirmed live: re-running `--floating`/`--fullscreen`/`--focus` on
-    /// a window already in that state hangs 5s and then errors out, rather
-    /// than completing promptly — so they're checked the same way, against
-    /// the container's own `floating`/`fullscreen_mode`/`focused` fields.
-    /// `Mark` was checked live too and found *not* to need this:
-    /// re-applying a mark the container already has still fires
-    /// `WindowChange::Mark`, unlike these three. `Scratchpad` was found to
-    /// need it as well — re-running `[con_id] move scratchpad` on a window
-    /// already in the scratchpad fires no event at all, confirmed live —
-    /// checked against the ancestor workspace name rather than `floating`,
-    /// since a scratchpad window also reports as floating for the unrelated
-    /// reason `matching_window_change_event()`'s doc comment covers. Every
-    /// state above is read in one pass by `ContainerState::from_tree()`; every
-    /// other action falls through to `false` unconditionally, which this never
-    /// touches.
-    ///
-    /// `Mark` is the one event-confirmed action deliberately excluded here
-    /// even though `state_satisfied()` below can answer for it: re-applying a
-    /// mark the container already has *does* fire `WindowChange::Mark`, so
-    /// there's no hang to avoid, and short-circuiting would report it as
-    /// `AlreadySatisfied` when the command genuinely does re-apply.
-    ///
-    /// **Call this only once a subscription is already open.** This check reads
-    /// state that another client can change a moment later, and the no-op it
-    /// exists to detect is precisely the case Sway fires no event for — so if
-    /// the state flips between reading it here and subscribing, the command
-    /// becomes a no-op, no event ever arrives, and the action waits out the
-    /// full `--timeout` before erroring. Subscribing first closes the window
-    /// completely rather than narrowing it: a change landing before this read
-    /// is caught by the read, and one landing after it is caught by the
-    /// subscription, with no instant belonging to neither. Measured against a
-    /// live compositor while the check still ran ahead of the subscription:
-    /// sweeping a competing `floating enable` across a 0-20ms window after
-    /// spawn, 5 of 40 trials hung the full timeout, clustered 2.5-4ms in.
-    fn already_at_target(&self) -> Result<bool, String> {
-        if matches!(self.kind, ActionKind::Mark(_)) {
-            return Ok(false);
-        }
-        self.state_satisfied()
-    }
-
-    /// Whether this action's requested end state currently holds, read from
-    /// Sway's tree. `false` for every action that confirms by polling instead
-    /// (`Split`, `Sticky`, `Height`, `Width`, `Position`, `NewColumn`,
-    /// `NewRow`), none of which reach this.
-    ///
-    /// Used twice, for two different questions. Before the command runs,
-    /// `already_at_target()` asks it to detect a no-op Sway would fire no
-    /// event for. *After* a matching event arrives,
-    /// `run_wait_matching_events()` asks it again — because an event proves
-    /// only that Sway emitted that event type for this container, not that the
-    /// state this action asked for is the one that ended up applying.
+    /// `run_batch()` asks it twice, for two different questions. Before the
+    /// command runs, to detect a no-op Sway would fire no event for (see
+    /// `ActionKind::is_skipped_when_already_in_effect()`). *After* a matching
+    /// event arrives, again, because an event proves only that Sway emitted
+    /// that event type for this container, not that the state this action
+    /// asked for is the one that ended up applying.
     ///
     /// The gap is reachable whenever something else is driving the same
     /// window: another `sway-launch` process, a keybinding, a `swaymsg` in the
@@ -336,29 +282,9 @@ impl SwayAction<'_> {
     /// this is not a settle race. If the state genuinely isn't there, the
     /// event was someone else's and waiting for the next one is correct.
     ///
-    /// Split in two: this half fetches, `state_satisfies()` below decides. The
-    /// decision is the part worth testing exhaustively and the part with no
-    /// business talking to a socket, so it takes a `ContainerState` and stays
-    /// ordinary pure logic — the same shape `position_matches()`/
-    /// `expected_position()` already use, and what this project asks of any new
-    /// matcher (see CLAUDE.md's coverage note). One `get_tree()` answers for
-    /// every variant, where the previous per-arm helpers each fetched their
-    /// own.
-    fn state_satisfied(&self) -> Result<bool, String> {
-        // Every kind `state_satisfies()` answers `false` for regardless of
-        // state is one with no confirming event, so there's nothing to read a
-        // tree for.
-        if !self.kind.is_event_confirmed() {
-            return Ok(false);
-        }
-        Ok(self.state_satisfies(container_state(self.container_id)?.as_ref()))
-    }
-
-    /// Whether `state` is the state this action asked for. `None` — the
-    /// container isn't in the tree at all — is never satisfied: a window that
-    /// has closed isn't floating, focused or on the target workspace, and
-    /// reporting it as already-there would short-circuit an action into
-    /// claiming success over a container that no longer exists.
+    /// Pure: `run_batch()` fetches one `ContainerState` and this decides, so
+    /// every case is a unit test rather than a scripted compositor exchange
+    /// (see CLAUDE.md's coverage note).
     fn state_satisfies(&self, state: Option<&ContainerState>) -> bool {
         let Some(state) = state else {
             return false;
@@ -405,8 +331,8 @@ impl SwayAction<'_> {
         }
     }
 
-    /// How long `run_poll_then_fallback()` may keep polling for this
-    /// variant's own confirmation. Pure, so the choice stays unit-testable
+    /// How long `run_batch()` may keep polling for this variant's own
+    /// confirmation after sending its command. Pure, so the choice stays unit-testable
     /// headlessly; the caller still caps it at the actual `--wait-time`.
     ///
     /// `NewColumn`/`NewRow` get a much shorter window than everything else
@@ -434,8 +360,8 @@ impl SwayAction<'_> {
     }
 
     /// Whether this variant confirms its own command via polling at all.
-    /// Pure — no IPC — so `run_wait_time()` can decide whether to enter the
-    /// poll loop before opening a connection for it, and so the decision
+    /// Pure — no IPC — so `run_batch()` can decide whether an action is
+    /// worth polling for at all once the command is sent, and so the decision
     /// stays unit-testable headlessly (which is most of what the poll
     /// matchers' own tests were ever asserting).
     ///
@@ -471,7 +397,7 @@ impl SwayAction<'_> {
     /// variant answers `false` unconditionally.
     ///
     /// Reads through the caller's `connection` rather than opening its own:
-    /// `run_poll_then_fallback()` calls this up to 20 times inside a 200ms
+    /// `run_batch()` calls this up to 20 times per action inside a 200ms
     /// grace period, so opening a fresh Sway IPC connection per iteration
     /// would cost ~20 connects and handshakes for a single action.
     ///
@@ -567,321 +493,6 @@ impl SwayAction<'_> {
             | ActionKind::WorkspaceToOutput { .. }
             | ActionKind::Mark(_)
             | ActionKind::Scratchpad => None,
-        }
-    }
-
-    /// Polls for up to `poll_grace()` for `poll_matches()` to confirm
-    /// the command `run_wait_time()` just sent took effect, returning as
-    /// soon as it does (the fast path). Several wait-time actions have
-    /// legitimate no-op outcomes where confirmation never arrives (a solo
-    /// window's clamped resize, a move already at the workspace edge) —
-    /// telling that apart from "hasn't happened yet" is impossible from tree
-    /// state alone, so once the grace period elapses this falls back to
-    /// assuming success and sleeping out the rest of `wait_time`, mirroring
-    /// `run_wait_matching_exec_event()`'s `PID_MARKER_FALLBACK_GRACE`
-    /// fallback.
-    /// Returns whether the change was actually observed —
-    /// `false` means the grace period elapsed and this fell back to sleeping,
-    /// which the caller reports as `ActionStatus::Unconfirmed` rather than
-    /// letting it pass as an ordinary success.
-    fn run_poll_then_fallback(
-        &self,
-        connection: &mut Connection,
-        baseline: Option<swayipc::Rect>,
-    ) -> bool {
-        let wait_time = self.timing;
-        // Capped at `wait_time`: `WAIT_TIME_POLL_GRACE` (200ms) is only a
-        // sound upper bound when `--wait-time` is at least that — at the
-        // CLI's own 20ms default, polling for the full 200ms before
-        // falling back would make the fallback path (a legitimate, common
-        // case — a solo-window resize clamp, a tiled NewColumn/NewRow
-        // already at the edge) take ~220ms total instead of ~40ms. With the
-        // cap, the fallback path costs `wait_time` (pre-sleep) + at most
-        // `wait_time` (grace plus whatever's left of the sleep) — roughly
-        // `2 * wait_time`, confirmed live.
-        let grace = self.poll_grace().min(wait_time);
-        let poll_started = time::Instant::now();
-        loop {
-            if self.poll_matches(connection, baseline) {
-                if self.verbose {
-                    diagnostic!("Confirmed via poll (container id: {})", self.container_id);
-                }
-                return true;
-            }
-            if poll_started.elapsed() >= grace {
-                break;
-            }
-            thread::sleep(WAIT_TIME_POLL_INTERVAL);
-        }
-
-        if self.verbose {
-            diagnostic!(
-                "Poll grace period elapsed without confirmation, falling back to wait-time \
-                 (container id: {})",
-                self.container_id
-            );
-        }
-        // A signal cuts this short; run_wait_time() reports it.
-        let _ = interrupt::sleep(wait_time.saturating_sub(poll_started.elapsed()));
-        false
-    }
-
-    /// Returns whether the requested change was actually observed. `false` covers every route to "we sent the command and waited,
-    /// but never saw it take effect": the poll grace period elapsing, a variant
-    /// with no poll matcher at all (a `ppt` size has no pixel figure to check),
-    /// and failing to open the poll connection. The caller reports that as
-    /// `ActionStatus::Unconfirmed` — it is not the same claim as a confirmed
-    /// change, and reporting it as one is what made a wait-time action's
-    /// "success" weaker than an event-confirmed action's without saying so.
-    fn run_wait_time(&self) -> Result<bool, String> {
-        let wait_time = self.timing;
-        let container_id = self.container_id;
-
-        if self.verbose {
-            diagnostic!(
-                "No matching event types for action. Will run Sway command and wait {} ms.",
-                wait_time.as_millis()
-            );
-        }
-
-        // Checked before the sleep as well as after it, and both are wanted.
-        //
-        // This one is a fast fail: --wait-time is the caller's own knob and is
-        // deliberately unbounded, so sleeping it out in full only to report
-        // that the target had already closed before the wait even began is
-        // pure delay in front of a foregone answer (`wait_time = 3600000`
-        // would otherwise sit for an hour before saying so).
-        //
-        // It doesn't replace the post-sleep check below, which covers the
-        // different case of a window closing *during* the wait, and is the one
-        // guaranteeing the container still exists at the moment the command is
-        // actually sent. The extra get_tree() runs a handful of times per
-        // invocation, never in a loop.
-        ensure_container_exists(container_id)?;
-
-        // Wait before and after running the Sway command: before, to let
-        // other running IPC clients finish their own commands; after, to
-        // let this command finish before the next action runs.
-        interrupt::sleep(wait_time)?;
-
-        // On Sway 1.9 (see node_is_floating()'s doc comment for the same
-        // version split), a
-        // wait-time action's [con_id=N] criteria matching zero containers is
-        // "success" as far as Sway's concerned (there's simply nothing to
-        // apply the command to) — unlike an event-confirmed action, which
-        // would visibly hang until --timeout instead. Without this check, a
-        // container that closed between an earlier action resolving it and
-        // this one running would silently no-op rather than error on 1.9.
-        // Sway 1.11 already errors clearly ("No matching node.") on its own,
-        // confirmed live, making this check redundant there — it's kept for
-        // 1.9 compatibility, not because it's still needed on every version.
-        ensure_container_exists(container_id)?;
-
-        // One connection for the whole poll cycle — the baseline snapshot
-        // and every poll iteration below share it, rather than each tree
-        // read opening its own. Failing to open one isn't fatal: there's
-        // simply nothing to poll with, so this falls back to the
-        // unconditional sleep, exactly as a variant with no matcher does.
-        let mut poll_connection = new_connection().ok();
-
-        // Captured before the command runs, not after — see
-        // poll_baseline()'s doc comment for why NewColumn/NewRow need a
-        // "before" snapshot while every other poll-matched action doesn't.
-        let baseline = poll_connection
-            .as_mut()
-            .and_then(|connection| self.poll_baseline(connection));
-
-        let sway_command = self.sway_command();
-        if self.verbose {
-            diagnostic!(
-                "Sway command: {}",
-                escape_control_characters(&sway_command, false)
-            );
-        }
-
-        run_sway_command(&sway_command)?;
-
-        if self.polls(baseline) {
-            if let Some(connection) = poll_connection.as_mut() {
-                let confirmed = self.run_poll_then_fallback(connection, baseline);
-                interrupt::check()?;
-                return Ok(confirmed);
-            }
-        }
-
-        interrupt::sleep(wait_time)?;
-
-        // Nothing was polled for, so nothing was observed. Honest rather than
-        // optimistic: this is the ppt-size case, and the no-connection case.
-        Ok(false)
-    }
-
-    /// Subscribes, confirms the requested state isn't already in effect, sends
-    /// the command, and waits for an event that — together with a second state
-    /// read — confirms it applied.
-    ///
-    /// The subscription is opened before the no-op check and before the
-    /// command, and that ordering is the whole point rather than an incidental
-    /// detail: it's what makes the check-then-command sequence safe against
-    /// another client racing it. See `already_at_target()`'s doc comment. The
-    /// cost is one Sway IPC connection opened and immediately dropped on the
-    /// short-circuit path, which is the cheap half of the trade — that path
-    /// already pays for a `get_tree()`.
-    ///
-    /// The container-exists check stays ahead of the subscription only to
-    /// fail fast on a closed window before opening a subscription for it;
-    /// `event_loop()` bounds the subscribe handshake itself (by
-    /// `IPC_ROUND_TRIP_TIMEOUT`, like every other request).
-    fn run_wait_matching_events(&self) -> Result<ActionOutcome, String> {
-        // Same check and same reason as run_wait_time()'s: on Sway 1.9 a
-        // [con_id=N] criteria matching zero containers is
-        // "success", so without this an action whose container closed since
-        // it was resolved would send its command successfully and then block
-        // for the full --timeout waiting on a confirmation event that can
-        // never arrive, reporting a timeout — pointing the
-        // user at --timeout rather than at the closed window. Sway 1.11
-        // already errors clearly ("No matching node.") from
-        // run_sway_command() below, confirmed live, making this redundant
-        // there but still required for 1.9.
-        //
-        // Costs one extra get_tree() per event-confirmed action, partly
-        // duplicating the one already_at_target() makes for six of the seven
-        // variants. Accepted deliberately: one check in one place covers
-        // every variant (including Mark, which has no already_at_target()
-        // arm at all), and this runs a handful of times per invocation, not
-        // in a loop.
-        let container_id = self.container_id;
-        let container = existing_container(container_id)?;
-        if self.kind.needs_a_window() && !is_window(&container) {
-            return Err(split_container_error(container_id));
-        }
-
-        let event_loop = event_loop(&[EventType::Window])?;
-
-        if self.already_at_target()? {
-            if self.verbose {
-                diagnostic!(
-                    "Already at target, nothing to move (container id: {})",
-                    container_id
-                );
-            }
-            return Ok(ActionOutcome::AlreadySatisfied);
-        }
-
-        let deadline = deadline_after(self.timing)?;
-        let sway_command = self.sway_command();
-        if self.verbose {
-            diagnostic!(
-                "Sway command: {}",
-                escape_control_characters(&sway_command, false)
-            );
-        }
-        run_sway_command(&sway_command)?;
-
-        // spawn_event_forwarder() reads events on a separate thread and
-        // forwards them through a channel, so recv_timeout() below enforces a real deadline even if
-        // the event stream itself never produces another event (a blocking
-        // iterator has no way to time out on its own).
-        //
-        // The thread outlives this function whenever it's still blocked on the
-        // socket as we return: there's no public way to interrupt a blocking
-        // EventStream read from another thread, so it can only notice its
-        // receiver is gone the next time an event actually arrives, at which
-        // point send() fails, the loop breaks, and the thread and its Sway IPC
-        // socket are released.
-        //
-        // That drains itself in practice rather than accumulating, because the
-        // events that wake a stale reader are the very ones the *next*
-        // event-confirmed action produces: Sway broadcasts every window event
-        // to every subscription, so step N's own confirming event is what
-        // retires step N-1's reader. Measured against a live compositor rather
-        // than assumed — a 300-step layout of event-confirmed actions peaked at
-        // 2 threads and 3 sockets, and a 15-step layout launching a real window
-        // per step at 3 and 3. Pinned by tests/live_sway.rs's
-        // `event_reader_threads_stay_bounded_across_a_long_layout`.
-        //
-        // The bound depends on later events arriving: the *last*
-        // event-confirmed action's reader stays blocked until the process
-        // exits, which is why it's a small constant rather than zero. One
-        // owned event reader per SwayLaunch run, with an explicit shutdown
-        // protocol, would buy nothing for a CLI that exits moments later, and
-        // would replace a per-action subscription (which is also what makes
-        // each action's wait independent, see Scratchpad's shared
-        // WindowChange::Move in matching_window_change_event()) with shared
-        // mutable state to coordinate. Revisit if this ever becomes a
-        // library, gains a long-lived mode, or needs cancellation.
-        let event_receiver = spawn_event_forwarder(event_loop);
-
-        loop {
-            let remaining = deadline.saturating_duration_since(time::Instant::now());
-            if remaining.is_zero() {
-                return Err(event_timeout_message(self.timing));
-            }
-
-            let event = match interrupt::recv(&event_receiver, remaining) {
-                Ok(event) => event,
-                Err(WaitEnd::Timeout) => {
-                    return Err(event_timeout_message(self.timing));
-                }
-                Err(WaitEnd::Disconnected) => {
-                    return Err("Event stream closed unexpectedly".to_string());
-                }
-                Err(WaitEnd::Interrupted(message)) => return Err(message),
-            };
-
-            let event = match event {
-                Ok(event) => event,
-                Err(error) => return Err(error.to_string()),
-            };
-
-            let window = match event {
-                Event::Window(window) => window,
-                _ => continue,
-            };
-
-            match self.matches_window_event(&window) {
-                Ok(result) => {
-                    // The event identifies the right container and the right
-                    // event type, which is not the same as the requested state
-                    // having been what applied — another IPC client driving the
-                    // same window produces events indistinguishable from ours.
-                    // See state_satisfied()'s doc comment.
-                    if !self.state_satisfied()? {
-                        if self.verbose {
-                            diagnostic!(
-                                "Event match: {:?} container id {} ({}), but the requested state \
-                                 is not in effect — another client may be driving this window; \
-                                 waiting for the next event",
-                                window.change,
-                                window.container.id,
-                                result
-                            );
-                        }
-                        continue;
-                    }
-
-                    if self.verbose {
-                        diagnostic!(
-                            "Event match: {:?} container id {} ({})",
-                            window.change,
-                            window.container.id,
-                            result
-                        );
-                    }
-
-                    return Ok(ActionOutcome::Changed);
-                }
-                Err(error_result) => {
-                    if self.verbose {
-                        diagnostic!(
-                            "Event mismatch: {:?} container id {} ({})",
-                            window.change,
-                            window.container.id,
-                            error_result
-                        );
-                    }
-                }
-            }
         }
     }
 
@@ -997,19 +608,27 @@ impl BatchProgress {
     }
 }
 
-/// Runs `actions` (all against one container, every kind `joins_batch()`) as
-/// one Sway command, and confirms each the same way it would be confirmed
-/// alone: an event-confirmed kind needs its own event and then the requested
-/// state, a polled kind is polled for, and a kind that can't be confirmed is
-/// `Unconfirmed`. Returns one outcome per action, in order.
+/// Runs `actions` (all against one container: a run of kinds that
+/// `joins_batch()`, or one action of any other kind on its own) as one Sway
+/// command, and confirms each: an event-confirmed kind needs its own event and
+/// then the requested state, a polled kind is polled for, and a kind that
+/// can't be confirmed is `Unconfirmed`. Returns one outcome per action, in
+/// order. This is the one place an action's effect is confirmed (#133), so a
+/// change to how that works is made once.
 ///
-/// The order is `run_wait_matching_events()`'s and `run_wait_time()`'s
-/// merged, for the same reasons: the existence check, then the subscription,
-/// then the already-there check (one state read for every event-confirmed
-/// kind but `Mark`, see `already_at_target()`), then, if anything polled is
-/// in the batch, `--wait-time` with the existence check on both sides of it,
-/// then the command. An action already in its state is left out of the
-/// command, and a batch left with nothing to send sends nothing.
+/// The order is load-bearing: the existence check (failing fast on a closed
+/// window, before a subscription is opened for it), then the subscription,
+/// then the already-there check (one state read, for every kind
+/// `is_skipped_when_already_in_effect()`; the subscription has to come first,
+/// see there), then, if anything polled is sent, `--wait-time` with the
+/// existence check after it, then the command. An action already in its
+/// state is left out of the command, and a batch left with nothing to send
+/// sends nothing. `NewColumn`/`NewRow` take their `poll_baseline()` just
+/// before the command, from the poll connection.
+///
+/// Every error is prefixed with the failing action's Sway command verb, so a
+/// timeout in an invocation with several actions, or a layout's
+/// `step N: ...`, says which one failed rather than only how long it waited.
 ///
 /// Every event wakes one state read that settles every action whose event
 /// has arrived; polled actions are polled every `WAIT_TIME_POLL_INTERVAL` in
@@ -1071,8 +690,7 @@ pub(super) fn run_batch(
     if event_timeout.is_some() {
         let state = container_state(container_id).map_err(|error| fail(first, error))?;
         for (action, progress) in actions.iter().zip(progress.iter_mut()) {
-            if action.kind.is_event_confirmed()
-                && !matches!(action.kind, ActionKind::Mark(_))
+            if action.kind.is_skipped_when_already_in_effect()
                 && action.state_satisfies(state.as_ref())
             {
                 if verbose {
@@ -1103,9 +721,13 @@ pub(super) fn run_batch(
         .transpose()
         .map_err(|error| fail(first, error))?;
 
-    // See run_wait_time() for why the existence check sits on both sides of
-    // the --wait-time sleep (fast failure, and Sway 1.9 treating a missing
-    // [con_id=N] as success).
+    // The existence check above is a fast fail: --wait-time is the caller's
+    // own knob and deliberately unbounded, so sleeping it out only to report
+    // that the target had already closed is pure delay (`wait_time = 3600000`
+    // would sit for an hour before saying so). The one after the sleep covers
+    // a window closing *during* it: on Sway 1.9 a [con_id=N] criteria matching
+    // nothing is "success" for a polled command, which would silently no-op.
+    // Sway 1.11 errors on its own ("No matching node."), confirmed live.
     let mut poll_connection = None;
     if let (true, Some(wait_time)) = (sends_polled, wait_time) {
         if verbose {
@@ -1119,6 +741,15 @@ pub(super) fn run_batch(
         ensure_container_exists(container_id).map_err(|error| fail(first, error))?;
         poll_connection = new_connection().ok();
     }
+    // Before the command, not after: see poll_baseline().
+    let baselines: Vec<Option<swayipc::Rect>> = actions
+        .iter()
+        .map(|action| {
+            poll_connection
+                .as_mut()
+                .and_then(|connection| action.poll_baseline(connection))
+        })
+        .collect();
 
     let command = batch_command(container_id, &sent_actions);
     if verbose {
@@ -1136,7 +767,7 @@ pub(super) fn run_batch(
 
     for &index in &sent {
         let action = &actions[index];
-        if !action.kind.is_event_confirmed() && !action.polls(None) {
+        if !action.kind.is_event_confirmed() && !action.polls(baselines[index]) {
             progress[index] = BatchProgress::Unconfirmed;
         }
     }
@@ -1148,6 +779,35 @@ pub(super) fn run_batch(
         }
     }
 
+    // spawn_event_forwarder() reads events on a separate thread, so
+    // recv_timeout() below enforces a real deadline even if the stream never
+    // produces another event.
+    //
+    // The thread outlives this function whenever it's still blocked on the
+    // socket as we return: there's no public way to interrupt a blocking
+    // EventStream read from another thread, so it can only notice its
+    // receiver is gone the next time an event actually arrives, at which
+    // point send() fails, the loop breaks, and the thread and its Sway IPC
+    // socket are released.
+    //
+    // That drains itself in practice rather than accumulating, because the
+    // events that wake a stale reader are the very ones the *next*
+    // event-confirmed action produces: Sway broadcasts every window event to
+    // every subscription, so step N's own confirming event is what retires
+    // step N-1's reader. Measured against a live compositor rather than
+    // assumed — a 300-step layout of event-confirmed actions peaked at 2
+    // threads and 3 sockets, and a 15-step layout launching a real window per
+    // step at 3 and 3. Pinned by tests/live_sway.rs's
+    // `event_reader_threads_stay_bounded_across_a_long_layout`.
+    //
+    // The *last* reader stays blocked until the process exits, which is why
+    // it's a small constant rather than zero. One owned event reader per run,
+    // with an explicit shutdown protocol, would buy nothing for a CLI that
+    // exits moments later, and would replace a per-action subscription (which
+    // is also what keeps each wait independent, see Scratchpad's shared
+    // WindowChange::Move in matching_window_change_event()) with shared
+    // mutable state. Revisit if this ever becomes a library, gains a
+    // long-lived mode, or needs cancellation.
     let event_receiver = event_stream.map(spawn_event_forwarder);
     loop {
         if let Some(connection) = poll_connection.as_mut() {
@@ -1156,7 +816,7 @@ pub(super) fn run_batch(
                 if action.kind.is_event_confirmed() || progress[index] != BatchProgress::Waiting {
                     continue;
                 }
-                if action.poll_matches(connection, None) {
+                if action.poll_matches(connection, baselines[index]) {
                     if verbose {
                         diagnostic!(
                             "Confirmed via poll: {} (container id: {})",
@@ -1238,7 +898,7 @@ pub(super) fn run_batch(
             continue;
         }
         // The event is a wake-up, not the confirmation: see
-        // state_satisfied()'s doc comment.
+        // state_satisfies()'s doc comment.
         let state = container_state(container_id).map_err(|error| fail(waiting, error))?;
         for &index in &sent {
             let action = &actions[index];
@@ -1276,8 +936,10 @@ pub(super) fn run_batch(
             .map_err(|error| fail(first, error))?;
     }
 
-    // As run_poll_then_fallback() does: what couldn't be confirmed is given
-    // the rest of --wait-time to finish before the next action runs.
+    // What couldn't be confirmed (a solo window's clamped resize, a move
+    // already at the workspace edge: no-ops tree state can't tell apart from
+    // "not yet") is assumed to have worked, and given the rest of --wait-time
+    // to finish before the next action runs.
     if let Some(wait_time) = wait_time {
         if sent
             .iter()
@@ -1411,10 +1073,10 @@ impl ExecAction<'_> {
     /// Launches this action's command and waits for its window, returning the
     /// window's container id and whether this run can prove it launched it
     /// (see `LaunchOwnership`). A freshly launched window is inherently a
-    /// change, so unlike `SwayAction::run()` there's no outcome to report.
+    /// change, so unlike `run_batch()` there's no outcome to report.
     ///
     /// Every error is prefixed with `launch "<command>"`, for the same reason
-    /// `SwayAction::run()` prefixes its own with the command verb.
+    /// `run_batch()` prefixes its own with the command verb.
     pub(super) fn run(&self) -> Result<(i64, LaunchOwnership), RunError> {
         if self.verbose {
             diagnostic!(
@@ -1430,7 +1092,7 @@ impl ExecAction<'_> {
             })
     }
 
-    /// The launch counterpart of `run_wait_matching_events()`: matching purely
+    /// The launch counterpart of `run_batch()`: matching purely
     /// on event content (app_id/class, or nothing at all with no filter) is
     /// ambiguous when more than one qualifying `New` window can appear
     /// around the same time — a concurrently-running second `sway-launch`
@@ -1480,7 +1142,7 @@ impl ExecAction<'_> {
     /// reads this, and only to decide whether killing the window is this
     /// run's business.
     ///
-    /// Same background-thread/socket lifetime as `run_wait_matching_events()`:
+    /// Same background-thread/socket lifetime as `run_batch()`'s:
     /// the thread reading this action's event stream may outlive this function
     /// if still blocked on the socket when we return, but is retired by the
     /// next window event to arrive — which, in a multi-step run, is the next
@@ -1997,7 +1659,7 @@ fn deadline_after(timeout: time::Duration) -> Result<time::Instant, String> {
     })
 }
 
-/// Why a window-only action refuses a split container. `SwayAction::run()`
+/// Why a window-only action refuses a split container. `run_batch()`
 /// prefixes it with the action's verb.
 fn split_container_error(container_id: i64) -> String {
     format!(
@@ -2007,7 +1669,7 @@ fn split_container_error(container_id: i64) -> String {
     )
 }
 
-/// An event-confirmed action's timeout. `SwayAction::run()` prefixes it with
+/// An event-confirmed action's timeout. `run_batch()` prefixes it with
 /// the action's own verb, which is what tells several such actions apart.
 fn event_timeout_message(timeout: time::Duration) -> String {
     format!("no matching window event within {} sec", timeout.as_secs())
@@ -2118,7 +1780,7 @@ fn exec_timeout_message(
 /// other than this run is starting (an autostart entry, a launcher).
 ///
 /// Subscribes before the first tree read, the same order
-/// `run_wait_matching_events()` uses, so a window mapping between the two
+/// `run_batch()` uses, so a window mapping between the two
 /// can't be missed. Every window event then prompts another read, and so does
 /// every `LATE_PROPERTY_RECHECK_INTERVAL` without one, since a client can
 /// set its app_id/class after mapping and Sway sends no event when it does.

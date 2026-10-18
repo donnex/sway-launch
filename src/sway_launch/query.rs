@@ -189,8 +189,8 @@ pub fn containers_still_present(container_ids: &[i64]) -> Result<Vec<i64>, Strin
 /// a solo window instead sets the `layout` of the workspace it's already
 /// the sole child of; the leaf window node's own `layout` field is always
 /// `None`/unset either way. Used by `SwayAction::poll_matches()` to confirm
-/// a `Split` action actually applied before its `run_poll_then_fallback()`
-/// grace period falls back to sleeping the rest of `--wait-time`.
+/// a `Split` action actually applied before its `run_batch()`
+/// poll grace period falls back to sleeping the rest of `--wait-time`.
 pub(super) fn parent_node_layout(
     connection: &mut Connection,
     container_id: i64,
