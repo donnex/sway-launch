@@ -5614,6 +5614,62 @@ fn capture_keeps_a_floating_windows_geometry_and_mark() {
 }
 
 #[test]
+fn capture_never_replays_an_app_id_as_shell_code() {
+    fresh_workspace();
+    // #125: an app_id is the client's to set (foot takes one from an escape
+    // sequence anything printed in its terminal can send), so --capture must
+    // not write one as a command string a replay hands to `sh`. Written as one
+    // quoted word, it names a program that doesn't exist: the replay times out
+    // and the payload never runs.
+    let temp_dir = TestTempDir::new();
+    let payload_file = temp_dir.join("capture-payload-ran");
+    let hostile_app_id = format!("foot && touch {}", payload_file.display());
+    let mut connection = connect();
+    let built = focused_workspace_name(&mut connection);
+    let output = sway_launch_command()
+        .args([
+            "--app-id",
+            &hostile_app_id,
+            "--timeout",
+            "10",
+            &format!("foot --app-id='{hostile_app_id}'"),
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let container_id: i64 = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .expect("stdout should be a container id");
+    let guard = KillOnDrop(container_id);
+    let file = capture_to_file(&built, "capture-hostile-app-id");
+    drop(guard);
+    let captured = std::fs::read_to_string(file.to_str().unwrap()).unwrap_or_default();
+    assert!(
+        captured.contains(&format!("command = [\"{hostile_app_id}\"]")),
+        "{captured}"
+    );
+
+    fresh_workspace();
+    let output = sway_launch_command()
+        .args(["--layout", file.to_str().unwrap(), "--timeout", "2"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        !output.status.success(),
+        "no window can open for a program that doesn't exist"
+    );
+    assert!(
+        !payload_file.exists(),
+        "the captured app_id ran as shell code:\n{captured}"
+    );
+}
+
+#[test]
 fn template_params_build_the_shapes_of_the_ratio_variants_they_replaced() {
     fresh_workspace();
     // master-dual-stack-wide and dual-sidebars-wide were folded into a param

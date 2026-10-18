@@ -123,7 +123,7 @@ impl<'a> Capture<'a> {
         let id = self.name(window);
         let mut fields = vec![
             ("id", toml_string(&id)),
-            ("command", toml_string(&command_guess(key, value))),
+            ("command", self.command_field(&id, key, value)),
             (key, toml_string(value)),
         ];
         if let Some(horizontal) = split {
@@ -166,6 +166,25 @@ impl<'a> Capture<'a> {
             fields,
         });
         Ok(())
+    }
+
+    /// The `command` value guessed from a window's app_id or class: the
+    /// string form for a plain program name (`foot`), and otherwise the list
+    /// form, so whatever the client named itself reaches `sh` as one quoted
+    /// word. An app_id is the client's to set at any time (foot takes one from
+    /// an escape sequence anything printed in the terminal can send), so a
+    /// guess written as a string could replay `foot && rm ...` as shell code.
+    fn command_field(&mut self, id: &str, key: &str, value: &str) -> String {
+        let guess = command_guess(key, value);
+        if is_plain_program_name(&guess) {
+            return toml_string(&guess);
+        }
+        self.notes.push(format!(
+            "{}'s {} isn't a plain program name, so its command is written as one quoted word; \
+             check it before running this",
+            id, key
+        ));
+        format!("[{}]", toml_string(&guess))
     }
 
     fn retarget(&mut self, window: &Node, fields: Vec<(&'static str, String)>) {
@@ -307,6 +326,16 @@ fn command_guess(key: &str, value: &str) -> String {
     } else {
         value.to_string()
     }
+}
+
+/// Whether `name` is safe to write as a shell command as is: nothing but
+/// letters, digits and `.`, `_`, `+`, `-`, and not starting with `-`.
+fn is_plain_program_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('-')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-'))
 }
 
 fn split_value(horizontal: bool) -> &'static str {

@@ -304,7 +304,9 @@ way. A poll cycle and the move guard each share one connection across their read
 layout instead of nesting one: every child's first window opens beside its siblings first, then each
 nested child's is split and focused. Sizes come last, through each child's first window, in the
 order its module doc explains (`every_shipped_template_round_trips_through_capture` holds it to
-every template's shape). It's the one recursion over a tree outside `tree.rs`. Every standalone mode, `--layout` and
+every template's shape). A command guessed from an app_id or class that isn't a plain program name
+(`is_plain_program_name()`) is written in the list form, since the client sets it (#125). It's the
+one recursion over a tree outside `tree.rs`. Every standalone mode, `--layout` and
 `--template` build their `conflicts_with_all` with `per_window_and()` from `PER_WINDOW_ARGS`, so a
 per-window flag is never silently discarded. `--list-windows` alone keeps `LIST_WINDOWS_FILTERS`
 (`-a`/`-c`/`--mark-match`/`--title`, via `per_window_but_filters_and()`): they narrow its listing

@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after an unpaired backslash is now refused, as is a launch command ending that way, and every
   command is checked once more as a whole before it is sent, rather than only after Sway had
   already run it. (#123)
+- `--capture` no longer writes a window's app_id into the layout file as a shell command. A client
+  sets its own app_id, and foot takes one from an escape sequence that anything printed in the
+  terminal can send, so a captured `foot && rm ...` ran as shell code the next time the layout was
+  replayed. An app_id or class that isn't a plain program name is now written as a single quoted
+  word (`command = ["..."]`), with a note at the top of the file. (#125)
 
 ### Fixed
 

@@ -708,7 +708,10 @@ sway-launch --layout my-workspace.toml --on-workspace 4
 The file opens each window where it has to open to rebuild the same splits, then sets the sizes,
 and finishes with the floating windows' size and position. Marks, sticky and fullscreen are kept
 too. It can't know how a window was started, so each step's `command` is a guess from the window's
-app_id (or its class, lowercased): check and edit the commands before running the file. Each step
+app_id (or its class, lowercased): check and edit the commands before running the file. A client
+sets its own app_id, so one that isn't a plain program name (letters, digits, `.`, `_`, `+`, `-`) is
+written in the list form, `command = ["..."]`, which runs it as a single word rather than as shell
+code, and the file notes it at the top. Each step
 carries a comment with the window's title, to help tell them apart. Every built-in template
 rebuilds its exact shape from its own capture.
 

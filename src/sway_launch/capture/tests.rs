@@ -268,3 +268,40 @@ fn capture_output_parses_as_a_layout_file() {
     let layout = crate::layout::parse(&captured).expect("the capture parses");
     assert_eq!(layout.step.len(), 5);
 }
+
+#[test]
+fn capture_writes_a_command_guessed_from_a_hostile_app_id_as_one_quoted_word() {
+    // foot takes its app_id from an escape sequence anything printed in the
+    // terminal can send, so the guess can't be trusted to be a program name.
+    let hostile = "foot && touch /tmp/example-file";
+    let workspace = workspace("splith", vec![window(10, hostile, 1.0)], vec![]);
+    let captured = capture(&workspace).expect("captures");
+    assert_eq!(
+        steps(&captured),
+        [format!(
+            r#"id = "{hostile}"; command = ["{hostile}"]; app_id = "{hostile}""#
+        )]
+    );
+    assert!(
+        captured.contains(&format!(
+            "# Note: {hostile}'s app_id isn't a plain program name, so its command is written \
+             as one quoted word; check it before running this.\n"
+        )),
+        "{captured}"
+    );
+    let layout = crate::layout::parse(&captured).expect("the capture parses");
+    assert_eq!(
+        layout.step[0].command.as_deref(),
+        Some("'foot && touch /tmp/example-file'")
+    );
+}
+
+#[test]
+fn plain_program_names_are_letters_digits_and_a_few_punctuation_marks() {
+    for plain in ["foot", "org.gnome.Nautilus", "code-oss", "g++", "app_2"] {
+        assert!(is_plain_program_name(plain), "{plain}");
+    }
+    for unsafe_name in ["", "-x", "a b", "a;b", "a&&b", "$(x)", "a'b", "a/b"] {
+        assert!(!is_plain_program_name(unsafe_name), "{unsafe_name}");
+    }
+}
