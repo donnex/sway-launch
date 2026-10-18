@@ -465,7 +465,7 @@ fn to_sway_launch_turns_workspace_number_into_a_numbered_target() {
     step.workspace_number = Some(2);
     let launch = convert(&step).expect("a workspace number should convert");
     assert_eq!(
-        launch.workspace,
+        launch.actions.workspace,
         Some(sway_launch::WorkspaceTarget::Number(2))
     );
 }
@@ -578,7 +578,10 @@ fn to_sway_launch_carries_settle_and_refuses_it_without_geometry() {
     step.settle = Some(300);
     step.width = Some("700px".to_string());
     let sway_launch = convert(&step).expect("settle with a width is valid");
-    assert_eq!(sway_launch.settle, Some(time::Duration::from_millis(300)));
+    assert_eq!(
+        sway_launch.actions.settle,
+        Some(time::Duration::from_millis(300))
+    );
 
     step.width = Some("70ppt".to_string());
     assert_eq!(

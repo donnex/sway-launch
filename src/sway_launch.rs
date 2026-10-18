@@ -42,7 +42,7 @@ mod tree;
 mod values;
 
 pub use ipc::{kill_container, KillError};
-pub use launch::{debug_events, BuildLocation, Staging, SwayLaunch};
+pub use launch::{debug_events, ActionRequest, BuildLocation, Staging, SwayLaunch};
 pub use outcome::{
     ActionRecord, ActionStatus, LaunchOwnership, RunError, RunOutcome, UnmatchedWindow,
 };

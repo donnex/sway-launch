@@ -263,21 +263,24 @@ impl LayoutStep {
         Ok(sway_launch::SwayLaunch {
             target,
             launch_setup,
-            split: self.split,
-            floating: self.floating,
-            sticky: self.sticky,
-            fullscreen: self.fullscreen,
-            focus: self.focus,
-            mark: self.mark.as_deref(),
-            new_column: self.new_column,
-            new_row: self.new_row,
-            workspace,
-            output: self.output.as_deref(),
-            height,
-            width,
-            position,
-            scratchpad: self.scratchpad,
-            sway_commands: &self.sway_commands,
+            actions: sway_launch::ActionRequest {
+                split: self.split,
+                floating: self.floating,
+                sticky: self.sticky,
+                fullscreen: self.fullscreen,
+                focus: self.focus,
+                mark: self.mark.as_deref(),
+                new_column: self.new_column,
+                new_row: self.new_row,
+                workspace,
+                output: self.output.as_deref(),
+                height,
+                width,
+                position,
+                scratchpad: self.scratchpad,
+                sway_commands: &self.sway_commands,
+                settle,
+            },
             timeout: self
                 .timeout
                 .map(time::Duration::from_secs)
@@ -291,7 +294,6 @@ impl LayoutStep {
             warn_on_misplaced_launch: false,
             catch_late_window: false,
             excluded_containers: Vec::new(),
-            settle,
         })
     }
 }

@@ -679,22 +679,7 @@ fn launch_only<'a>(
     args: &Args,
 ) -> sway_launch::SwayLaunch<'a> {
     sway_launch::SwayLaunch {
-        split: None,
-        floating: false,
-        sticky: false,
-        fullscreen: false,
-        focus: false,
-        mark: None,
-        new_column: false,
-        new_row: false,
-        workspace: None,
-        output: None,
-        height: None,
-        width: None,
-        position: None,
-        scratchpad: false,
-        sway_commands: &[],
-        settle: None,
+        actions: sway_launch::ActionRequest::default(),
         // The window opens on the staging workspace wherever focus goes.
         require_launch_on_focused_workspace: false,
         warn_on_misplaced_launch: false,

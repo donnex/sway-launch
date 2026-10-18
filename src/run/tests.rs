@@ -306,3 +306,36 @@ fn run_progress_rolls_back_only_launched_windows_but_reports_every_one() {
         HashMap::from([("adopted".to_string(), 10), ("retargeted".to_string(), 11)])
     );
 }
+
+#[test]
+fn launch_only_keeps_the_launch_and_drops_every_action() {
+    let steps = layout_steps("[[step]]\ncommand = \"foot\"\nid = \"main\"\n");
+    let mut planned = plan_steps_offline(&steps, &offline_args())
+        .expect("step should plan")
+        .remove(0);
+    let sway_commands = vec!["border none".to_string()];
+    planned.actions = sway_launch::ActionRequest {
+        split: Some(sway_launch::Split::H),
+        floating: true,
+        sticky: true,
+        fullscreen: true,
+        focus: true,
+        mark: Some("pinned"),
+        new_column: true,
+        new_row: true,
+        workspace: Some(sway_launch::WorkspaceTarget::Name("3")),
+        output: Some("HEADLESS-1"),
+        height: Some(sway_launch::Size::Pixels(300)),
+        width: Some(sway_launch::Size::Pixels(400)),
+        position: Some(sway_launch::Position::Center),
+        scratchpad: true,
+        sway_commands: &sway_commands,
+        settle: Some(time::Duration::from_millis(300)),
+    };
+    assert!(!planned.build_actions_for_preview().is_empty());
+
+    let launch = launch_only(planned, &offline_args());
+    assert!(matches!(launch.target, sway_launch::Target::Exec { .. }));
+    assert!(launch.build_actions_for_preview().is_empty());
+    assert_eq!(launch.actions.settle, None);
+}

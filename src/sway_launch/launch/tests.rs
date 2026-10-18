@@ -7,21 +7,7 @@ fn minimal_sway_launch() -> SwayLaunch<'static> {
     SwayLaunch {
         target: Target::ConId(42),
         launch_setup: None,
-        split: None,
-        floating: false,
-        sticky: false,
-        fullscreen: false,
-        focus: false,
-        mark: None,
-        new_column: false,
-        new_row: false,
-        workspace: None,
-        output: None,
-        height: None,
-        width: None,
-        position: None,
-        scratchpad: false,
-        sway_commands: &[],
+        actions: ActionRequest::default(),
         verbose: false,
         timeout: time::Duration::from_secs(5),
         wait_time: time::Duration::from_millis(20),
@@ -29,7 +15,6 @@ fn minimal_sway_launch() -> SwayLaunch<'static> {
         warn_on_misplaced_launch: false,
         catch_late_window: false,
         excluded_containers: Vec::new(),
-        settle: None,
     }
 }
 
@@ -70,22 +55,22 @@ fn build_actions_includes_every_flag_in_the_documented_fixed_order() {
     // NewColumn/NewRow guard (execute_plan() does, per move), so both are
     // always planned.
     let mut sway_launch = minimal_sway_launch();
-    sway_launch.new_column = true;
-    sway_launch.new_row = true;
-    sway_launch.workspace = Some(WorkspaceTarget::Name("3"));
-    sway_launch.output = Some("HDMI-A-1");
-    sway_launch.split = Some(Split::H);
-    sway_launch.floating = true;
-    sway_launch.sticky = true;
-    sway_launch.fullscreen = true;
-    sway_launch.focus = true;
-    sway_launch.height = Some(Size::Pixels(300));
-    sway_launch.width = Some(Size::Pixels(400));
-    sway_launch.position = Some(Position::Center);
-    sway_launch.mark = Some("pinned");
+    sway_launch.actions.new_column = true;
+    sway_launch.actions.new_row = true;
+    sway_launch.actions.workspace = Some(WorkspaceTarget::Name("3"));
+    sway_launch.actions.output = Some("HDMI-A-1");
+    sway_launch.actions.split = Some(Split::H);
+    sway_launch.actions.floating = true;
+    sway_launch.actions.sticky = true;
+    sway_launch.actions.fullscreen = true;
+    sway_launch.actions.focus = true;
+    sway_launch.actions.height = Some(Size::Pixels(300));
+    sway_launch.actions.width = Some(Size::Pixels(400));
+    sway_launch.actions.position = Some(Position::Center);
+    sway_launch.actions.mark = Some("pinned");
     let sway_commands = ["border none".to_string(), "opacity 0.9".to_string()];
-    sway_launch.sway_commands = &sway_commands;
-    sway_launch.scratchpad = true;
+    sway_launch.actions.sway_commands = &sway_commands;
+    sway_launch.actions.scratchpad = true;
 
     let actions = sway_launch.build_actions(42);
 
@@ -127,12 +112,12 @@ fn build_actions_moves_the_workspace_to_the_output_when_both_are_set() {
     // A container move to the output would land on whatever workspace that
     // output shows, undoing --workspace; moving the workspace keeps both.
     let mut sway_launch = minimal_sway_launch();
-    sway_launch.output = Some("HDMI-A-1");
+    sway_launch.actions.output = Some("HDMI-A-1");
     let alone = sway_launch.build_actions(42);
     assert_eq!(alone.len(), 1);
     assert_eq!(alone[0].kind, ActionKind::Output("HDMI-A-1"));
 
-    sway_launch.workspace = Some(WorkspaceTarget::Name("3"));
+    sway_launch.actions.workspace = Some(WorkspaceTarget::Name("3"));
     let both = sway_launch.build_actions(42);
     assert_eq!(both.len(), 2);
     assert_eq!(
@@ -156,11 +141,11 @@ fn build_actions_moves_the_workspace_to_the_output_when_both_are_set() {
 #[test]
 fn build_actions_gives_event_confirmed_actions_the_timeout_and_the_rest_the_wait_time() {
     let mut sway_launch = minimal_sway_launch();
-    sway_launch.floating = true;
-    sway_launch.mark = Some("pinned");
-    sway_launch.split = Some(Split::V);
-    sway_launch.height = Some(Size::Pixels(300));
-    sway_launch.new_column = true;
+    sway_launch.actions.floating = true;
+    sway_launch.actions.mark = Some("pinned");
+    sway_launch.actions.split = Some(Split::V);
+    sway_launch.actions.height = Some(Size::Pixels(300));
+    sway_launch.actions.new_column = true;
 
     let actions = sway_launch.build_actions(42);
 
@@ -194,9 +179,9 @@ fn execute_plan_judges_new_row_only_after_new_column_has_run() {
     // and every run in one log pins that each move is checked right before
     // it's sent, after everything ahead of it in the plan has run.
     let mut sway_launch = minimal_sway_launch();
-    sway_launch.new_column = true;
-    sway_launch.new_row = true;
-    sway_launch.floating = true;
+    sway_launch.actions.new_column = true;
+    sway_launch.actions.new_row = true;
+    sway_launch.actions.floating = true;
     let log = std::cell::RefCell::new(Vec::new());
 
     let records = sway_launch
@@ -250,9 +235,9 @@ fn execute_plan_judges_new_row_only_after_new_column_has_run() {
 #[test]
 fn execute_plan_maps_each_action_outcome_to_its_status() {
     let mut sway_launch = minimal_sway_launch();
-    sway_launch.floating = true;
-    sway_launch.focus = true;
-    sway_launch.height = Some(Size::Percent(50));
+    sway_launch.actions.floating = true;
+    sway_launch.actions.focus = true;
+    sway_launch.actions.height = Some(Size::Percent(50));
     let records = sway_launch
         .execute_plan(
             sway_launch.build_actions(42),
@@ -283,8 +268,8 @@ fn execute_plan_maps_each_action_outcome_to_its_status() {
 #[test]
 fn execute_plan_stops_at_a_failed_guard_check_without_sending_the_move() {
     let mut sway_launch = minimal_sway_launch();
-    sway_launch.new_column = true;
-    sway_launch.floating = true;
+    sway_launch.actions.new_column = true;
+    sway_launch.actions.floating = true;
     let error = sway_launch
         .execute_plan(
             sway_launch.build_actions(42),
@@ -298,8 +283,8 @@ fn execute_plan_stops_at_a_failed_guard_check_without_sending_the_move() {
 #[test]
 fn execute_plan_stops_at_the_first_failed_action() {
     let mut sway_launch = minimal_sway_launch();
-    sway_launch.workspace = Some(WorkspaceTarget::Name("2"));
-    sway_launch.floating = true;
+    sway_launch.actions.workspace = Some(WorkspaceTarget::Name("2"));
+    sway_launch.actions.floating = true;
     let ran = std::cell::RefCell::new(Vec::new());
     let error = sway_launch
         .execute_plan(
@@ -320,18 +305,18 @@ fn execute_plan_hands_consecutive_batching_actions_over_together() {
     // #32: everything between the moves and the scratchpad goes to Sway as
     // one command, so it reaches the runner as one group.
     let mut sway_launch = minimal_sway_launch();
-    sway_launch.new_column = true;
-    sway_launch.workspace = Some(WorkspaceTarget::Name("2"));
-    sway_launch.split = Some(Split::V);
-    sway_launch.floating = true;
-    sway_launch.sticky = true;
-    sway_launch.fullscreen = true;
-    sway_launch.focus = true;
-    sway_launch.height = Some(Size::Pixels(500));
-    sway_launch.width = Some(Size::Pixels(700));
-    sway_launch.position = Some(Position::Center);
-    sway_launch.mark = Some("m");
-    sway_launch.scratchpad = true;
+    sway_launch.actions.new_column = true;
+    sway_launch.actions.workspace = Some(WorkspaceTarget::Name("2"));
+    sway_launch.actions.split = Some(Split::V);
+    sway_launch.actions.floating = true;
+    sway_launch.actions.sticky = true;
+    sway_launch.actions.fullscreen = true;
+    sway_launch.actions.focus = true;
+    sway_launch.actions.height = Some(Size::Pixels(500));
+    sway_launch.actions.width = Some(Size::Pixels(700));
+    sway_launch.actions.position = Some(Position::Center);
+    sway_launch.actions.mark = Some("m");
+    sway_launch.actions.scratchpad = true;
     let groups = std::cell::RefCell::new(Vec::new());
 
     let records = sway_launch
@@ -374,8 +359,8 @@ fn execute_plan_hands_consecutive_batching_actions_over_together() {
 #[test]
 fn build_actions_for_preview_never_touches_ipc_even_with_new_column_set() {
     let mut sway_launch = minimal_sway_launch();
-    sway_launch.new_column = true;
-    sway_launch.floating = true;
+    sway_launch.actions.new_column = true;
+    sway_launch.actions.floating = true;
     // build_actions() is pure, so a preview lists the move even though a
     // real run might skip it.
     let actions = sway_launch.build_actions_for_preview();
@@ -385,8 +370,8 @@ fn build_actions_for_preview_never_touches_ipc_even_with_new_column_set() {
 #[test]
 fn build_actions_for_preview_verbs_are_container_id_free() {
     let mut sway_launch = minimal_sway_launch();
-    sway_launch.floating = true;
-    sway_launch.mark = Some("pinned");
+    sway_launch.actions.floating = true;
+    sway_launch.actions.mark = Some("pinned");
     let actions = sway_launch.build_actions_for_preview();
     let verbs: Vec<String> = actions.iter().map(|a| a.sway_command_verb()).collect();
     assert_eq!(verbs, vec!["floating enable", "mark \"pinned\""]);

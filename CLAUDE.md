@@ -112,7 +112,7 @@ instruction set: where it disagrees with this file or the code, it's stale. The 
   | `outcome.rs` | `RunOutcome`/`RunError`/`UnmatchedWindow`/`ActionRecord`/`ActionStatus`/`LaunchOwnership` |
   | `interrupt.rs` | SIGINT/SIGTERM/SIGHUP as a flag (`install()`, `check()`), and the interruptible `sleep()`/`recv()` every long wait uses |
   | `capture.rs` | `--capture` (#31): `capture()`, a workspace `Node` to the `--layout` file rebuilding it, pure |
-  | `launch.rs` | `SwayLaunch`, `BuildLocation`, `build_actions()`/`execute_plan()`/`run()`, `debug_events()` |
+  | `launch.rs` | `SwayLaunch`, `ActionRequest`, `BuildLocation`, `build_actions()`/`execute_plan()`/`run()`, `debug_events()` |
 
 **Layering rules:**
 
@@ -289,7 +289,9 @@ doesn't compile until both its confirmation path and its state/poll arms are dec
 
 ### Orchestration
 
-`build_actions()` plans actions in a fixed order without touching IPC (pinned by
+`build_actions()` plans actions from the `SwayLaunch`'s `ActionRequest` (every action flag plus
+`settle`, in a struct of its own so a launch can drop them all with its `Default`, #180) in a
+fixed order without touching IPC (pinned by
 `build_actions_includes_every_flag_in_the_documented_fixed_order`): `NewColumn` → `NewRow` →
 `Workspace` → `Output` (or `WorkspaceToOutput`, see `output_action()`) → `Split` → `Floating` →
 `Sticky` → `Fullscreen` → `Focus` → `Height` → `Width` → `Position` → `Mark` → each
@@ -405,7 +407,8 @@ reliably. A new entry in
   OR-ed with the flag into `run_steps()`'s `concurrent` argument; a template file can't set it, since
   it names no applications), splits `run_steps()` in two: `stage_launches()` switches to a per-process staging workspace (`Staging`, in
   `launch.rs`) and runs every `command` step's launch at once on a thread each, actions stripped by
-  `launch_only()`; `reject_shared_windows()` fails a later step whose window an earlier one already
+  `launch_only()` (its `ActionRequest` replaced by the default, pinned by
+  `launch_only_keeps_the_launch_and_drops_every_action`); `reject_shared_windows()` fails a later step whose window an earlier one already
   has. Then each step runs in order as before, a staged one through `arrange_staged()`: the window
   is moved to the build workspace and focused (where a new window would open; every template's
   shape matches, `every_shipped_template_builds_the_same_shape_with_concurrent`), then the step

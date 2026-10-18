@@ -1,8 +1,8 @@
 //! Turning one invocation into an ordered plan, and running it.
 //!
 //! `SwayLaunch` is a whole invocation: what to target (launch it, or retarget
-//! an existing window), which actions were asked for, and the settings they
-//! share. `build_actions()` turns that into a fixed-order plan without running
+//! an existing window), which actions were asked for (its `ActionRequest`),
+//! and the settings they share. `build_actions()` turns that into a fixed-order plan without running
 //! any of it — which is what makes `--dry-run` possible and the ordering
 //! unit-testable — and `run()` executes the plan, folding each action's
 //! outcome into the `RunOutcome` `main.rs` reports.
@@ -50,32 +50,15 @@ pub(super) const DEBUG_EVENT_SUBSCRIPTIONS: [EventType; 10] = [
 pub struct SwayLaunch<'a> {
     pub target: Target<'a>,
 
-    pub split: Option<Split>,
-    pub floating: bool,
-    pub sticky: bool,
-    pub fullscreen: bool,
-    pub focus: bool,
-    pub mark: Option<&'a str>,
-    pub new_column: bool,
-    pub new_row: bool,
-    pub workspace: Option<WorkspaceTarget<'a>>,
-    pub output: Option<&'a str>,
-    pub height: Option<Size>,
-    pub width: Option<Size>,
-    pub position: Option<Position>,
-    pub scratchpad: bool,
-    /// `--sway-command` (#90), each already checked by
-    /// `validate_sway_command()`.
-    pub sway_commands: &'a [String],
+    /// What to do to the window once it is resolved. Its own struct so a
+    /// launch can drop every action at once (its `Default`), as
+    /// `--concurrent`'s staging does, with no list of fields to keep in step
+    /// with the actions (#180).
+    pub actions: ActionRequest<'a>,
 
     pub verbose: bool,
     pub timeout: time::Duration,
     pub wait_time: time::Duration,
-    /// `--settle` (#17): how long to keep holding the confirmed pixel
-    /// height/width and position against the client, if at all. See
-    /// `run_batch()`.
-    pub settle: Option<time::Duration>,
-
     /// Fail a launch if focus left the workspace it started on before its
     /// window appeared — `--layout`/`--template` set this, since their shapes
     /// are built where focus is, and every step launched after such a switch
@@ -104,6 +87,34 @@ pub struct SwayLaunch<'a> {
     /// for a later step (#190), which a sequential run wouldn't have opened
     /// yet.
     pub excluded_containers: Vec<i64>,
+}
+
+/// Every action flag of one invocation, plus `--settle`, which only changes
+/// how they are applied: what `build_actions()` plans from. The default asks
+/// for nothing.
+#[derive(Clone, Debug, Default)]
+pub struct ActionRequest<'a> {
+    pub split: Option<Split>,
+    pub floating: bool,
+    pub sticky: bool,
+    pub fullscreen: bool,
+    pub focus: bool,
+    pub mark: Option<&'a str>,
+    pub new_column: bool,
+    pub new_row: bool,
+    pub workspace: Option<WorkspaceTarget<'a>>,
+    pub output: Option<&'a str>,
+    pub height: Option<Size>,
+    pub width: Option<Size>,
+    pub position: Option<Position>,
+    pub scratchpad: bool,
+    /// `--sway-command` (#90), each already checked by
+    /// `validate_sway_command()`.
+    pub sway_commands: &'a [String],
+    /// `--settle` (#17): how long to keep holding the confirmed pixel
+    /// height/width and position against the client, if at all. See
+    /// `run_batch()`.
+    pub settle: Option<time::Duration>,
 }
 
 /// Where a `--layout`/`--template` run builds: a workspace and/or output
@@ -347,8 +358,8 @@ impl<'a> SwayLaunch<'a> {
     /// workspace. With `--workspace` too, that would undo the workspace move,
     /// so the workspace itself is moved to the output instead.
     fn output_action(&self) -> Option<ActionKind<'a>> {
-        let output = self.output?;
-        Some(match self.workspace {
+        let output = self.actions.output?;
+        Some(match self.actions.workspace {
             Some(workspace) => ActionKind::WorkspaceToOutput { workspace, output },
             None => ActionKind::Output(output),
         })
@@ -366,22 +377,23 @@ impl<'a> SwayLaunch<'a> {
     /// is sent. Deciding it while planning meant judging `--new-row` against
     /// a tree its own `--new-column` was about to change.
     fn build_actions(&self, container_id: i64) -> Vec<SwayAction<'a>> {
+        let actions = &self.actions;
         let requested = [
-            self.new_column.then_some(ActionKind::NewColumn),
-            self.new_row.then_some(ActionKind::NewRow),
-            self.workspace.map(ActionKind::Workspace),
+            actions.new_column.then_some(ActionKind::NewColumn),
+            actions.new_row.then_some(ActionKind::NewRow),
+            actions.workspace.map(ActionKind::Workspace),
             self.output_action(),
-            self.split.map(ActionKind::Split),
-            self.floating.then_some(ActionKind::Floating),
-            self.sticky.then_some(ActionKind::Sticky),
-            self.fullscreen.then_some(ActionKind::Fullscreen),
-            self.focus.then_some(ActionKind::Focus),
-            self.height.map(ActionKind::Height),
-            self.width.map(ActionKind::Width),
-            self.position.map(ActionKind::Position),
-            self.mark.map(ActionKind::Mark),
+            actions.split.map(ActionKind::Split),
+            actions.floating.then_some(ActionKind::Floating),
+            actions.sticky.then_some(ActionKind::Sticky),
+            actions.fullscreen.then_some(ActionKind::Fullscreen),
+            actions.focus.then_some(ActionKind::Focus),
+            actions.height.map(ActionKind::Height),
+            actions.width.map(ActionKind::Width),
+            actions.position.map(ActionKind::Position),
+            actions.mark.map(ActionKind::Mark),
         ];
-        let sway_commands = self
+        let sway_commands = actions
             .sway_commands
             .iter()
             .map(|command| ActionKind::SwayCommand(command));
@@ -389,7 +401,7 @@ impl<'a> SwayLaunch<'a> {
             .into_iter()
             .flatten()
             .chain(sway_commands)
-            .chain(self.scratchpad.then_some(ActionKind::Scratchpad))
+            .chain(actions.scratchpad.then_some(ActionKind::Scratchpad))
             .map(|kind| {
                 SwayAction::new(
                     container_id,
@@ -527,8 +539,10 @@ impl<'a> SwayLaunch<'a> {
         let warnings = if self.warn_on_misplaced_launch {
             launch_placement_problems_now(
                 container_id,
-                self.workspace.is_some() || self.output.is_some() || self.scratchpad,
-                self.floating || self.scratchpad,
+                self.actions.workspace.is_some()
+                    || self.actions.output.is_some()
+                    || self.actions.scratchpad,
+                self.actions.floating || self.actions.scratchpad,
             )
             .map_err(|error| resolved(error.into()))?
         } else {
@@ -547,7 +561,7 @@ impl<'a> SwayLaunch<'a> {
             .execute_plan(
                 plan,
                 |direction| current_move_skip_reason(container_id, direction),
-                |group| run_batch(group, self.settle),
+                |group| run_batch(group, self.actions.settle),
             )
             .map_err(resolved)?;
 
