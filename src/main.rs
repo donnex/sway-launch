@@ -2176,13 +2176,6 @@ fn run_steps(
     process::exit(if timed_out_steps.is_empty() { 0 } else { 1 });
 }
 
-/// The warning a `--layout`/`--template` run gives when the workspace it's
-/// about to build on already holds tiled windows: its shapes assume an
-/// empty workspace, so they come out distorted around what's there (the
-/// terminal the command was typed into, typically). Printed to stderr and
-/// returned for `--json`'s `"warnings"`. A failure to read the tree only
-/// skips the warning: the run itself will report a compositor that isn't
-/// answering.
 /// The layout half of a run lock's identity: the file by its canonical path,
 /// so `./x.toml` and its absolute path agree, or the built-in template's
 /// name. Everything piped in on stdin is called `-`, so a layout read from
@@ -2295,6 +2288,13 @@ fn run_lock_held_message(workspace: &str) -> String {
     )
 }
 
+/// The warning a `--layout`/`--template` run gives when the workspace it's
+/// about to build on already holds tiled windows: its shapes assume an
+/// empty workspace, so they come out distorted around what's there (the
+/// terminal the command was typed into, typically). Printed to stderr and
+/// returned for `--json`'s `"warnings"`. A failure to read the tree only
+/// skips the warning: the run itself will report a compositor that isn't
+/// answering.
 fn occupied_workspace_warning(args: &Args) -> Vec<String> {
     let Ok(Some((workspace, tiled_windows))) = sway_launch::focused_workspace_occupancy() else {
         return Vec::new();
@@ -2826,7 +2826,7 @@ const ROLLBACK_CLOSE_POLL_INTERVAL: time::Duration = time::Duration::from_millis
 ///
 /// What remains is not an identity question but a judgement one: the user may
 /// have started *using* that window since it launched, and rollback closes it
-/// anyway. That is deliberate and documented in README's "Layout files"
+/// anyway. That is deliberate and documented in README's "Running layouts"
 /// section — the feature undoes launches, and there is no way to ask a window
 /// whether it has become important to someone. It is opt-in for that reason.
 ///
@@ -3799,6 +3799,168 @@ mod tests {
         assert!(
             missing.is_empty(),
             "CLAUDE.md names functions that don't exist in src/, tests/ or scripts/: {missing:?}"
+        );
+    }
+
+    /// Each run of consecutive `//`, `///` or `//!` lines in `source`, joined
+    /// into one string with the markers stripped, so a code span or a quoted
+    /// section name wrapped onto the next line reads as one.
+    fn comment_blocks(source: &str) -> Vec<String> {
+        let mut blocks = Vec::new();
+        let mut current: Vec<&str> = Vec::new();
+        for line in source.lines() {
+            match line.trim_start().strip_prefix("//") {
+                Some(comment) => current.push(comment.trim_start_matches(['/', '!']).trim_start()),
+                None if !current.is_empty() => {
+                    blocks.push(current.join(" "));
+                    current.clear();
+                }
+                None => {}
+            }
+        }
+        if !current.is_empty() {
+            blocks.push(current.join(" "));
+        }
+        blocks
+    }
+
+    /// Every `.rs` file under `src/` and `tests/`, as (path, contents).
+    fn rust_sources() -> Vec<(String, String)> {
+        fn walk(directory: &std::path::Path, files: &mut Vec<(String, String)>) {
+            for entry in std::fs::read_dir(directory).expect("source directory should be readable")
+            {
+                let path = entry.expect("directory entry should be readable").path();
+                if path.is_dir() {
+                    walk(&path, files);
+                } else if path.extension().is_some_and(|extension| extension == "rs") {
+                    let contents =
+                        std::fs::read_to_string(&path).expect("source file should be readable");
+                    let relative = path
+                        .strip_prefix(env!("CARGO_MANIFEST_DIR"))
+                        .unwrap_or(&path);
+                    files.push((relative.display().to_string(), contents));
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files = Vec::new();
+        for directory in ["src", "tests"] {
+            walk(&root.join(directory), &mut files);
+        }
+        files
+    }
+
+    /// The CLAUDE.md sections a comment names: a quoted heading straight
+    /// after "CLAUDE.md's", or a one-word one followed by "section".
+    fn claude_md_section_references(comment: &str) -> Vec<String> {
+        let mut references = Vec::new();
+        for (index, _) in comment.match_indices("CLAUDE.md's ") {
+            let rest = &comment[index + "CLAUDE.md's ".len()..];
+            if let Some(quoted) = rest.strip_prefix('"') {
+                if let Some(end) = quoted.find('"') {
+                    references.push(quoted[..end].to_string());
+                }
+            } else if let Some((word, after)) = rest.split_once(' ') {
+                if after.starts_with("section") {
+                    references.push(word.to_string());
+                }
+            }
+        }
+        references
+    }
+
+    #[test]
+    fn source_comments_name_only_claude_md_sections_that_exist() {
+        // A comment sending the reader to a CLAUDE.md section that was
+        // renamed or moved to docs/design-notes.md points nowhere (#131).
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let claude_md =
+            std::fs::read_to_string(root.join("CLAUDE.md")).expect("CLAUDE.md should be readable");
+        let headings: Vec<&str> = claude_md
+            .lines()
+            .filter_map(|line| line.strip_prefix('#'))
+            .map(|heading| heading.trim_start_matches('#').trim())
+            .collect();
+        let mut dangling = Vec::new();
+        for (path, contents) in rust_sources() {
+            for block in comment_blocks(&contents) {
+                for section in claude_md_section_references(&block) {
+                    if !headings.contains(&section.as_str()) {
+                        dangling.push(format!("{path}: {section:?}"));
+                    }
+                }
+            }
+        }
+        assert!(
+            dangling.is_empty(),
+            "comments name CLAUDE.md sections that don't exist: {dangling:?}"
+        );
+    }
+
+    #[test]
+    fn claude_md_section_references_reads_quoted_and_one_word_sections() {
+        let comment = "see CLAUDE.md's \"Core model\" section and CLAUDE.md's Tests section, \
+                       not CLAUDE.md's coverage note";
+        assert_eq!(
+            claude_md_section_references(comment),
+            ["Core model", "Tests"]
+        );
+    }
+
+    #[test]
+    fn source_comments_name_only_functions_that_exist() {
+        // The same check as claude_md_names_only_functions_that_exist, over
+        // the comments in src/ and tests/: a doc comment pointing at a renamed
+        // function sends the reader nowhere (#131).
+        // Names from outside this repository (std, swayipc, Sway's and libc's
+        // C source) and the illustrations in this file's own test comments.
+        const EXTERNAL: &[&str] = &[
+            "argsep",
+            "atoi",
+            "bind",
+            "cmd_move_in_direction",
+            "command",
+            "container_move_in_direction",
+            "create",
+            "create_dir_all",
+            "foo",
+            "get_file",
+            "get_outputs",
+            "get_tree",
+            "now",
+            "recv_timeout",
+            "render",
+            "render_help",
+            "subscribe",
+            "success",
+            "try_clone",
+            "unwrap_or_default",
+        ];
+        let sources = rust_sources();
+        let mut missing = Vec::new();
+        for (path, contents) in &sources {
+            for block in comment_blocks(contents) {
+                for name in function_names_in_code_spans(&block) {
+                    if EXTERNAL.contains(&name.as_str()) {
+                        continue;
+                    }
+                    let definitions = [format!("fn {name}("), format!("fn {name}<")];
+                    let defined = sources.iter().any(|(_, contents)| {
+                        definitions
+                            .iter()
+                            .any(|definition| contents.contains(definition.as_str()))
+                    });
+                    if !defined {
+                        missing.push(format!("{path}: {name}"));
+                    }
+                }
+            }
+        }
+        missing.sort();
+        missing.dedup();
+        assert!(
+            missing.is_empty(),
+            "comments name functions that don't exist in src/ or tests/: {missing:?}"
         );
     }
 

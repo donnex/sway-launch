@@ -391,9 +391,8 @@ impl SwayAction<'_> {
     }
 
     /// Whether the tree currently shows this action's command as having
-    /// taken effect (see each variant's notes under CLAUDE.md's "Core model"
-    /// section). Only
-    /// meaningful for variants `polls()` returns `true` for; every other
+    /// taken effect (see the "Polled" bullet under CLAUDE.md's "Actions and
+    /// how each is confirmed"). Only meaningful for variants `polls()` returns `true` for; every other
     /// variant answers `false` unconditionally.
     ///
     /// Reads through the caller's `connection` rather than opening its own:

@@ -343,17 +343,6 @@ impl<'a> SwayLaunch<'a> {
         }
     }
 
-    /// Builds the sequence of `SwayAction`s `run()` would apply against
-    /// `container_id`, in the same fixed order `run()` always used, without
-    /// running any of them — the "plan" half of the plan-then-execute split
-    /// `run()` itself is the "execute" half of. Exists as its own method
-    /// (rather than inlined into `run()`) so `--dry-run` can print the plan
-    /// instead of running it.
-    ///
-    /// Pure: the multi-output/floating guard for `NewColumn`/`NewRow` is not
-    /// consulted here but by `execute_plan()`, immediately before each move
-    /// is sent. Deciding it while planning meant judging `--new-row` against
-    /// a tree its own `--new-column` was about to change.
     /// `--output` alone moves the container to the output's visible
     /// workspace. With `--workspace` too, that would undo the workspace move,
     /// so the workspace itself is moved to the output instead.
@@ -365,6 +354,17 @@ impl<'a> SwayLaunch<'a> {
         })
     }
 
+    /// Builds the sequence of `SwayAction`s `run()` would apply against
+    /// `container_id`, in the same fixed order `run()` always used, without
+    /// running any of them — the "plan" half of the plan-then-execute split
+    /// `run()` itself is the "execute" half of. Exists as its own method
+    /// (rather than inlined into `run()`) so `--dry-run` can print the plan
+    /// instead of running it.
+    ///
+    /// Pure: the multi-output/floating guard for `NewColumn`/`NewRow` is not
+    /// consulted here but by `execute_plan()`, immediately before each move
+    /// is sent. Deciding it while planning meant judging `--new-row` against
+    /// a tree its own `--new-column` was about to change.
     fn build_actions(&self, container_id: i64) -> Vec<SwayAction<'a>> {
         let requested = [
             self.new_column.then_some(ActionKind::NewColumn),

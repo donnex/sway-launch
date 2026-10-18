@@ -685,8 +685,9 @@ pub(super) fn find_node(tree: &Node, container_id: i64) -> Option<&Node> {
 /// while before being floated and resized comes out `2 *
 /// current_border_width` short on `rect.width` alone (see
 /// `retarget_by_id_layout_floats_the_first_step_by_name` in
-/// `tests/live_sway.rs`, and the `Height`/`Width` notes under CLAUDE.md's
-/// "Core model" section) — border accounting
+/// `tests/live_sway.rs`, and the `Height`/`Width` notes in
+/// `docs/design-notes.md`'s "Core model" section, kept as history) — border
+/// accounting
 /// this project hasn't found a single deterministic rule for, so both
 /// candidates are accepted rather than picking one and risking a resize
 /// that's actually done never being recognized as such.

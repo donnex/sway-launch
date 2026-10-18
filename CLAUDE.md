@@ -74,7 +74,8 @@ See the CI section below for how GitHub Actions runs these same checks.
 This section is the map and the rules. The reasoning behind a rule lives in the doc comment of the
 function it names; read that before changing the rule. The design history (measurements,
 alternatives tried, review outcomes) is in `docs/design-notes.md`, which is a snapshot and not an
-instruction set: where it disagrees with this file or the code, it's stale.
+instruction set: where it disagrees with this file or the code, it's stale. The same goes for
+`docs/plan-poll-based-wait-time-actions.md`, the plan the polled actions were built from.
 
 ### Crate map
 
@@ -436,7 +437,10 @@ follow-up:
 - **`CHANGELOG.md`**: see "Changelog" below.
 - **This file**: a function named here in backticks with `()` must exist in `src/`, `tests/` or
   `scripts/` (`claude_md_names_only_functions_that_exist`). Rename or remove one, and this file
-  changes in the same commit.
+  changes in the same commit. The same goes the other way: a comment in `src/` or `tests/`
+  naming a function, or a CLAUDE.md section by its heading, must name one that exists
+  (`source_comments_name_only_functions_that_exist`,
+  `source_comments_name_only_claude_md_sections_that_exist`).
 
 ### Tests
 

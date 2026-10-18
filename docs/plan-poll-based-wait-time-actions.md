@@ -6,8 +6,9 @@ instead of always blind-sleeping `2 * --wait-time`. `Sticky` was added as a seve
 the same mechanism.
 
 **This is a historical record, not a reference.** It records why the poll matchers look the way they
-do, and the code no longer points here for how they work: CLAUDE.md's "Core model" section and the
-code's own doc comments are the maintained description. Known places where the body below no longer
+do, and the code no longer points here for how they work: CLAUDE.md's "Actions and how each is
+confirmed" section and the code's own doc comments are the maintained description. CLAUDE.md's
+"Core model" section, which this document cites below, has since moved to `docs/design-notes.md`. Known places where the body below no longer
 matches the code, beyond the file paths and connection handling covered next: `Size::Percent` now
 makes `polls()` return plain `false` rather than an `Option`; the per-function coverage exemption
 list it mentions was replaced by a per-module rule; and `position_matches()` also falls back to
@@ -24,8 +25,8 @@ reasoning is unchanged.
 this variant poll at all" decision, `poll_matches()` for the tree read — and now takes a
 `&mut Connection` from its caller instead of opening one per iteration. `expected_position()`
 likewise takes the resolved output `Rect` rather than looking it up. The per-action matching logic
-described below is unchanged; only where the connection comes from is. See CLAUDE.md's "Core
-model" section for the current shape. See "Per-action matching
+described below is unchanged; only where the connection comes from is. See CLAUDE.md's "Actions and
+how each is confirmed" section for the current shape. See "Per-action matching
 logic" below for what each variant actually checks, and "Corrections found during implementation"
 for two assumptions this doc originally got wrong that live-Sway testing caught before they
 shipped. `WAIT_TIME_POLL_GRACE`/`WAIT_TIME_POLL_INTERVAL` were hardcoded (200ms/10ms) per the

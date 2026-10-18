@@ -2707,7 +2707,7 @@ fn new_column_does_not_relocate_a_nested_window_to_a_different_output() {
     let (second_id, _second_guard) =
         launch_foot(&["--workspace", "live-sway-test-new-column-nested"]);
     // Splitting a window that already has a sibling wraps it in a new,
-    // nested split container one level up (see CLAUDE.md's Split notes) --
+    // nested split container one level up (see parent_node_layout()'s doc) --
     // splith here matches the workspace's own layout, nesting second_id in
     // the axis-matched worst case rather than the safer mismatched one.
     connection
@@ -4770,7 +4770,8 @@ fn new_column_does_not_credit_a_geometry_change_that_arrives_after_its_poll_wind
     // right, so this must keep holding if one is ever added here), and the
     // competing change must actually move the window. A solo window on a splitv workspace does it:
     // "move right" there restructures in place without changing the rect
-    // (CLAUDE.md's Orchestration section documents this case), and the
+    // (Sway re-orients the workspace; see is_at_the_trailing_workspace_edge()'s
+    // doc), and the
     // workspace's axis doesn't match the move, so is_at_the_trailing_workspace
     // _edge() returns false and the action runs.
     //
@@ -7944,8 +7945,8 @@ fn debug_events_prints_a_real_output_event() {
     // Output events were once missing from --debug-events' subscription list,
     // so it printed nothing at all while outputs were added, removed or
     // reconfigured. Rescaling the original output is the cheapest way to make
-    // Sway send one: it needs no create_output (see the budget note under
-    // CLAUDE.md's "Orchestration" section).
+    // Sway send one: it needs no create_output, so no CreatedOutput to set
+    // up and tear down.
     fresh_workspace();
     let mut connection = connect();
     let output = original_output().to_string();

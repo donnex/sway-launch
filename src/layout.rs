@@ -165,10 +165,6 @@ impl LayoutStep {
         if let Some(target_id) = self.target_id.as_deref() {
             sway_launch::require_non_blank("target_id", target_id)?;
         }
-        // A relative move only ever acts on the workspace the window opened
-        // on; the workspace move after it then drops the window into the
-        // target as an ordinary new sibling, so the new row/column never
-        // takes effect there.
         if self.workspace.is_some() && self.workspace_number.is_some() {
             return Err(
                 "workspace and workspace_number can't both be set — pick the workspace by name \
@@ -176,6 +172,10 @@ impl LayoutStep {
                     .to_string(),
             );
         }
+        // A relative move only ever acts on the workspace the window opened
+        // on; the workspace move after it then drops the window into the
+        // target as an ordinary new sibling, so the new row/column never
+        // takes effect there.
         if (self.workspace.is_some() || self.workspace_number.is_some())
             && (self.new_column || self.new_row)
         {

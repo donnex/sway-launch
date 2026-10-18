@@ -518,7 +518,7 @@ pub fn escape_control_characters(text: &str, keep_newlines: bool) -> String {
 /// CLI command, and a layout step's (or a resolved template binding's)
 /// `command` field.
 ///
-/// The command is sent raw, not quoted (see `exec_sway_command()` for why),
+/// The command is sent raw, not quoted (see `ExecAction::sway_command()` for why),
 /// so it goes through Sway's own command parser before the shell ever sees
 /// it, and that parser treats a few characters as command separators:
 ///

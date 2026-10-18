@@ -22,6 +22,12 @@ use super::tree::{
 use super::values::{Position, TitlePattern};
 use swayipc::{Connection, Node, NodeLayout};
 
+/// The whole tree, on a connection of its own, with a failure already
+/// worded by `ipc_error()`.
+fn fetch_tree() -> Result<Node, String> {
+    new_connection()?.get_tree().map_err(ipc_error)
+}
+
 /// Finds exactly one already-open window `criteria` accepts via
 /// `get_tree()`, for `Target::Existing`.
 /// Errors — rather than silently picking one — if zero or more than one
@@ -32,10 +38,7 @@ pub(super) fn find_existing_container_id(
     criteria: WindowCriteria,
     excluded: &[i64],
 ) -> Result<i64, String> {
-    let tree = match new_connection()?.get_tree() {
-        Ok(tree) => tree,
-        Err(error) => return Err(ipc_error(error)),
-    };
+    let tree = fetch_tree()?;
 
     resolve_matches(
         existing_candidates(&tree, criteria, excluded),
@@ -46,17 +49,14 @@ pub(super) fn find_existing_container_id(
 /// Every open window `criteria` accepts, for `--list-windows` (see
 /// `window_listing()`).
 pub fn list_windows(criteria: WindowCriteria) -> Result<Vec<ListedWindow>, String> {
-    let tree = match new_connection()?.get_tree() {
-        Ok(tree) => tree,
-        Err(error) => return Err(ipc_error(error)),
-    };
+    let tree = fetch_tree()?;
     Ok(window_listing(&tree, criteria))
 }
 
 /// `--capture` (#31): the `--layout` file rebuilding the workspace named
 /// `name`, or the focused one.
 pub fn capture_workspace(name: Option<&str>) -> Result<String, String> {
-    let tree = new_connection()?.get_tree().map_err(ipc_error)?;
+    let tree = fetch_tree()?;
     let workspace = match name {
         Some(name) => workspace_named(&tree, name)
             .ok_or_else(|| format!("no workspace is named {:?}", name))?,
@@ -90,10 +90,7 @@ pub(super) fn awaited_existing_container_id(
 /// fail with a confusing timeout instead of surfacing the actual problem
 /// immediately.
 pub(super) fn container_state(container_id: i64) -> Result<Option<ContainerState>, String> {
-    let tree = match new_connection()?.get_tree() {
-        Ok(tree) => tree,
-        Err(error) => return Err(ipc_error(error)),
-    };
+    let tree = fetch_tree()?;
 
     Ok(ContainerState::from_tree(&tree, container_id))
 }
@@ -106,8 +103,9 @@ pub(super) fn container_state(container_id: i64) -> Result<Option<ContainerState
 ///
 /// The tree half replays Sway's own `move right`/`move down` rather than
 /// approximating it with a shape rule — see `move_skip_reason()` and
-/// `is_at_the_trailing_workspace_edge()`, and CLAUDE.md's Orchestration
-/// section for the shape rules that preceded it and the cases each missed.
+/// `is_at_the_trailing_workspace_edge()`, and `docs/design-notes.md`'s
+/// "Orchestration" section (history) for the shape rules that preceded it
+/// and the cases each missed.
 ///
 /// A failed `get_outputs()`/`get_tree()` propagates as an error rather than
 /// being treated as "safe to proceed": the caller is about to run a command
@@ -120,14 +118,8 @@ pub(super) fn current_move_skip_reason(
     // One connection for both reads: they answer halves of a single question.
     let mut connection = new_connection()?;
 
-    let outputs = match connection.get_outputs() {
-        Ok(outputs) => outputs,
-        Err(error) => return Err(ipc_error(error)),
-    };
-    let tree = match connection.get_tree() {
-        Ok(tree) => tree,
-        Err(error) => return Err(ipc_error(error)),
-    };
+    let outputs = connection.get_outputs().map_err(ipc_error)?;
+    let tree = connection.get_tree().map_err(ipc_error)?;
 
     Ok(move_skip_reason(
         &tree,
@@ -152,20 +144,14 @@ pub(super) fn ensure_container_exists(container_id: i64) -> Result<(), String> {
 /// Fails unless `container_id` names a window or split container, for a
 /// `Target::ConId` run with actions to apply (see `con_id_target_problem()`).
 pub(super) fn ensure_con_id_target(container_id: i64) -> Result<(), String> {
-    let tree = match new_connection()?.get_tree() {
-        Ok(tree) => tree,
-        Err(error) => return Err(ipc_error(error)),
-    };
+    let tree = fetch_tree()?;
     con_id_target_problem(&tree, container_id).map_or(Ok(()), Err)
 }
 
 /// `ensure_container_exists()`, handing back the container's node for a
 /// caller that needs to know what kind of container it is.
 pub(super) fn existing_container(container_id: i64) -> Result<Node, String> {
-    let tree = match new_connection()?.get_tree() {
-        Ok(tree) => tree,
-        Err(error) => return Err(ipc_error(error)),
-    };
+    let tree = fetch_tree()?;
     find_node(&tree, container_id).cloned().ok_or_else(|| {
         format!(
             "container id {} no longer exists — window may have closed",
@@ -180,10 +166,7 @@ pub(super) fn existing_container(container_id: i64) -> Result<Node, String> {
 /// `kill` asks the client to close and replies before it has, and a client
 /// is free to keep its window open (an unsaved-changes prompt, say).
 pub fn containers_still_present(container_ids: &[i64]) -> Result<Vec<i64>, String> {
-    let tree = match new_connection()?.get_tree() {
-        Ok(tree) => tree,
-        Err(error) => return Err(ipc_error(error)),
-    };
+    let tree = fetch_tree()?;
     Ok(present_ids(&tree, container_ids))
 }
 
@@ -227,10 +210,7 @@ pub(super) fn recheck_launched_windows_now(
 /// `find_workspace()` over a fresh tree: the workspace `lookup` names, by id
 /// and current name, or `None` when there is none.
 pub(super) fn workspace_now(lookup: WorkspaceLookup) -> Result<Option<WorkspaceIdentity>, String> {
-    let tree = match new_connection()?.get_tree() {
-        Ok(tree) => tree,
-        Err(error) => return Err(ipc_error(error)),
-    };
+    let tree = fetch_tree()?;
     Ok(find_workspace(&tree, lookup))
 }
 
@@ -241,10 +221,7 @@ pub(super) fn launch_placement_problems_now(
     moves_itself: bool,
     floats_itself: bool,
 ) -> Result<Vec<String>, String> {
-    let tree = match new_connection()?.get_tree() {
-        Ok(tree) => tree,
-        Err(error) => return Err(ipc_error(error)),
-    };
+    let tree = fetch_tree()?;
     Ok(launch_placement_problems(
         &tree,
         container_id,
@@ -256,10 +233,7 @@ pub(super) fn launch_placement_problems_now(
 /// `unnamed_build_workspace()` over a fresh tree: the name of the workspace
 /// a run with no `--on-workspace` builds on, for its run lock (#129).
 pub fn unnamed_build_workspace_name(output: Option<&str>) -> Result<Option<String>, String> {
-    let tree = match new_connection()?.get_tree() {
-        Ok(tree) => tree,
-        Err(error) => return Err(ipc_error(error)),
-    };
+    let tree = fetch_tree()?;
     Ok(unnamed_build_workspace(&tree, output).and_then(|workspace| workspace.name.clone()))
 }
 
@@ -267,10 +241,7 @@ pub fn unnamed_build_workspace_name(output: Option<&str>) -> Result<Option<Strin
 /// for `--layout`/`--template`'s warning that a run is building around
 /// existing windows.
 pub fn focused_workspace_occupancy() -> Result<Option<(String, usize)>, String> {
-    let tree = match new_connection()?.get_tree() {
-        Ok(tree) => tree,
-        Err(error) => return Err(ipc_error(error)),
-    };
+    let tree = fetch_tree()?;
     Ok(focused_workspace(&tree).and_then(|workspace| {
         workspace
             .name
@@ -279,6 +250,8 @@ pub fn focused_workspace_occupancy() -> Result<Option<(String, usize)>, String> 
     }))
 }
 
+/// `ContainerState::from_tree()` on the caller's `connection`, or `None` if
+/// the tree can't be read or `container_id` isn't in it.
 pub(super) fn container_state_on(
     connection: &mut Connection,
     container_id: i64,
