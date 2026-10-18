@@ -4771,9 +4771,8 @@ fn new_column_does_not_credit_a_geometry_change_that_arrives_after_its_poll_wind
     // competing change must actually move the window. A solo window on a splitv workspace does it:
     // "move right" there restructures in place without changing the rect
     // (Sway re-orients the workspace; see is_at_the_trailing_workspace_edge()'s
-    // doc), and the
-    // workspace's axis doesn't match the move, so is_at_the_trailing_workspace
-    // _edge() returns false and the action runs.
+    // doc), and the workspace's axis doesn't match the move, so
+    // is_at_the_trailing_workspace_edge() returns false and the action runs.
     //
     // run_batch() sleeps --wait-time (2000ms) before sending the command,
     // so the poll window runs from ~2000ms to ~2025ms after spawn. The
@@ -5001,7 +5000,7 @@ fn wait_time_action_errors_clearly_when_its_container_already_closed() {
     // resolving it and this one running. run_batch()'s existence
     // check is what's under test here — still required on 1.9, though
     // confirmed live to be redundant on Sway 1.11, which already errors
-    // clearly ("No matching node.") on its own; see container_exists()'s doc
+    // clearly ("No matching node.") on its own; see ensure_container_exists()'s doc
     // comment for that version split.
     let mut connection = connect();
     let (container_id, guard) = launch_foot(&[]);
@@ -5014,7 +5013,7 @@ fn wait_time_action_errors_clearly_when_its_container_already_closed() {
     std::mem::forget(guard); // already closed — nothing left for KillOnDrop to clean up
                              // Deterministic rather than incidental: this test only ever passed
                              // because run_batch() sleeps --wait-time *before* its own
-                             // container_exists() check, which happened to give Sway long enough to
+                             // ensure_container_exists() check, which happened to give Sway long enough to
                              // process the kill. Waiting explicitly removes that dependency.
     wait_for_container_gone(&mut connection, container_id);
 
@@ -5039,7 +5038,7 @@ fn wait_time_action_does_not_sleep_out_the_wait_before_noticing_its_container_is
     fresh_workspace();
     // run_batch() sleeps --wait-time before sending its command, to let
     // other IPC clients finish theirs. That sleep used to come before the
-    // container_exists() check, so an action whose target had already closed
+    // ensure_container_exists() check, so an action whose target had already closed
     // waited out the entire wait before reporting a foregone answer -- with a
     // large --wait-time (the caller's own knob, deliberately unbounded) that
     // reads as a hang. The check now runs before the sleep too; the one after

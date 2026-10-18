@@ -569,16 +569,24 @@ fn function_names_in_code_spans(markdown: &str) -> Vec<String> {
         })
         .collect::<Vec<_>>()
         .join("\n");
+    prose
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .flat_map(called_function_names)
+        .collect()
+}
+
+/// Every `name()` in `text`, code span or not, by its last path segment.
+fn called_function_names(text: &str) -> Vec<String> {
     let mut names = Vec::new();
-    for span in prose.split('`').skip(1).step_by(2) {
-        for (index, _) in span.match_indices("()") {
-            let before = &span[..index];
-            let start = before
-                .rfind(|character: char| !(character.is_alphanumeric() || character == '_'))
-                .map_or(0, |position| position + 1);
-            if start < index {
-                names.push(span[start..index].to_string());
-            }
+    for (index, _) in text.match_indices("()") {
+        let before = &text[..index];
+        let start = before
+            .rfind(|character: char| !(character.is_alphanumeric() || character == '_'))
+            .map_or(0, |position| position + 1);
+        if start < index {
+            names.push(text[start..index].to_string());
         }
     }
     names
@@ -784,9 +792,11 @@ fn claude_md_section_references_reads_quoted_and_one_word_sections() {
 fn source_comments_name_only_functions_that_exist() {
     // The same check as claude_md_names_only_functions_that_exist, over
     // the comments in src/ and tests/: a doc comment pointing at a renamed
-    // function sends the reader nowhere (#131).
-    // Names from outside this repository (std, swayipc, Sway's and libc's
-    // C source) and the illustrations in this file's own test comments.
+    // function sends the reader nowhere (#131). Every `name()` counts,
+    // inside backticks or not, since plenty of comments name a function
+    // without a code span (#140).
+    // Names from outside this repository (std, swayipc, clap, Sway's and
+    // libc's C source) and the illustrations in this file's own test comments.
     const EXTERNAL: &[&str] = &[
         "argsep",
         "atoi",
@@ -796,24 +806,30 @@ fn source_comments_name_only_functions_that_exist() {
         "container_move_in_direction",
         "create",
         "create_dir_all",
+        "expect",
+        "extension",
         "foo",
+        "generate",
         "get_file",
         "get_outputs",
         "get_tree",
+        "len",
         "now",
         "recv_timeout",
         "render",
         "render_help",
+        "render_long_help",
         "subscribe",
         "success",
         "try_clone",
+        "try_wait",
         "unwrap_or_default",
     ];
     let sources = rust_sources();
     let mut missing = Vec::new();
     for (path, contents) in &sources {
         for block in comment_blocks(contents) {
-            for name in function_names_in_code_spans(&block) {
+            for name in called_function_names(&block) {
                 if EXTERNAL.contains(&name.as_str()) {
                     continue;
                 }
@@ -842,6 +858,14 @@ fn function_names_in_code_spans_takes_each_call_s_last_segment() {
     let markdown = "see `a::b()` and `x().y()`, not `str::parse::<i32>()` or\n\
                     ```shell\nfenced()\n```\n";
     assert_eq!(function_names_in_code_spans(markdown), ["b", "x", "y"]);
+}
+
+#[test]
+fn called_function_names_takes_names_outside_code_spans_too() {
+    assert_eq!(
+        called_function_names("see run() and `a::b()`, not str::parse::<i32>() or ()"),
+        ["run", "b"]
+    );
 }
 
 #[test]

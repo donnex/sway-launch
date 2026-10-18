@@ -113,7 +113,7 @@ fn per_window_and(extras: &[&'static str]) -> Vec<&'static str> {
 /// `--list-templates`, `--show-template`, `--debug-events`, `--completions`)
 /// would otherwise accept and discard. Each builds its `conflicts_with_all`
 /// through `standalone_mode_conflicts()`, so a new run-level flag added here
-/// is rejected by all six at once. `main()` dispatches those modes before its
+/// is rejected by all of them at once. `main()` dispatches those modes before its
 /// own "requires --layout or --template" checks, so they can't catch it.
 /// `run_args_*` in the tests fail if a flag `main()` checks isn't here.
 const RUN_ARGS: &[&str] = &[

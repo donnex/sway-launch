@@ -354,10 +354,9 @@ pub(super) fn first_outcome_error<E: fmt::Display>(
     command: &str,
 ) -> Result<(), String> {
     // Every SwayAction::sway_command() builds a non-empty string, and
-    // swayipc always returns at least one outcome for one, so this branch
-    // isn't known to be reachable in practice — it's defensive against a
-    // theoretical empty reply rather than a case this crate can construct
-    // a test for without mocking swayipc.
+    // Sway always returns at least one outcome for one, so real Sway isn't
+    // known to reach this branch: it's defensive against an empty reply,
+    // which `first_outcome_error_fails_when_empty` pins.
     if outcomes.is_empty() {
         return Err(format!("{} command failed", command));
     }

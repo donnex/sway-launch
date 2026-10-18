@@ -116,8 +116,11 @@ instruction set: where it disagrees with this file or the code, it's stale. The 
 
 **Layering rules:**
 
-- Only `ipc.rs` and `query.rs` talk to the compositor (plus the `run_*` drivers in
-  `confirmation.rs` and `SwayLaunch::run()`). A new predicate goes in `tree.rs`; if it can't answer
+- Only `ipc.rs` opens connections, sends commands and subscribes to events. Its callers are
+  `query.rs` (every tree and output read), `confirmation.rs`'s `run_*` drivers and
+  `hold_geometry()`, `launch.rs`'s `BuildLocation::apply()`, `Staging` (through `send()`) and
+  `debug_events()`, and `run.rs`'s rollback through `kill_container()`; a new caller is added to
+  this list in the same change. A new predicate goes in `tree.rs`; if it can't answer
   from a `&Node`, the fetching half goes in `query.rs` and the deciding half still goes in
   `tree.rs`, where a unit test can reach every case without scripting a compositor.
 - `tree.rs` walks the tree in exactly two places, `ancestors_of()` and `descendants()`. A new
@@ -410,7 +413,7 @@ reliably. A new entry in
   workspace first, the failure `take_staging_failure()` picked included (#168).
 - `--rollback-on-error` closes only windows whose `launch_ownership` is `Launched` — never
   retargeted or `Adopted` ones — most recent first (`rollback()`, `send_rollback_kills()`), waits
-  `ROLLBACK_CLOSE_GRACE` for each to actually close, and stops at the first unanswered kill. It
+  `ROLLBACK_CLOSE_GRACE` once, in total, for all of them to actually close, and stops at the first unanswered kill. It
   undoes launches, not mutations to existing windows.
 - A template's `[params]` (#92) names values a step's `height`/`width`/`position` takes by
   writing `"{name}"` as the whole value: plain substitution, no expressions. `parse()` checks every
@@ -452,7 +455,8 @@ follow-up:
 - **This file**: a function named here in backticks with `()` must exist in `src/`, `tests/` or
   `scripts/` (`claude_md_names_only_functions_that_exist`). Rename or remove one, and this file
   changes in the same commit. The same goes the other way: a comment in `src/` or `tests/`
-  naming a function, or a CLAUDE.md section by its heading, must name one that exists
+  naming a function (any `name()`, in backticks or not), or a CLAUDE.md section by its heading,
+  must name one that exists
   (`source_comments_name_only_functions_that_exist`,
   `source_comments_name_only_claude_md_sections_that_exist`).
 
@@ -810,10 +814,10 @@ comments, name things clearly instead" style). Two rule-specific overrides:
     every `tests.rs`, which is why unit tests live in sibling files rather than inline — an inline
     test module's bodies would count as covered production code and pad the total):
     `cargo llvm-cov --summary-only --ignore-filename-regex '(^|/)(main|test_support|tests)\.rs$'`
-    reproduces CI's figure. Measured that way (2026-10-18, with `run.rs` split out of `main.rs`, #134): 94.4% lines
-    overall; `tree.rs` 98.8%, `values.rs` 97.3%, `layout.rs` 98.0%, `template.rs` 98.0%, `ipc.rs`
-    93.7%, `confirmation.rs` 93.3%, `run.rs` 89.6%, `launch.rs` 83.9%, `query.rs` 92.7%. What's left uncovered is mostly IPC-error branches
-    (a `get_tree()` that fails mid-run) and `--debug-events`' event loop.
+    reproduces CI's figure. The measured baseline lives in one place, the comment above the gate
+    in `.github/workflows/check.yml`, which changes with the thresholds; this file doesn't restate
+    it. What's left uncovered is mostly IPC-error branches (a `get_tree()` that fails mid-run) and
+    `--debug-events`' event loop.
 
     **Keep the decision pure and let the IPC layer fetch** — the shape `expected_position`/
     `position_matches` and `state_satisfies`/`container_state` already use — rather than burying a
@@ -1657,8 +1661,8 @@ by name, markdownlint on every tracked Markdown file, black/ruff), then a `cargo
 step in both workflows, and had drifted between them; the shared script replaced both copies, and
 the separate `lint-scripts-and-docs` job folded into `check`. The gate excludes
 `main.rs` and the unit-test files themselves by filename (see the coverage bullet under Rust
-conventions above), and its thresholds sit under the baseline measured on 2026-10-17 (re-measured 2026-10-18 once
-`run.rs` joined the measured set, thresholds unchanged), recorded in the comment above that step. Until #103 it also excluded the compositor-bound
+conventions above), and its thresholds sit a few points under the measured baseline recorded in the comment above that
+step (the one place it's written down). Until #103 it also excluded the compositor-bound
 `ipc.rs`/`query.rs`, and the `run_*` drivers were most of the gap; the fake-Sway suite reaches
 both. Re-measure
 and adjust the thresholds as their own deliberate decision (with the comment updated) rather than

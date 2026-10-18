@@ -12,6 +12,8 @@
 //! - `confirmation` — deciding whether that command took effect.
 //! - `outcome` — what a run reports back.
 //! - `interrupt` — turning SIGINT/SIGTERM/SIGHUP into an ordinary failure.
+//! - `capture` — turning a workspace's tree into the `--layout` file that
+//!   rebuilds it, purely.
 //! - `launch` — turning one invocation into an ordered plan, and running it.
 //!
 //! The `tree`/`query` boundary is the load-bearing one: everything that needs
@@ -77,8 +79,7 @@ pub use values::{
 /// `--wait-time` default, so using it uncapped would make any fallback case
 /// at default settings cost ~220ms instead of ~40ms (`2 * wait_time`),
 /// confirmed live. 200ms comfortably
-/// covers every matcher this project has shipped (`Split`, `Sticky`, `Height`,
-/// `Width`, `Position`, `NewColumn`, `NewRow`), all confirmed live to
+/// covers every matcher `poll_matches()` has, all confirmed live to
 /// converge in a handful of milliseconds when they converge at all.
 const WAIT_TIME_POLL_GRACE: time::Duration = time::Duration::from_millis(200);
 

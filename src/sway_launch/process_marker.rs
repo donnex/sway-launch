@@ -382,7 +382,8 @@ pub(super) fn classify_marker_reads(
 ///
 /// Scanning is also not an implementation shortcut that a narrower lookup could
 /// replace: `sway-launch` never spawns the process. Sway does, via
-/// `exec export <marker> && <command>`, so there is no child pid to inspect — which
+/// `exec export <marker> && [<setup> &&] ( <command> )` (see
+/// `ExecAction::sway_command()`), so there is no child pid to inspect — which
 /// is the entire reason the environment marker exists. A "just look at the pid
 /// we spawned" design has nothing to look at.
 ///
