@@ -36,6 +36,7 @@ fn exec_timeout_message_names_a_window_the_filter_rejected() {
             ..unmatched(12, Some("foot"), None)
         }],
         Some(true),
+        false,
     );
     assert_eq!(
         message,
@@ -61,6 +62,7 @@ fn exec_timeout_message_lists_several_rejected_windows() {
             unmatched(14, None, None),
         ],
         None,
+        false,
     );
     assert_eq!(
         message,
@@ -83,6 +85,7 @@ fn exec_timeout_message_escapes_control_characters_in_an_app_id_or_class() {
             unmatched(13, None, Some("XTerm\r\u{1b}[2K")),
         ],
         None,
+        false,
     );
     assert!(!message.chars().any(char::is_control), "{message:?}");
     assert!(
@@ -106,6 +109,7 @@ fn exec_timeout_message_names_a_launched_window_that_never_set_its_class() {
             ..unmatched(12, None, None)
         }],
         None,
+        false,
     );
     assert_eq!(
         message,
@@ -117,18 +121,37 @@ fn exec_timeout_message_names_a_launched_window_that_never_set_its_class() {
 }
 
 #[test]
-fn exec_timeout_message_says_when_the_command_exited_without_a_window() {
+fn exec_timeout_message_points_at_path_when_the_command_never_started() {
     let message = exec_timeout_message(
         time::Duration::from_secs(2),
         filter("", ""),
         None,
         &[],
         Some(false),
+        false,
     );
     assert_eq!(
         message,
         "no window appeared within 2 sec: the launched command exited without opening a \
              window — check that it is on PATH in Sway's environment"
+    );
+}
+
+#[test]
+fn exec_timeout_message_says_a_command_that_ran_and_exited_may_have_raised_an_open_window() {
+    let message = exec_timeout_message(
+        time::Duration::from_secs(5),
+        filter("", "Code"),
+        None,
+        &[],
+        Some(false),
+        true,
+    );
+    assert_eq!(
+        message,
+        "no window with class \"Code\" appeared within 5 sec: the launched command ran and \
+             exited without opening a new window — if the application was already running, it \
+             may have raised its open window instead; act on that one with --existing"
     );
 }
 
@@ -140,6 +163,7 @@ fn exec_timeout_message_suggests_slowness_only_while_the_command_still_runs() {
         None,
         &[],
         Some(true),
+        false,
     );
     assert!(message.contains("still running"), "{message}");
     assert!(message.contains("--timeout"), "{message}");
@@ -153,7 +177,8 @@ fn exec_timeout_message_adds_nothing_when_the_command_s_state_is_unknown() {
             filter("foot", ""),
             None,
             &[],
-            None
+            None,
+            false
         ),
         "no window with app_id \"foot\" appeared within 3 sec"
     );
@@ -170,6 +195,7 @@ fn exec_timeout_message_prefers_this_command_s_rejected_window_over_its_state() 
             ..unmatched(12, Some("foot"), None)
         }],
         Some(false),
+        false,
     );
     assert!(message.contains("check --app-id/--class"), "{message}");
     assert!(!message.contains("exited"), "{message}");
@@ -183,6 +209,7 @@ fn exec_timeout_message_leads_with_an_exited_command_over_a_foreign_window() {
         None,
         &[unmatched(7, Some("other"), None)],
         Some(false),
+        false,
     );
     assert_eq!(
         message,
@@ -204,6 +231,7 @@ fn exec_timeout_message_leads_with_a_running_command_over_foreign_windows() {
             unmatched(8, None, Some("XTerm")),
         ],
         Some(true),
+        false,
     );
     assert_eq!(
         message,
@@ -978,7 +1006,8 @@ fn exec_timeout_message_names_the_title_it_waited_for() {
             None,
             Some(&title),
             &[unmatched(12, Some("foot"), None)],
-            None
+            None,
+            false
         ),
         "no window with title matching \"project-a\" appeared within 3 sec; meanwhile 1 other \
          new window opened, not traced to this command (con_id 12, app_id \"foot\", no title) \

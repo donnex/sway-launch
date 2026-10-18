@@ -1362,6 +1362,7 @@ impl ExecAction<'_> {
                     title,
                     &unmatched_windows,
                     command_running,
+                    !marker.previously_seen().is_empty(),
                 );
                 let late_window = if self.catch_late_window {
                     late_marked_window(&event_receiver, &token)
@@ -1816,7 +1817,12 @@ fn unfiltered_fallback_hint(filter: Option<LaunchFilter>) -> &'static str {
 /// explanation, named with the filter to check. Without one, a launched
 /// command that's no longer running (`command_running == Some(false)`) is
 /// called out as such, and only a command still running gets the hint that it
-/// may simply be slow. `launched_command_running()` decides which, from the
+/// may simply be slow. An exited command is split by `marker_seen`, whether
+/// any process was ever seen carrying the marker (#175): one that never did
+/// never started, since only the program the launch's shell execs carries it,
+/// so the hint is `PATH`; one that did ran and exited, which is what a
+/// single-instance application does when it raises its already-open window
+/// instead of opening another, so the hint is `--existing`. `launched_command_running()` decides which, from the
 /// marker and the launch's own shell; `None` means it couldn't tell, and adds
 /// nothing. Rejected windows not traced to this command come after that
 /// explanation rather than replacing it (#161): on a desktop another program
@@ -1830,6 +1836,7 @@ fn exec_timeout_message(
     title: Option<&TitlePattern>,
     unmatched_windows: &[UnmatchedWindow],
     command_running: Option<bool>,
+    marker_seen: bool,
 ) -> String {
     let criteria = match (filter, title) {
         (Some(filter), Some(title)) => format!(" with {} and {}", filter, title),
@@ -1880,6 +1887,12 @@ fn exec_timeout_message(
     }
 
     let explanation = match command_running {
+        Some(false) if marker_seen => format!(
+            "{}: the launched command ran and exited without opening a new window — if the \
+             application was already running, it may have raised its open window instead; act \
+             on that one with --existing",
+            base
+        ),
         Some(false) => format!(
             "{}: the launched command exited without opening a window — check that it is on \
              PATH in Sway's environment",

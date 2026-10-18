@@ -1497,11 +1497,43 @@ fn a_launch_whose_command_exits_without_a_window_says_so() {
         }
         Ok(())
     });
-    let run = run(&fake, &["-a", "fake-app", "--timeout", "1", "true"]);
+    let run = run(
+        &fake,
+        &[
+            "-a",
+            "fake-app",
+            "--timeout",
+            "1",
+            "sway-launch-no-such-command-probe",
+        ],
+    );
     assert!(!run.succeeded());
     assert!(
         run.error()
-            .contains("the launched command exited without opening a window"),
+            .contains("the launched command exited without opening a window")
+            && run.error().contains("PATH"),
+        "{}",
+        run.error()
+    );
+}
+
+#[test]
+fn a_launch_whose_command_ran_and_exited_without_a_window_points_at_existing() {
+    // A single-instance application raising its open window runs, carrying
+    // the marker, and exits with no window event: not a PATH problem (#175).
+    let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {
+        if command.starts_with("exec ") {
+            sway.launch(command);
+        }
+        Ok(())
+    });
+    let run = run(&fake, &["-a", "fake-app", "--timeout", "1", "sleep 0.3"]);
+    assert!(!run.succeeded());
+    assert!(
+        run.error()
+            .contains("the launched command ran and exited without opening a new window")
+            && run.error().contains("--existing")
+            && !run.error().contains("PATH"),
         "{}",
         run.error()
     );

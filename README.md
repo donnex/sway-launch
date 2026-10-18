@@ -1334,6 +1334,10 @@ error: launch "footx": no window appeared within 2 sec: the launched command exi
   The rejected window stays open, and `--json` lists it under `unmatched_windows`.
 - The command exited without a window: it probably isn't on `PATH` in Sway's environment, or
   failed; its own error is in Sway's log (see [Launching a command](#launching-a-command)).
+- The command ran and exited without a new window: a single-instance application (VS Code,
+  KeePassXC, most Electron apps) that was already running raises its open window instead of
+  opening another. Act on that window with `--existing` (for example `sway-launch --existing -c
+  Code --floating`).
 - A window some other program opened during the wait (not traced to this command) is listed after
   the explanation as `meanwhile 1 other new window opened, not traced to this command (...)`,
   rather than replacing it. It only points at `--app-id`/`--class` when that window is really

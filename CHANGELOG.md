@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A launch that times out because a single-instance application (VS Code, KeePassXC, most
+  Electron apps) was already open no longer tells you to check that the command is on `PATH`. The
+  command ran, raised its existing window and exited; the error now says it ran and exited without
+  opening a new window, and points at `--existing` for acting on the open one. A command that never
+  started still gets the `PATH` hint. (#175)
 - A window reporting an empty app_id or class is now described the same way everywhere: as having
   none. `--list-windows` and a launch's timeout message showed it as `app_id ""` (and `--json` as
   an empty string) while `--capture` already treated it as missing; all of them now show no app_id

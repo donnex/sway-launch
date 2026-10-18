@@ -8411,6 +8411,28 @@ fn launch_timeout_says_when_the_command_exited_without_a_window() {
 }
 
 #[test]
+fn launch_timeout_says_a_command_that_ran_and_exited_may_have_raised_an_open_window() {
+    fresh_workspace();
+    // What a single-instance app does when a copy is already open: it runs,
+    // raises that window and exits. That used to be blamed on PATH (#175).
+    let output = sway_launch_command()
+        .args(["--timeout", "2", "--app-id", "foot", "sleep 0.3"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        !output.status.success(),
+        "nothing can open a window: {stderr}"
+    );
+    assert!(
+        stderr.contains("ran and exited without opening a new window")
+            && stderr.contains("--existing")
+            && !stderr.contains("PATH"),
+        "the error should point at --existing, not PATH: {stderr}"
+    );
+}
+
+#[test]
 fn launch_timeout_blames_the_command_not_the_filter_for_another_program_s_window() {
     fresh_workspace();
     // Another program opening a window during the wait used to replace the
