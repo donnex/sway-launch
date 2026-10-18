@@ -361,6 +361,93 @@ fn per_window_args_conflict_with_every_standalone_mode() {
     }
 }
 
+#[test]
+fn run_args_conflict_with_every_standalone_mode_but_layout_and_template() {
+    let command = Args::command();
+    for mode in STANDALONE_MODES {
+        if *mode == "layout" || *mode == "template" {
+            continue;
+        }
+        let mode_argument = command
+            .get_arguments()
+            .find(|argument| argument.get_id() == *mode)
+            .expect("every standalone mode should be an Args flag");
+        let conflicts: Vec<String> = command
+            .get_arg_conflicts_with(mode_argument)
+            .iter()
+            .map(|argument| argument.get_id().to_string())
+            .collect();
+        for run_arg in RUN_ARGS {
+            assert!(
+                conflicts.iter().any(|name| name == run_arg),
+                "--{mode} should conflict with {run_arg}, which only a run uses"
+            );
+        }
+    }
+}
+
+/// `CLI_ONLY_ARGS` that are neither a standalone mode nor in `RUN_ARGS`:
+/// they mean something to a direct-CLI run and to the standalone modes
+/// alike, so no list of conflicts covers them all.
+const GENERAL_ARGS: &[&str] = &["dry_run", "json", "verbose", "help", "version"];
+
+/// The `RUN_ARGS` that `main()` checks require `--template`, on their own
+/// rather than through `layout_or_template_only_flags()`.
+const TEMPLATE_ONLY_ARGS: &[&str] = &["bindings", "apps", "param"];
+
+#[test]
+fn run_args_lists_every_flag_main_checks_requires_a_run() {
+    let args = Args::parse_from(["sway-launch", "foot"]);
+    let checked: std::collections::BTreeSet<&str> = layout_or_template_only_flags(&args)
+        .iter()
+        .map(|(name, _)| *name)
+        .chain(TEMPLATE_ONLY_ARGS.iter().copied())
+        .collect();
+    let run_args: std::collections::BTreeSet<&str> = RUN_ARGS.iter().copied().collect();
+    assert_eq!(checked, run_args);
+}
+
+#[test]
+fn run_args_lists_every_cli_only_flag_that_is_not_a_mode_or_general() {
+    // A new invocation-wide flag lands in CLI_ONLY_ARGS (the schema mirror
+    // test forces that); this makes the author decide whether it's run-only,
+    // and so rejected by every standalone mode, or general.
+    let expected: std::collections::BTreeSet<&str> = CLI_ONLY_ARGS
+        .iter()
+        .copied()
+        .filter(|name| !STANDALONE_MODES.contains(name) && !GENERAL_ARGS.contains(name))
+        .collect();
+    let run_args: std::collections::BTreeSet<&str> = RUN_ARGS.iter().copied().collect();
+    assert_eq!(run_args, expected);
+}
+
+#[test]
+fn layout_or_template_only_flags_reports_each_flag_by_its_args_id() {
+    let flags_with_values: &[(&str, &[&str])] = &[
+        ("rollback_on_error", &["--rollback-on-error"]),
+        ("continue_on_timeout", &["--continue-on-timeout"]),
+        ("on_workspace", &["--on-workspace", "example"]),
+        ("on_workspace_number", &["--on-workspace-number", "2"]),
+        ("on_output", &["--on-output", "HEADLESS-1"]),
+        ("concurrent", &["--concurrent"]),
+        ("no_lock", &["--no-lock"]),
+        ("validate", &["--validate"]),
+    ];
+    for (id, flag) in flags_with_values {
+        let argv = ["sway-launch"]
+            .into_iter()
+            .chain(flag.iter().copied())
+            .chain(["foot"]);
+        let args = Args::parse_from(argv);
+        let set: Vec<&str> = layout_or_template_only_flags(&args)
+            .iter()
+            .filter(|(_, is_set)| *is_set)
+            .map(|(name, _)| *name)
+            .collect();
+        assert_eq!(set, [*id], "{flag:?}");
+    }
+}
+
 fn listed_window(container_id: i64) -> sway_launch::ListedWindow {
     sway_launch::ListedWindow {
         container_id,

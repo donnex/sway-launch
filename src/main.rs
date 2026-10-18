@@ -63,11 +63,11 @@ fn stderr_label(severity: Severity) -> String {
 }
 
 /// Every flag that selects or acts on a window: the flags a `--layout`/
-/// `--template` step carries per step instead. The standalone modes
-/// (`--debug-events`, `--completions`, `--layout`, `--template`,
-/// `--list-templates`, `--show-template`) each build their
-/// `conflicts_with_all` from this one list via `per_window_and()`, so a new
-/// per-window flag added here is rejected by all six at once, and
+/// `--template` step carries per step instead. `--layout`, `--template` and
+/// every standalone mode build their `conflicts_with_all` from this one list
+/// via `per_window_and()` (the standalone modes through
+/// `standalone_mode_conflicts()`), so a new per-window flag added here is
+/// rejected by all of them at once, and
 /// `per_window_args_*` in the tests fail if it isn't added here.
 ///
 /// A clap `ArgGroup` would say the same thing, but clap then reports a
@@ -108,16 +108,65 @@ fn per_window_and(extras: &[&'static str]) -> Vec<&'static str> {
     PER_WINDOW_ARGS.iter().chain(extras).copied().collect()
 }
 
+/// Every flag that only means something to a `--layout`/`--template` run:
+/// the other half of what a standalone mode (`--list-windows`, `--capture`,
+/// `--list-templates`, `--show-template`, `--debug-events`, `--completions`)
+/// would otherwise accept and discard. Each builds its `conflicts_with_all`
+/// through `standalone_mode_conflicts()`, so a new run-level flag added here
+/// is rejected by all six at once. `main()` dispatches those modes before its
+/// own "requires --layout or --template" checks, so they can't catch it.
+/// `run_args_*` in the tests fail if a flag `main()` checks isn't here.
+const RUN_ARGS: &[&str] = &[
+    "bindings",
+    "apps",
+    "param",
+    "rollback_on_error",
+    "continue_on_timeout",
+    "on_workspace",
+    "on_workspace_number",
+    "on_output",
+    "concurrent",
+    "no_lock",
+    "validate",
+];
+
+/// `PER_WINDOW_ARGS` and `RUN_ARGS` plus a standalone mode's own extra
+/// conflicts.
+fn standalone_mode_conflicts(extras: &[&'static str]) -> Vec<&'static str> {
+    per_window_and(RUN_ARGS)
+        .into_iter()
+        .chain(extras.iter().copied())
+        .collect()
+}
+
 /// The per-window flags `--list-windows` accepts: they narrow the listing to
 /// what `--existing` would choose between, rather than being discarded.
 const LIST_WINDOWS_FILTERS: &[&str] = &["app_id", "class", "mark_match", "title"];
 
-/// `per_window_and()` for `--list-windows`, which keeps its filters.
-fn per_window_but_filters_and(extras: &[&'static str]) -> Vec<&'static str> {
-    per_window_and(extras)
+/// `standalone_mode_conflicts()` for `--list-windows`, which keeps its
+/// filters.
+fn standalone_mode_conflicts_but_filters(extras: &[&'static str]) -> Vec<&'static str> {
+    standalone_mode_conflicts(extras)
         .into_iter()
         .filter(|name| !LIST_WINDOWS_FILTERS.contains(name))
         .collect()
+}
+
+/// The `RUN_ARGS` that `main()` rejects without `--layout`/`--template`, by
+/// `Args` id, each with whether it was passed. `--bindings`/`--apps`/
+/// `--param` aren't here: they require `--template` alone, and are checked
+/// on their own.
+fn layout_or_template_only_flags(args: &Args) -> [(&'static str, bool); 8] {
+    [
+        ("rollback_on_error", args.rollback_on_error),
+        ("continue_on_timeout", args.continue_on_timeout),
+        ("on_workspace", args.on_workspace.is_some()),
+        ("on_workspace_number", args.on_workspace_number.is_some()),
+        ("on_output", args.on_output.is_some()),
+        ("concurrent", args.concurrent),
+        ("no_lock", args.no_lock),
+        ("validate", args.validate),
+    ]
 }
 
 const HEADING_LAUNCH: &str = "Launch a window";
@@ -478,9 +527,9 @@ struct Args {
     /// Shows each window's container id, app_id, class, workspace, marks and
     /// title. --app-id, --class, --mark-match and --title narrow it to the
     /// windows --existing would choose between.
-    #[clap(long, conflicts_with_all = per_window_but_filters_and(&[
+    #[clap(long, conflicts_with_all = standalone_mode_conflicts_but_filters(&[
         "debug_events", "layout", "template", "completions", "list_templates", "show_template",
-        "bindings", "apps", "param", "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent", "dry_run", "validate",
+        "dry_run",
     ]), help_heading = HEADING_INSPECT, verbatim_doc_comment)]
     list_windows: bool,
 
@@ -490,18 +539,15 @@ struct Args {
     /// marks, and floating windows' size and position. Each window's command
     /// is a guess from its app_id or class. Tabbed and stacked containers
     /// can't be captured.
-    #[clap(long, value_name = "WORKSPACE", num_args = 0..=1, conflicts_with_all = per_window_and(&[
+    #[clap(long, value_name = "WORKSPACE", num_args = 0..=1, conflicts_with_all = standalone_mode_conflicts(&[
         "debug_events", "layout", "template", "completions", "list_templates", "list_windows",
-        "show_template", "bindings", "apps", "param", "rollback_on_error", "continue_on_timeout",
-        "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent", "dry_run",
-        "validate", "json",
+        "show_template", "dry_run", "json",
     ]), help_heading = HEADING_INSPECT, verbatim_doc_comment)]
     capture: Option<Option<String>>,
 
     /// List the built-in templates and exit
-    #[clap(long, conflicts_with_all = per_window_and(&[
-        "debug_events", "layout", "template", "completions", "bindings", "apps", "param",
-        "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent", "dry_run", "validate", "show_template",
+    #[clap(long, conflicts_with_all = standalone_mode_conflicts(&[
+        "debug_events", "layout", "template", "completions", "dry_run", "show_template",
     ]), help_heading = HEADING_INSPECT)]
     list_templates: bool,
 
@@ -509,9 +555,8 @@ struct Args {
     ///
     /// A built-in name or a path ending in .toml, as for --template. With
     /// --json, prints {"name": ..., "contents": "..."}.
-    #[clap(long, value_name = "NAME|FILE", conflicts_with_all = per_window_and(&[
-        "debug_events", "layout", "template", "completions", "bindings", "apps", "param",
-        "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent", "dry_run", "validate",
+    #[clap(long, value_name = "NAME|FILE", conflicts_with_all = standalone_mode_conflicts(&[
+        "debug_events", "layout", "template", "completions", "dry_run",
     ]), help_heading = HEADING_INSPECT, verbatim_doc_comment)]
     show_template: Option<PathBuf>,
 
@@ -519,20 +564,13 @@ struct Args {
     // on a window, so a command or per-window flag alongside it could only
     // be discarded. Rejected rather than ignored, same as those.
     //
-    // --bindings/--apps/--rollback-on-error are listed for the same reason
-    // --completions and --list-templates list them: main() dispatches this
-    // mode before its manual "requires --template/--layout" checks run, so
-    // without these the flags would be silently discarded.
-    //
     // Kept as `//` rather than `///`: clap renders every doc-comment
     // paragraph into `--help`, where these notes mean nothing to a user.
     /// Print every Sway event until interrupted
     ///
     /// One JSON object per line with --json. Can't be combined with a command
     /// or per-window flags.
-    #[clap(short, long, conflicts_with_all = per_window_and(&[
-        "bindings", "apps", "param", "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent",
-    ]), help_heading = HEADING_INSPECT, verbatim_doc_comment)]
+    #[clap(short, long, conflicts_with_all = standalone_mode_conflicts(&[]), help_heading = HEADING_INSPECT, verbatim_doc_comment)]
     debug_events: bool,
 
     // Conflicts with --json, unlike the other standalone modes: a completion
@@ -540,9 +578,8 @@ struct Args {
     // accepting the flag could only discard it. --list-templates and
     // --show-template both do have one, which is why they don't conflict.
     /// Print a shell completion script and exit
-    #[clap(long, value_enum, value_name = "SHELL", conflicts_with_all = per_window_and(&[
-        "debug_events", "layout", "template", "list_templates", "bindings", "apps", "param",
-        "rollback_on_error", "continue_on_timeout", "on_workspace", "on_workspace_number", "on_output", "no_lock", "concurrent", "dry_run", "validate", "show_template", "json",
+    #[clap(long, value_enum, value_name = "SHELL", conflicts_with_all = standalone_mode_conflicts(&[
+        "debug_events", "layout", "template", "list_templates", "dry_run", "show_template", "json",
     ]), help_heading = HEADING_GENERAL)]
     completions: Option<clap_complete::Shell>,
 
@@ -689,21 +726,17 @@ fn main() {
     }
 
     if args.layout.is_none() && args.template.is_none() {
-        let run_only_flags = [
-            (args.rollback_on_error, "--rollback-on-error"),
-            (args.continue_on_timeout, "--continue-on-timeout"),
-            (args.on_workspace.is_some(), "--on-workspace"),
-            (args.on_workspace_number.is_some(), "--on-workspace-number"),
-            (args.on_output.is_some(), "--on-output"),
-            (args.concurrent, "--concurrent"),
-            (args.no_lock, "--no-lock"),
-            (args.validate, "--validate"),
-        ];
-        if let Some((_, flag)) = run_only_flags.iter().find(|(is_set, _)| *is_set) {
+        if let Some((name, _)) = layout_or_template_only_flags(&args)
+            .into_iter()
+            .find(|(_, is_set)| *is_set)
+        {
             Args::command()
                 .error(
                     ErrorKind::MissingRequiredArgument,
-                    format!("{} requires --layout or --template", flag),
+                    format!(
+                        "--{} requires --layout or --template",
+                        name.replace('_', "-")
+                    ),
                 )
                 .exit();
         }

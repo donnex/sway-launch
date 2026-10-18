@@ -321,17 +321,21 @@ focus on a fullscreen window, so later launches open behind it, and `share_of()`
 `1.0` percent it reports) (`every_shipped_template_round_trips_through_capture` holds it to
 every template's shape). A command guessed from an app_id or class that isn't a plain program name
 (`is_plain_program_name()`) is written in the list form, since the client sets it (#125). It's the
-one recursion over a tree outside `tree.rs`. Every standalone mode, `--layout` and
-`--template` build their `conflicts_with_all` with `per_window_and()` from `PER_WINDOW_ARGS`, so a
-per-window flag is never silently discarded. `--list-windows` alone keeps `LIST_WINDOWS_FILTERS`
-(`-a`/`-c`/`--mark-match`/`--title`, via `per_window_but_filters_and()`): they narrow its listing
+one recursion over a tree outside `tree.rs`. `--layout` and `--template` build their
+`conflicts_with_all` with `per_window_and()` from `PER_WINDOW_ARGS`, and every other standalone
+mode with `standalone_mode_conflicts()`, which adds `RUN_ARGS` (the flags only a
+`--layout`/`--template` run uses), so neither kind of flag is ever silently discarded (#136).
+`--list-windows` alone keeps `LIST_WINDOWS_FILTERS` (`-a`/`-c`/`--mark-match`/`--title`, via
+`standalone_mode_conflicts_but_filters()`): they narrow its listing
 (`tree::window_listing()`) to what `--existing` would choose between, so its rows and
 `matching_container_ids()` must keep agreeing on what a match is: both filter on
 `is_listable_candidate()` (a window, or a marked split container) before the criteria (#144).
 `per_window_args_conflict_with_every_standalone_mode` and
-`per_window_args_lists_every_flag_a_layout_step_mirrors` keep the list complete. clap's `requires`
-is not used for `--bindings`/`--apps`/`--rollback-on-error`/`--on-workspace`/`--validate`: `main()`
-checks those by hand, because the derive macro doesn't enforce `requires` reliably. A new entry in
+`per_window_args_lists_every_flag_a_layout_step_mirrors` keep the list complete, and the
+`run_args_*` tests do the same for `RUN_ARGS`. clap's `requires` is not used for
+`--bindings`/`--apps`/`--rollback-on-error`/`--on-workspace`/`--validate`: `main()` checks those by
+hand (`layout_or_template_only_flags()`), because the derive macro doesn't enforce `requires`
+reliably. A new entry in
 `DEBUG_EVENT_SUBSCRIPTIONS` is checked against Sway's documented event list by
 `debug_event_subscriptions_cover_every_sway_ipc_event_type_once`; recheck it when bumping `swayipc`.
 
