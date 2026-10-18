@@ -1261,26 +1261,24 @@ writing it anywhere:
   decision such as "the six basic example scripts need no `die`") is project-specific, and is
   written here directly.
 
-**Never name the canonical repository in this one** — not its name, not its path on this machine,
-not a commit SHA from it — in any file, commit message, issue, or comment. It's private and this
+**Never name the canonical repository in this one** — not its name, not its path, not a commit
+SHA from it — in any file, commit message, issue, or comment. It's private and this
 repo is public, so the name alone leaks something. Call it "the shared conventions" or "the
 canonical repository", and its files "the canonical module", as this section already does.
 
 **Never commit in the canonical repository from this project — not the edit, not a fix to it, not
 anything.** The scratch copy at this repo's root is the entire deliverable; the user carries it
 across themselves. This holds however convenient it looks and however clearly correct the change
-is: the canonical repository is checked out on the same machine, so reaching into it is always one
-command away, and that is exactly why the rule has to be absolute rather than a judgement call. Do
+is: the rule is absolute rather than a judgement call. Do
 not offer it as an option either — a user picking it from a list is not the same as the rule not
 applying, and offering it is how it gets picked. Two things follow that are easy to get wrong in the
 moment:
 
 - **Don't touch the canonical repository's state at all** — no branch checkout, no `git config`,
   no stash. A repo left on a different branch than it was found on is its own small mess, separate
-  from the commit. Its own automated sync is the only thing that moves it.
-- **Being unable to push is not the signal.** Read access without write access is the normal shape
-  of a sandbox credential, so a failed push is a second line of defence catching a rule already
-  broken — a local commit in the canonical repo is already the mistake, whether or not it ever
+  from the commit.
+- **Being unable to push is not the signal.** A failed push is a second line of defence catching a
+  rule already broken — a local commit in the canonical repo is already the mistake, whether or not it ever
   reaches a remote.
 
 Don't wait to be asked, either: whenever a task brings in a new tool, library, pattern, or idea
