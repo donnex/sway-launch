@@ -375,7 +375,9 @@ reliably. A new entry in
 
 - All three modes plan each step through `plan_step()` (duplicate `id` check, then
   `to_sway_launch()`), `--dry-run`/`--validate` via `plan_steps_offline()` with placeholder ids. A
-  new per-step rule goes in `plan_step()` or `to_sway_launch()`, never in one mode's loop, or
+  real run calls `plan_steps_offline()` too, before the run lock and anything else, so a mistake in
+  a later step fails it before the first window opens (#179); its loop then plans each step again
+  against the real ids. A new per-step rule goes in `plan_step()` or `to_sway_launch()`, never in one mode's loop, or
   `--validate` can accept what a real run rejects. Errors are formatted once, by `step_error()`.
 - A step's `id` names its container; a later `target_id` resolves to it through `resolved_ids`. A
   template's `slot` becomes the step's `id`, so templates use the same mechanism.
@@ -401,8 +403,7 @@ reliably. A new entry in
   `rust-version` is 1.89.
 - `--concurrent` (#73), or a top-level `concurrent = true` in a layout or bindings file (#121,
   OR-ed with the flag into `run_steps()`'s `concurrent` argument; a template file can't set it, since
-  it names no applications), splits `run_steps()` in two: `stage_launches()` checks the whole plan
-  (`plan_steps_offline()`), switches to a per-process staging workspace (`Staging`, in
+  it names no applications), splits `run_steps()` in two: `stage_launches()` switches to a per-process staging workspace (`Staging`, in
   `launch.rs`) and runs every `command` step's launch at once on a thread each, actions stripped by
   `launch_only()`; `reject_shared_windows()` fails a later step whose window an earlier one already
   has. Then each step runs in order as before, a staged one through `arrange_staged()`: the window

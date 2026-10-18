@@ -626,11 +626,12 @@ fn layout_json_error_output_reports_the_steps_that_already_completed() {
     // error object named nothing that had already run -- leaving a caller
     // with real windows open and no way to identify them. Steps 1 and 2 here
     // are con_id-only (headless-safe, never touching the socket); step 3
-    // fails on a duplicate id.
+    // fails on the unreachable socket. Not on a mistake in the file, which
+    // fails the run before any step (#179).
     let path = TempToml::write(
         "json-error-progress",
         "[[step]]\nid = \"first\"\ncon_id = 42\n\n[[step]]\ncon_id = 91\n\n\
-         [[step]]\nid = \"first\"\ncon_id = 7\n",
+         [[step]]\ncon_id = 7\nfloating = true\n",
     );
 
     let output = sway_launch()

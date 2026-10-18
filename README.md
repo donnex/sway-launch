@@ -440,7 +440,8 @@ Advanced (several applications):
 ### Layout files
 
 `--layout <FILE>` runs a whole layout from one TOML file and one invocation. Each `[[step]]` is the
-equivalent of one call's flags, run in order, stopping at the first error:
+equivalent of one call's flags, run in order, stopping at the first error. The whole file is
+checked before the first step starts, so a mistake in a later step opens no windows:
 
 ```toml
 [[step]]
@@ -743,8 +744,7 @@ window is in place, so it takes as long as all of its applications' startups add
 `--concurrent` starts them all at once on a workspace of their own (`sway-launch-staging-<pid>`),
 then moves each window to the build workspace in step order and applies its step's actions there,
 so it lands exactly where it would have opened. A four-window grid of applications taking about a
-second each to start drops from about 4 seconds to just over 1. The whole file is checked before
-anything starts, and a failure never leaves a window on the staging workspace. An `existing` step
+second each to start drops from about 4 seconds to just over 1. A failure never leaves a window on the staging workspace. An `existing` step
 sees the same windows it would in a sequential run: a later step's window, already open on the
 staging workspace, is never one it chooses between or waits for. Focus visibly jumps to the
 staging workspace while the applications start. A single-instance application can't be told apart

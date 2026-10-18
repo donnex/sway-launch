@@ -46,6 +46,15 @@ pub(crate) fn run_steps(
         run_steps_validate(steps, args);
     }
 
+    // The whole file is checked before anything opens (#179): a mistake in
+    // a later step would otherwise surface only after the earlier steps'
+    // windows were open, and --validate would reject what a real run had
+    // half-built. The per-step plan_step() below still runs, since it
+    // resolves target_id against real container ids.
+    if let Err(error) = plan_steps_offline(steps, args) {
+        fail(args.json, &error);
+    }
+
     // Held until the process exits, so a second run of the same layout on
     // the same workspace can't interleave its windows with this one's.
     let launches = steps.iter().any(|step| step.command.is_some());
@@ -606,15 +615,12 @@ fn staged_window_taken_error(container_id: i64, owner: usize) -> sway_launch::Ru
 }
 
 /// Launches every `command` step at once (#73), without its actions, on a
-/// staging workspace, and returns each one's result by step index. The whole
-/// plan is checked first, so a mistake in any step fails the run before
-/// anything opens. Two steps ending up with the same window (a
+/// staging workspace, and returns each one's result by step index.
+/// `run_steps()` has already checked the whole plan, so every step plans
+/// again here without error. Two steps ending up with the same window (a
 /// single-instance application handing both requests to one process, whose
 /// window each then adopts) can't be told apart, so the later one fails.
 fn stage_launches(steps: &[layout::LayoutStep], args: &Args) -> StagedLaunches {
-    if let Err(error) = plan_steps_offline(steps, args) {
-        fail(args.json, &error);
-    }
     let staging = match sway_launch::Staging::enter(args.verbose) {
         Ok(staging) => staging,
         Err(error) => fail(args.json, &format!("{}: {}", steps_source(args), error)),
@@ -626,7 +632,7 @@ fn stage_launches(steps: &[layout::LayoutStep], args: &Args) -> StagedLaunches {
         .filter(|(_, step)| step.command.is_some())
         .map(|(index, step)| {
             let planned = plan_step(step, args, &no_ids)
-                .expect("plan_steps_offline() already accepted every step");
+                .expect("run_steps() already checked every step with plan_steps_offline()");
             (index, launch_only(planned, args))
         })
         .collect();

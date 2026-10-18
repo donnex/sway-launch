@@ -38,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `--layout` or `--template` run no longer opens half a layout before reporting a mistake in a
+  later step. A typo such as `height = "50pct"` in step 3 used to be found only after steps 1 and 2
+  had opened their windows; the whole file is now checked before the first window opens, as
+  `--validate` and `--concurrent` already did. A step reusing the `id` of an earlier step whose
+  window timed out is now refused under `--continue-on-timeout` too, rather than accepted with the
+  later `target_id` skipped. (#179)
 - A launch that times out because a single-instance application (VS Code, KeePassXC, most
   Electron apps) was already open no longer tells you to check that the command is on `PATH`. The
   command ran, raised its existing window and exited; the error now says it ran and exited without

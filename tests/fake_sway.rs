@@ -1849,6 +1849,97 @@ timeout = 1
 }
 
 #[test]
+fn a_mistake_in_a_later_step_fails_the_run_before_anything_launches() {
+    // #179: a sequential run planned each step only when it reached it, so
+    // the first two windows opened before step 3's typo was found.
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        opens_a_window_for_each_launch("fake-app"),
+    );
+    let layout = TempToml::write(
+        "later-step-mistake",
+        r#"
+[[step]]
+command = "sleep 30"
+app_id = "fake-app"
+
+[[step]]
+command = "sleep 30"
+app_id = "fake-app"
+
+[[step]]
+command = "sleep 30"
+app_id = "fake-app"
+height = "50pct"
+"#,
+    );
+    let run = run(&fake, &["--layout", layout.to_str().unwrap()]);
+    assert!(!run.succeeded());
+    assert!(run.error().contains("step 3: height"), "{}", run.json);
+    assert!(
+        !fake
+            .commands()
+            .iter()
+            .any(|command| command.starts_with("exec ")),
+        "launched before the mistake was found: {:?}",
+        fake.commands()
+    );
+}
+
+#[test]
+fn continue_on_timeout_refuses_an_id_reused_after_a_timed_out_step() {
+    // #179: the duplicate-id check only saw ids that resolved, so a timed-out
+    // step's id could be reused, and the later target_id was then skipped
+    // although --json listed a container under that id.
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        opens_a_window_for_each_launch("fake-app"),
+    );
+    let layout = TempToml::write(
+        "continue-on-timeout-reused-id",
+        r#"
+[[step]]
+id = "a"
+command = "sleep 30"
+app_id = "slow-app"
+timeout = 1
+
+[[step]]
+id = "a"
+command = "sleep 30"
+app_id = "fake-app"
+
+[[step]]
+target_id = "a"
+mark = "x"
+"#,
+    );
+    let run = run(
+        &fake,
+        &[
+            "--layout",
+            layout.to_str().unwrap(),
+            "--continue-on-timeout",
+        ],
+    );
+    assert!(!run.succeeded());
+    assert!(
+        run.error()
+            .contains("step 2: id \"a\" was already used by an earlier step"),
+        "{}",
+        run.json
+    );
+    assert!(
+        !fake
+            .commands()
+            .iter()
+            .any(|command| command.starts_with("exec ")),
+        "launched before the mistake was found: {:?}",
+        fake.commands()
+    );
+}
+
+#[test]
 fn concurrent_launches_every_step_on_a_staging_workspace_then_arranges_in_order() {
     // #73: both launches are sent before either window is arranged, on the
     // staging workspace; each window is then moved to the build workspace
