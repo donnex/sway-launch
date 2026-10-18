@@ -473,7 +473,7 @@ kind of shipped layout file, `--template` files, lives at the repo root instead,
   `quad-mixed-apps`, `editor-with-floating-terminal`) combine multiple applications (Firefox,
   Chromium, Thunar, VS Code) and exercise more of the CLI surface (`--app-id`/`--class` matching
   across several apps — VS Code by class `Code`, matching README.md, since it runs under XWayland
-  by default and has no app_id there — `--floating`, `--mark`, `--width`/`--height`). README.md's "Recreatable layouts"
+  by default and has no app_id there — `--floating`, `--mark`, `--width`/`--height`). README.md's "Scripts"
   section links to and groups all of these; they are full scripts a user runs directly, so they
   follow every Scripts/Shell convention below, including `-h`/`--help`. Keep this set and README's
   list of them in sync when either changes. Every one of the eleven preflights `sway-launch` itself

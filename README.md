@@ -5,94 +5,1297 @@
 > human, and comes with no guarantees of correctness, security, or fitness for any particular
 > purpose — read through the code yourself before relying on it.
 
-`sway-launch` is a CLI for the [Sway](https://swaywm.org/) window manager. It launches an
-application, waits for its window to appear via Sway's IPC event stream, then optionally runs
-follow-up actions against that window — floating, fullscreen, resizing, moving to a
-workspace/output, splitting, marking, and more (see [Actions reference](#actions-reference)).
+`sway-launch` launches an application in the [Sway](https://swaywm.org/) window manager, waits for
+its window to appear, and then does things to that window: float it, size it, move it to a
+workspace or monitor, split beside it, mark it. Each call returns only once the window exists and
+every action is confirmed, so calls chain into scripts that build the same window layout every
+time, with no `sleep`s.
 
-- **Deterministic** — blocks until the window exists, and until each follow-up action is confirmed
-  wherever Sway exposes a reliable event or observable tree state to confirm it against, so layouts
-  build up reliably with no manual `sleep`s or race conditions. Percentage-based `--height`/`--width`
-  (`ppt`) are the one exception — there's no reference dimension available to verify a percentage
-  against, so those always fall back to the configured wait time instead of an actual confirmation.
-  Window correlation itself is deterministic whenever the launched process's own marker is
-  observable, and falls back to a bounded heuristic on the rare occasions it isn't (see
-  [Basic usage](#basic-usage)) — chaining calls sequentially, the default and recommended way to use
-  this tool, keeps things fully deterministic throughout.
-- **Zero setup** — a single binary; no daemon, no config file. Chain calls directly in a
-  shell script.
-- **Built-in template library** — dozens of ready-made grid, sidebar, and master/stack layouts
-  ship inside the binary. Apply one to any set of applications with `--template <name> --apps ...`
-  — no files to write (see [Templates](#templates)).
-- **Works on existing windows too** — not just newly launched ones, via
-  `--con-id`/`--existing` (see [Target an existing window](#target-an-existing-window)).
+```shell
+sway-launch -a foot --split h foot          # a terminal; the next window opens beside it
+sway-launch -a foot --width 30ppt foot      # a second one beside it, 30% of the width
+sway-launch --template quad-grid --apps foot,foot,foot,foot --on-workspace 9   # a 2x2 grid
+```
 
-Requires a running Sway session, Sway 1.9 or newer — `sway-launch` talks to Sway over its IPC
-socket (the same one `swaymsg` uses, found the same way: `SWAYSOCK`, then `I3SOCK`), so it won't do
-anything useful outside of one. CI tests every change against Sway 1.9 and against the newest Sway
-release.
+- **Waits for the window.** Each call blocks until the launched command's own window is open and
+  every action has taken effect, then prints the window's container id.
+- **Acts on it.** Floating, sticky, fullscreen, focus, marks, size, position, splits, new
+  rows/columns, workspaces, outputs, the scratchpad, plus any other single-window Sway command.
+- **Builds whole layouts.** From a shell script, a TOML layout file, or one of about thirty
+  built-in templates (grids, sidebars, master/stack) filled with any applications. `--capture`
+  writes the layout file for a workspace you arranged by hand.
+- **Works on open windows too.** Find a window by app_id, class, title, mark or container id, and
+  act on it without launching anything.
+- **Made for scripts.** A single binary with no daemon or config. stdout is the container id, or a
+  JSON report with `--json`; `--dry-run` and `--validate` work without a running Sway.
 
-## Table of contents
+Requires Sway 1.9 or newer, running. `sway-launch` talks to it over the same IPC socket `swaymsg`
+uses, found the same way (`SWAYSOCK`, then `I3SOCK`). Every change is tested against Sway 1.9 and
+the newest Sway release.
+
+## Contents
 
 - [Installation](#installation)
-- [Quickstart](#quickstart)
-- [Basic usage](#basic-usage)
-  - [Finding a window's app_id or class](#finding-a-windows-app_id-or-class)
-  - [Matching by title](#matching-by-title)
-- [Recreatable layouts](#recreatable-layouts)
-  - [Examples](#examples)
+- [Quick start](#quick-start)
+- [Guide](#guide)
+  - [Launching a command](#launching-a-command)
+  - [Matching the right window](#matching-the-right-window)
+  - [Acting on an open window](#acting-on-an-open-window)
+  - [Scripts](#scripts)
   - [Layout files](#layout-files)
-  - [Capturing a workspace](#capturing-a-workspace)
   - [Templates](#templates)
+  - [Capturing a workspace](#capturing-a-workspace)
+  - [Running layouts](#running-layouts)
 - [Actions reference](#actions-reference)
-  - [Target an existing window](#target-an-existing-window)
   - [Floating](#floating) · [Sticky](#sticky) · [Fullscreen](#fullscreen) · [Focus](#focus) ·
-    [Mark](#mark)
-  - [Workspace](#workspace) · [Output](#output) · [Height and width](#height-and-width) ·
-    [Position](#position) · [Settle](#settle) · [Split](#split) · [New column](#new-column) ·
-    [New row](#new-row) · [Scratchpad](#scratchpad) · [Sway command](#sway-command)
-  - [Verbose](#verbose) · [JSON output](#json-output) · [Dry run](#dry-run) ·
-    [Validate](#validate) · [Wait time](#wait-time) · [Debug events](#debug-events)
+    [Mark](#mark) · [Scratchpad](#scratchpad) · [Sway command](#sway-command)
+  - [Height and width](#height-and-width) · [Position](#position) · [Settle](#settle)
+  - [Split](#split) · [New column](#new-column) · [New row](#new-row) ·
+    [Workspace](#workspace) · [Output](#output)
+- [Output and diagnostics](#output-and-diagnostics)
+  - [Exit status and output streams](#exit-status-and-output-streams)
+  - [JSON output](#json-output) · [Verbose](#verbose) · [Dry run](#dry-run) ·
+    [Validate](#validate) · [Debug events](#debug-events)
+- [Timing: timeout and wait time](#timing-timeout-and-wait-time)
+- [How a launch finds its window](#how-a-launch-finds-its-window)
+- [Troubleshooting](#troubleshooting)
+- [Command-line reference](#command-line-reference)
 
 ## Installation
 
-Build from source with Cargo. This needs Rust 1.89 or newer — distribution packages are often
-older (Ubuntu 24.04 ships 1.75, Debian 12 ships 1.63), so install a current toolchain via
-rustup if yours is behind:
+**Prebuilt binary.** Download the archive for the latest release from the
+[Releases page](https://github.com/donnex/sway-launch/releases), extract it, and put `sway-launch`
+somewhere on your `PATH`. It's statically linked, so it runs on any x86_64 Linux distribution
+whatever its glibc version. The archive also holds the man page and shell completions:
 
 ```shell
-cargo build --release --locked
-```
-
-The binary is written to `target/release/sway-launch` — put it somewhere on your `PATH`. Or build
-and install it to `~/.cargo/bin` in one step with `cargo install --path . --locked`.
-
-Prebuilt Linux x86_64 binaries for tagged releases are also available from the
-[Releases page](https://github.com/donnex/sway-launch/releases). They're statically linked against
-musl, so they run on any x86_64 Linux distribution regardless of its glibc version. The archive
-also holds the man page and ready-made shell completions; install them where your system looks:
-
-```shell
-# User-local:
+install -Dm755 sway-launch ~/.local/bin/sway-launch
 install -Dm644 sway-launch.1 ~/.local/share/man/man1/sway-launch.1
 install -Dm644 completions/sway-launch.bash ~/.local/share/bash-completion/completions/sway-launch
 install -Dm644 completions/_sway-launch ~/.local/share/zsh/site-functions/_sway-launch  # on $fpath
 install -Dm644 completions/sway-launch.fish ~/.config/fish/completions/sway-launch.fish
 ```
 
-A build from source can produce the same man page with `cargo run --features generate-man --
---generate-man > sway-launch.1`.
-
-Shell completions (bash, zsh, fish, elvish, PowerShell) can be generated with `--completions
-<SHELL>`, e.g.:
+**From source.** This needs Rust 1.89 or newer. Distribution packages are often older (Ubuntu 24.04
+ships 1.75, Debian 12 ships 1.63), so install a current toolchain with rustup if yours is behind.
+Then build and install to `~/.cargo/bin` in one step:
 
 ```shell
-# User-local (no root needed):
-sway-launch --completions bash > ~/.local/share/bash-completion/completions/sway-launch
+cargo install --path . --locked
+```
 
-# System-wide — note the redirect has to run as root too, so `sudo sway-launch ... >` won't work:
+or build only, with the binary written to `target/release/sway-launch`:
+
+```shell
+cargo build --release --locked
+```
+
+A source build makes the man page with `cargo run --features generate-man -- --generate-man >
+sway-launch.1`, and any build prints completions for bash, zsh, fish, elvish or PowerShell:
+
+```shell
+sway-launch --completions bash > ~/.local/share/bash-completion/completions/sway-launch
+# System-wide: the redirect needs root too, so pipe through sudo tee rather than sudo sway-launch >
 sway-launch --completions bash | sudo tee /usr/share/bash-completion/completions/sway-launch
 ```
+
+## Quick start
+
+Run these from a terminal in your Sway session. The examples use `foot`, Sway's default terminal;
+any application works.
+
+**1. Launch a window.** `sway-launch` starts the command, waits until its window is open, and
+prints the window's container id:
+
+```console
+$ sway-launch foot
+271
+```
+
+**2. Do something with it.** Actions are flags, applied to the new window before `sway-launch`
+returns:
+
+```shell
+sway-launch --floating --width 800px --height 500px --position center foot
+```
+
+**3. Say which window you mean.** If an application might already be running, or several windows
+may open at once, tell `sway-launch` which one belongs to the launch with `-a` (a Wayland app_id)
+or `-c` (an X11 class). `--list-windows` shows the values your open windows have:
+
+```shell
+sway-launch -a foot foot
+sway-launch -c Code code
+sway-launch --list-windows
+```
+
+**4. Chain calls into a layout.** Each call returns only once its window is in place, so the next
+one can build on it. `--split h` makes the next window open beside this one, `--split v` below:
+
+```shell
+sway-launch -a foot --split h foot    # left
+sway-launch -a foot --split v foot    # right, top
+sway-launch -a foot foot              # right, bottom
+```
+
+**5. Act on a window that's already open.** `--existing` finds one instead of launching:
+
+```shell
+sway-launch --existing -a firefox --workspace 2 --focus
+```
+
+**6. Use a built-in template.** A template is a ready-made shape you fill with any applications.
+`--on-workspace` builds it on an empty workspace rather than around your terminal:
+
+```shell
+sway-launch --list-templates
+sway-launch --template quad-grid --apps foot,foot,foot,foot --on-workspace 9
+```
+
+**7. Write your own layout file.** The script from step 4 as a file, one `[[step]]` per call:
+
+```toml
+# my-layout.toml
+[[step]]
+command = "foot"
+app_id = "foot"
+split = "h"
+
+[[step]]
+command = "foot"
+app_id = "foot"
+split = "v"
+
+[[step]]
+command = "foot"
+app_id = "foot"
+```
+
+```shell
+sway-launch --layout my-layout.toml --validate     # check it without running anything
+sway-launch --layout my-layout.toml --dry-run      # print the Sway commands it would send
+sway-launch --layout my-layout.toml --on-workspace 3
+```
+
+**8. Capture a workspace you arranged by hand.** `--capture` writes the layout file that rebuilds
+it:
+
+```shell
+sway-launch --capture > workspace.toml
+```
+
+From here, the [Guide](#guide) covers each of these in depth, the
+[Actions reference](#actions-reference) every action, and `sway-launch --help` every flag.
+
+## Guide
+
+### Launching a command
+
+Quote a command that has arguments: `sway-launch 'firefox --new-window https://example.com'`. It
+runs as a shell command line, exactly as `swaymsg exec` would run it, so shell syntax works too:
+`'cd ~/project && foot'`.
+
+Sway's own command parser reads the command before the shell does, which has three consequences:
+
+- An unquoted `,` or `;` would end the `exec` and start a separate Sway command, so `sway-launch`
+  rejects one up front. Wrap the part containing it in quotes (`'foot -T "a,b"'`), escape it with a
+  backslash, or move the command into a script. This rules out an unquoted shell `;` too:
+  `'sh -c "if true; then foot; fi"'` works, a bare `if true; then foot; fi` doesn't.
+- A newline (or carriage return) is rejected anywhere in the command, even inside quotes, since
+  Sway turns it into a `;` before it looks at quotes at all. Put a multi-line command in a script.
+- Sway substitutes its own `set $name` variables (`$term`, `$mod`, ...) in the command before
+  running it.
+
+`sway-launch` also runs the command inside a `( ... )` group, which keeps the shell Sway starts
+alive above the program so the window can be recognised (see
+[How a launch finds its window](#how-a-launch-finds-its-window)). A shell comment (an unquoted `#`
+starting a word) would cut that group short, so it's rejected too. The same rules apply to a
+`command` in a layout or bindings file, where a NUL character is rejected along with a newline.
+
+**The command runs in Sway's working directory and environment, not yours.** `sway-launch` hands
+the command to Sway's `exec`, so the program is started by the compositor and inherits *Sway's*
+working directory (usually your home directory) and environment, not those of the shell or script
+that ran `sway-launch`:
+
+- A relative path resolves against Sway's directory, not the current one, including in a layout
+  or bindings file's `command`, where it isn't relative to the file either. `cd ~/project &&
+  sway-launch 'code .'` opens Sway's directory.
+- A variable you export before running `sway-launch` (an activated virtualenv's `PATH`,
+  `GDK_BACKEND`, anything set only in a shell rc file Sway never read) doesn't reach the program.
+- The program's own stdout and stderr go to Sway's log, not your terminal. A command that works in
+  your shell but can't start this way usually shows up as a timeout, with the program's own error
+  in Sway's log.
+
+`--cwd <DIR>` starts the command in a directory (`~` is your home directory; a relative path is
+relative to where you run `sway-launch`, and it must exist), and `--env KEY=VALUE` (repeatable)
+sets a variable for it. A layout step or binding takes the same as `cwd = "~/project"` and
+`env = { GDK_BACKEND = "x11" }`. Both apply only to a launched command, and a value can't contain a
+`$`, which Sway would replace with one of its config variables.
+
+```shell
+sway-launch --cwd ~/projects/website --env GDK_BACKEND=x11 -c Code 'code .'
+```
+
+### Matching the right window
+
+**Pass `-a`/`-c` whenever the application might already be running**, even when the call launches
+only one window. A browser or editor that's already open usually hands the request to the running
+copy, and the window it opens can't be traced back to this launch, so `sway-launch` falls back to
+the first new window that appears within a short grace period. Without a filter that can be any
+window (a notification, another application finishing its own start), and every action then lands
+on it. With `-a`/`-c` only the right application's window can match. The same goes for
+`app_id`/`class` in a layout step or a template binding. `--verbose` points it out when an
+unfiltered launch was matched that way.
+
+`--app-id` and `--class` can't be combined: a native Wayland application has an `app_id` and no
+`class`; one running under XWayland has a `class` and no `app_id`. Both compare the whole value
+exactly, case included, so `-a firefox` matches only `firefox`, not `firefox-esr`,
+`org.mozilla.firefox` or `Firefox`. That's unlike Sway's own `[app_id="..."]` criteria, which are
+regular expressions, so a value copied out of a Sway config may need adjusting.
+
+#### Finding a window's app_id or class
+
+The value an application reports isn't always its command name. Open the application, then run
+`sway-launch --list-windows`, which prints one row per open window, the scratchpad included:
+
+```console
+$ sway-launch --list-windows
+ID  APP_ID   CLASS  WORKSPACE     FLAGS     MARKS     TITLE
+4   foot     -      1             -         -         ~/projects
+7   firefox  -      2             focused   -         Sway — Mozilla Firefox
+9   -        Code   2             floating  editor    main.rs - sway-launch - Visual Studio Code
+12  foot     -      (scratchpad)  floating  dropdown  ~
+```
+
+A missing value prints as `-`, and a title longer than 50 characters is shortened. `--json` prints
+`{"windows": [...]}`, one object per row with the full title and each window's `output`,
+`scratchpad`, `floating`, `focused` and `split_container` fields (a missing value is `null`).
+`-a`/`-c`/`--mark-match`/`--title` narrow the list to the windows `--existing` would choose between,
+so `sway-launch --list-windows -a foot` shows what `sway-launch --existing -a foot` would act on. A
+split container carrying a mark is listed too, with the flag `split`, since `--mark-match` can
+select one. `swaymsg -t get_tree` shows the same values (`"app_id"`, and `"class"` under
+`"window_properties"`).
+
+The same application can report different values depending on how it was built, packaged or
+started:
+
+- VS Code runs under XWayland by default, with class `Code`; started as a native Wayland client
+  (`code --ozone-platform=wayland`) its app_id is `code` instead.
+- Chromium under XWayland has class `Chromium`; as a native Wayland client its app_id is `chromium`.
+- Firefox is `firefox`, but Debian's Firefox ESR is `firefox-esr`.
+- A Flatpak application usually uses its reverse-DNS id (`org.mozilla.firefox`).
+
+With the wrong value the window still opens, but `sway-launch` never sees a match and stops with a
+timeout that names the window it saw instead (see [Troubleshooting](#troubleshooting)).
+
+Some applications, typically XWayland ones, set their app_id or class only after their window has
+appeared, and Sway sends no event when it changes. A window the launched command itself opened is
+therefore not given up on when it first fails to match: `sway-launch` keeps rechecking it until it
+matches or `--timeout` runs out.
+
+#### Matching by title
+
+`--title <REGEX>` (`title` in a layout step or binding) also requires the window's title to match a
+regular expression. Like Sway's own `title=` criteria it's unanchored, so `--title project-a`
+matches `main.rs - project-a - Visual Studio Code`; use `^` and `$` to anchor it. It narrows
+`--app-id`/`--class` (or `--mark-match` with `--existing`), or works on its own:
+
+```shell
+# Several terminals share app_id foot; pick the one titled "logs"
+sway-launch --existing -a foot --title '^logs$' --fullscreen
+
+# An editor that shows a splash window first: wait for the project window instead
+sway-launch -c Code --title 'project-a' --width 60ppt 'code ~/projects/project-a'
+```
+
+For a launch, a window that opens with a different title doesn't end the wait, which is how a
+splash or welcome window is skipped. A window this run opened is checked again when its title
+changes, so one that starts as `Loading…` and later shows its project's title still matches. An
+older window that happens to change its title meanwhile never counts. On a timeout, the windows
+that were turned away are listed with their titles.
+
+The pattern syntax is the usual one (`.`, `*`, `[...]`, `(a|b)`, `(?i)` for case-insensitive);
+`\w`, `\d` and `(?i)` work on ASCII letters only. An invalid pattern is rejected before anything
+runs.
+
+### Acting on an open window
+
+Every action also works on a window that's already open, for adjusting a window from a later step
+in a script without relaunching it.
+
+By container id, for example one an earlier call printed:
+
+```shell
+container_id="$(sway-launch -a foot foot)"
+sway-launch --con-id "$container_id" --floating
+```
+
+With actions to apply, the id is looked up first, and a wrong one fails before anything is sent:
+`no window with container id N` for an id nothing has, or `container N is a workspace, not a
+window` (likewise for an output) for one copied from the wrong line of `swaymsg -t get_tree`. A
+bare `--con-id N` with no actions isn't looked up: it just prints the id back, without needing a
+Sway session.
+
+By app_id, class or title, with `--existing`:
+
+```shell
+sway-launch --existing -a foot --fullscreen
+```
+
+Or by a mark an earlier `--mark` (or `swaymsg mark`) set, the classic "dropdown terminal" pattern
+of a script finding its own window again without tracking a container id:
+
+```shell
+sway-launch --existing --mark-match dropdown-term --scratchpad
+```
+
+`--existing` needs one of `--app-id`, `--class` or `--mark-match` (pick one), or `--title`, which
+can also narrow any of them. The match is exact and case-sensitive, and must find exactly one
+window: several matches are an error, since `sway-launch` won't guess which one you meant. The same
+flags with `--list-windows` show the windows it would choose between. The search includes Sway's
+scratchpad, so if a visible and a hidden window share an app_id or mark, use `--con-id` instead.
+
+**Waiting for a window something else starts.** With `--wait`, `--existing` waits up to `--timeout`
+for a matching window to open instead of failing when there isn't one yet. That covers windows
+`sway-launch` doesn't start itself: an `exec` line in the Sway config, an autostart entry or systemd
+user unit, an app restoring its session, a launcher such as `fuzzel`:
+
+```shell
+# In the Sway config: start Firefox, and put its window on workspace 2 once it opens
+exec firefox
+exec sway-launch --existing --wait -a firefox --workspace 2
+```
+
+A window already open is used at once. Several matching windows are still an error, at once, since
+waiting can't tell them apart. In a layout step or a binding, write `wait = true` next to
+`existing = true`. A window found this way wasn't launched by the run, so `--rollback-on-error`
+never closes it.
+
+A mark (or a `--con-id`) can also name a split container holding several windows, which is what a
+`focus parent; mark <name>` binding marks. `--floating`, `--fullscreen`, `--scratchpad` and `--mark`
+work on one, but `--workspace`, `--output` and `--focus` are refused with an error: Sway reports
+those moves only for a single window, so `sway-launch` couldn't confirm them. Target one of the
+windows inside, or use `swaymsg` directly for the container.
+
+### Scripts
+
+Since every call blocks until its window is in place, a shell script of `sway-launch` calls builds
+the same layout every time: workspace 1 set up the same way when Sway starts, or an editor with
+three terminals arranged around it from a launch script. The printed container id also lets you
+combine `sway-launch` with your own `swaymsg` commands:
+
+```shell
+#!/bin/sh
+container_id="$(sway-launch -a foot foot)"
+swaymsg "[con_id=$container_id] move workspace 1"
+```
+
+**Run calls one after another rather than backgrounding them with `&`.** Two `sway-launch`
+processes launching ordinary applications at the same time don't take each other's windows, since
+each recognises the window its own command opened. But that can't work for a single-instance
+application that's already running (see [Matching the right window](#matching-the-right-window)),
+so two concurrent calls both starting one can still collide. Chaining calls sequentially is always
+reliable. A layout file's `--concurrent` (see [Running layouts](#running-layouts)) launches in
+parallel safely.
+
+Not every layout can be built from the window's own actions: it depends on the layout and on the
+workspace's current state. Most gaps can be filled with the container id and a few `swaymsg`
+commands, or by focusing an earlier window between launches.
+
+Runnable example scripts live in [`examples/scripts/`](examples/scripts/), each a small standalone
+script built out of `sway-launch` calls; run one directly to see the layout it builds. The advanced
+ones also need Firefox, Chromium, Thunar and VS Code (`code`) on `PATH`, and match each by the value
+it reports on a typical setup (VS Code by class `Code`, the others by app_id); if one times out on
+your system, check its real value with `--list-windows` and edit the script to match.
+
+Basic (all `foot`):
+
+- [`dual-terminals`](examples/scripts/dual-terminals): two terminals side by side, one row.
+- [`triple-row`](examples/scripts/triple-row): three terminals side by side, one row.
+- [`column-split`](examples/scripts/column-split): two terminals stacked in one column.
+- [`quad-terminals`](examples/scripts/quad-terminals): four terminals as a 2x2 grid, two rows.
+- [`workspace-and-position`](examples/scripts/workspace-and-position): a floating terminal moved
+  to workspace 2 and centered.
+- [`retarget-floating`](examples/scripts/retarget-floating): a terminal adjusted twice after
+  launch, once by `--con-id` with its container id and once by `--existing` matching `--app-id`.
+
+Advanced (several applications):
+
+- [`dev-workspace`](examples/scripts/dev-workspace): VS Code taking most of the width, with two
+  terminals stacked beside it; `--class`/`--app-id`, `--split` and `--width`.
+- [`floating-file-manager`](examples/scripts/floating-file-manager): Thunar as a floating,
+  fixed-size window with a mark, ready for a `for_window` rule (see [Mark](#mark)).
+- [`browser-comparison`](examples/scripts/browser-comparison): Firefox and Chromium side by side on
+  the same page.
+- [`quad-mixed-apps`](examples/scripts/quad-mixed-apps): a 2x2 grid of foot, Firefox, Thunar and VS
+  Code.
+- [`editor-with-floating-terminal`](examples/scripts/editor-with-floating-terminal): VS Code
+  full-width, with a small floating terminal on top.
+
+### Layout files
+
+`--layout <FILE>` runs a whole layout from one TOML file and one invocation. Each `[[step]]` is the
+equivalent of one call's flags, run in order, stopping at the first error:
+
+```toml
+[[step]]
+command = "foot"
+app_id = "foot"
+split = "h"
+
+[[step]]
+command = "foot"
+app_id = "foot"
+```
+
+```shell
+sway-launch --layout layout.toml
+```
+
+> [!WARNING]
+> A layout file's `command` fields are executed. Running someone else's layout file is exactly as
+> dangerous as running their shell script, so read it first. The same applies to a `--bindings`
+> file (see [Templates](#templates)). Template files themselves are safe: they contain no commands
+> at all, which is what makes them shareable on their own.
+
+A step's keys mirror the CLI flags of the same name: `cwd`, `env`, `app_id`, `class`,
+`mark_match`, `title`, `con_id`, `existing`, `wait`, `split`, `floating`, `sticky`, `fullscreen`,
+`focus`, `mark`, `new_column`, `new_row`, `workspace`, `workspace_number`, `output`, `height`,
+`width`, `position`, `settle`, `scratchpad`, `timeout`, `wait_time`, and `sway_commands` (a list,
+one `--sway-command` per entry). Each is validated the same way as its flag, and a step without its
+own `timeout`/`wait_time` takes the command line's `--timeout`/`--wait-time`. A step's `command` is
+checked against the same Sway-parsing rules as the command line's (see
+[Launching a command](#launching-a-command)), so `--validate` catches an unquoted `,`/`;` or an
+embedded newline before anything launches.
+
+Exactly one of `command`, `con_id`, `existing = true` or `target_id` is required per step, and only
+one of `app_id`, `class` and `mark_match`, as on the command line. Two keys exist only in files:
+
+- `id` names a step, so a later step can act on its window again through `target_id`. That's
+  useful when several steps share an `app_id`, where `existing = true` would be ambiguous. See
+  [`examples/layouts/retarget-by-id.toml`](examples/layouts/retarget-by-id.toml).
+- `target_id` targets an earlier step's window by that name, instead of
+  `command`/`con_id`/`existing`. It's an error if the named `id` doesn't exist or was used by more
+  than one step. Like `con_id`, it can't be combined with `app_id`/`class`/`mark_match`, since it
+  already names an exact window.
+
+`command` can also be a list of words, the safest form for a generated file:
+
+```toml
+[[step]]
+command = ["foot", "-T", "notes, todo; misc"]
+app_id = "foot"
+```
+
+Each word reaches the program exactly as written: `sway-launch` quotes it for Sway and the shell, so
+commas, semicolons, quotes, spaces and backslashes inside a word need no escaping. The first word is
+the program, with no shell features (`&&`, `~`, `*`). A `$` is refused, since Sway replaces `$name`
+with one of its config variables before the shell runs, even inside quotes; so is a newline. Use the
+string form, or a script, for anything that needs the shell. A binding's `command` takes the same
+two forms.
+
+`-` in place of a file name reads it from stdin, so a script that generates a layout can pipe it
+in. The same works for `--template` and `--bindings`, one of them per run; errors and `--validate`
+then name the source `<stdin>`:
+
+```shell
+generate-my-layout | sway-launch --layout -
+generate-my-bindings | sway-launch --template quad-grid --bindings -
+```
+
+The per-window flags (`--split`, `--floating`, ...) can't be combined with `--layout`, since it
+would be unclear which step they applied to. `--timeout`, `--wait-time`, `--verbose` and `--json`
+still apply, `--json` printing one object at the end (see [JSON output](#json-output)). Examples
+are in [`examples/layouts/`](examples/layouts/): [`quad-terminals.toml`](examples/layouts/quad-terminals.toml)
+is the `quad-terminals` script as a file.
+
+### Templates
+
+A layout file names an application in every step. A template separates the two: its steps describe
+the shape, and each `slot` names a window that you fill when you run it, from a list of commands
+(`--apps`) or a bindings file (`--bindings`). The same template can build the same shape around
+any applications.
+
+```toml
+[template]
+description = "An editor beside a terminal."
+category = "Grid"
+
+[[step]]
+slot = "editor"
+split = "h"
+
+[[step]]
+slot = "terminal"
+```
+
+Since a template names no commands, it can't run anything on its own: it's safe to share, and the
+commands stay in the `--apps` list or bindings file you supply.
+
+Fill it from a list of commands, in the order the template's slots appear:
+
+```shell
+sway-launch --template template.toml --apps code,foot
+```
+
+`--apps` splits on plain commas, with no escaping, and trims each entry, so a command that itself
+contains a comma needs `--bindings` instead. A bindings file gives each slot its own entry,
+including matching an already-open window instead of launching one:
+
+```toml
+[[binding]]
+slot = "editor"
+command = "code"
+class = "Code"
+
+[[binding]]
+slot = "terminal"
+existing = true
+app_id = "foot"
+```
+
+```shell
+sway-launch --template template.toml --bindings bindings.toml
+```
+
+A binding takes the keys that choose a window, as a layout step does (`command`, `con_id`,
+`existing`, `wait`, `app_id`, `class`, `mark_match`, `title`, with exactly one of
+`command`/`con_id`/`existing = true`), plus the launch's `cwd` and `env`. It can also replace the
+step's `workspace`/`workspace_number`/`output` (where the window goes), `timeout`/`wait_time` (so
+the slot a slow application fills can wait longer than the rest) and `settle` (so the slot a browser
+fills can hold its size, see [Settle](#settle)).
+
+A template step takes the same action keys a layout step has. Its window comes from `slot`, or from
+`target_id`, which acts again on an earlier slot's window (a slot's name is its step's `id`). Each
+slot name may appear on only one step. Every template file needs a `[template]` table with a
+one-sentence `description` and a `category` (`Grid`, `Master/stack`, `Sidebar`, `Floating`,
+`Multi-workspace/output`, `Retargeting`, or a new one).
+
+**Where it's built.** A template's shape is built wherever focus is when it runs, and assumes that
+workspace is empty. Run from a terminal, the terminal is on that workspace, so the shape is built
+around it: `sway-launch` warns when the workspace already holds tiled windows (on stderr, and as a
+`"warnings"` list under `--json`) but still runs. To build somewhere specific, pass
+`--on-workspace <WORKSPACE>` (or `--on-workspace-number <N>`, see [Workspace](#workspace)) and
+`--on-output <OUTPUT>`, which work for `--layout` files too, or declare it in the template:
+
+```toml
+[layout]
+workspace = "3"
+output = "HDMI-A-1"
+```
+
+The run switches to that workspace before the first step, focusing the output first so a new
+workspace is created there, and builds the whole shape in place. The command-line options win over
+the table. A step's own `workspace`/`output` still moves that one window afterwards. A binding's
+`workspace`/`workspace_number`/`output` replaces the step's, so a built-in that places windows on
+fixed workspaces or outputs works on your setup without copying the file:
+
+```toml
+# sway-launch --template dual-output --bindings outputs.toml
+[[binding]]
+slot = "first"
+command = "foot"
+output = "eDP-1"
+
+[[binding]]
+slot = "second"
+command = "firefox"
+output = "HDMI-A-2"
+```
+
+A binding can't give a `workspace` to a slot whose step uses `new_column`/`new_row`, for the same
+reason a step can't (see [New column](#new-column)); use `--on-workspace` to build the whole
+template elsewhere instead.
+
+**Params.** A template can leave its sizes to the caller with a `[params]` table: each entry names a
+value and gives its default, and a step's `height`, `width` or `position` refers to one by writing
+its name in braces as the whole value:
+
+```toml
+[params]
+stack-width = "35ppt"
+
+[[step]]
+slot = "stack-top"
+width = "{stack-width}"
+```
+
+`--param NAME=VALUE` (repeatable) overrides a default for one run, and so does a `[params]` table
+in a bindings file, with `--param` winning over both:
+
+```shell
+sway-launch --template master-dual-stack --apps code,foot,foot --param stack-width=40ppt
+```
+
+A value is a plain substitution: there are no expressions, and a param can't stand for part of a
+value. An unknown name, or a value a field using it can't take, is an error before anything runs.
+
+#### Built-in templates
+
+Every file in [`templates/`](templates/) is built into the binary. `--template <name>`, with no
+`.toml`, uses the built-in of that name, so nothing needs downloading; a value ending in `.toml` is
+always a file on disk, so the two never collide. `--list-templates` prints each built-in's name,
+category, description, slots in `--apps` order, and params with their defaults; `--json` gives the
+same as `slots`, `slot_names` and `params`, so a script can fill `--apps` without reading the
+TOML:
+
+```console
+$ sway-launch --list-templates
+...
+quad-grid                   Grid                    An equally sized 2x2 grid, two rows of two, with no application baked in. (4 slots: top-left, top-right, bottom-left, bottom-right)
+...
+```
+
+`--show-template <NAME|FILE>` prints a template's TOML without running it (`--json` gives
+`{"name": ..., "contents": ...}`), and each file's header comment has a ready-to-run `--apps`
+example. Every shape with a size has params.
+
+Each screenshot is a real `--template` run on a live Sway, with every slot labelled by name
+(generated by `scripts/generate-layout-screenshots`).
+
+| Preview | Category | Template | Shape | Slots |
+| --- | --- | --- | --- | --- |
+| [<img src="screenshots/dual-row.png" width="120" alt="dual-row template layout">](screenshots/dual-row.png) | Grid | [`dual-row`](templates/dual-row.toml) | Two windows side by side, one row | 2 |
+| [<img src="screenshots/dual-column.png" width="120" alt="dual-column template layout">](screenshots/dual-column.png) | Grid | [`dual-column`](templates/dual-column.toml) | Two windows stacked, one column | 2 |
+| [<img src="screenshots/triple-row.png" width="120" alt="triple-row template layout">](screenshots/triple-row.png) | Grid | [`triple-row`](templates/triple-row.toml) | Three windows side by side, one row | 3 |
+| [<img src="screenshots/triple-column.png" width="120" alt="triple-column template layout">](screenshots/triple-column.png) | Grid | [`triple-column`](templates/triple-column.toml) | Three windows stacked, one column | 3 |
+| [<img src="screenshots/quad-grid.png" width="120" alt="quad-grid template layout">](screenshots/quad-grid.png) | Grid | [`quad-grid`](templates/quad-grid.toml) | Equal 2×2 grid | 4 |
+| [<img src="screenshots/six-grid.png" width="120" alt="six-grid template layout">](screenshots/six-grid.png) | Grid | [`six-grid`](templates/six-grid.toml) | Equal grid, two rows of three | 6 |
+| [<img src="screenshots/eight-grid.png" width="120" alt="eight-grid template layout">](screenshots/eight-grid.png) | Grid | [`eight-grid`](templates/eight-grid.toml) | Equal grid, two rows of four | 8 |
+| [<img src="screenshots/nine-grid.png" width="120" alt="nine-grid template layout">](screenshots/nine-grid.png) | Grid | [`nine-grid`](templates/nine-grid.toml) | Equal 3×3 grid | 9 |
+| [<img src="screenshots/six-grid-vertical.png" width="120" alt="six-grid-vertical template layout">](screenshots/six-grid-vertical.png) | Grid | [`six-grid-vertical`](templates/six-grid-vertical.toml) | Equal grid, three rows of two — six-grid.toml rotated | 6 |
+| [<img src="screenshots/eight-grid-vertical.png" width="120" alt="eight-grid-vertical template layout">](screenshots/eight-grid-vertical.png) | Grid | [`eight-grid-vertical`](templates/eight-grid-vertical.toml) | Equal grid, four rows of two — eight-grid.toml rotated | 8 |
+| [<img src="screenshots/master-dual-stack.png" width="120" alt="master-dual-stack template layout">](screenshots/master-dual-stack.png) | Master/stack | [`master-dual-stack`](templates/master-dual-stack.toml) | One main window, a 2-window stack beside it | 3 |
+| [<img src="screenshots/master-triple-stack.png" width="120" alt="master-triple-stack template layout">](screenshots/master-triple-stack.png) | Master/stack | [`master-triple-stack`](templates/master-triple-stack.toml) | One main window, a 3-window stack beside it | 4 |
+| [<img src="screenshots/master-dual-stack-left.png" width="120" alt="master-dual-stack-left template layout">](screenshots/master-dual-stack-left.png) | Master/stack | [`master-dual-stack-left`](templates/master-dual-stack-left.toml) | A 2-window stack, one main window beside it — master-dual-stack.toml mirrored | 3 |
+| [<img src="screenshots/master-triple-stack-left.png" width="120" alt="master-triple-stack-left template layout">](screenshots/master-triple-stack-left.png) | Master/stack | [`master-triple-stack-left`](templates/master-triple-stack-left.toml) | A 3-window stack, one main window beside it — master-triple-stack.toml mirrored | 4 |
+| [<img src="screenshots/dual-sidebars.png" width="120" alt="dual-sidebars template layout">](screenshots/dual-sidebars.png) | Master/stack | [`dual-sidebars`](templates/dual-sidebars.toml) | One main window, a single narrow sidebar flanking each side | 3 |
+| [<img src="screenshots/dual-stack-sidebars.png" width="120" alt="dual-stack-sidebars template layout">](screenshots/dual-stack-sidebars.png) | Master/stack | [`dual-stack-sidebars`](templates/dual-stack-sidebars.toml) | One main window, a 2-window stack flanking each side | 5 |
+| [<img src="screenshots/master-dual-stack-bottom.png" width="120" alt="master-dual-stack-bottom template layout">](screenshots/master-dual-stack-bottom.png) | Master/stack | [`master-dual-stack-bottom`](templates/master-dual-stack-bottom.toml) | One main window on top, a 2-window stack split below it | 3 |
+| [<img src="screenshots/master-triple-stack-bottom.png" width="120" alt="master-triple-stack-bottom template layout">](screenshots/master-triple-stack-bottom.png) | Master/stack | [`master-triple-stack-bottom`](templates/master-triple-stack-bottom.toml) | One main window on top, a 3-window stack split below it | 4 |
+| [<img src="screenshots/master-dual-stack-top.png" width="120" alt="master-dual-stack-top template layout">](screenshots/master-dual-stack-top.png) | Master/stack | [`master-dual-stack-top`](templates/master-dual-stack-top.toml) | A 2-window stack on top, one main window below it — master-dual-stack-left.toml rotated | 3 |
+| [<img src="screenshots/master-triple-stack-top.png" width="120" alt="master-triple-stack-top template layout">](screenshots/master-triple-stack-top.png) | Master/stack | [`master-triple-stack-top`](templates/master-triple-stack-top.toml) | A 3-window stack on top, one main window below it — master-triple-stack-left.toml rotated | 4 |
+| [<img src="screenshots/sidebar-left.png" width="120" alt="sidebar-left template layout">](screenshots/sidebar-left.png) | Sidebar | [`sidebar-left`](templates/sidebar-left.toml) | Narrow sidebar on the left, wide main window on the right | 2 |
+| [<img src="screenshots/sidebar-right.png" width="120" alt="sidebar-right template layout">](screenshots/sidebar-right.png) | Sidebar | [`sidebar-right`](templates/sidebar-right.toml) | Wide main window on the left, narrow sidebar on the right | 2 |
+| [<img src="screenshots/sidebar-top.png" width="120" alt="sidebar-top template layout">](screenshots/sidebar-top.png) | Sidebar | [`sidebar-top`](templates/sidebar-top.toml) | Narrow bar across the top, wide main window below | 2 |
+| [<img src="screenshots/sidebar-bottom.png" width="120" alt="sidebar-bottom template layout">](screenshots/sidebar-bottom.png) | Sidebar | [`sidebar-bottom`](templates/sidebar-bottom.toml) | Wide main window on top, narrow bar across the bottom | 2 |
+| [<img src="screenshots/sidebar-left-dual-stack.png" width="120" alt="sidebar-left-dual-stack template layout">](screenshots/sidebar-left-dual-stack.png) | Sidebar | [`sidebar-left-dual-stack`](templates/sidebar-left-dual-stack.toml) | Sidebar on the left split into two windows (75%/25% height), wide main window on the right | 3 |
+| [<img src="screenshots/sidebar-right-dual-stack.png" width="120" alt="sidebar-right-dual-stack template layout">](screenshots/sidebar-right-dual-stack.png) | Sidebar | [`sidebar-right-dual-stack`](templates/sidebar-right-dual-stack.toml) | Wide main window on the left, sidebar on the right split into two windows (75%/25% height) | 3 |
+| [<img src="screenshots/floating-overlay.png" width="120" alt="floating-overlay template layout">](screenshots/floating-overlay.png) | Floating | [`floating-overlay`](templates/floating-overlay.toml) | A tiled main window, with a small floating window on top | 2 |
+| [<img src="screenshots/floating-centered.png" width="120" alt="floating-centered template layout">](screenshots/floating-centered.png) | Floating | [`floating-centered`](templates/floating-centered.toml) | A single floating window, centered | 1 |
+| — | Multi-workspace/output | [`workspace-spread`](templates/workspace-spread.toml) | Each window moved to its own named workspace | 3 |
+| — | Multi-workspace/output | [`dual-output`](templates/dual-output.toml) | Each window moved to a different output (monitor) | 2 |
+| [<img src="screenshots/retarget-by-slot.png" width="120" alt="retarget-by-slot template layout">](screenshots/retarget-by-slot.png) | Retargeting | [`retarget-by-slot`](templates/retarget-by-slot.toml) | Two windows side by side, then the first one retargeted by slot name | 2 |
+
+`workspace-spread` and `dual-output` have no screenshot, since a single-output screenshot can't
+show either.
+
+### Capturing a workspace
+
+Arrange a workspace by hand once, then let `sway-launch` write the layout file that rebuilds it:
+
+```shell
+sway-launch --capture > my-workspace.toml        # the focused workspace
+sway-launch --capture 3 > three.toml             # workspace "3"
+sway-launch --layout my-workspace.toml --on-workspace 4
+```
+
+The file opens each window where it has to open to rebuild the same splits, then sets the sizes,
+and finishes with the floating windows' size and position. Marks, sticky and fullscreen are kept
+too. It can't know how a window was started, so each step's `command` is a guess from the window's
+app_id (or its class, lowercased): check and edit the commands before running the file. Each step
+carries a comment with the window's title, to help tell them apart. Every built-in template
+rebuilds its exact shape from its own capture.
+
+Two things can't be captured exactly. Tabbed and stacked containers aren't supported, and
+`--capture` refuses a workspace holding one. And some uneven sizes come out approximate, since Sway
+shares each resize with a window's siblings, and Sway 1.12 shares it differently from older
+versions: two windows, three whose outer two are the same size, and even splits are exact on every
+version; any other three are exact on Sway 1.9 to 1.11; four or more uneven ones are approximate.
+The file says so in a note at the top when it applies.
+
+### Running layouts
+
+These apply to `--layout` and `--template` runs.
+
+**Faster: `--concurrent`.** A layout normally starts each application once the previous step's
+window is in place, so it takes as long as all of its applications' startups added together.
+`--concurrent` starts them all at once on a workspace of their own (`sway-launch-staging-<pid>`),
+then moves each window to the build workspace in step order and applies its step's actions there,
+so it lands exactly where it would have opened. A four-window grid of applications taking about a
+second each to start drops from about 4 seconds to just over 1. The whole file is checked before
+anything starts, and a failure never leaves a window on the staging workspace. Focus visibly jumps
+to the staging workspace while the applications start. A single-instance application can't be
+told apart this way: when two steps' launches end up with the same window, the run fails, so run
+such layouts without `--concurrent`.
+
+**Slow applications: `--continue-on-timeout`.** By default a step whose window doesn't appear within
+its `timeout` stops the run, so one slow application at the start leaves every later one unopened.
+A binding's `timeout` gives just that slot longer. `--continue-on-timeout` instead reports the step
+and carries on; a later step that targets the missing window (`target_id`) is skipped too. The run
+still exits non-zero, so a calling script knows the layout is incomplete. Each such step gets a
+warning on stderr, and `--json` lists them under `timed_out_steps` (`step`, `error`, and any
+`unmatched_windows`) and `skipped_steps` (`step`, `target_id`). Plain output prints a container id
+only for each step that has one, so match steps to windows with `--json`'s `containers` when steps
+may be missing. Only a missing window counts: a step that fails any other way still stops the run.
+
+**Clean up on failure: `--rollback-on-error`.** A failed run leaves whatever earlier steps launched
+open, and the failing step's own window too when it launched one and then failed on an action.
+`--rollback-on-error` closes them instead:
+
+```shell
+sway-launch --layout layout.toml --rollback-on-error
+```
+
+Only windows this run launched itself are closed, most recent first. A window a step retargeted
+(`con_id`, `existing`, `target_id`) existed before the run and is left alone, and so is a window the
+run matched but couldn't prove it launched (see
+[How a launch finds its window](#how-a-launch-finds-its-window)); both are still reported as open
+container ids. This undoes launches, not actions: a move, resize or mark an earlier step applied to
+a retargeted window stays applied.
+
+Closing a window asks its application to close, and the application decides: an editor with unsaved
+changes can keep its window open. So rollback waits up to a second for each window to actually go,
+and only counts the ones that did. A window still open after that, or whose close request failed
+(usually because it had already closed), is reported with a warning and skipped, and the original
+step failure stays the error that's reported. If the compositor stops answering, the remaining
+windows are reported as unconfirmed at once rather than each waiting out the same timeout. With
+`--json`, the error object lists what was closed and what couldn't be confirmed closed:
+`"rolled_back": [123, 456], "rollback_failed": [789]` (see [JSON output](#json-output)). A launch
+that times out keeps watching up to 2 more seconds for its window under `--rollback-on-error`, and
+rolls that one back too rather than leaving it to appear after the run has failed.
+
+**Interrupting a run.** Ctrl-C (SIGINT) or SIGTERM (a `timeout(1)` wrapper, a stopped service) ends
+a run within a moment as a failure of the step it was on, so `--rollback-on-error` closes what the
+run launched and `--json` reports its partial progress. The run exits 130 or 143. A second signal
+exits at once, skipping the cleanup.
+
+**Focus moving away.** A step whose application is still starting when focus moves to another
+workspace (a keybinding, a notification click, another script) fails, naming both workspaces:
+every later step would otherwise open on the other workspace and split the layout in two.
+
+**One run at a time.** A run takes a lock on its file (or built-in template name) and the workspace
+it builds on, so a second run of the same layout on the same workspace (a key pressed twice, a login
+script still running when you start it by hand) stops at once with `another run of this layout on
+workspace "3" is still in progress`, instead of interleaving its windows with the first run's.
+Different layouts, or the same one on different workspaces, run side by side. The lock lives under
+`$XDG_RUNTIME_DIR/sway-launch/` and is released when the run ends, even if it crashes. `--no-lock`
+runs anyway.
+
+## Actions reference
+
+Actions apply to the window a call launched or found. They run in a fixed order: the moves
+(`--new-column`, `--new-row`, `--workspace`, `--output`) first, one at a time, since each changes
+where the window is before the next is judged; then `--split`, `--floating`, `--sticky`,
+`--fullscreen`, `--focus`, `--height`, `--width`, `--position`, `--mark` and each `--sway-command`,
+sent to Sway together as one command (`[con_id=N] floating enable, resize set width 700px, ...`), so
+the window takes them all at once instead of visibly floating, then resizing, then jumping into
+place; and `--scratchpad` last. Each action is still confirmed and reported on its own, and one
+whose state already holds is left out of the command and reported `already_satisfied`.
+
+An action is confirmed by the Sway event it causes together with the window's new state, or, for
+actions Sway sends no event for, by checking the window's state shortly after the command (see
+[Timing](#timing-timeout-and-wait-time)). These flags are a convenience: you could equally take the
+container id and run `swaymsg` commands, or set up window rules with a mark.
+
+### Floating
+
+Makes the window floating.
+
+```shell
+sway-launch --floating 'firefox --new-window https://example.com'
+```
+
+### Sticky
+
+Makes the window sticky: a floating sticky window shows on the current output across every
+workspace, instead of just the one it was launched on. Sticky only takes effect while the window is
+floating, so pair it with `--floating`. On a tiled window Sway just records the flag, and it applies
+if the window is floated later.
+
+```shell
+sway-launch --floating --sticky foot
+```
+
+### Fullscreen
+
+Makes the window fullscreen.
+
+```shell
+sway-launch --fullscreen foot
+```
+
+### Focus
+
+Focuses the window, for when a later step would otherwise leave a different window focused, such
+as a layout that ends by launching a background application.
+
+```shell
+sway-launch --focus foot
+```
+
+### Mark
+
+Marks the window, for Sway rules or keybindings that act on it by mark, or for finding it again
+with `--existing --mark-match`:
+
+```shell
+# sway config
+for_window [con_mark="firefox-floating-left"] resize set 1100 px 90 ppt, move position 20 20
+```
+
+```shell
+sway-launch --mark firefox-floating-left 'firefox --new-window https://example.com'
+```
+
+`--mark` uses Sway's plain `mark` command, so it **replaces** rather than adds, in two ways:
+
+- the new mark becomes the window's **only** mark, and any marks it already carried are removed;
+- a mark is unique across windows, so if **another window** already holds it, that window loses it.
+
+So `sway-launch --existing --mark-match dropdown-term --mark pinned` leaves the window marked
+`pinned` and no longer `dropdown-term`, and a later `--mark-match dropdown-term` finds nothing. To
+add a mark instead, use `swaymsg '[con_id=<id>] mark --add <name>'`.
+
+A mark may contain spaces, tabs and Sway's own command separators (`,`, `;`), which are quoted and
+stored literally. A few characters are rejected up front, because Sway doesn't store them as given
+and the mark could never be found again:
+
+- a **double quote** or a **backslash**, stored with the escape character still attached;
+- a **newline**, rewritten to `;` when stored;
+- a **dollar sign**, since Sway replaces `$name` with the matching `set $name ...` variable from its
+  config, even inside quotes.
+
+Every other control character is rejected too, even though Sway would store it: a name is printed
+later by status bars and `swaymsg`, and a shared template shouldn't be able to plant a terminal
+escape sequence there. The same rules apply to `--mark-match`, `--workspace` and `--output`.
+
+### Scratchpad
+
+Moves the window to Sway's scratchpad, hidden until shown again (`swaymsg scratchpad show`, or a
+keybinding matching a mark). It runs after every other action, so one call can build a
+fully-configured window and then hide it away, the classic dropdown terminal:
+
+```shell
+sway-launch --floating --width 500px --height 400px --mark dropdown-term --scratchpad foot
+```
+
+A window already in the scratchpad is left there and reported `already_satisfied`.
+
+### Sway command
+
+Sends a Sway command of your own to the window, for a property no flag sets: borders, opacity, a
+title format, a tabbed parent. Each `--sway-command` is sent as `[con_id=N] <command>` along with
+the other actions, after `--mark` and before `--scratchpad`, in the order given. It's an escape
+hatch: `sway-launch` can't tell what an arbitrary command was meant to do, so its effect is reported
+`unconfirmed` under [`--json`](#json-output), and only Sway refusing it fails the run.
+
+```shell
+sway-launch --floating --width 900px --height 500px --sway-command 'border none' \
+  --sway-command 'opacity 0.9' foot
+```
+
+A layout or template step takes a list: `sway_commands = ["border none", "opacity 0.9"]`.
+
+Sway runs any command given window criteria, including ones that act on the whole session
+(`exec`, `reload`, `bindsym`, even `exit`), and a layout or template file may come from someone
+else. So a command must start with one that acts on one window: `allow_tearing`, `border`,
+`floating`, `focus`, `fullscreen`, `inhibit_idle`, `layout`, `mark`, `max_render_time`, `move`,
+`opacity`, `resize`, `scratchpad`, `shortcuts_inhibitor`, `split`/`splith`/`splitv`/`splitt`,
+`sticky`, `swap`, `title_format`, `unmark` or `urgent`. Each entry is one command: an unquoted `,`
+or `;`, a newline, and a leading `[` (the criteria are `sway-launch`'s to add) are refused, and so
+is a `$`, which Sway would replace with a variable from your own config.
+
+### Height and width
+
+Sets the window's height and width, tiled or floating: `<n>px`, or `<n>ppt` for a percentage. A
+pixel value must be at least 1 and a percentage 1-100; `0` and percentages over 100 are rejected,
+since Sway would ignore or clamp them.
+
+```shell
+sway-launch --floating --width 1200px --height 80ppt foot
+```
+
+A tiled window that's alone on its workspace can't be resized, so size the second window of a
+split rather than the first. A pixel size is confirmed against the window's new size; a `ppt` one
+has no pixel figure to check against, so it's reported `unconfirmed` after the
+[wait time](#timing-timeout-and-wait-time).
+
+### Position
+
+Moves a floating window to `center` or to `<x>,<y>` in pixels. A tiled window's position comes from
+the layout, and Sway refuses the command for one, so pair this with `--floating`. Coordinates are
+relative to the window's workspace, as Sway's own `move position` is: the workspace starts below or
+beside a bar and inside any outer gaps, so `0,0` is its top-left corner, not the output's. `<x>` and
+`<y>` may be negative. To place a window on another monitor, combine `--output` with `--position`.
+
+```shell
+sway-launch --floating --position center foot
+sway-launch --floating --position 100,200 foot
+sway-launch --floating --output HDMI-A-1 --position 100,200 foot
+```
+
+### Settle
+
+Some applications, browsers especially, set their own window size in the first fraction of a second
+after opening, often just after `sway-launch` applied and confirmed the requested one. Without help,
+such a window ends up a different size from one run to the next while every action reports
+`changed`. `--settle <MS>` keeps holding the pixel `--height`/`--width` and `--position` for that
+many milliseconds after they're confirmed, applying them again if the application undoes them:
+
+```shell
+sway-launch -a firefox --floating --width 1100px --height 800px --position 20,20 --settle 500 \
+  'firefox --new-window'
+```
+
+Each re-apply starts the hold over; after three, the application is left to have its way and what
+it changed is reported `unconfirmed` rather than failing the run. A `ppt` size can't be held, so
+`--settle` needs a pixel size or a position. It takes 1 to 60000 ms, and a run with it takes at
+least that long, so use it only for applications that need it. In a template, a binding's `settle`
+replaces the step's, since the binding knows which slot is a browser.
+
+### Split
+
+Sets the split for what opens next to the window: `h` makes the next window open beside it, `v`
+below it.
+
+```shell
+sway-launch -a foot --split h foot
+sway-launch -a foot foot
+```
+
+### New column
+
+Moves the window right, into a new column beside its current one (`move right`):
+
+```shell
+sway-launch -a foot foot
+sway-launch -a foot --new-column foot
+```
+
+A move is skipped, not sent, when it wouldn't make a new column, and reported `skipped` with a
+`reason` under [`--json`](#json-output) (and a line under `--verbose`):
+
+- `floating`: Sway only nudges a floating window 10 px for `move right`.
+- `trailing_workspace_edge` (with several outputs): Sway would move the window onto the next output
+  instead. That happens when the window is already the rightmost child of a horizontal (or tabbed)
+  workspace, or the only window inside a container at that edge, which includes a lone window
+  you've made tabbed and every first window when your config sets `workspace_layout tabbed` or
+  `stacking`.
+- `fullscreen` (with several outputs): Sway sends a fullscreen window's `move right` straight to
+  the next output.
+
+With a single output, only `floating` applies. The check runs right before the move is sent, so
+`--new-column --new-row` judges the row move after the column move has happened.
+
+`--new-column` and `--new-row` can't be combined with `--workspace`/`--workspace-number` (in a layout
+step either): the move would apply on the workspace the window opened on, and the workspace move
+would then drop it into the target as an ordinary new window. Build on the target workspace instead,
+with `--on-workspace` or a template's `[layout]` table.
+
+### New row
+
+Moves the window down, into a new row beneath its current one (`move down`):
+
+```shell
+sway-launch -a foot foot
+sway-launch -a foot --new-row foot
+```
+
+It's skipped in the same cases as [New column](#new-column), along the vertical axis (where a
+stacked layout counts as vertical, the way tabbed counts as horizontal).
+
+### Workspace
+
+Moves the window to a workspace:
+
+```shell
+sway-launch --workspace 2 foot
+```
+
+The name is matched the way Sway matches it, ignoring case, so `--workspace web` joins an existing
+`Web`. Sway's own keywords (`next`, `prev`, `next_on_output`, `prev_on_output`, `current`,
+`back_and_forth`, in any case, and `number` and `to` on their own) are rejected, because Sway acts
+on them even when quoted.
+
+If your workspaces are named `<number>: <label>` (`1: term`, `2: web`) and your keybindings use
+`workspace number N`, use `--workspace-number` (`workspace_number` in a file). It finds the
+workspace the way Sway does, by the number its name starts with, so `--workspace-number 2` joins
+`2: web`, where `--workspace 2` would create a separate workspace named `2`. With no workspace
+numbered 2 yet, Sway creates one named `2`.
+
+```shell
+sway-launch --workspace-number 2 firefox
+```
+
+For the keyword forms, use the container id with `swaymsg`:
+
+```shell
+container_id="$(sway-launch foot)"
+swaymsg "[con_id=$container_id] move container to workspace next"
+```
+
+### Output
+
+Moves the window to an output (monitor):
+
+```shell
+sway-launch --output HDMI-A-1 foot
+```
+
+As with Sway's own `move container to output`, the window lands on the workspace that output is
+showing, which brings into view a window that was on a hidden workspace of the same output. With
+`--workspace` too, the window goes to that workspace and the workspace is moved to the output, along
+with any other window on it, since a workspace moves as a whole.
+
+The value is the output's connector name as `swaymsg -t get_outputs` shows it (`HDMI-A-1`, `DP-2`),
+matched ignoring case. Sway also accepts an output's make, model and serial, but `sway-launch`
+confirms the move by connector name, so that form isn't supported. Sway's directional keywords
+(`left`, `right`, `up`, `down`, `current`) are rejected; use `swaymsg` with the container id for
+those.
+
+## Output and diagnostics
+
+### Exit status and output streams
+
+stdout carries exactly one thing: the container id on success (one line per step for a layout or
+template), or the `--json` object. Everything else goes to stderr, so
+`container_id="$(sway-launch ...)"` always gets a clean value, even with `--verbose`. The modes
+whose output is the point (`--list-windows`, `--capture`, `--list-templates`, `--show-template`,
+`--dry-run`, `--validate`, `--debug-events`, `--completions`) print it to stdout.
+
+The exit status is 0 on success, 1 when the run fails, 2 for invalid arguments, and 130 or 143 when
+a layout or template run is interrupted by SIGINT or SIGTERM. A failure's message on stderr starts
+with `error:` (and a rollback problem with `warning:`), colored only when stderr is a terminal and
+`NO_COLOR` is unset.
+
+### JSON output
+
+`--json` prints the result as one JSON object. `actions` lists every planned action in order, each
+as `{"kind": ..., "command": ..., "status": ...}`:
+
+- `kind` names the action by its flag, in `snake_case` (`new_column`, `mark`, `height`, ...),
+  whether it ran or was skipped. Match on this field: it never carries your values or Sway syntax.
+- `command` is the Sway command the action sent, the text `--dry-run` prints for it (`move right`,
+  `mark "pinned"`), on its own even when it was sent along with other actions. It's absent for a
+  skipped action.
+- `status` is one of:
+  - `changed`: the action ran and changed the window.
+  - `already_satisfied`: the window was already in that state (floating, on that workspace, ...),
+    so nothing was sent.
+  - `unconfirmed`: the command was sent but the change wasn't observed in time. Only actions
+    confirmed by checking the window's state can report this (see
+    [Timing](#timing-timeout-and-wait-time)), plus `--sway-command` and anything `--settle` gave up
+    on. It isn't an error, since some of these have legitimate outcomes where the state never
+    changes (a lone tiled window can't be resized, a `ppt` size has nothing to compare against),
+    but if you chain further actions assuming this one took effect, this is the field that tells
+    you it may not have.
+  - `skipped`: the action was never sent, with a `reason` (see [New column](#new-column)).
+
+```console
+$ sway-launch --json --floating --mark pinned foot
+{"actions":[{"command":"floating enable","kind":"floating","status":"changed"},{"command":"mark \"pinned\"","kind":"mark","status":"changed"}],"container_id":437}
+```
+
+For a layout or template, `container_ids` lists every step's container id in order, `containers`
+maps each *named* step (one with an `id`, or a template `slot`) to its id, and `actions` covers
+every step, each action tagged with its 1-based `step`. A run that built on a workspace already
+holding tiled windows adds a `warnings` list:
+
+```console
+$ sway-launch --template quad-grid --apps foot,foot,code,foot --json
+{"actions":[{"command":"splith","kind":"split","status":"changed","step":1},{"command":"splitv","kind":"split","status":"changed","step":2},{"command":"move down","kind":"new_row","status":"changed","step":3},{"command":"splith","kind":"split","status":"changed","step":3}],"container_ids":[437,438,439,440],"containers":{"bottom-left":439,"bottom-right":440,"top-left":437,"top-right":438}}
+```
+
+**Errors.** A failure prints a JSON object to stderr instead of the plain message. Read it as the
+**last line** of stderr: with no reachable Sway socket, the IPC library's fallback can print its own
+`sway socket not detected.` line first.
+
+```console
+$ sway-launch --json --con-id 999999 --floating
+{"container_id":999999,"error":"no window with container id 999999","rolled_back":[]}
+```
+
+- `container_id` is the window the run had resolved (launched, or found by `--con-id`/`--existing`)
+  when a later action failed, so a window that launched and then failed on, say, `--position` can
+  still be found and closed. It's absent when nothing was resolved yet (a launch that timed out),
+  and it may itself be the window that closed. Plain output says the same with a `container <id>
+  was the target when this failed` line.
+- `unmatched_windows` lists windows a timed-out launch turned away because they didn't match its
+  filter, present only when there are any. `launched_by_this_run` says whether the window's process
+  was started by this run; when it was, the filter is what's wrong, and the window is yours to
+  close:
+
+  ```console
+  $ sway-launch --json --timeout 2 -a notfoot foot
+  {"error":"launch \"foot\": no window with app_id \"notfoot\" appeared within 2 sec; ...","rolled_back":[],"unmatched_windows":[{"app_id":"foot","class":null,"container_id":12,"launched_by_this_run":true,"title":"foot"}]}
+  ```
+
+- For a layout or template, `container_ids`/`containers` report the steps that completed, plus the
+  failing step's own window if it launched one, so a caller can find the windows left open without
+  walking Sway's tree. They're absent when there's no progress to report.
+- `rolled_back` lists the windows `--rollback-on-error` closed, and `rollback_failed` (present only
+  when non-empty) the ones it asked to close but couldn't confirm closed. The lists never overlap:
+  `container_ids` are still open, `rolled_back` are gone, `rollback_failed` are worth checking.
+
+```console
+$ sway-launch --layout layout.toml --json
+{"container_id":439,"container_ids":[437,438,439],"containers":{"editor":437},"error":"layout.toml: step 3: floating enable: no matching window event within 5 sec","rolled_back":[]}
+```
+
+### Verbose
+
+`--verbose` (`-v`) explains on stderr what the run is doing: the commands it sends, how the window
+was recognised, and how each action was confirmed.
+
+```console
+$ sway-launch --split h -v foot
+Sway action: Exec "foot"
+Sway command: exec export SWAY_LAUNCH_PID_MARKER=<token> && ( foot )
+Event match: New container id 437 (PID-marker-confirmed)
+Target container id: 437
+Sway action: Split (container id: 437) (split: Horizontal)
+Some actions have no matching event type. Will wait 20 ms, then run the Sway command.
+Sway command: [con_id=437] splith
+Confirmed via poll: splith (container id: 437)
+437
+```
+
+### Dry run
+
+`--dry-run` prints the Sway commands a run would send, numbered across every step, without
+launching anything or touching Sway, so it works with no Sway session at all. It works with a
+command or a layout or template:
+
+```console
+$ sway-launch --template master-triple-stack --apps code,foot,foot,foot --dry-run
+1. launch code
+2. splith
+3. launch foot
+4. splitv, resize set width 30ppt
+5. launch foot
+6. launch foot
+```
+
+Actions a real run sends together share a line, though a real run leaves out any whose state
+already holds. A run that switches workspace first (`--on-workspace`, a `[layout]` table) lists those
+commands first. `--json` prints `{"steps": [{"target": ..., "actions": [{"kind": ..., "command": ...}]}]}`,
+with a `"setup"` list of those commands ahead of `"steps"` when there are any. Control characters show as visible escapes (`\u{1b}`, `\t`), so a file can't use
+a terminal escape sequence to make the preview show something other than what it would run.
+
+The preview is planned, not predicted: `--new-column`/`--new-row` always show, even where a real run
+would skip one (that needs the live window), and a `target_id` resolves against a placeholder.
+
+### Validate
+
+`--validate` checks a `--layout` or `--template` file (and, for a template, its `--bindings`/`--apps`)
+without launching anything or touching Sway: every value's format, each step's target keys, and
+`target_id` references. Useful in CI or a dotfiles repository.
+
+```console
+$ sway-launch --layout layout.toml --validate
+valid: layout.toml (3 step(s))
+$ sway-launch --layout broken.toml --validate
+error: broken.toml: step 2: height: Must be <N>px (N >= 1) or <N>ppt (N 1-100), e.g. 300px or 20ppt (ppt = percent)
+```
+
+An error names the file holding the mistake: a bad binding is reported against the bindings file
+(or `--apps`), not the template. `--json` prints `{"source": "...", "steps": N, "valid": true}`, or
+the usual error object.
+
+### Debug events
+
+`--debug-events` prints every Sway IPC event until stopped with Ctrl-C, for seeing what Sway
+actually sends when something doesn't behave as expected. With `--json`, each event is one line:
+Sway's own payload, as `swaymsg -t subscribe` shows it, plus an `event` field naming its type. For
+example, the app_id of every window that opens:
+
+```shell
+sway-launch --debug-events --json | jq -r 'select(.event == "window" and .change == "new") | .container.app_id'
+```
+
+## Timing: timeout and wait time
+
+`--timeout <SECONDS>` (default 5, at least 1) bounds how long a run waits for the launched window,
+and for each action's confirmation. A layout step's or binding's `timeout` replaces it for that
+step. Each single request to Sway is bounded separately, at 10 seconds, so a compositor that stops
+answering fails with a clear message rather than hanging.
+
+`--wait-time <MS>` (default 20) applies to the actions Sway sends no event for: `--split`,
+`--sticky`, `--new-column`, `--new-row`, `--height`, `--width`, `--position`, `--workspace` together
+with `--output`, and `--sway-command`. The wait runs once before their command, to let other IPC
+clients finish their own, and afterwards `sway-launch` checks the window's state until the change
+shows, for up to `--wait-time` and at most 200 ms (25 ms for `--new-column`/`--new-row`). When the
+change never shows, the action waits `--wait-time` once more and is reported `unconfirmed`: the run
+still succeeds, since several of these are legitimate no-ops, so a script that wants to treat
+`unconfirmed` as fatal checks the `--json` field. On a heavily loaded machine, raise `--wait-time`.
+
+## How a launch finds its window
+
+`sway-launch` doesn't start the program itself, so it can't simply know its process id. Instead it
+runs the command as `exec export SWAY_LAUNCH_PID_MARKER=<token> && ( <command> )`, and a new window
+is this launch's once its process carries that token in its environment (read from `/proc`). That's
+deterministic and lets launches run side by side.
+
+A program that never sees the marker is still recognised when it descends from the launch: a wrapper
+that clears the environment (`env -i`, a script that unsets it), or a program whose environment
+can't be read (a setuid program, or one that marks itself non-dumpable). `sway-launch` walks up from
+the window's process to the shell Sway started for this launch, which it knows by its command line.
+A program that has left that line of descent (started through `systemd-run`, `setsid -f`, or a daemon
+such as an app launcher) can't be recognised this way.
+
+When no window is recognised, the first new window that matches the filters is taken as a
+fallback: at once if the launched process was seen running and has exited (the single-instance case:
+the request went to an already-running copy), and otherwise after a grace period of about 2 seconds.
+`--rollback-on-error` treats a window taken after the grace period as adopted and never closes it.
+This is why `-a`/`-c` matter for an application that may already be running.
+
+A client/server launcher always takes the slow path: `footclient` (with `foot --server` running),
+`emacsclient -c`, `code --wait`. The window belongs to the already-running server, so it never
+carries the marker, and the client stays alive until the window closes, so it never exits either.
+Each such launch waits out the grace period and then uses the first window that matches. On a system
+without `/proc` (a BSD running Sway, an unusual container), every launch goes through the same
+fallback; nothing breaks, but sequential chaining matters more there.
+
+## Troubleshooting
+
+**The run times out waiting for the window.** The error says what it saw:
+
+```console
+$ sway-launch --timeout 2 -a notfoot foot
+error: launch "foot": no window with app_id "notfoot" appeared within 2 sec; 1 other new window did (con_id 12, app_id "foot", opened by this command) — check --app-id/--class (a window opened by this command was rechecked until the timeout, in case the app sets its app_id/class after mapping)
+$ sway-launch --timeout 2 footx
+error: launch "footx": no window appeared within 2 sec: the launched command exited without opening a window — check that it is on PATH in Sway's environment
+```
+
+- A window opened under a different app_id or class: check the real value with
+  `sway-launch --list-windows` (see [Finding a window's app_id or class](#finding-a-windows-app_id-or-class)).
+  The rejected window stays open, and `--json` lists it under `unmatched_windows`.
+- The command exited without a window: it probably isn't on `PATH` in Sway's environment, or
+  failed; its own error is in Sway's log (see [Launching a command](#launching-a-command)).
+- The application is just slow to start: raise `--timeout`, or a binding's `timeout` for its slot.
+
+**An action lands on the wrong window.** The application was probably already running and the
+launch fell back to the first new window; pass `-a`/`-c` (see
+[Matching the right window](#matching-the-right-window)).
+
+**`--width`/`--height` did nothing.** A tiled window alone on its workspace can't be resized; size
+the second window of a split instead. A browser that changes its own size right after opening needs
+[`--settle`](#settle).
+
+**`--new-column`/`--new-row` was skipped.** See the reasons under [New column](#new-column); `--json`
+and `--verbose` say which one applied.
+
+**A template was built around the terminal you ran it from.** Pass `--on-workspace` to build it on
+an empty workspace (see [Templates](#templates)).
+
+**A layout run says another run is still in progress.** The same layout is already being built on
+that workspace; wait for it, or pass `--no-lock`.
+
+## Command-line reference
+
+`sway-launch -h` prints the summary below, and `sway-launch --help` (or `man sway-launch`) the full
+description of each flag.
 
 ```shell
 Launch an application, wait for its Sway window, then run follow-up actions against it
@@ -190,1439 +1393,4 @@ Examples:
   sway-launch --list-templates
 
 The full guide, with layout files and templates, is in README.md.
-```
-
-## Quickstart
-
-A few commands to try immediately — each one blocks until confirmed, so nothing here needs a
-manual wait between them.
-
-```shell
-# Launch a terminal, wait for it to appear
-$ sway-launch foot
-271
-```
-
-```shell
-# Two terminals side by side — the second command doesn't start until the first window exists
-sway-launch -a foot --split h foot
-sway-launch -a foot foot
-```
-
-```shell
-# Floating, centered, and sized — all in one command
-sway-launch --floating --position center --width 800px --height 500px foot
-```
-
-```shell
-# An instant 2x2 grid from a built-in template — no files to write. --on-workspace builds it on an
-# empty workspace, rather than around the terminal you typed the command into
-sway-launch --template quad-grid --apps foot,foot,foot,foot --on-workspace 9
-```
-
-```shell
-# See every built-in template shape
-sway-launch --list-templates
-```
-
-See [Basic usage](#basic-usage) below for chaining and window-matching in more depth, and
-[Templates](#templates) for the full built-in library.
-
-## Basic usage
-
-Beyond the Quickstart commands above, a command passed to `sway-launch` must be quoted when it
-contains spaces, e.g. `'firefox --new-window https://example.com'`. It runs as a shell command
-line, exactly as `swaymsg exec` would run it, so shell syntax works too: `'cd ~/project && foot'`,
-`'exec foot'`.
-
-Sway's own command parser reads the command before the shell does, which has three consequences:
-
-- An unquoted `,` or `;` would end the `exec` and start a separate Sway command, so `sway-launch`
-  rejects one up front. Wrap the part containing it in quotes (`'foot -T "a,b"'`), escape it with a
-  backslash, or move the command into a script. This rules out an unquoted shell `;` too:
-  `'sh -c "if true; then foot; fi"'` works, a bare `if true; then foot; fi` doesn't.
-- A newline (or carriage return) is rejected anywhere in the command, even inside quotes, since
-  Sway turns it into a `;` before it looks at quotes at all. Put a multi-line command in a script.
-- Sway substitutes its own `set $name` variables (`$term`, `$mod`, ...) in the command before
-  running it.
-
-`sway-launch` also runs the command inside a `( ... )` group, which keeps the shell Sway starts
-alive above the program so the window can be recognised (see below). A shell comment (an unquoted
-`#` starting a word) would cut that group short, so it's rejected too.
-
-The same rules apply to a `command` in a layout or bindings file (see [Layout files](#layout-files)
-and [Templates](#templates)), where a NUL character (`\u0000`) is rejected along with a newline.
-
-**The command runs in Sway's working directory and environment, not yours.** `sway-launch` doesn't
-start the program itself: it hands the command to Sway's `exec`, so the program is started by the
-compositor and inherits *Sway's* working directory (usually your home directory) and environment,
-not those of the shell or script that ran `sway-launch`. In practice:
-
-- A relative path resolves against Sway's directory, not the current one — including in a layout or
-  bindings file's `command`, where it isn't relative to the file either. `cd ~/project &&
-  sway-launch 'code .'` opens Sway's directory; use `--cwd ~/project`, `'cd ~/project && code .'`
-  or an absolute path instead.
-- A variable you export before running `sway-launch` (an activated virtualenv's `PATH`,
-  `GDK_BACKEND`, anything set only in a shell rc file Sway never read) doesn't reach the program.
-  Pass it with `--env GDK_BACKEND=x11` (repeatable), or set it inside the command:
-  `'GDK_BACKEND=x11 app'`.
-- `--cwd <DIR>` starts the command in that directory (`~` is your home directory; a relative path is
-  relative to the directory you run `sway-launch` from, and it must exist), and `--env KEY=VALUE`
-  sets a variable for it. A layout step or binding takes the same as `cwd = "~/project"` and
-  `env = { GDK_BACKEND = "x11" }`. Both only apply to a launched command, and a value can't
-  contain a `$`, which Sway would replace with one of its config variables.
-
-```shell
-sway-launch --cwd ~/projects/website --env GDK_BACKEND=x11 -c Code 'code .'
-```
-
-- The program's own stdout/stderr go wherever Sway's own output goes (its log), not your terminal.
-  A command that works in your shell but can't start this way usually shows up as a timeout waiting
-  for its window, with any error message of its own in Sway's log.
-
-Since the container id of the matching window is returned, it's also possible to combine
-`sway-launch` with custom `swaymsg` commands.
-
-```shell
-#!/bin/sh
-container_id="$(sway-launch foot)"
-swaymsg "[con_id=$container_id] move workspace 1"
-
-container_id="$(sway-launch foot)"
-swaymsg "[con_id=$container_id] floating enable, move position center"
-
-sway-launch 'firefox --new-window https://example.com'
-sway-launch 'firefox --new-window https://example.com'
-```
-
-It is possible to add additional checks against the new window, to make sure it matches a given
-`app_id` or `class`. This is useful when several windows end up open around the same time (e.g.
-later in a layout script) and you need to make sure each `sway-launch` call matches the correct
-one.
-
-```shell
-sway-launch -a foot foot
-sway-launch -c Code code
-```
-
-`--app-id` and `--class` can't be combined — pick whichever matches the application (native
-Wayland apps expose `app_id`; XWayland apps expose `class`). Both compare the whole value exactly,
-case included — `-a firefox` matches only an app_id of `firefox`, not `firefox-esr`,
-`org.mozilla.firefox` or `Firefox`. That's unlike Sway's own `[app_id="..."]`/`[class="..."]`
-criteria, which are regexes, so a value copied out of a Sway config may need adjusting. See
-[Finding a window's app_id or class](#finding-a-windows-app_id-or-class) below for how to look up
-the right value.
-
-**Pass `-a`/`-c` whenever the application might already be running**, even when the call launches
-only one window. A browser or editor that's already open usually hands the request to the running
-copy, and the window it opens can't be traced back to this launch, so `sway-launch` falls back to
-the first new window that appears within a short grace period. Without a filter that can be any
-window — a notification, another application finishing its own start — and every follow-up action
-then lands on it. With `-a`/`-c` only the right application's window can match. The same goes for
-`app_id`/`class` in a layout step or a template binding. `--verbose` points this out when an
-unfiltered launch is matched that way.
-
-**Prefer running `sway-launch` calls one at a time over backgrounding them.** Every example in
-this README — and `--layout`/`--template`'s own step-by-step execution — chains calls
-sequentially, each one finishing (its window matched and confirmed) before the next starts, and
-that's still the recommended, fully reliable way to use it. Launching a new window (no
-`--con-id`/`--existing`) correlates the window it matches back to the specific process it spawned,
-so two `sway-launch` processes launching ordinary applications at the same time (e.g. backgrounded
-with `&`) no longer collide on each other's windows — this correlation is deterministic whenever
-that process's own marker is observable, which is the case that matters in practice. It falls back
-to a bounded heuristic (the first plausibly-matching window seen, after a short grace period) only
-when the marker genuinely can't be observed: that correlation can't help for a single-instance
-application (a browser, an editor) that's already running, since invoking it again typically just
-forwards the request to the existing instance and exits immediately, so the new window is
-legitimately owned by a process `sway-launch` never spawned — nothing to correlate against. Two
-concurrent invocations both targeting a single-instance application can still collide in that
-specific case; a heavily loaded system can, in principle, also delay marker observation long enough
-to hit the same fallback even for an ordinary application. When in doubt, chain calls sequentially.
-
-A program that never sees the marker is still recognised when it descends from the launch: a
-wrapper that clears the environment before starting it (`env -u`, `env -i`, a script that unsets
-it), or a program whose environment can't be read even by its own user (a setuid program, or one
-that marks itself non-dumpable, as security-sensitive programs do). `sway-launch` walks up from the
-window's process to the shell Sway started for this launch, which it knows by its command line, and
-takes the window at once. What it can't recognise is a program that has left that line of descent:
-one started through `systemd-run` or `setsid -f`, or by a daemon such as an app launcher.
-
-The marker is read back through `/proc`, so on a system without it (a BSD running Sway, an unusual
-container) every launch resolves through that same bounded fallback rather than the deterministic
-path, and so does a launch whose program left its line of descent. Nothing breaks — a window it
-can't confirm is never treated as this run's own for `--rollback-on-error`, and is only used after
-the short grace period — but correlation is best-effort there, so sequential chaining matters more.
-A window is only treated as this run's own without its marker or its ancestry when the launched
-process was actually seen running and has since exited, the single-instance case above.
-
-A client/server launcher is the one common case that always takes the slow path: `footclient`
-(with `foot --server` running), `emacsclient -c`, `code --wait`. The window belongs to the
-already-running server, so it never carries the marker, and the client you launched stays alive
-until that window closes, so it never exits either. Each such launch waits out the short grace
-period (about 2 seconds) and then uses the first window that matches, which `--rollback-on-error`
-treats as adopted and leaves open. Pass `-a`/`-c` so that only the right application's window can
-match, and chain such launches sequentially.
-
-### Finding a window's app_id or class
-
-`--app-id`, `--class`, `--existing` and a bindings file's `app_id`/`class` all need the value the
-application actually reports, which isn't always its command name. The match is exact and
-case-sensitive (no regex, no substring, unlike Sway's own criteria), so copy the value verbatim.
-Open the application, then run `sway-launch --list-windows`. It prints one row per open window,
-the scratchpad included, with the values `--app-id`/`--class`/`--mark-match`/`--con-id` need:
-
-```console
-$ sway-launch --list-windows
-ID  APP_ID   CLASS  WORKSPACE     FLAGS     MARKS     TITLE
-4   foot     -      1             -         -         ~/projects
-7   firefox  -      2             focused   -         Sway — Mozilla Firefox
-9   -        Code   2             floating  editor    main.rs - sway-launch - Visual Studio Code
-12  foot     -      (scratchpad)  floating  dropdown  ~
-```
-
-A missing value prints as `-`, and a title longer than 50 characters is shortened. `--json` prints
-`{"windows": [...]}`, one object per row with the full title and each window's `output`,
-`scratchpad`, `floating`, `focused` and `split_container` fields; a missing value is `null` there.
-Pass `-a`/`-c`/`--mark-match` and `--title` to narrow the list to the windows `--existing` would choose between,
-so `sway-launch --list-windows -a foot` shows what `sway-launch --existing -a foot` would act on
-(see [Target an existing window](#target-an-existing-window)). A split container carrying a mark
-is listed too, with the flag `split`, since `--mark-match` can select one.
-
-Two other ways to see the same values:
-
-- run `swaymsg -t get_tree` and look for its window's `"app_id"` and `"class"` fields (`"class"`
-  sits under `"window_properties"`), or
-- run `sway-launch --debug-events` in a terminal and open the application while it's running: the
-  `Window` event with `change: New` carries the same fields (`app_id`, and `class` inside
-  `window_properties`). Stop it with `Ctrl-C`.
-
-A native Wayland application has an `app_id` and no `class`; an application running under XWayland
-has a `class` and no `app_id` (its `app_id` is `null`), so match it with `--class`. The same
-application can report different values depending on how it was built, packaged or started:
-
-- VS Code runs under XWayland by default, with class `Code`; started as a native Wayland client
-  (`code --ozone-platform=wayland`) its app_id is `code` instead.
-- Chromium under XWayland has class `Chromium`; as a native Wayland client its app_id is `chromium`.
-- Firefox is `firefox`, but Debian's Firefox ESR is `firefox-esr`.
-- A Flatpak application usually uses its reverse-DNS id (`org.mozilla.firefox`).
-
-With the wrong value the window still opens, but `sway-launch` never sees a match and stops with a
-timeout once `--timeout` runs out.
-
-Some applications set their app_id or class only after their window has appeared (a known pattern
-for some XWayland apps), so the window briefly has none, or a different one, and Sway sends no event
-when it changes. A window the launched command itself opened is therefore not given up on when it
-first fails to match: `sway-launch` keeps rechecking it until it matches or `--timeout` runs out.
-`--debug-events` shows only the value the window appeared with, so for such an app read the value
-from `--list-windows` (or `swaymsg -t get_tree`) instead.
-
-### Matching by title
-
-`--title <REGEX>` (`title` in a layout step or binding) also requires the window's title to match a
-regular expression. Like Sway's own `title=` criteria it's unanchored, so `--title project-a`
-matches `main.rs - project-a - Visual Studio Code`. Use `^` and `$` to anchor it. It narrows
-`--app-id`/`--class` (or `--mark-match` with `--existing`), or works on its own:
-
-```shell
-# Several terminals share app_id foot; pick the one titled "logs"
-sway-launch --existing -a foot --title '^logs$' --fullscreen
-
-# An editor that shows a splash window first: wait for the project window instead
-sway-launch -c Code --title 'project-a' --width 60ppt 'code ~/projects/project-a'
-```
-
-For a launch, a window that opens with a different title doesn't end the wait. That's how a splash
-or welcome window is skipped. A window this run opened is checked again when its title changes, so
-one that starts as `Loading…` and later shows its project's title still matches. An older window
-that happens to change its title meanwhile never counts. On a timeout, the windows that were
-turned away are listed with their titles. `--list-windows` shows every window's current title.
-
-The pattern syntax is the usual one (`.`, `*`, `[...]`, `(a|b)`, `(?i)` for case-insensitive);
-`\w`, `\d` and `(?i)` work on ASCII letters only. An invalid pattern is rejected before anything
-runs.
-
-## Recreatable layouts
-
-Since `sway-launch` blocks on every command, its arguments can be combined into scripts that
-recreate a static window setup/layout — for example, always setting up workspace 1 the same way
-when Sway starts, or starting VS Code together with three terminals arranged in a certain way via
-a launch script.
-
-Not everything will work with the current implementation — it all depends on the layout and the
-current workspace state. Most issues should be fixable by capturing the container id and running
-some additional `swaymsg` commands.
-
-The `foot` terminal — Sway's own default — is used as a stand-in application in most of these
-examples; a few combine several different applications to show off more advanced layouts.
-
-### Examples
-
-Runnable example scripts live in [`examples/scripts/`](examples/scripts/) — each one is a small,
-standalone shell script built entirely out of `sway-launch` calls; run any of them directly (e.g.
-`examples/scripts/quad-terminals`) against a live Sway session to see the layout it builds. The
-advanced examples expect Firefox, Chromium, Thunar, and VS Code (the `code` command) to be
-installed and on `PATH`, in addition to `foot`, and match each one by the `app_id`/`class` it
-reports on a typical setup (VS Code by class `Code`, the others by app_id); if one of them times out
-on your system, check its real value (see
-[Finding a window's app_id or class](#finding-a-windows-app_id-or-class)) and edit the script to
-match. Declarative `--layout` example files live alongside
-them in [`examples/layouts/`](examples/layouts/); `--template` files live in
-[`templates/`](templates/) at the repo root instead — see [Templates](#templates) below for why.
-
-Basic (all `foot`):
-
-- [`examples/scripts/dual-terminals`](examples/scripts/dual-terminals) — two terminals side by
-  side, one row.
-- [`examples/scripts/triple-row`](examples/scripts/triple-row) — three terminals side by side, one
-  row.
-- [`examples/scripts/column-split`](examples/scripts/column-split) — two terminals stacked in one
-  column.
-- [`examples/scripts/quad-terminals`](examples/scripts/quad-terminals) — four terminals as a 2x2
-  grid, two rows.
-- [`examples/scripts/workspace-and-position`](examples/scripts/workspace-and-position) — a
-  floating terminal moved to workspace 2 and centered. Demonstrates `--workspace` and `--position`
-  together.
-- [`examples/scripts/retarget-floating`](examples/scripts/retarget-floating) — a terminal adjusted
-  twice after launch, without relaunching it: once via `--con-id` with a captured container id,
-  once via `--existing` matching `--app-id`. The terminal gets its own app_id, so `--existing`
-  still finds exactly one window when other foot terminals are open.
-- [`examples/layouts/quad-terminals.toml`](examples/layouts/quad-terminals.toml) — the same layout
-  as `examples/scripts/quad-terminals`, as a declarative `--layout` file instead of a shell
-  script; run with `sway-launch --layout examples/layouts/quad-terminals.toml`. See
-  [Layout files](#layout-files) below.
-- [`examples/layouts/retarget-by-id.toml`](examples/layouts/retarget-by-id.toml) — two terminals
-  sharing an `app_id`, then a third step that retargets specifically the first one by its step
-  `id` — something `--existing` can't express, since it'd be ambiguous between the two.
-  Demonstrates `id`/`target_id`. Run with `sway-launch --layout
-  examples/layouts/retarget-by-id.toml`.
-- [`templates/quad-grid.toml`](templates/quad-grid.toml) — the app-agnostic
-  version of `examples/layouts/quad-terminals.toml`'s shape: the same 2x2 grid, but with no
-  application baked in. Run with `sway-launch --template templates/quad-grid.toml --apps
-  foot,firefox,code,thunar` (or any four commands). See [Templates](#templates) below.
-
-Advanced (multiple applications):
-
-- [`examples/scripts/dev-workspace`](examples/scripts/dev-workspace) — VS Code taking most of the
-  width, with two terminals stacked in a column beside it. Demonstrates `--class`/`--app-id`
-  matching alongside `--split` and `--width`, with the width set on the first terminal because a
-  window that's still alone on its workspace can't be resized.
-- [`examples/scripts/floating-file-manager`](examples/scripts/floating-file-manager) — Thunar as a
-  floating, fixed-size window with a mark set, ready for a `for_window` rule to reposition it (see
-  [Mark](#mark) below). Demonstrates combining `--floating`, `--width`/`--height`, and `--mark`.
-- [`examples/scripts/browser-comparison`](examples/scripts/browser-comparison) — Firefox and
-  Chromium side by side on the same page, for comparing how each renders it.
-- [`examples/scripts/quad-mixed-apps`](examples/scripts/quad-mixed-apps) — a 2x2 grid like
-  `examples/scripts/quad-terminals`, but with four different applications (foot, Firefox, Thunar,
-  VS Code) instead of four terminals.
-- [`examples/scripts/editor-with-floating-terminal`](examples/scripts/editor-with-floating-terminal)
-  — VS Code full-width, with a small floating terminal on top for quick one-off commands.
-
-More advanced layouts should be possible by focusing earlier windows between launches.
-
-### Layout files
-
-Chaining several `sway-launch` calls in a shell script (as every example above does) works well,
-but each call is a separate process. `--layout <FILE>` runs a whole layout from one TOML file and
-one invocation instead — each `[[step]]` is the equivalent of one CLI call's flags, run in order,
-stopping at the first error.
-
-```toml
-[[step]]
-command = "foot"
-app_id = "foot"
-split = "h"
-
-[[step]]
-command = "foot"
-app_id = "foot"
-```
-
-```shell
-sway-launch --layout layout.toml
-```
-
-`-` in place of a file name reads it from stdin, so a script that generates a layout can pipe it in
-instead of writing a temporary file. The same works for `--template` and `--bindings`, one of them
-per run; errors and `--validate` then name the source `<stdin>`.
-
-```shell
-generate-my-layout | sway-launch --layout -
-generate-my-bindings | sway-launch --template quad-grid --bindings -
-```
-
-> [!WARNING]
-> A layout file's `command` fields are executed. Running someone else's layout file is exactly as
-> dangerous as running their shell script — read it first. The same applies to a `--bindings` file
-> (see [Templates](#templates) below). Template files themselves are safe: they contain no commands
-> at all, which is what makes them shareable on their own.
-
-A step's `command` is checked against the same Sway-parsing rules as the CLI's positional command
-(see [Basic usage](#basic-usage)), so `--validate` catches an unquoted `,`/`;` or an embedded
-newline before anything launches.
-
-`command` can also be a list of words, the safest form for a generated file:
-
-```toml
-[[step]]
-command = ["foot", "-T", "notes, todo; misc"]
-app_id = "foot"
-```
-
-Each word reaches the program exactly as written: `sway-launch` quotes it for Sway and the shell, so
-commas, semicolons, quotes, spaces and backslashes inside a word need no escaping. The first word is
-the program, with no shell features (`&&`, `~`, `*`). A `$` is refused, since Sway replaces `$name`
-with one of its config variables before the shell runs, even inside quotes; so is a newline. Use the
-plain string form, or a script, for anything that needs the shell. A binding's `command` takes the
-same two forms. Like the CLI's, it runs in Sway's working directory and
-environment, not the layout file's directory or the caller's (see [Basic usage](#basic-usage)). A
-step's other keys mirror the CLI flags of the same name (`cwd`, `env`, `app_id`, `class`, `mark_match`, `title`, `con_id`,
-`existing`, `wait`, `split`, `floating`, `sticky`, `fullscreen`, `focus`, `mark`, `new_column`, `new_row`,
-`workspace`, `workspace_number`, `output`, `height`, `width`, `position`, `settle`, `scratchpad`,
-`timeout`, `wait_time`, and `sway_commands`, a list of what `--sway-command` takes, one per entry) —
-`app_id`/`class`/`mark_match` match exactly and case-sensitively, like their CLI equivalents,
-`height`/`width`/`position`/`settle`/`timeout` are validated the same way their CLI equivalents are, and a step
-without its own `timeout`/`wait_time` inherits the top-level `--timeout`/`--wait-time` values.
-Exactly one of `command`, `con_id`, `existing = true`, or `target_id` is required per step, matching
-the CLI's own command/`--con-id`/`--existing` mutual exclusivity plus one layout-only addition:
-
-- `id` names a step, so a later step can target its window specifically via `target_id` — useful
-  when several steps share the same `app_id`/`class`/`mark_match`, where `existing = true` would be
-  ambiguous about which one it means. See
-  [`examples/layouts/retarget-by-id.toml`](examples/layouts/retarget-by-id.toml).
-- `target_id` targets an earlier step's window by that name, instead of `command`/`con_id`/
-  `existing`. Errors if the named `id` doesn't exist, or was used by more than one step.
-
-As with the CLI's `--app-id`/`--class`/`--mark-match`, a step can set only one of `app_id`, `class`,
-`mark_match` — pick whichever identifies the window. Neither `con_id` nor `target_id` can be
-combined with any of the three, same as the CLI: both already name an exact container, so a match
-criteria alongside one would only be silently ignored.
-
-Neither has a CLI equivalent — a single `sway-launch` invocation only ever has one step, so
-there's nothing to name or reference.
-
-Every top-level per-window flag (`--split`, `--floating`, etc.) conflicts with `--layout`, since it
-would otherwise be unclear which step it applied to — `--timeout`, `--wait-time`, `--verbose`, and
-`--json` still apply, the latter printing one object at the end (see
-[JSON output](#json-output) below) instead of a line per step.
-
-A layout or template run can't overlap with itself. A run takes a lock on its file (or built-in
-template name) and the workspace it builds on, so a second run of the same layout on the same
-workspace — a key pressed twice, a login script still running when you start it by hand — stops at
-once with `another run of this layout on workspace "3" is still in progress`, instead of
-interleaving its windows with the first run's. Different layouts, or the same one on different
-workspaces, run side by side. The lock lives under `$XDG_RUNTIME_DIR/sway-launch/` and is released
-when the run ends, even if it crashes. `--no-lock` runs anyway.
-
-Stopping at the first error leaves whatever earlier steps already launched open by default — and
-the failing step's own window too, when it launched one and then failed on a later action (a
-`position` on a tiled window, say). Add `--rollback-on-error` to close them automatically instead:
-
-```shell
-sway-launch --layout layout.toml --rollback-on-error
-```
-
-Only windows this invocation itself launched (a step's `command`) are ever closed — a step that
-retargeted an already-open window via `con_id`/`existing`/`target_id` is left alone, since that
-window existed before this run and isn't this run's to close. Requires `--layout` or `--template`.
-
-One more window is left alone: one this run matched but couldn't confirm it launched. `sway-launch`
-tags the process it starts with a private marker and prefers a window whose process carries it, but
-falls back to matching on `app_id`/`class` alone when no marked window appears — which is what makes
-single-instance applications (browsers, editors, anything that hands a second invocation off to an
-already-running process) work. When that fallback is used because the launched process is *gone*,
-nothing marked can still be coming and the window is treated as this run's own. When it's used
-because the wait simply elapsed while the launched process is still running, the matching window
-came from somewhere else — another launcher, another `sway-launch`, or something the user opened at
-the wrong moment — and rollback leaves it open rather than killing a window it can't prove is its
-own. It's still reported as an open container id (see `container_ids` under
-[JSON output](#json-output)), so a script that wants it closed can do so itself. `--verbose` says
-when this happens.
-
-Rollback doesn't check whether a launched window has since been put to other use — it kills any
-window it recognizes as its own, best-effort, regardless of what's happened to it since launch.
-Closing a window means asking its application to close, and the application decides: an editor
-with unsaved changes or a browser confirming before closing several tabs can keep its window open.
-So rollback waits up to a second for each window it asked to close to actually go, and only counts
-the ones that did as closed. A window still open after that, or whose close request failed outright
-(usually: it had already closed on its own), is reported with a warning and skipped rather than
-stopping the rest of the rollback, and the original step failure stays the error that's actually
-reported. The exception is a compositor that has stopped answering: once one close request gets no
-reply, rollback doesn't wait out the same timeout again for every other window, and reports them all
-as unconfirmed straight away. With `--json`, the error object includes which container ids were
-closed, and which ones couldn't be confirmed closed: `{"error": "...", "rolled_back": [123, 456], "rollback_failed": [789]}`
-(see [JSON output](#json-output) below).
-
-An interrupted run fails the same way. Ctrl-C (SIGINT) or SIGTERM — a `timeout(1)` wrapper, a
-service being stopped — ends a `--layout`/`--template` run within a moment as a failure of the step
-it was on, so `--rollback-on-error` closes what the run launched and `--json` reports its partial
-progress, and the run exits with the usual status for that signal (130 or 143). A second signal
-exits at once, skipping the cleanup. A launch interrupted while waiting for its window says the
-command may still open one.
-
-An application slower than its `timeout` can open its window just after the run has given up on
-it. With `--rollback-on-error`, a timed-out launch keeps watching for up to 2 more seconds for a
-window carrying its marker, and rolls that one back too, rather than leaving it to appear after the
-run has failed.
-
-By default a step whose window doesn't appear within its `timeout` stops the run, so one slow
-application at the start of a layout leaves every later one unopened. `--continue-on-timeout`
-reports that step and carries on with the next one instead. A later step that targets the missing
-window (`target_id`) is skipped and reported too, since there is nothing for it to act on. The run
-still exits non-zero, so a calling script knows the layout is incomplete. Each such step gets a
-warning on stderr, and `--json` lists them under `timed_out_steps` (`step`, `error`, and any
-`unmatched_windows`) and `skipped_steps` (`step`, `target_id`). Plain output prints a container id
-only for each step that has one, so match steps to windows with `--json`'s `containers` when steps
-may be missing. Only a missing window counts: a step that fails any other way still stops the run,
-and with `--rollback-on-error`, still rolls it back.
-
-A layout normally starts each application only once the previous step's window is in place, so it
-takes as long as all of its applications' startups added together. `--concurrent` starts them all
-at once instead, on a workspace of their own (`sway-launch-staging-<pid>`), then moves each window to
-the build workspace in step order and applies its step's actions there, so it lands exactly where
-it would have opened. Every built-in template builds the same shape either way; a four-window grid
-of applications taking about a second each to start drops from about 5 seconds to under 2. The
-whole file is checked before anything starts, and a failure never leaves a window on the staging
-workspace: whatever was staged is moved to the build workspace, reported, and with
-`--rollback-on-error`, rolled back. Focus visibly jumps to the staging workspace while the
-applications start. A single-instance application can't be told apart this way: when two steps'
-launches end up with the same window, the run fails, so run such layouts without `--concurrent`.
-
-This is **window-launch rollback**, not transactional rollback: it undoes *launches*, not
-*actions*. A `move`/`resize`/`mark`/etc. an earlier step applied to a `con_id`/`existing`/
-`target_id`-retargeted window is never reverted — that window is never eligible for rollback at
-all (see above), so any changes an earlier step made to it stay applied even after a later step
-fails. There's no mechanism that tracks or reverses individual mutations, only whether this
-invocation is the one that created the window in the first place.
-
-### Capturing a workspace
-
-Arrange a workspace by hand once, then let `sway-launch` write the layout file that rebuilds it:
-
-```shell
-sway-launch --capture > my-workspace.toml        # the focused workspace
-sway-launch --capture 3 > three.toml             # workspace "3"
-sway-launch --layout my-workspace.toml
-```
-
-The file opens each window where it would have to open to rebuild the same splits, splits and
-focuses windows in between, then sets the sizes, and finishes with the floating windows' size and
-position. Marks, sticky and fullscreen windows are kept too. It can't know how a window was
-started, so each step's `command` is a guess from the window's app_id (or its class, lowercased):
-check and edit the commands before running the file. Each step carries a comment with the window's
-title, to help tell them apart. Every built-in template rebuilds its exact shape from its own
-capture.
-
-Two things can't be captured exactly. Tabbed and stacked containers aren't supported, and
-`--capture` refuses a workspace holding one. And some uneven sizes come out approximate, since Sway
-shares each resize with a window's siblings, and Sway 1.12 shares it differently from older
-versions: two windows, three whose outer two are the same size, and even splits are exact on every
-version; any other three are exact on Sway 1.9 to 1.11; four or more uneven ones are approximate.
-The file says so in a note at the top when it applies.
-
-### Templates
-
-A `--layout` file bakes a specific application into every step (`command`/`app_id`), which means
-reusing one for a different application means editing it. `--template <FILE>` separates the two: a
-template step describes *what to do*, and a `slot` names *which window* — the application itself
-comes from a separate `--bindings <FILE>` or `--apps <list>`, so the same template can be shared or
-reused across completely different applications.
-
-That split has a useful safety property: a template file names no commands anywhere, so it can't
-run anything on its own. The commands live in the `--bindings` file (or `--apps`), which you
-supply. A template is therefore safe to share and apply to your own applications; a layout or
-bindings file from elsewhere should be read first, like any shell script.
-
-```toml
-[template]
-description = "An editor beside a terminal."
-category = "Grid"
-
-[[step]]
-slot = "editor"
-split = "h"
-
-[[step]]
-slot = "terminal"
-```
-
-Every template file requires a `[template]` table with `description` and `category` — the source
-`--list-templates`/`--show-template --json` read a built-in's name from, and how README.md's own
-"Templates" table below groups it alongside similarly-shaped templates (`Grid`, `Master/stack`,
-`Sidebar`, `Floating`, `Multi-workspace/output`, `Retargeting`; not a closed set — a new shape can
-introduce a new category). `description` should be a complete, self-contained sentence.
-
-Applied to a plain list of commands, launched into the slots in the order the template's slot steps
-appear:
-
-```shell
-sway-launch --template template.toml --apps code,foot
-```
-
-`--apps` splits its argument on plain commas, with no escaping — a command that itself needs to
-contain a literal comma (a URL query string, a `sh -c 'a, b'`) can't be represented this way. Use
-`--bindings` instead for that case, since each command there is its own TOML field, not part of a
-comma-separated list (quoting the comma is still required there, per
-[Basic usage](#basic-usage)). Each entry is trimmed of leading/trailing whitespace, so `--apps "foot,
-firefox"` works the same as `--apps "foot,firefox"`.
-
-Or applied via a bindings file, for full control over each slot's identity — including matching an
-already-open window instead of launching a new one:
-
-```toml
-[[binding]]
-slot = "editor"
-command = "code"
-class = "Code"
-
-[[binding]]
-slot = "terminal"
-existing = true
-app_id = "foot"
-```
-
-```shell
-sway-launch --template template.toml --bindings bindings.toml
-```
-
-A `Binding`'s keys are the same target-selection subset a layout step has (`command`, `con_id`,
-`existing`, `wait`, `app_id`, `class`, `mark_match`, `title`), plus the launched command's `cwd` and `env`, plus where the window goes (`workspace`/`workspace_number`/`output`, see below) and how long to wait for it (`timeout`/`wait_time`, replacing the step's and the command line's, so one slow-starting application's slot can wait longer than the rest), plus `settle`, replacing the step's, so the slot a browser fills can hold its size (see [Settle](#settle)) — exactly one of `command`/`con_id`/`existing = true` is
-required, same rule as `--layout`, and `app_id`/`class`/`mark_match` can set only one of the three,
-same rule too (each an exact, case-sensitive match, as on the CLI). A binding's `command` runs in Sway's working directory and environment, the same as
-a layout step's (see [Basic usage](#basic-usage)). A template step's
-action keys (`split`, `floating`, `height`, etc.) are the same
-ones `--layout` has; `slot` and `target_id` are its only two target-selection keys, and exactly one
-is required per step — a `slot` step resolves its window via a binding, a `target_id` step
-retargets an earlier `slot`'s resolved window (see `id`/`target_id` above; a template step's
-resolved `id` is always its slot name). Each slot name may appear on only one step; a later step
-acts on the same window again with `target_id`. `--template` requires exactly one of `--bindings`/`--apps`,
-and conflicts with `--layout` and every per-window flag, same reasoning as `--layout`. See
-[`templates/quad-grid.toml`](templates/quad-grid.toml).
-
-A template's shape is built wherever focus is when it runs, and assumes that workspace is empty.
-Run from a terminal, the terminal itself is on that workspace, so the shape comes out built around
-it: `sway-launch` warns when the workspace already holds tiled windows (on stderr, and as a
-`"warnings"` list under `--json`) but still runs. To build somewhere specific, a template can
-declare an optional `[layout]` table:
-
-```toml
-[layout]
-workspace = "3"
-output = "HDMI-A-1"
-```
-
-The run switches to that workspace before the first step — focusing the output first, so a
-workspace that doesn't exist yet is created there — and builds the whole shape in place. The view
-stays there afterwards. `--on-workspace <WORKSPACE>` does the same from the command line, for a
-`--template` or a `--layout` file, and wins over a template's own `[layout]` workspace. A step's
-own `workspace`/`output` still moves that one window afterwards, as before. Both `[layout]` values
-are validated where they're declared, so a bad one is reported as `[layout] workspace: ...`.
-`workspace_number = 3` in place of `workspace` picks the workspace by number instead (see
-[Workspace](#workspace)), and so does `--on-workspace-number <N>` on the command line.
-`--on-output <OUTPUT>` overrides the `[layout]` output the same way, and builds a `--layout` run
-on that output's current workspace.
-
-A binding can also move its own slot's window, with the same `workspace`, `workspace_number` and
-`output` keys a step has. A binding's value replaces the step's, so a built-in template that places
-windows on fixed workspaces or outputs works on your own setup without copying the file:
-
-```toml
-# sway-launch --template dual-output --bindings outputs.toml
-[[binding]]
-slot = "first"
-command = "foot"
-output = "eDP-1"
-
-[[binding]]
-slot = "second"
-command = "firefox"
-output = "HDMI-A-2"
-```
-
-A binding can't set a `workspace` for a slot whose step uses `new_column`/`new_row`, for the same
-reason a step can't: the move would apply where the window opened. Use `--on-workspace` to build
-the whole template elsewhere instead.
-
-A step whose application is still starting when focus moves to another workspace — a keybinding,
-a notification click, another script — fails, naming both workspaces: every later step would
-otherwise open on the other workspace and split the layout in two. With `--rollback-on-error`, the
-windows the run launched are closed.
-
-Every file under [`templates/`](templates/) is also built into the `sway-launch`
-binary itself as a *built-in template* — `--template <name>` (no `.toml` extension, e.g.
-`--template quad-grid`) resolves that name against the embedded copy, so using one doesn't require
-cloning this repo or downloading anything. A value ending in `.toml` is always read from disk
-instead, so a built-in name and a same-named local template file never collide (if no such file
-exists but the name is a built-in, e.g. `--template quad-grid.toml`, the error says to drop the
-extension). Run
-`sway-launch --list-templates` to print every built-in name with its category, one-line
-description, and slot names (in the order `--apps` zips its own comma-separated list against):
-
-```shell
-$ sway-launch --list-templates
-dual-row     Grid  Two windows side by side in a single row. (2 slots: left, right)
-...
-```
-
-`--json` reports the same slot info structurally as `slots` (the count) and `slot_names` (the
-array), so a script can size or pre-fill `--apps`/a `--bindings` file without parsing the
-template's TOML itself, and each template's params with their defaults as `params`.
-
-A template can leave its sizes open to the caller with a `[params]` table: each entry names a
-value and gives its default, and a step's `height`, `width` or `position` refers to one by writing
-its name in braces as the whole value:
-
-```toml
-[params]
-stack-width = "35ppt"
-
-[[step]]
-slot = "stack-top"
-width = "{stack-width}"
-```
-
-`--param NAME=VALUE` (repeatable) overrides a default for one run, and so does a `[params]` table
-in a `--bindings` file, with `--param` winning over both:
-
-```shell
-sway-launch --template master-dual-stack --apps code,foot,foot --param stack-width=40ppt
-```
-
-Every built-in with a size has params: `--list-templates` lists them with their defaults, and each
-file's header comment says what each one sizes. An unknown name, or a value that a field using it
-can't take, is an error before anything runs. A value is a plain substitution: there are no
-expressions, and a param can't stand for part of a value.
-
-```shell
-sway-launch --template quad-grid --apps foot,firefox,code,thunar
-```
-
-To inspect a built-in's exact shape before binding apps to it, `--show-template <NAME_OR_PATH>`
-prints its raw TOML and exits without running it — the same `NAME_OR_PATH` resolution `--template`
-itself uses, so it works on a built-in name or a local `.toml` file path alike:
-
-```shell
-sway-launch --show-template quad-grid
-```
-
-Add `--json` for `{"name": "quad-grid", "contents": "..."}` instead of the bare TOML text.
-
-The library below has a wide range of other app-agnostic shapes ready to apply to any application
-via `--apps`/`--bindings`. Each file's own header comment has a ready-to-run `--apps` example.
-
-Screenshots are generated by `scripts/generate-layout-screenshots` (see CLAUDE.md's "Screenshots"
-section) — each is a real `sway-launch --template` run against a live Sway compositor, with every
-slot labeled by name.
-
-| Preview | Category | Template | Shape | Slots |
-| --- | --- | --- | --- | --- |
-| [<img src="screenshots/dual-row.png" width="120" alt="dual-row template layout">](screenshots/dual-row.png) | Grid | [`dual-row`](templates/dual-row.toml) | Two windows side by side, one row | 2 |
-| [<img src="screenshots/dual-column.png" width="120" alt="dual-column template layout">](screenshots/dual-column.png) | Grid | [`dual-column`](templates/dual-column.toml) | Two windows stacked, one column | 2 |
-| [<img src="screenshots/triple-row.png" width="120" alt="triple-row template layout">](screenshots/triple-row.png) | Grid | [`triple-row`](templates/triple-row.toml) | Three windows side by side, one row | 3 |
-| [<img src="screenshots/triple-column.png" width="120" alt="triple-column template layout">](screenshots/triple-column.png) | Grid | [`triple-column`](templates/triple-column.toml) | Three windows stacked, one column | 3 |
-| [<img src="screenshots/quad-grid.png" width="120" alt="quad-grid template layout">](screenshots/quad-grid.png) | Grid | [`quad-grid`](templates/quad-grid.toml) | Equal 2×2 grid | 4 |
-| [<img src="screenshots/six-grid.png" width="120" alt="six-grid template layout">](screenshots/six-grid.png) | Grid | [`six-grid`](templates/six-grid.toml) | Equal grid, two rows of three | 6 |
-| [<img src="screenshots/eight-grid.png" width="120" alt="eight-grid template layout">](screenshots/eight-grid.png) | Grid | [`eight-grid`](templates/eight-grid.toml) | Equal grid, two rows of four | 8 |
-| [<img src="screenshots/nine-grid.png" width="120" alt="nine-grid template layout">](screenshots/nine-grid.png) | Grid | [`nine-grid`](templates/nine-grid.toml) | Equal 3×3 grid | 9 |
-| [<img src="screenshots/six-grid-vertical.png" width="120" alt="six-grid-vertical template layout">](screenshots/six-grid-vertical.png) | Grid | [`six-grid-vertical`](templates/six-grid-vertical.toml) | Equal grid, three rows of two — six-grid.toml rotated | 6 |
-| [<img src="screenshots/eight-grid-vertical.png" width="120" alt="eight-grid-vertical template layout">](screenshots/eight-grid-vertical.png) | Grid | [`eight-grid-vertical`](templates/eight-grid-vertical.toml) | Equal grid, four rows of two — eight-grid.toml rotated | 8 |
-| [<img src="screenshots/master-dual-stack.png" width="120" alt="master-dual-stack template layout">](screenshots/master-dual-stack.png) | Master/stack | [`master-dual-stack`](templates/master-dual-stack.toml) | One main window, a 2-window stack beside it | 3 |
-| [<img src="screenshots/master-triple-stack.png" width="120" alt="master-triple-stack template layout">](screenshots/master-triple-stack.png) | Master/stack | [`master-triple-stack`](templates/master-triple-stack.toml) | One main window, a 3-window stack beside it | 4 |
-| [<img src="screenshots/master-dual-stack-left.png" width="120" alt="master-dual-stack-left template layout">](screenshots/master-dual-stack-left.png) | Master/stack | [`master-dual-stack-left`](templates/master-dual-stack-left.toml) | A 2-window stack, one main window beside it — master-dual-stack.toml mirrored | 3 |
-| [<img src="screenshots/master-triple-stack-left.png" width="120" alt="master-triple-stack-left template layout">](screenshots/master-triple-stack-left.png) | Master/stack | [`master-triple-stack-left`](templates/master-triple-stack-left.toml) | A 3-window stack, one main window beside it — master-triple-stack.toml mirrored | 4 |
-| [<img src="screenshots/dual-sidebars.png" width="120" alt="dual-sidebars template layout">](screenshots/dual-sidebars.png) | Master/stack | [`dual-sidebars`](templates/dual-sidebars.toml) | One main window, a single narrow sidebar flanking each side | 3 |
-| [<img src="screenshots/dual-stack-sidebars.png" width="120" alt="dual-stack-sidebars template layout">](screenshots/dual-stack-sidebars.png) | Master/stack | [`dual-stack-sidebars`](templates/dual-stack-sidebars.toml) | One main window, a 2-window stack flanking each side | 5 |
-| [<img src="screenshots/master-dual-stack-bottom.png" width="120" alt="master-dual-stack-bottom template layout">](screenshots/master-dual-stack-bottom.png) | Master/stack | [`master-dual-stack-bottom`](templates/master-dual-stack-bottom.toml) | One main window on top, a 2-window stack split below it | 3 |
-| [<img src="screenshots/master-triple-stack-bottom.png" width="120" alt="master-triple-stack-bottom template layout">](screenshots/master-triple-stack-bottom.png) | Master/stack | [`master-triple-stack-bottom`](templates/master-triple-stack-bottom.toml) | One main window on top, a 3-window stack split below it | 4 |
-| [<img src="screenshots/master-dual-stack-top.png" width="120" alt="master-dual-stack-top template layout">](screenshots/master-dual-stack-top.png) | Master/stack | [`master-dual-stack-top`](templates/master-dual-stack-top.toml) | A 2-window stack on top, one main window below it — master-dual-stack-left.toml rotated | 3 |
-| [<img src="screenshots/master-triple-stack-top.png" width="120" alt="master-triple-stack-top template layout">](screenshots/master-triple-stack-top.png) | Master/stack | [`master-triple-stack-top`](templates/master-triple-stack-top.toml) | A 3-window stack on top, one main window below it — master-triple-stack-left.toml rotated | 4 |
-| [<img src="screenshots/sidebar-left.png" width="120" alt="sidebar-left template layout">](screenshots/sidebar-left.png) | Sidebar | [`sidebar-left`](templates/sidebar-left.toml) | Narrow sidebar on the left, wide main window on the right | 2 |
-| [<img src="screenshots/sidebar-right.png" width="120" alt="sidebar-right template layout">](screenshots/sidebar-right.png) | Sidebar | [`sidebar-right`](templates/sidebar-right.toml) | Wide main window on the left, narrow sidebar on the right | 2 |
-| [<img src="screenshots/sidebar-top.png" width="120" alt="sidebar-top template layout">](screenshots/sidebar-top.png) | Sidebar | [`sidebar-top`](templates/sidebar-top.toml) | Narrow bar across the top, wide main window below | 2 |
-| [<img src="screenshots/sidebar-bottom.png" width="120" alt="sidebar-bottom template layout">](screenshots/sidebar-bottom.png) | Sidebar | [`sidebar-bottom`](templates/sidebar-bottom.toml) | Wide main window on top, narrow bar across the bottom | 2 |
-| [<img src="screenshots/sidebar-left-dual-stack.png" width="120" alt="sidebar-left-dual-stack template layout">](screenshots/sidebar-left-dual-stack.png) | Sidebar | [`sidebar-left-dual-stack`](templates/sidebar-left-dual-stack.toml) | Sidebar on the left split into two windows (75%/25% height), wide main window on the right | 3 |
-| [<img src="screenshots/sidebar-right-dual-stack.png" width="120" alt="sidebar-right-dual-stack template layout">](screenshots/sidebar-right-dual-stack.png) | Sidebar | [`sidebar-right-dual-stack`](templates/sidebar-right-dual-stack.toml) | Wide main window on the left, sidebar on the right split into two windows (75%/25% height) | 3 |
-| [<img src="screenshots/floating-overlay.png" width="120" alt="floating-overlay template layout">](screenshots/floating-overlay.png) | Floating | [`floating-overlay`](templates/floating-overlay.toml) | A tiled main window, with a small floating window on top | 2 |
-| [<img src="screenshots/floating-centered.png" width="120" alt="floating-centered template layout">](screenshots/floating-centered.png) | Floating | [`floating-centered`](templates/floating-centered.toml) | A single floating window, centered | 1 |
-| — | Multi-workspace/output | [`workspace-spread`](templates/workspace-spread.toml) | Each window moved to its own named workspace | 3 |
-| — | Multi-workspace/output | [`dual-output`](templates/dual-output.toml) | Each window moved to a different output (monitor) | 2 |
-| [<img src="screenshots/retarget-by-slot.png" width="120" alt="retarget-by-slot template layout">](screenshots/retarget-by-slot.png) | Retargeting | [`retarget-by-slot`](templates/retarget-by-slot.toml) | Two windows side by side, then the first one retargeted by slot name | 2 |
-
-`workspace-spread`/`dual-output` have no screenshot — `scripts/generate-layout-screenshots` skips
-both, since a single-output screenshot can't meaningfully depict either (see CLAUDE.md's
-"Screenshots" section).
-
-## Actions reference
-
-It's possible to run additional actions on the new window. Each action waits for its
-corresponding Sway IPC event, or, if the action doesn't have one, waits `--wait-time` ms and then
-briefly polls Sway's tree to confirm the change (see [Wait time](#wait-time)).
-
-Multiple actions can be added to `sway-launch`. They run in a fixed order: the moves
-(`--new-column`, `--new-row`, `--workspace`, `--output`) first, one at a time, since each one
-changes where the window is before the next is judged; then `--split`, `--floating`, `--sticky`,
-`--fullscreen`, `--focus`, `--height`, `--width`, `--position`, `--mark` and each
-`--sway-command`, sent to Sway together as one command (`[con_id=N] floating enable, resize set width 700px, ...`), so the window takes
-them all at once instead of visibly floating, then resizing, then jumping into place; and
-`--scratchpad` last. Each action in that one command is still confirmed and reported on its own,
-and an action whose state already holds is left out of it.
-
-These flags exist for convenience — you could just as well get the container id and run manual
-`swaymsg` commands against it, set up window rules with a mark, or use other window rules
-directly.
-
-`--timeout` bounds how long an action waits for its confirmation *event* — the part that depends on
-an application actually mapping a window, so seconds are a sensible unit. It is not the bound on
-talking to the compositor itself: a single Sway IPC request/response is bounded separately, at a
-fixed 10 seconds, so a compositor that accepts a connection and then stops answering fails with a
-clear message rather than blocking forever. The two are deliberately independent — tying them
-together would make `--timeout 1` break ordinary tree reads on a slow machine, and `--timeout 60`
-re-open a minute-long hang.
-
-`--timeout` (and a step's `timeout`) must be at least 1 second: an action sends its command before
-it starts waiting, so a zero timeout could only ever report failure over a change that had already
-happened. Values too large for the system clock to represent (above 4294967295 seconds) are
-rejected too.
-
-When a wait does run out, the error says which action it was and, for a launch, what it saw. A new
-window that opened but didn't match `--app-id`/`--class` is named — usually the one you meant,
-under an app_id you didn't expect (it varies with version, packaging and backend, and an XWayland
-window has none, only a class). A command that exited without opening any window, typically one
-that isn't on `PATH` in Sway's environment, is called out as such:
-
-```text
-$ sway-launch --timeout 2 -a notfoot foot
-launch "foot": no window with app_id "notfoot" appeared within 2 sec; 1 other new window did (con_id 12, app_id "foot", opened by this command) — check --app-id/--class (a window opened by this command was rechecked until the timeout, in case the app sets its app_id/class after mapping)
-$ sway-launch --timeout 2 footx
-launch "footx": no window appeared within 2 sec: the launched command exited without opening a window — check that it is on PATH in Sway's environment
-$ sway-launch --con-id 31 --floating --output left --mark m
-move container to output "left": no matching window event within 5 sec
-```
-
-A rejected window stays open. With `--json`, its id is in the error object's `unmatched_windows`
-(see [JSON output](#json-output)), so a script can close it or retry with the right filter.
-
-### Target an existing window
-
-All the actions above can also run against a window that's already open, instead of always
-launching a new one — useful for adjusting a window from a later step in a script without
-relaunching it.
-
-Target a specific container id (e.g. one captured from an earlier `sway-launch` call):
-
-```shell
-container_id="$(sway-launch -a foot foot)"
-sway-launch --con-id "$container_id" --floating
-```
-
-With actions to apply, the id is looked up first, and a wrong one fails before anything is sent:
-`no window with container id N` for an id nothing has, or `container N is a workspace, not a
-window` (likewise for an output) for one copied from the wrong line of `swaymsg -t get_tree`. A
-bare `--con-id N` with no actions isn't looked up — it just prints the id back, without needing a
-Sway session — so in a `--layout` file a step that only names a window by `con_id` succeeds, and
-the step that later targets it is the one that reports a wrong id.
-
-Or target an already-open window by matching `--app-id`/`--class` against currently open windows,
-the same way those flags match a newly launched window:
-
-```shell
-sway-launch --existing -a foot --fullscreen
-```
-
-Or match on a mark instead, applied to a window by an earlier `--mark` (or `swaymsg mark`) call —
-useful for the classic "dropdown terminal" scripting pattern, where a script wants to find its own
-previously-marked window again without tracking a container id itself:
-
-```shell
-sway-launch --existing --mark-match dropdown-term --scratchpad
-```
-
-`--existing` requires one of `--app-id`, `--class`, or `--mark-match` (they're mutually
-exclusive — pick whichever identifies the window), or `--title` (see
-[Matching by title](#matching-by-title)), which can also narrow any of the three. It compares the
-value exactly and
-case-sensitively (see [Finding a window's app_id or class](#finding-a-windows-app_id-or-class)),
-and errors if that doesn't match exactly one window — it won't guess which one you meant. The
-same flags with `--list-windows` instead of `--existing` show the windows it would choose between,
-with their container ids. The search includes windows in Sway's scratchpad
-(hidden/stashed windows), not just visible ones — if you have both a visible and a scratchpad
-window with the same `app_id`/`class`/mark, retarget with `--con-id` instead to be unambiguous.
-
-#### Waiting for a window something else starts
-
-With `--wait`, `--existing` waits up to `--timeout` for a matching window to open instead of
-failing when there isn't one yet. That covers windows `sway-launch` doesn't start itself: an
-`exec` line in the Sway config, an XDG autostart entry or systemd user unit, an app restoring its
-session, a launcher like `fuzzel`, or an app that opens its window seconds after starting. No
-`sleep` is needed in front of the call:
-
-```shell
-# In the Sway config: start Firefox, and put its window on workspace 2 once it opens
-exec firefox
-exec sway-launch --existing --wait -a firefox --workspace 2
-```
-
-A window already open is used at once. Otherwise the run waits for one to open, and also notices
-an app that sets its app_id/class only after its window appears. Several matching windows are
-still an error, at once, since waiting can't tell them apart. If none opens in time, the run fails
-with `no window with app_id "firefox" appeared within 5 sec`. In a layout step or a binding, write
-`wait = true` next to `existing = true`. A window found this way wasn't launched by the run, so
-`--rollback-on-error` never closes it.
-
-A mark (or a `--con-id`) can also name a split container holding several windows — what a
-`focus parent; mark <name>` binding marks. `--floating`, `--fullscreen`, `--scratchpad` and `--mark`
-work on one, but `--workspace`, `--output` and `--focus` are refused with an error: Sway reports
-those moves only for a single window, so `sway-launch` couldn't confirm them. Target one of the
-windows inside, or use `swaymsg` directly for the container.
-
-### Floating
-
-Makes the window floating. Useful for applications that share a single `app_id` across all their
-windows — Firefox, for example, uses `app_id=firefox`.
-
-```shell
-sway-launch --floating 'firefox --new-window https://example.com'
-```
-
-### Sticky
-
-Makes the window sticky: a floating sticky window shows on the current output across every
-workspace, instead of just the one it was launched on. Sticky only takes effect while the window is
-floating, so pair it with `--floating` (a small utility window you want visible no matter which
-workspace you switch to). On a tiled window Sway just records the flag — the window stays on its
-own workspace — and it applies if the window is floated later.
-
-```shell
-sway-launch --floating --sticky foot
-```
-
-### Fullscreen
-
-Makes the window fullscreen.
-
-```shell
-sway-launch --fullscreen foot
-```
-
-### Focus
-
-Focuses the window. Useful when a later step in a layout would otherwise leave a different window
-focused — for example, focusing the first terminal after building a layout that ends by launching
-a background app.
-
-```shell
-sway-launch --focus foot
-```
-
-### Mark
-
-Mark the window. This is useful when additional rules are set up in Sway — for example, a floating
-Firefox window pinned to the left side of the screen with a specific page open.
-
-```shell
-# sway config
-for_window [con_mark="firefox-floating-left"] resize set 1100 px 90 ppt, move position 20 20
-```
-
-```shell
-sway-launch --mark firefox-floating-left 'firefox --new-window https://example.com'
-```
-
-A mark may contain spaces, tabs and Sway's own command separators (`,`, `;`) — those are quoted and
-stored literally. A few characters are rejected up front rather than silently mangled, because Sway
-doesn't store any of them as given, so the value could never be found again by `--mark-match`:
-
-- a **double quote** or a **backslash** — stored with the escape character still attached
-  (`dropdown"term` comes back as `dropdown\"term`);
-- a **newline** — rewritten to `;` when stored (`a⏎b` comes back as `a;b`);
-- a **dollar sign** — Sway replaces `$name` with the matching `set $name ...` variable from its
-  config, even inside quotes (`$ws1` lands on whatever your config sets `$ws1` to). Which names
-  are defined differs from one config to the next, so `$` is rejected everywhere.
-
-Every other control character (a carriage return, a terminal escape, ...) is rejected too, even
-though Sway would store it: a name is printed later by status bars and `swaymsg`, and a shared
-template shouldn't be able to plant a terminal escape sequence there.
-
-The same rule applies to `--mark-match`, `--workspace`, and `--output`.
-
-`--mark` uses Sway's plain `mark` command, so it **replaces** rather than adds, in two ways:
-
-- the new mark becomes the window's **only** mark — any marks it already carried are removed;
-- a mark is unique across windows, so if **another window** already holds it, that window loses it.
-
-This matters most when retargeting by mark. `sway-launch --existing --mark-match dropdown-term
---mark pinned` leaves the window marked `pinned` and no longer `dropdown-term`, so a later
-`--mark-match dropdown-term` finds nothing. Likewise, marking a new window with a name your own
-`for_window` rules or keybindings expect on a different window moves the mark away from it. To keep
-a window findable by an existing mark, don't `--mark` it again with a different one; add extra marks
-with `swaymsg '[con_id=<id>] mark --add <name>'` instead.
-
-### Workspace
-
-Move the new window to a workspace.
-
-```shell
-sway-launch --workspace 2 foot
-```
-
-The value is a workspace name, matched the way Sway matches it: ignoring case, so `--workspace
-web` joins an existing `Web`. Sway's own keywords — `next`, `prev`, `next_on_output`,
-`prev_on_output`, `current`, `back_and_forth` (in any case), plus `number` and `to` on their own —
-are rejected, because Sway acts on them even when quoted, so they can't be used as names.
-
-If your workspaces are named `<number>: <label>` (`1: term`, `2: web`) and your keybindings switch
-with `workspace number N`, use `--workspace-number` (`workspace_number` in a layout or template
-step) instead. It finds the workspace the same way Sway does, by the number its name starts with,
-so `--workspace-number 2` joins `2: web`, where `--workspace 2` would create a separate workspace
-named `2`. With no workspace numbered 2 yet, Sway creates one named `2`. `--on-workspace-number`
-and a template's `[layout]` `workspace_number` build a whole layout there the same way.
-
-```shell
-sway-launch --workspace-number 2 firefox
-```
-
-For the other keyword forms, capture the container id and run `swaymsg` directly:
-
-```shell
-container_id="$(sway-launch foot)"
-swaymsg "[con_id=$container_id] move container to workspace next"
-```
-
-### Output
-
-Move the new window to a specific output (monitor).
-
-```shell
-sway-launch --output HDMI-A-1 foot
-```
-
-As with Sway's own `move container to output`, the window lands on the workspace that output is
-currently showing — including when it was already on a hidden workspace of the same output, which
-brings it into view. Combined with `--workspace`, the window goes to that workspace and the
-workspace itself is moved to the output, so the window ends up on both — and so does any other
-window already on that workspace, since a workspace moves as a whole.
-
-The value is the output's connector name as `swaymsg -t get_outputs` shows it (`HDMI-A-1`,
-`DP-2`), matched ignoring case. Sway also accepts an output's make, model and serial
-(`"Example Corp EX-27 0000001"`), but `sway-launch` confirms the move by connector name, so that
-form isn't supported. As with [Workspace](#workspace) above, Sway's directional keywords (`left`,
-`right`, `up`, `down`, `current`, in any case) are rejected; use `swaymsg` with a captured container
-id for those.
-
-### Height and width
-
-Set the height and width of the new window. This usually works, but it depends on the current
-Sway container layout — should work on both tiled and floating windows.
-
-The format used is `100px` or `100ppt` for percent. A pixel value must be at least 1, and a
-percentage 1-100 — `0` and percentages over 100 are rejected up front, since Sway would ignore or
-clamp them.
-
-```shell
-sway-launch --floating --width 1200px --height 80ppt foot
-```
-
-### Position
-
-Set the position of the new window. Only makes sense for a floating window — a tiled window's
-position is determined by the layout, not by coordinates, and Sway rejects the command outright
-(rather than silently ignoring it) if the window isn't floating, so pair this with `--floating`.
-Either `center`, or `<x>,<y>` in pixels. Both are relative to the window's workspace, the same as
-Sway's own `move position`: the workspace starts below or beside a bar and inside any outer gaps,
-so `0,0` is its top-left corner, not the output's, and `center` centers the window on the
-workspace. `<x>`/`<y>` may be negative, which places the window partly past the workspace's left
-or top edge. To place a window on another monitor, combine `--output` with `--position`; the
-coordinates are then relative to the workspace it lands on there.
-
-```shell
-sway-launch --floating --position center foot
-sway-launch --floating --position 100,200 foot
-sway-launch --floating --output HDMI-A-1 --position 100,200 foot
-```
-
-### Settle
-
-Keep holding `--height`/`--width` (in `px`) and `--position` for the given number of milliseconds
-after they're confirmed, applying them again if the window stops showing them. Browsers set their
-own window size in the first fraction of a second after opening, often just after `sway-launch` has
-applied and confirmed the requested one, so without this a browser window can end up a different
-size from one run to the next. Every time the geometry has to be applied again, the hold starts
-over; after three re-applies the application is left to have its way, and whatever it changed is
-reported `"unconfirmed"` under [`--json`](#json-output) rather than failing the run.
-
-A `ppt` size can't be held, since there's no pixel figure to compare against, so `--settle` needs
-a pixel `--height`/`--width` or a `--position`. It accepts 1 to 60000 ms, and every run with it
-takes at least that long, so use it only for the applications that need it. In a template, a
-binding's `settle` replaces the step's: the binding is what knows the slot is a browser.
-
-```shell
-sway-launch --floating --width 1100px --height 1080px --position 20,20 --settle 500 \
-  firefox --new-window
-```
-
-### Split
-
-Change split on the new window.
-
-```shell
-sway-launch --split v foot
-sway-launch --split h foot
-```
-
-### New column
-
-Move the window right, into a new column beside its current one (`move right`).
-
-```shell
-sway-launch -a foot foot
-sway-launch --new-column foot
-```
-
-On a multi-monitor setup, this can be silently skipped — not delayed, not erroring, simply not
-run — whenever Sway's own `move right` would relocate the window to the next output instead of
-restructuring it in place, and `sway-launch` skips the command rather than doing that silently on
-your behalf. That happens when the window is already the trailing (rightmost) child of a workspace
-laid out horizontally (or tabbed), and also when it's the only window inside a container sitting at
-that trailing edge, which Sway treats the same as the container itself. The second case includes a
-lone window you've run `layout tabbed` on, and every first window on a workspace when your Sway
-config sets `workspace_layout tabbed` or `stacking`. A window that's already fullscreen is skipped
-too on a multi-monitor setup (reason `fullscreen`), since Sway sends a fullscreen window's `move
-right` straight to the next output whatever its position — for example a layout step retargeting
-an earlier step's fullscreen window, or an app that starts fullscreen. With a single output Sway
-leaves it in place, so nothing is skipped.
-
-A floating window is skipped on every setup (reason `floating`): Sway only nudges a floating
-window 10 px for `move right`, which is never a new column.
-
-`--new-column` and `--new-row` can't be combined with `--workspace`/`--workspace-number` (or
-`workspace`/`workspace_number` in the same layout step): the move would apply on the workspace the window opened on, and the workspace move
-afterwards drops it into the target as an ordinary new window, so the new column or row never
-appears there. Build on the target workspace instead, with `--on-workspace` or a template's
-`[layout]` table.
-
-The check runs right before the move is sent, against the tree as the earlier actions in the same
-invocation left it, so `--new-column --new-row` judges the row move after the column move has
-happened. Run with `--verbose` to see when a move is skipped and why, or check `--json`'s
-`"actions"` array (see [JSON output](#json-output) below) for a machine-readable `"reason"`
-(`trailing_workspace_edge`, `fullscreen` or `floating`) instead of parsing a log line.
-
-### New row
-
-Move the window down, into a new row beneath its current one (`move down`).
-
-```shell
-sway-launch -a foot foot
-sway-launch --new-row foot
-```
-
-Subject to the same skips as [New column](#new-column) above — the multi-monitor ones along the
-vertical axis instead (where a stacked layout counts as vertical, the way tabbed counts as
-horizontal), and the floating one on every setup.
-
-### Scratchpad
-
-Move the window to Sway's scratchpad — hidden until shown again (e.g. `swaymsg scratchpad show`,
-or a keybinding matching a mark). Runs last, after every other action, so it's useful for building
-up a fully-configured window (size, position, mark) and then hiding it away in one invocation — the
-classic "dropdown terminal" pattern.
-
-```shell
-sway-launch --floating --width 500px --height 400px --mark dropdown-term --scratchpad foot
-```
-
-Re-running `--scratchpad` on a window already in the scratchpad is a no-op, the same as
-[Floating](#floating)/[Fullscreen](#fullscreen)/[Focus](#focus) above.
-
-### Sway command
-
-Send a Sway command of your own to the window, for a property no flag sets: borders, opacity, a
-title format, a tabbed parent. Each `--sway-command` is sent as `[con_id=N] <command>` in the same
-command as the other actions, after `--mark` and before `--scratchpad`, in the order given. It's
-an escape hatch, not a replacement for the flags: `sway-launch` can't tell what an arbitrary
-command was meant to do, so its effect is reported `"unconfirmed"` under [`--json`](#json-output),
-and only Sway refusing it fails the run.
-
-```shell
-sway-launch --floating --width 900px --height 500px --sway-command 'border none' \
-  --sway-command 'opacity 0.9' foot
-```
-
-A layout or template step takes the same commands as a list:
-`sway_commands = ["border none", "opacity 0.9"]`.
-
-Sway runs any command given window criteria, including ones that act on the whole session
-(`exec`, `reload`, `bindsym`, even `exit`), and a layout or template file may come from someone
-else. So a command must start with one that acts on one window: `allow_tearing`, `border`,
-`floating`, `focus`, `fullscreen`, `inhibit_idle`, `layout`, `mark`, `max_render_time`, `move`,
-`opacity`, `resize`, `scratchpad`, `shortcuts_inhibitor`, `split`/`splith`/`splitv`/`splitt`,
-`sticky`, `swap`, `title_format`, `unmark` or `urgent`. Each entry is one command: an unquoted `,`
-or `;`, a newline, and a leading `[` (the criteria are `sway-launch`'s to add) are refused, and so
-is a `$`, which Sway would replace with a variable from your own config.
-
-### Verbose
-
-Show verbose debug information. This goes to stderr, not stdout — stdout is always reserved for
-the final result (the bare container id, or the `--json` object below), so
-`container_id="$(sway-launch -v ...)"`-style capture still gets exactly one clean line even with
-`-v` on. A runtime failure's message is prefixed `error:` (and a rollback problem `warning:`), the
-same labels the argument parser uses, so the line that explains why a script stopped stands out
-from the diagnostics around it. The label is colored only when stderr is a terminal and `NO_COLOR`
-is unset; `--json` error objects are never labelled or colored.
-
-```shell
-$ sway-launch --split h -v foot
-Sway action: Exec "foot" (app_id_match: "") (class_match: "")
-Sway command: exec export SWAY_LAUNCH_PID_MARKER=<pid>-<nanos>-<n> && ( foot )
-Event match: New container id 437 (PID-marker-confirmed)
-Target container id: 437
-Sway action: Split (container id: 437) (split: Horizontal)
-Some actions have no matching event type. Will wait 20 ms, then run the Sway command.
-Sway command: [con_id=437] splith
-Confirmed via poll: splith (container id: 437)
-437
-```
-
-### JSON output
-
-Print the result as a JSON object instead of a bare container id, for scripts that want structured
-output. `actions` lists every planned action, in order, each as `{"kind": ..., "command": ...,
-"status": ...}`:
-
-- `"kind"` identifies the action by the flag that produced it, in `snake_case` (`"new_column"` for
-  `--new-column`, `"mark"` for `--mark`, `"height"` for `--height`, ...) — the same whether the
-  action ran or was skipped. Match on this field: it never carries your values or Sway syntax.
-- `"command"` is the Sway command the action sent, the same text `--dry-run` prints for it (e.g.
-  `"move right"`, `"mark \"pinned\""`) — on its own, without the other parts of a command it was
-  sent as one part of. It's absent for a skipped action, which never ran one.
-- `"status"` is one of:
-  - `"changed"` — the action ran and actually changed something.
-  - `"already_satisfied"` — the window was already in the target state (already floating, already
-    on the target workspace, etc.), so nothing needed to change; see
-    [Floating](#floating)/[Fullscreen](#fullscreen)/[Focus](#focus)/[Workspace](#workspace)/
-    [Output](#output)/[Scratchpad](#scratchpad) above for which actions can no-op like this.
-  - `"unconfirmed"` — the command was sent and the wait elapsed, but the change was never
-    observed. Only the [wait time](#wait-time) actions can report this, and it isn't an error:
-    some of them have legitimate outcomes where the expected state never arrives (resizing a
-    window that's the sole occupant of its workspace is silently clamped by Sway; moving one
-    that's already at the edge of its workspace is a no-op), and a percentage `--height`/`--width`
-    has no pixel figure to check against at all. It is a weaker result than `"changed"`, though —
-    if you chain further actions assuming this one took effect, this is the field that tells you
-    it may not have.
-  - `"skipped"` — the action was never run at all, with a machine-readable `"reason"` field added
-    alongside `"status"`. Currently only `--new-column`/`--new-row`'s guard produces one, with
-    reason `trailing_workspace_edge`, `fullscreen` or `floating` (see "New column"/"New row" above).
-
-```shell
-$ sway-launch --json --floating --mark pinned foot
-{"actions":[{"command":"floating enable","kind":"floating","status":"changed"},{"command":"mark \"pinned\"","kind":"mark","status":"changed"}],"container_id":437}
-```
-
-For `--layout`/`--template`, `container_ids` lists every step's container id positionally,
-`containers` maps each *named* step (one with `id` set, or a template `slot`, which resolves to the
-same name) to its container id — steps without a name only appear in `container_ids` — and
-`actions` aggregates every step's actions, each also tagged with its 1-based `step` number:
-
-```shell
-$ sway-launch --template quad-grid --apps foot,foot,code,foot --json
-{"actions":[{"command":"splith","kind":"split","status":"changed","step":1},{"command":"splitv","kind":"split","status":"changed","step":2},{"command":"move down","kind":"new_row","status":"changed","step":3},{"command":"splith","kind":"split","status":"changed","step":3}],"container_ids":[437,438,439,440],"containers":{"bottom-left":439,"bottom-right":440,"top-left":437,"top-right":438}}
-```
-
-A `--layout`/`--template` run that launched windows onto a workspace already holding tiled windows
-adds a `"warnings"` list of messages saying so (see [Templates](#templates)); the key is absent
-otherwise.
-
-This also applies to errors — a failure prints a JSON object to stderr instead of a plain-text
-message, so a `--json` caller never needs to interpret a plain-text error message. Read it as the
-**last line** of stderr rather than assuming stderr holds nothing else: with no reachable Sway
-socket, the `i3`/`sway --get-socketpath` fallback the IPC library shells out to can print its own
-`sway socket not detected.` diagnostic to the inherited stderr first, ahead of anything
-`sway-launch` writes.
-
-```shell
-$ sway-launch --json --con-id 999999 --floating
-{"container_id":999999,"error":"no window with container id 999999","rolled_back":[]}
-```
-
-`container_id` is the container the run had already resolved — launched, or targeted via
-`--con-id`/`--existing` — when a later action failed, so a window that launched fine and then
-failed on, say, `--position` can still be found and closed. It's omitted when the failure came
-before any container was resolved (a launch that timed out, an `--existing` that matched nothing).
-It names the run's target, not a window guaranteed to still be open: the failure may itself be that
-the container closed, as above. Plain output reports the same thing as a
-`container <id> was the target when this failed` line on stderr, just ahead of the error message;
-stdout stays empty on failure.
-
-A launch that timed out after rejecting windows its `--app-id`/`--class` didn't match lists them
-under `unmatched_windows`, present only when there are any. `launched_by_this_run` says whether the
-window's process was started by this invocation — when it was, the filter is what's wrong, and the
-window is yours to close:
-
-```shell
-$ sway-launch --json --timeout 2 -a notfoot foot
-{"error":"launch \"foot\": no window with app_id \"notfoot\" appeared within 2 sec; ...","rolled_back":[],"unmatched_windows":[{"app_id":"foot","class":null,"container_id":12,"launched_by_this_run":true}]}
-```
-
-`rolled_back` is only ever non-empty when `--rollback-on-error` (see "Layout files" above) actually
-closed something first. If a rollback kill fails — most often because that window had already
-closed on its own — or the window was asked to close but was still open a second later, the id
-appears under `rollback_failed` instead, a field present only when there's something in it:
-
-```shell
-{"error":"layout.toml: step 2: move right: container id 437 no longer exists — window may have closed","rolled_back":[],"rollback_failed":[437]}
-```
-
-The three lists never overlap and mean different things: `container_ids` is still open,
-`rolled_back` was closed by this run (asked to close, then seen gone), and `rollback_failed` is in a
-state this run can't vouch for and worth checking. An id in `rollback_failed` is deliberately kept
-out of `container_ids` rather than reported as though it were still open.
-
-For a `--layout`/`--template` run, the error object also reports whatever earlier steps had already
-completed, plus the failing step's own window if it launched one before failing, so a caller can
-identify the windows left open on screen without walking Sway's tree and guessing which ones were
-its own. Whatever container the failing step targeted — launched or retargeted — is also named by
-`container_id`, the same field a single invocation uses (a retargeted one isn't added to
-`container_ids`, since it may never have existed — a stale `con_id` fails exactly that way):
-
-```shell
-$ sway-launch --layout layout.toml --json
-{"container_id":439,"container_ids":[437,438,439],"containers":{"editor":437},"error":"layout.toml: step 3: floating enable: no matching window event within 5 sec","rolled_back":[]}
-```
-
-`container_ids`/`containers` carry the same meaning they do on success. Anything `rolled_back`
-closed is excluded — it no longer exists — and that includes `container_id`, which is omitted when
-rollback closed the failing step's window. `container_ids`/`containers` are omitted whenever there's
-no partial progress to report at all: for a single invocation, which has no concept of one, and
-equally for a `--layout`/`--template` run that failed on its very first step before launching a
-window. Treat them as optional rather than always present.
-
-### Dry run
-
-Print the planned sequence of Sway commands instead of running them, numbered continuously across
-every step — never touches Sway IPC or launches anything, so it works even with no Sway session
-running at all. Works with a direct command or `--layout`/`--template`.
-
-```shell
-$ sway-launch --template master-triple-stack --apps code,foot,foot,foot --dry-run
-1. launch code
-2. splith
-3. launch foot
-4. splitv, resize set width 30ppt
-5. launch foot
-6. launch foot
-```
-
-Actions a real run sends to Sway as one command (see [Actions reference](#actions-reference)) share
-a line, joined with `,` the way Sway receives them, though a real run leaves out any whose state
-already holds.
-
-Every line is container-id-free by design: for a fresh command, there's no real window yet to name
-one for; for `--con-id`/`--existing`, showing the id on some lines and not others would be an
-inconsistent preview. `--json` prints a structured `{"steps": [{"target": "...", "actions":
-[{"kind": "...", "command": "..."}, ...]}, ...]}` object instead, each action carrying the same
-`kind`/`command` pair a real run's [JSON output](#json-output) reports. A `--layout`/`--template`
-run that switches workspace before its first step (`--on-workspace`, or a template's `[layout]`
-table) lists those commands first — numbered ahead of the steps in plain output, and as a
-`"setup"` list under `--json`.
-
-Control characters in a command (or anything else the preview prints) are shown as visible escapes
-— `\u{1b}` for an escape character, `\t` for a tab — rather than printed raw, so a layout or
-bindings file can't use a terminal escape sequence to make the preview show something other than
-what it would run.
-
-The preview is statically planned, not a guaranteed prediction of what a real run will do: `move
-right`/`move down` (`--new-column`/`--new-row`) always show as planned here, even on a multi-monitor
-setup where a real run's guard (see [JSON output](#json-output) above) would skip one of them to
-avoid throwing the window onto a different output, or for a floating window. Checking that guard
-needs a live query against the window's actual state and Sway's output layout at the moment the move
-would run, which would defeat the point of a preview that works with no Sway session running at
-all.
-
-A `target_id` reference in a `--layout`/`--template` step still resolves during a dry run (so the
-plan doesn't error out partway through), but against a placeholder rather than a real container id,
-since nothing has actually launched — the placeholder is never shown in the output either way.
-
-### Validate
-
-Parses and validates a `--layout`/`--template` file — every step's height/width/position formats,
-target-field consistency, and `target_id` references, plus (for `--template`) `--bindings`/`--apps`
-resolution — without launching anything or touching Sway IPC. Requires `--layout` or `--template`.
-
-```shell
-$ sway-launch --layout layout.toml --validate
-valid: layout.toml (3 step(s))
-```
-
-```shell
-$ sway-launch --layout layout.toml --validate
-error: layout.toml: step 2: height: Must be <N>px (N >= 1) or <N>ppt (N 1-100), e.g. 300px or 20ppt (ppt = percent)
-```
-
-An error names the file holding the mistake, and the step for a mistake in a step: a bad binding is
-reported under the `--bindings` file (or `--apps`), not the template it's applied to.
-
-`--json` prints `{"source": "...", "steps": N, "valid": true}` on success — `source` echoes back the
-`--layout`/`--template` argument as given, not a canonicalized path — or the same structured
-`{"error": "...", "rolled_back": [...]}` shape every other runtime error uses. Useful in CI or a
-dotfiles repo to catch a typo in a layout/template file without needing a live Sway session to
-check it against.
-
-### Wait time
-
-Some actions, like split and move, do not have a corresponding Sway IPC event. For these, a
-static sleep time is used instead. Depending on the machine or setup, the wait time may need to
-be set higher or lower than the default.
-
-The wait is always applied *before* the underlying Sway command, unconditionally — to let other
-running IPC clients finish their own commands — and once for all the actions sent together as one
-command, not once per action. *After* the command, every action in this category
-now briefly polls Sway's tree instead of unconditionally sleeping the full `--wait-time` again,
-returning as soon as the change is confirmed — so the actual delay is often just the one
-before-command wait, not double `--wait-time`. A few cases have no way to confirm via polling
-(e.g. resizing a window that's the sole occupant of its workspace is silently clamped by Sway, or
-moving a tiled window that's already at the edge of its workspace), in which case the action falls
-back to sleeping the full `--wait-time` again, same as before this fast path existed — so the
-"roughly double `--wait-time`" figure is still the worst case, just no longer the typical one. The
-poll window itself is capped at `--wait-time` too, and at a fixed ceiling of its own: 200 ms for
-most actions, and only 25 ms for `--new-column`/`--new-row`. On a heavily-loaded system, raising
-`--wait-time` therefore widens the confirmation window only up to that ceiling (so not at all past
-25 ms for `--new-column`/`--new-row`); beyond it, a higher `--wait-time` lengthens the
-before-command wait and the fallback sleep, not the poll.
-
-Falling back is reported, not hidden: the action's `"status"` under
-[`--json`](#json-output) is `"unconfirmed"` rather than `"changed"` whenever the change was never
-observed, so "we waited long enough" is never presented as "we saw it happen". The exit status is
-still success — several of these fallbacks are legitimate no-ops rather than failures — so a script
-that wants to treat unconfirmed as fatal has to check the field.
-
-```shell
-...
-Sway action: Split (container id: 439) (split: Horizontal)
-Some actions have no matching event type. Will wait 100 ms, then run the Sway command.
-Sway command: [con_id=439] splith
-Confirmed via poll: splith (container id: 439)
-439
-```
-
-When the change can't be observed within the poll window, the `Confirmed via poll` line is
-replaced by `Poll grace period elapsed without confirmation: splith (container id: 439)`. For the
-polled actions sent on their own (`--new-column`, `--new-row`, and `--workspace` together with
-`--output`), the lines read `No matching event types
-for action. Will run Sway command and wait 100 ms.`, `Confirmed via poll (container id: 439)` and
-`Poll grace period elapsed without confirmation, falling back to wait-time (container id: 439)`.
-
-### Debug events
-
-Prints every Sway IPC event to stdout, until stopped (`Ctrl-C`). Not part of everyday use — it's a
-diagnostic tool for seeing what Sway actually sends: useful when a `sway-launch` action doesn't
-behave as expected and you want to see the raw event stream Sway produces around it.
-
-```shell
-sway-launch --debug-events
-```
-
-With `--json`, each event is one line of JSON instead: Sway's own payload, in the shape `swaymsg -t
-subscribe` shows, plus an `event` field naming its type (`window`, `workspace`, `output`, ...). That
-makes it easy to filter, for example to print the app_id of every window that opens:
-
-```shell
-sway-launch --debug-events --json | jq -r 'select(.event == "window" and .change == "new") | .container.app_id'
 ```

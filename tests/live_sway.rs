@@ -1056,7 +1056,7 @@ fn exec_runs_in_sway_s_directory_and_environment_not_the_caller_s() {
     fresh_workspace();
     // Sway's own `exec` forks the command from the compositor, so it inherits
     // Sway's working directory and environment rather than sway-launch's.
-    // README.md's "Basic usage" documents this; pinned here so a future
+    // README.md's "Launching a command" documents this; pinned here so a future
     // change to how the command is launched can't alter it unnoticed.
     let temp_dir = TestTempDir::new();
     let caller_directory = temp_dir.join("exec-caller-directory");
