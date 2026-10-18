@@ -33,6 +33,7 @@ use super::query::{
 use super::target::{LaunchFilter, WindowCriteria};
 use super::tree::{
     find_node, height_matches, is_window, position_shows, width_matches, ContainerState,
+    WindowIdentity,
 };
 use super::values::{escape_control_characters, Size, Split, TitlePattern};
 use super::{MOVE_POLL_GRACE, WAIT_TIME_POLL_GRACE, WAIT_TIME_POLL_INTERVAL};
@@ -1385,9 +1386,9 @@ impl ExecAction<'_> {
                             .iter()
                             .filter(|window| {
                                 window.launched_by_this_run
-                                    && rechecks.contains(&window.container_id)
+                                    && rechecks.contains(&window.identity.container_id)
                             })
-                            .map(|window| window.container_id),
+                            .map(|window| window.identity.container_id),
                     );
                 }
                 let container_id = launched.first().copied();
@@ -1544,20 +1545,13 @@ impl ExecAction<'_> {
                 ) {
                     if let Some(seen) = unmatched_windows
                         .iter_mut()
-                        .find(|unmatched| unmatched.container_id == container_id)
+                        .find(|unmatched| unmatched.identity.container_id == container_id)
                     {
-                        seen.title = window.container.name.clone();
+                        seen.identity.title = window.container.name.clone();
                         continue;
                     }
                     let unmatched = UnmatchedWindow {
-                        container_id,
-                        app_id: window.container.app_id.clone(),
-                        class: window
-                            .container
-                            .window_properties
-                            .as_ref()
-                            .and_then(|properties| properties.class.clone()),
-                        title: window.container.name.clone(),
+                        identity: WindowIdentity::of(&window.container),
                         launched_by_this_run: window
                             .container
                             .pid
@@ -1578,7 +1572,7 @@ impl ExecAction<'_> {
                         );
                     }
                     if unmatched.launched_by_this_run {
-                        rechecks.push(unmatched.container_id);
+                        rechecks.push(unmatched.identity.container_id);
                         next_recheck = time::Instant::now() + LATE_PROPERTY_RECHECK_INTERVAL;
                     }
                     unmatched_windows.push(unmatched);
@@ -1587,7 +1581,7 @@ impl ExecAction<'_> {
             }
             // A window that failed its title when it mapped and matches now
             // is no longer one to report.
-            unmatched_windows.retain(|unmatched| unmatched.container_id != container_id);
+            unmatched_windows.retain(|unmatched| unmatched.identity.container_id != container_id);
 
             let evidence = window
                 .container
@@ -1670,18 +1664,19 @@ impl ExecAction<'_> {
         for window in &rechecked {
             if let Some(unmatched) = unmatched_windows
                 .iter_mut()
-                .find(|unmatched| unmatched.container_id == window.container_id)
+                .find(|unmatched| unmatched.identity.container_id == window.identity.container_id)
             {
-                unmatched.app_id = window.app_id.clone();
-                unmatched.class = window.class.clone();
-                unmatched.title = window.title.clone();
+                unmatched.identity = window.identity.clone();
             }
         }
-        *rechecks = rechecked.iter().map(|window| window.container_id).collect();
+        *rechecks = rechecked
+            .iter()
+            .map(|window| window.identity.container_id)
+            .collect();
         rechecked
             .iter()
             .find(|window| window.matches)
-            .map(|window| window.container_id)
+            .map(|window| window.identity.container_id)
     }
 
     /// Whether `window` is the `New` window this launch is waiting for,
@@ -1986,13 +1981,13 @@ const LATE_PROPERTY_RECHECK_INTERVAL: time::Duration = time::Duration::from_mill
 /// `con_id 7, app_id "foot"`, with the window's title too when the launch
 /// was matching on one.
 fn describe_unmatched_window(window: &UnmatchedWindow, with_title: bool) -> String {
-    let mut identity = match (&window.app_id, &window.class) {
+    let mut identity = match (&window.identity.app_id, &window.identity.class) {
         (Some(app_id), _) => format!("app_id \"{}\"", escape_control_characters(app_id, false)),
         (None, Some(class)) => format!("class \"{}\"", escape_control_characters(class, false)),
         (None, None) => "no app_id or class".to_string(),
     };
     if with_title {
-        match &window.title {
+        match &window.identity.title {
             Some(title) => identity.push_str(&format!(
                 ", title \"{}\"",
                 escape_control_characters(title, false)
@@ -2005,7 +2000,10 @@ fn describe_unmatched_window(window: &UnmatchedWindow, with_title: bool) -> Stri
     } else {
         ""
     };
-    format!("con_id {}, {}{}", window.container_id, identity, ownership)
+    format!(
+        "con_id {}, {}{}",
+        window.identity.container_id, identity, ownership
+    )
 }
 
 #[cfg(test)]

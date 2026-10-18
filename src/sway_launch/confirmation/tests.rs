@@ -15,10 +15,12 @@ fn unfiltered_fallback_hint_is_empty_with_a_filter_and_names_the_flags_without()
 
 fn unmatched(container_id: i64, app_id: Option<&str>, class: Option<&str>) -> UnmatchedWindow {
     UnmatchedWindow {
-        container_id,
-        app_id: app_id.map(str::to_string),
-        class: class.map(str::to_string),
-        title: None,
+        identity: WindowIdentity {
+            container_id,
+            app_id: app_id.map(str::to_string),
+            class: class.map(str::to_string),
+            title: None,
+        },
         launched_by_this_run: false,
     }
 }
@@ -975,10 +977,7 @@ fn exec_timeout_message_names_the_title_it_waited_for() {
             time::Duration::from_secs(3),
             None,
             Some(&title),
-            &[UnmatchedWindow {
-                title: None,
-                ..unmatched(12, Some("foot"), None)
-            }],
+            &[unmatched(12, Some("foot"), None)],
             None
         ),
         "no window with title matching \"project-a\" appeared within 3 sec; meanwhile 1 other \

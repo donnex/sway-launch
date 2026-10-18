@@ -104,7 +104,7 @@ instruction set: where it disagrees with this file or the code, it's stale. The 
   | `values.rs` | `Split`/`Size`/`Position`, `parse_size()`/`parse_position()`, every `validate_*` function, `escape_control_characters()` |
   | `target.rs` | `Target`/`WindowMatch`/`LaunchFilter`, and `Target::from_fields()`, the one owner of the target-selection rules |
   | `ipc.rs` | connections, socket discovery, command dispatch, the event subscription, `kill_container()` |
-  | `tree.rs` | every pure `&Node` predicate: matching, geometry, `ContainerState::from_tree()`, the move guard |
+  | `tree.rs` | every pure `&Node` predicate: matching, geometry, `ContainerState::from_tree()`, the move guard, and how a window is named (`window_app_id()`/`window_class()`, empty read as none, and the `WindowIdentity` every window report holds) |
   | `query.rs` | fetch-a-tree-then-delegate wrappers, and nothing else |
   | `process_marker.rs` | the PID marker and its `/proc` reads |
   | `action.rs` | `SwayAction`/`ActionKind`/`ExecAction` themselves: fields, `Display`, `sway_command_verb()`, `flag_name()` |

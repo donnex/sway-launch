@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A window reporting an empty app_id or class is now described the same way everywhere: as having
+  none. `--list-windows` and a launch's timeout message showed it as `app_id ""` (and `--json` as
+  an empty string) while `--capture` already treated it as missing; all of them now show no app_id
+  (`-` in the table, `null` in `--json`). (#174)
 - A `--continue-on-timeout` run with a timed-out step no longer exits 0 when stdout is closed early.
   Piped into a reader that stops after the first line (`sway-launch --layout ... | head -n1`
   under `set -o pipefail`), the run reported success even though its layout was incomplete; it now exits 1 as it does with stdout open, with or without `--json`. (#165)

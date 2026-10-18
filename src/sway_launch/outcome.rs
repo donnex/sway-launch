@@ -7,6 +7,7 @@
 //! the executor draws while working (observed versus merely sent) is finer
 //! than the one worth publishing.
 
+use super::tree::WindowIdentity;
 use std::fmt;
 
 /// `SwayLaunch::run()`'s result: the resolved container id, plus every
@@ -128,10 +129,7 @@ impl fmt::Display for RunError {
 /// filter is almost certainly what's wrong, not the command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnmatchedWindow {
-    pub container_id: i64,
-    pub app_id: Option<String>,
-    pub class: Option<String>,
-    pub title: Option<String>,
+    pub identity: WindowIdentity,
     pub launched_by_this_run: bool,
 }
 

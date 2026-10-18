@@ -1204,17 +1204,24 @@ fn fail_with_rollback(
     process::exit(sway_launch::interrupt::exit_status().unwrap_or(1));
 }
 
+/// The fields every `--json` description of a window starts with, so
+/// `unmatched_windows` and `--list-windows` name a window the same way.
+fn window_identity_json(identity: &sway_launch::WindowIdentity) -> serde_json::Value {
+    serde_json::json!({
+        "container_id": identity.container_id,
+        "app_id": identity.app_id,
+        "class": identity.class,
+        "title": identity.title,
+    })
+}
+
 fn unmatched_windows_json(windows: &[sway_launch::UnmatchedWindow]) -> serde_json::Value {
     windows
         .iter()
         .map(|window| {
-            serde_json::json!({
-                "container_id": window.container_id,
-                "app_id": window.app_id,
-                "class": window.class,
-                "title": window.title,
-                "launched_by_this_run": window.launched_by_this_run,
-            })
+            let mut value = window_identity_json(&window.identity);
+            value["launched_by_this_run"] = serde_json::json!(window.launched_by_this_run);
+            value
         })
         .collect()
 }
@@ -1585,19 +1592,19 @@ fn window_listing_json(windows: &[sway_launch::ListedWindow]) -> serde_json::Val
     let windows: Vec<_> = windows
         .iter()
         .map(|window| {
-            serde_json::json!({
-                "container_id": window.container_id,
-                "app_id": window.app_id,
-                "class": window.class,
-                "title": window.title,
-                "marks": window.marks,
-                "workspace": window.workspace,
-                "output": window.output,
-                "scratchpad": window.scratchpad,
-                "floating": window.floating,
-                "focused": window.focused,
-                "split_container": window.split_container,
-            })
+            let mut value = window_identity_json(&window.identity);
+            for (key, field) in [
+                ("marks", serde_json::json!(window.marks)),
+                ("workspace", serde_json::json!(window.workspace)),
+                ("output", serde_json::json!(window.output)),
+                ("scratchpad", serde_json::json!(window.scratchpad)),
+                ("floating", serde_json::json!(window.floating)),
+                ("focused", serde_json::json!(window.focused)),
+                ("split_container", serde_json::json!(window.split_container)),
+            ] {
+                value[key] = field;
+            }
+            value
         })
         .collect();
     serde_json::json!({ "windows": windows })
@@ -1645,7 +1652,7 @@ fn window_listing_table(windows: &[sway_launch::ListedWindow]) -> Vec<String> {
         } else {
             sway_launch::escape_control_characters(&window.marks.join(","), false)
         };
-        let mut title = text(window.title.as_deref());
+        let mut title = text(window.identity.title.as_deref());
         if title.chars().count() > LISTED_TITLE_LIMIT {
             title = title
                 .chars()
@@ -1654,9 +1661,9 @@ fn window_listing_table(windows: &[sway_launch::ListedWindow]) -> Vec<String> {
                 + "…";
         }
         rows.push([
-            window.container_id.to_string(),
-            text(window.app_id.as_deref()),
-            text(window.class.as_deref()),
+            window.identity.container_id.to_string(),
+            text(window.identity.app_id.as_deref()),
+            text(window.identity.class.as_deref()),
             workspace,
             if flags.is_empty() {
                 "-".to_string()

@@ -65,6 +65,45 @@ fn name_of_nearest(path: &[&Node], kind: NodeType) -> Option<String> {
     nearest_of_kind(path, kind).and_then(|node| node.name.clone())
 }
 
+/// `node`'s app_id, with an empty one read as none, the same as
+/// `window_class()`: a client can set `""`, and every consumer (matching,
+/// `--list-windows`, a timeout message, `--capture`'s step keys) then agrees
+/// the window has no app_id (#174).
+pub(super) fn window_app_id(node: &Node) -> Option<&str> {
+    node.app_id.as_deref().filter(|app_id| !app_id.is_empty())
+}
+
+/// `node`'s X11 class, with an empty one read as none.
+pub(super) fn window_class(node: &Node) -> Option<&str> {
+    node.window_properties
+        .as_ref()
+        .and_then(|properties| properties.class.as_deref())
+        .filter(|class| !class.is_empty())
+}
+
+/// How this tool names a window to the user: its container id, app_id, class
+/// and title as the tree shows them. Shared by `--list-windows`' rows, a
+/// launch's unmatched windows and its late-property rechecks, so all three
+/// read a window the same way.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WindowIdentity {
+    pub container_id: i64,
+    pub app_id: Option<String>,
+    pub class: Option<String>,
+    pub title: Option<String>,
+}
+
+impl WindowIdentity {
+    pub(super) fn of(node: &Node) -> Self {
+        WindowIdentity {
+            container_id: node.id,
+            app_id: window_app_id(node).map(str::to_string),
+            class: window_class(node).map(str::to_string),
+            title: node.name.clone(),
+        }
+    }
+}
+
 /// Whether `node` passes a launch's `--app-id`/`--class` filter; with no
 /// filter, any window does.
 pub(super) fn launch_filter_match(node: &Node, filter: Option<LaunchFilter>) -> bool {
@@ -76,10 +115,7 @@ pub(super) fn launch_filter_match(node: &Node, filter: Option<LaunchFilter>) -> 
 /// shows them now, and whether they pass the filter and title pattern yet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct RecheckedWindow {
-    pub(super) container_id: i64,
-    pub(super) app_id: Option<String>,
-    pub(super) class: Option<String>,
-    pub(super) title: Option<String>,
+    pub(super) identity: WindowIdentity,
     pub(super) matches: bool,
 }
 
@@ -99,13 +135,7 @@ pub(super) fn recheck_launched_windows(
         .iter()
         .filter_map(|&container_id| find_node(tree, container_id))
         .map(|node| RecheckedWindow {
-            container_id: node.id,
-            app_id: node.app_id.clone(),
-            class: node
-                .window_properties
-                .as_ref()
-                .and_then(|properties| properties.class.clone()),
-            title: node.name.clone(),
+            identity: WindowIdentity::of(node),
             matches: launch_filter_match(node, filter)
                 && title.is_none_or(|title| title.matches(node.name.as_deref())),
         })
@@ -154,10 +184,7 @@ pub(super) fn existing_candidates(
 /// `--con-id` or a bindings file for an open window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListedWindow {
-    pub container_id: i64,
-    pub app_id: Option<String>,
-    pub class: Option<String>,
-    pub title: Option<String>,
+    pub identity: WindowIdentity,
     pub marks: Vec<String>,
     /// `None` when the window is hidden in the scratchpad.
     pub workspace: Option<String>,
@@ -182,13 +209,7 @@ pub(super) fn window_listing(tree: &Node, criteria: WindowCriteria) -> Vec<Liste
             let workspace = name_of_nearest(&path, NodeType::Workspace);
             let scratchpad = is_scratchpad_workspace(workspace.as_deref());
             ListedWindow {
-                container_id: node.id,
-                app_id: node.app_id.clone(),
-                class: node
-                    .window_properties
-                    .as_ref()
-                    .and_then(|properties| properties.class.clone()),
-                title: node.name.clone(),
+                identity: WindowIdentity::of(node),
                 marks: node.marks.clone(),
                 workspace: workspace.filter(|_| !scratchpad),
                 output: name_of_nearest(&path, NodeType::Output).filter(|_| !scratchpad),

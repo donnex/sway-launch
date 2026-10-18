@@ -10,6 +10,7 @@
 //! most one matcher and at least one criterion, and a container id carries
 //! none.
 
+use super::tree::{window_app_id, window_class};
 use super::values::{validate_exec_command, TitlePattern};
 use std::fmt;
 use swayipc::Node;
@@ -113,7 +114,7 @@ impl WindowMatch<'_> {
 
     pub(super) fn matches(&self, node: &Node) -> bool {
         match *self {
-            WindowMatch::AppId(app_id) => node.app_id.as_deref() == Some(app_id),
+            WindowMatch::AppId(app_id) => window_app_id(node) == Some(app_id),
             WindowMatch::Class(class) => window_class(node) == Some(class),
             WindowMatch::Mark(mark) => node.marks.iter().any(|held| held == mark),
         }
@@ -134,27 +135,25 @@ impl fmt::Display for WindowMatch<'_> {
 
 impl LaunchFilter<'_> {
     pub(super) fn matches(&self, node: &Node) -> bool {
-        match *self {
-            LaunchFilter::AppId(app_id) => node.app_id.as_deref() == Some(app_id),
-            LaunchFilter::Class(class) => window_class(node) == Some(class),
+        WindowMatch::from(*self).matches(node)
+    }
+}
+
+impl<'a> From<LaunchFilter<'a>> for WindowMatch<'a> {
+    fn from(filter: LaunchFilter<'a>) -> Self {
+        match filter {
+            LaunchFilter::AppId(value) => WindowMatch::AppId(value),
+            LaunchFilter::Class(value) => WindowMatch::Class(value),
         }
     }
 }
 
-/// ` with app_id "foot"`/` with class "Code"`, for a launch's own messages.
+/// `app_id "foot"`/`class "Code"`, for a launch's own messages: the same text
+/// as the `WindowMatch` it names.
 impl fmt::Display for LaunchFilter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            LaunchFilter::AppId(value) => write!(f, "app_id \"{}\"", value),
-            LaunchFilter::Class(value) => write!(f, "class \"{}\"", value),
-        }
+        WindowMatch::from(*self).fmt(f)
     }
-}
-
-fn window_class(node: &Node) -> Option<&str> {
-    node.window_properties
-        .as_ref()
-        .and_then(|properties| properties.class.as_deref())
 }
 
 /// The target-selection fields every front end has, as it read them. A

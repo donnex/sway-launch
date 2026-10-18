@@ -21,7 +21,7 @@
 //! each one and rebuilds it), so this is the one place outside `tree.rs` that
 //! recurses over a tree: the shape *is* the recursion.
 
-use super::tree::node_position;
+use super::tree::{node_position, window_app_id, window_class};
 use super::values::escape_control_characters;
 use swayipc::{Node, NodeLayout};
 
@@ -345,19 +345,9 @@ impl<'a> Capture<'a> {
 
 /// A window's app_id, or failing that its class, as the step key matching it.
 fn identity(window: &Node) -> Option<(&'static str, &str)> {
-    window
-        .app_id
-        .as_deref()
-        .filter(|app_id| !app_id.is_empty())
+    window_app_id(window)
         .map(|app_id| ("app_id", app_id))
-        .or_else(|| {
-            window
-                .window_properties
-                .as_ref()
-                .and_then(|properties| properties.class.as_deref())
-                .filter(|class| !class.is_empty())
-                .map(|class| ("class", class))
-        })
+        .or_else(|| window_class(window).map(|class| ("class", class)))
 }
 
 /// The command a window was most likely started with: its app_id as is

@@ -202,7 +202,7 @@ fn listing_tree() -> Node {
 fn window_listing_lists_windows_and_marked_split_containers_in_tree_order() {
     let ids: Vec<i64> = window_listing(&listing_tree(), WindowCriteria::default())
         .iter()
-        .map(|window| window.container_id)
+        .map(|window| window.identity.container_id)
         .collect();
     assert_eq!(ids, vec![20, 10, 11, 12, 13]);
 }
@@ -213,10 +213,12 @@ fn window_listing_describes_each_window() {
     assert_eq!(
         listing[1],
         ListedWindow {
-            container_id: 10,
-            app_id: Some("foot".to_string()),
-            class: None,
-            title: Some("shell".to_string()),
+            identity: WindowIdentity {
+                container_id: 10,
+                app_id: Some("foot".to_string()),
+                class: None,
+                title: Some("shell".to_string()),
+            },
             marks: vec![],
             workspace: Some("1".to_string()),
             output: Some("HEADLESS-1".to_string()),
@@ -229,7 +231,7 @@ fn window_listing_describes_each_window() {
     assert!(listing[2].split_container);
     assert_eq!(listing[2].marks, vec!["browsers".to_string()]);
     assert!(listing[4].floating);
-    assert_eq!(listing[4].class.as_deref(), Some("Code"));
+    assert_eq!(listing[4].identity.class.as_deref(), Some("Code"));
 }
 
 #[test]
@@ -245,7 +247,7 @@ fn window_listing_with_a_filter_lists_what_existing_chooses_between() {
     let ids = |filter| -> Vec<i64> {
         window_listing(&listing_tree(), by(filter))
             .iter()
-            .map(|window| window.container_id)
+            .map(|window| window.identity.container_id)
             .collect()
     };
     assert_eq!(ids(WindowMatch::AppId("foot")), vec![20, 10]);
@@ -264,10 +266,54 @@ fn a_title_alone_never_matches_a_workspace_output_root_or_the_scratchpad() {
     let tree = listing_tree();
     let listed: Vec<i64> = window_listing(&tree, criteria)
         .iter()
-        .map(|window| window.container_id)
+        .map(|window| window.identity.container_id)
         .collect();
     assert_eq!(matching_container_ids(&tree, criteria), vec![10]);
     assert_eq!(listed, vec![10]);
+}
+
+// window_app_id / window_class / WindowIdentity (#174)
+
+#[test]
+fn window_identity_reads_an_empty_app_id_or_class_as_none() {
+    let tree = node_tree(
+        1,
+        vec![
+            leaf_node_value(10, Some(""), Some("")),
+            leaf_node_value(11, Some("foot"), Some("Foot")),
+        ],
+        vec![],
+    );
+    let empty = find_node(&tree, 10).unwrap();
+    assert_eq!(window_app_id(empty), None);
+    assert_eq!(window_class(empty), None);
+    assert_eq!(
+        WindowIdentity::of(empty),
+        WindowIdentity {
+            container_id: 10,
+            ..WindowIdentity::default()
+        }
+    );
+    let named = find_node(&tree, 11).unwrap();
+    assert_eq!(
+        WindowIdentity::of(named),
+        WindowIdentity {
+            container_id: 11,
+            app_id: Some("foot".to_string()),
+            class: Some("Foot".to_string()),
+            title: None,
+        }
+    );
+}
+
+#[test]
+fn an_empty_app_id_reads_as_none_in_the_listing_and_in_a_recheck() {
+    let tree = node_tree(1, vec![leaf_node_value(12, Some(""), None)], vec![]);
+    let listing = window_listing(&tree, WindowCriteria::default());
+    assert_eq!(listing[0].identity.app_id, None);
+    let rechecked = recheck_launched_windows(&tree, &[12], filter("foot", ""), None);
+    assert_eq!(rechecked[0].identity.app_id, None);
+    assert!(!rechecked[0].matches);
 }
 
 // launch_filter_match / recheck_launched_windows
@@ -301,10 +347,12 @@ fn recheck_launched_windows_matches_a_class_set_after_mapping() {
     assert_eq!(
         recheck_launched_windows(&tree, &[12], filter("", "Spotify"), None),
         vec![RecheckedWindow {
-            container_id: 12,
-            app_id: None,
-            class: Some("Spotify".to_string()),
-            title: None,
+            identity: WindowIdentity {
+                container_id: 12,
+                app_id: None,
+                class: Some("Spotify".to_string()),
+                title: None
+            },
             matches: true,
         }]
     );
@@ -316,10 +364,12 @@ fn recheck_launched_windows_reports_a_still_unset_class_as_not_matching() {
     assert_eq!(
         recheck_launched_windows(&tree, &[12], filter("", "Spotify"), None),
         vec![RecheckedWindow {
-            container_id: 12,
-            app_id: None,
-            class: None,
-            title: None,
+            identity: WindowIdentity {
+                container_id: 12,
+                app_id: None,
+                class: None,
+                title: None
+            },
             matches: false,
         }]
     );
@@ -339,7 +389,7 @@ fn recheck_launched_windows_drops_a_window_that_closed_and_keeps_the_order() {
     assert_eq!(
         rechecked
             .iter()
-            .map(|window| (window.container_id, window.matches))
+            .map(|window| (window.identity.container_id, window.matches))
             .collect::<Vec<_>>(),
         vec![(14, true), (12, false)]
     );
@@ -1273,7 +1323,7 @@ fn recheck_launched_windows_needs_the_title_to_match_too() {
     value["name"] = serde_json::json!("Welcome");
     let tree = node_tree(1, vec![value], vec![]);
     let rechecked = recheck_launched_windows(&tree, &[12], filter("code", ""), Some(&title));
-    assert_eq!(rechecked[0].title.as_deref(), Some("Welcome"));
+    assert_eq!(rechecked[0].identity.title.as_deref(), Some("Welcome"));
     assert!(!rechecked[0].matches);
 }
 

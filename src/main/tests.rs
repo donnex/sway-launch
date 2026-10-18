@@ -450,10 +450,10 @@ fn layout_or_template_only_flags_reports_each_flag_by_its_args_id() {
 
 fn listed_window(container_id: i64) -> sway_launch::ListedWindow {
     sway_launch::ListedWindow {
-        container_id,
-        app_id: None,
-        class: None,
-        title: None,
+        identity: sway_launch::WindowIdentity {
+            container_id,
+            ..Default::default()
+        },
         marks: vec![],
         workspace: Some("1".to_string()),
         output: Some("HEADLESS-1".to_string()),
@@ -467,12 +467,12 @@ fn listed_window(container_id: i64) -> sway_launch::ListedWindow {
 #[test]
 fn window_listing_table_aligns_columns_and_fills_gaps_with_a_dash() {
     let mut foot = listed_window(7);
-    foot.app_id = Some("foot".to_string());
-    foot.title = Some("shell".to_string());
+    foot.identity.app_id = Some("foot".to_string());
+    foot.identity.title = Some("shell".to_string());
     foot.focused = true;
     foot.floating = true;
     let mut code = listed_window(1234);
-    code.class = Some("Code".to_string());
+    code.identity.class = Some("Code".to_string());
     code.marks = vec!["editor".to_string(), "main".to_string()];
     code.workspace = None;
     code.scratchpad = true;
@@ -489,7 +489,7 @@ fn window_listing_table_aligns_columns_and_fills_gaps_with_a_dash() {
 #[test]
 fn window_listing_table_shortens_long_titles_and_escapes_control_characters() {
     let mut window = listed_window(1);
-    window.title = Some(format!("a\tb{}", "x".repeat(60)));
+    window.identity.title = Some(format!("a\tb{}", "x".repeat(60)));
     let table = window_listing_table(&[window]);
     let title = table[1].rsplit("  ").next().unwrap();
     assert!(title.starts_with("a\\tb"), "{title}");
@@ -500,7 +500,7 @@ fn window_listing_table_shortens_long_titles_and_escapes_control_characters() {
 #[test]
 fn window_listing_json_keeps_every_field_and_the_full_title() {
     let mut window = listed_window(5);
-    window.title = Some("t".repeat(80));
+    window.identity.title = Some("t".repeat(80));
     window.split_container = true;
     let json = window_listing_json(&[window]);
     assert_eq!(json["windows"][0]["container_id"], 5);

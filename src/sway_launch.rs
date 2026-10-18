@@ -52,7 +52,7 @@ pub use query::{
     unnamed_build_workspace_name,
 };
 pub use target::{FieldStyle, Target, TargetError, TargetFields, WindowCriteria, WindowMatch};
-pub use tree::ListedWindow;
+pub use tree::{ListedWindow, WindowIdentity};
 pub use values::{
     check_relative_move, escape_control_characters, launch_setup, parse_env_assignment,
     parse_position, parse_size, parse_title_pattern, parse_workspace_number, render_argv,
