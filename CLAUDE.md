@@ -1106,7 +1106,9 @@ summary of its own. `mm` inside a longer message is ordinary text, not the short
 
 `main` doesn't exist yet — no release has shipped. The first
 merge creates it by pushing `dev`'s tip to `main` on the remote, per step 5's no-local-checkout
-case; every step before that applies unchanged.
+case; every step before that applies unchanged. Once it exists, make `main` the repository's default
+branch (`gh repo edit --default-branch main`), so visitors see the released code; Dependabot already
+targets `dev` on its own.
 
 The sequence:
 
@@ -1628,7 +1630,8 @@ grant; a new job that declares nothing starts read-only in both files.
 Every third-party action in both workflows is pinned to a full commit SHA with its tag in a
 trailing comment (`uses: actions/checkout@<sha> # v7.0.1`), never a movable tag or branch, so a
 retargeted ref can't run new code with a job's token; `.github/dependabot.yml` keeps the pins
-current with weekly pull requests. `dtolnay/rust-toolchain` is pinned the same way, which is why
+current with weekly pull requests, opened against `dev` (`target-branch`) rather than the default
+branch. `dtolnay/rust-toolchain` is pinned the same way, which is why
 its steps pass `toolchain: stable` explicitly — that was previously implied by the `@stable`
 branch name. A new action added to either workflow gets the same SHA-plus-comment form. Checkout
 steps in jobs that hold more than a read token, or that build the release, set
