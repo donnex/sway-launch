@@ -24,6 +24,7 @@ use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -187,9 +188,11 @@ impl Drop for FakeSway {
         self.stopping.store(true, Ordering::SeqCst);
         // Wakes the accept loop so it sees the flag.
         let _ = UnixStream::connect(&self.socket);
+        // Each launch leads its own process group, so signalling the group
+        // takes the command the shell started with it, not just the shell.
         for pid in std::mem::take(&mut self.sway().launched_pids) {
             let _ = Command::new("kill")
-                .arg(pid.to_string())
+                .args(["-TERM", "--", &format!("-{pid}")])
                 .stderr(Stdio::null())
                 .status();
         }
@@ -327,8 +330,9 @@ impl Sway {
     }
 
     /// Runs an `exec` command the way Sway does, through `sh -c`, and
-    /// returns the marker token the binary tagged it with. The process is
-    /// killed when the server is dropped.
+    /// returns the marker token the binary tagged it with. The shell leads
+    /// its own process group, so it and everything it started are killed
+    /// when the server is dropped.
     pub fn launch(&mut self, command: &str) -> String {
         let shell_command = command
             .strip_prefix("exec ")
@@ -337,6 +341,7 @@ impl Sway {
             .unwrap_or_else(|| panic!("exec command carries no marker: {command}"));
         let mut child = Command::new("sh")
             .args(["-c", shell_command])
+            .process_group(0)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -356,6 +361,7 @@ impl Sway {
         let mut child = Command::new("sleep")
             .arg("30")
             .env_remove("SWAY_LAUNCH_PID_MARKER")
+            .process_group(0)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -597,7 +603,7 @@ fn marker_token(shell_command: &str) -> Option<String> {
 }
 
 /// The pid of a running process whose environment carries `token`'s marker.
-fn marked_process(token: &str) -> Option<u32> {
+pub fn marked_process(token: &str) -> Option<u32> {
     let entry = format!("{PID_MARKER_VAR}={token}");
     std::fs::read_dir("/proc")
         .ok()?

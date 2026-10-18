@@ -11,7 +11,9 @@ mod common;
 
 use common::{TempToml, TestTempDir};
 
-use common::fake_sway::{FakeSway, Sway, SwayVersion, FLOATING, SCRATCHPAD, TILED, WORKSPACE};
+use common::fake_sway::{
+    marked_process, FakeSway, Sway, SwayVersion, FLOATING, SCRATCHPAD, TILED, WORKSPACE,
+};
 use serde_json::Value;
 use std::process::Output;
 use std::time::Duration;
@@ -1272,6 +1274,31 @@ fn a_launched_window_carrying_the_marker_is_ours() {
         "{}",
         run.stderr()
     );
+}
+
+#[test]
+fn dropping_the_fake_kills_the_command_a_launch_started_not_just_its_shell() {
+    let fake = FakeSway::accepting_everything(SwayVersion::V1_11);
+    let token = fake
+        .sway()
+        .launch("exec export SWAY_LAUNCH_PID_MARKER=drop-test && ( sleep 30 )");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while marked_process(&token).is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the launched command never started"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    drop(fake);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while let Some(pid) = marked_process(&token) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "process {pid} carrying the dropped fake's marker is still running"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 /// The pid of `parent`'s child whose command line starts with `program`,
