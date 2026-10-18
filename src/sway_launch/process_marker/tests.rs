@@ -165,6 +165,34 @@ fn marker_tracker_stops_scanning_and_reports_once_when_proc_is_unavailable() {
     assert!(!tracker.needs_scan(true));
 }
 
+#[test]
+fn marker_tracker_predates_launch_only_for_a_process_older_than_every_marked_one() {
+    let mut tracker = MarkerTracker::default();
+    assert!(!tracker.predates_launch(Some(1)));
+    tracker.record_start(500);
+    tracker.record_start(450);
+    tracker.record_start(600);
+    assert!(tracker.predates_launch(Some(449)));
+    assert!(!tracker.predates_launch(Some(450)));
+    assert!(!tracker.predates_launch(Some(700)));
+    assert!(!tracker.predates_launch(None));
+}
+
+#[test]
+fn start_ticks_from_stat_reads_the_22nd_field() {
+    let stat = "42 (a) b) S 7 42 42 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 98765 1000 50";
+    assert_eq!(start_ticks_from_stat(stat), Some(98765));
+    assert_eq!(start_ticks_from_stat("42 (foot) S 7"), None);
+    assert_eq!(start_ticks_from_stat("garbage"), None);
+}
+
+#[test]
+fn process_start_ticks_reads_this_process() {
+    let own = process_start_ticks(std::process::id() as i32);
+    assert!(own.is_some());
+    assert_eq!(process_start_ticks(-1), None);
+}
+
 // launch_evidence / marked_ancestor / parent_pid_from_stat /
 // cmdline_is_launch_shell
 

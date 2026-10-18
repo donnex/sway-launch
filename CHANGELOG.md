@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command is checked once more as a whole before it is sent, rather than only after Sway had
   already run it. (#123)
 
+### Fixed
+
+- `--rollback-on-error` no longer closes a window you opened yourself while a launch was failing.
+  When the launched command exited early (a mistyped flag, a crash) and a matching window opened
+  meanwhile, that window was counted as one the run had launched, so a later step's failure closed
+  it. A window whose process started after the launch is now only adopted, which rollback leaves
+  open; a single-instance application handing the request to a copy that was already running is
+  still recognised as launched. (#124)
+
 ## [0.1.0] - 2026-10-18
 
 The first release.

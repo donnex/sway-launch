@@ -299,6 +299,20 @@ pub(super) fn parent_pid_from_stat(stat: &str) -> Option<i32> {
     fields.split_whitespace().nth(1)?.parse().ok()
 }
 
+/// When a process started, in clock ticks since boot, from `/proc/<pid>/stat`.
+/// Only ever compared with another process's, so the tick length doesn't
+/// matter.
+pub(super) fn process_start_ticks(pid: i32) -> Option<u64> {
+    start_ticks_from_stat(&std::fs::read_to_string(format!("/proc/{}/stat", pid)).ok()?)
+}
+
+/// The `starttime` field (the 22nd) of a `/proc/<pid>/stat` line, counted
+/// from the last `)` as `parent_pid_from_stat()` does.
+pub(super) fn start_ticks_from_stat(stat: &str) -> Option<u64> {
+    let fields = &stat[stat.rfind(')')? + 1..];
+    fields.split_whitespace().nth(19)?.parse().ok()
+}
+
 /// The token of the launch whose shell a NUL-separated `/proc/<pid>/cmdline`
 /// is, if it is one: `sh -c "export <marker>=<token> && ..."`, as
 /// `ExecAction::sway_command()` writes it after `exec `.
@@ -403,6 +417,7 @@ pub(super) fn scan_marker_presence(
 #[derive(Debug, Default)]
 pub(super) struct MarkerTracker {
     seen: Vec<i32>,
+    earliest_start: Option<u64>,
     gone: bool,
     unavailable: bool,
 }
@@ -418,8 +433,29 @@ impl MarkerTracker {
     /// Never true for a marker that was simply never observed: that's also
     /// what "not started yet" and "a launcher dropped the environment" look
     /// like, and in both a foreign window would otherwise be claimed.
+    ///
+    /// Gone alone doesn't make a waiting window this launch's: a command that
+    /// fails and exits (a bad flag, a crash) looks the same as one handing
+    /// its request over. `predates_launch()` tells the two apart (#124).
     pub(super) fn is_gone(&self) -> bool {
         self.gone
+    }
+
+    /// Records the start time (`process_start_ticks()`) of a process seen
+    /// carrying the marker. The earliest one stands for the launch's start.
+    pub(super) fn record_start(&mut self, ticks: u64) {
+        self.earliest_start = Some(self.earliest_start.map_or(ticks, |known| known.min(ticks)));
+    }
+
+    /// Whether a window's process, started at `window_start`, was already
+    /// running before any process carrying the marker: what a single-instance
+    /// hand-off looks like, since the window then belongs to an instance that
+    /// predates the launch. A process started later carries no marker and
+    /// doesn't descend from the launch (or it would have been confirmed), so
+    /// it isn't this launch's, whatever the launched command did (#124).
+    /// Unknown start times, and a tie within one clock tick, answer `false`.
+    pub(super) fn predates_launch(&self, window_start: Option<u64>) -> bool {
+        matches!((window_start, self.earliest_start), (Some(window), Some(launch)) if window < launch)
     }
 
     /// Whether another scan could still change the outcome: before the marker

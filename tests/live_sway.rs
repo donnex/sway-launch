@@ -3624,6 +3624,69 @@ fn rollback_on_error_still_kills_a_window_matched_after_its_launcher_exited() {
 }
 
 #[test]
+fn rollback_on_error_leaves_a_window_the_user_opened_while_a_failed_launch_exited() {
+    fresh_workspace();
+    // #124: the same "seen, then gone" as the test above, but here the
+    // launched command fails (foot refuses an unknown flag) and the matching
+    // window is one the user opens a second in, from a process started after
+    // the launch. It can't be the instance a hand-off went to, so it is only
+    // adopted, and --rollback-on-error must leave it open.
+    let mut connection = connect();
+    let path = TempToml::write(
+        "rollback-failed-launch",
+        "[[step]]\ncommand = \"sleep 0.3 && foot --no-such-flag\"\napp_id = \"failed-probe\"\n\
+         timeout = 20\n\n[[step]]\ncon_id = 999999999\nmark = \"x\"\n",
+    );
+
+    let child = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--rollback-on-error",
+            "--json",
+            "--verbose",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to run sway-launch binary");
+
+    std::thread::sleep(Duration::from_millis(1000));
+    connection
+        .run_command("exec foot --app-id=failed-probe")
+        .expect("exec should succeed")
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("exec should succeed");
+
+    let output = child
+        .wait_with_output()
+        .expect("failed to wait for sway-launch");
+
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let users_window = first_app_id_window(&tree, "failed-probe");
+    let _guard = users_window.map(KillOnDrop);
+
+    assert!(
+        !output.status.success(),
+        "sway-launch should fail on the bad second step"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        users_window.is_some(),
+        "--rollback-on-error closed a window the user opened: {stderr:?}"
+    );
+    assert!(
+        stderr.contains("\"rolled_back\":[]"),
+        "nothing this run can prove it launched should be rolled back: {stderr:?}"
+    );
+    assert!(
+        stderr.contains("its process started after the launch"),
+        "--verbose should say why the window was only adopted: {stderr:?}"
+    );
+}
+
+#[test]
 fn a_hand_off_whose_launcher_exits_after_the_window_maps_is_launched_promptly() {
     fresh_workspace();
     // The single-instance hand-off where the forwarding process outlives the

@@ -36,16 +36,20 @@ pub struct RunOutcome {
 /// `run_wait_matching_exec_event()`. That fallback covers two very different
 /// situations, and only one of them is evidence of ownership:
 ///
-/// - The marked process is *gone*. Nothing marker-confirmed can still be
-///   coming, and a matching window appeared anyway — the single-instance
-///   application case (a browser or editor forwarding the request to an
-///   already-running process, which then maps the window). Our command caused
-///   that window, as directly as can be observed from outside: `Launched`.
-/// - The marked process is still *running* and the grace period simply
-///   elapsed. The matching window came from somewhere else — another
-///   `sway-launch`, another launcher, a user opening something at the wrong
-///   moment — and this invocation adopted it only because it matched the
-///   requested app_id/class: `Adopted`.
+/// - The marked process is *gone*, and the window's process was already
+///   running before the launch — the single-instance application case (a
+///   browser or editor forwarding the request to an already-running process,
+///   which then maps the window). Nothing marker-confirmed can still be
+///   coming, and the window most likely appeared because we asked for it:
+///   `Launched`. This is an inference, not proof: the older process could
+///   have opened a window for its own reasons at the same moment.
+/// - Anything else: the marked process is still *running* when the grace
+///   period elapses, or it's gone but the window's process started after the
+///   launch (the launched command failed and exited, #124). The matching
+///   window came from somewhere else — another `sway-launch`, another
+///   launcher, a user opening something at the wrong moment — and this
+///   invocation adopted it only because it matched the requested
+///   app_id/class: `Adopted`.
 ///
 /// The distinction exists because `--rollback-on-error` kills windows, and a
 /// kill can't be undone. Reporting an adopted window as this run's own would

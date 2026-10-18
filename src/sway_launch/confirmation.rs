@@ -21,9 +21,9 @@ use super::ipc::{
 };
 use super::outcome::{ActionOutcome, LaunchOwnership, RunError, UnmatchedWindow};
 use super::process_marker::{
-    generate_pid_marker_token, is_sibling_launchs_window, launch_evidence, register_launch,
-    scan_marker_presence, LaunchEvidence, MarkerPresence, MarkerTracker, MARKER_SCAN_INTERVAL,
-    PID_MARKER_FALLBACK_GRACE, PID_MARKER_VAR,
+    generate_pid_marker_token, is_sibling_launchs_window, launch_evidence, process_start_ticks,
+    register_launch, scan_marker_presence, LaunchEvidence, MarkerPresence, MarkerTracker,
+    MARKER_SCAN_INTERVAL, PID_MARKER_FALLBACK_GRACE, PID_MARKER_VAR,
 };
 use super::query::{
     awaited_existing_container_id, container_state, container_state_on, ensure_container_exists,
@@ -1468,11 +1468,17 @@ impl ExecAction<'_> {
     /// ends through the grace period, as `Adopted`.
     ///
     /// Which of those two ends the wait is reported back as the returned
-    /// `LaunchOwnership` (see its own doc comment): a marked process that's
-    /// gone means the window is ours by elimination, while the grace period
-    /// merely elapsing means we adopted a window we never confirmed was ours.
-    /// Only `--rollback-on-error` reads this, and only to decide whether
-    /// killing the window is this run's business.
+    /// `LaunchOwnership` (see its own doc comment). A marked process that's
+    /// gone makes the window `Launched` only when the window's process was
+    /// already running before the launch (`MarkerTracker::predates_launch()`),
+    /// as the instance a single-instance application hands over to is. A
+    /// command that simply failed and exited is gone too, and a window from a
+    /// process started after the launch is then someone else's: measured live
+    /// as `--rollback-on-error` closing a terminal the user opened while a
+    /// mistyped launch was failing (#124). That window, like one the grace
+    /// period merely ran out on, is `Adopted`. Only `--rollback-on-error`
+    /// reads this, and only to decide whether killing the window is this
+    /// run's business.
     ///
     /// Same background-thread/socket lifetime as `run_wait_matching_events()`:
     /// the thread reading this action's event stream may outlive this function
@@ -1530,8 +1536,10 @@ impl ExecAction<'_> {
 
         // The first content-matching-but-unconfirmed event seen, and when —
         // used both to cap how long the grace period below can run and as
-        // the value returned once it's used.
+        // the value returned once it's used — plus when its process started,
+        // for MarkerTracker::predates_launch().
         let mut fallback: Option<(i64, time::Instant)> = None;
+        let mut fallback_start: Option<u64> = None;
 
         let mut marker = MarkerTracker::default();
         let mut next_scan = time::Instant::now();
@@ -1612,6 +1620,13 @@ impl ExecAction<'_> {
             if marker.needs_scan(fallback.is_some()) && now >= next_scan {
                 let presence =
                     scan_marker_presence(PID_MARKER_VAR, &token, marker.previously_seen());
+                if let MarkerPresence::Present(pids) = &presence {
+                    for &pid in pids {
+                        if let Some(ticks) = process_start_ticks(pid) {
+                            marker.record_start(ticks);
+                        }
+                    }
+                }
                 if marker.observe(presence) && verbose {
                     diagnostic!(
                         "Could not read /proc — PID-marker correlation is degraded on this system"
@@ -1619,11 +1634,25 @@ impl ExecAction<'_> {
                 }
                 next_scan = now + MARKER_SCAN_INTERVAL;
                 if let (true, Some((container_id, _))) = (marker.is_gone(), fallback) {
+                    if !marker.predates_launch(fallback_start) {
+                        if verbose {
+                            diagnostic!(
+                                "Marked process no longer running; using fallback container id \
+                                 {} (adopted, not confirmed as launched by this run: its process \
+                                 started after the launch, so the launched command exited \
+                                 without a window of its own){}",
+                                container_id,
+                                unfiltered_fallback_hint(filter)
+                            );
+                        }
+                        return Ok((container_id, LaunchOwnership::Adopted));
+                    }
                     if verbose {
                         diagnostic!(
                             "Marked process no longer running; using fallback container id {} \
-                             (nothing marker-confirmed can still arrive, so this window is this \
-                             run's own){}",
+                             (nothing marker-confirmed can still arrive, and its process was \
+                             already running before the launch, so this window is this run's \
+                             own){}",
                             container_id,
                             unfiltered_fallback_hint(filter)
                         );
@@ -1797,6 +1826,7 @@ impl ExecAction<'_> {
                     );
                 }
                 fallback = Some((window.container.id, time::Instant::now()));
+                fallback_start = window.container.pid.and_then(process_start_ticks);
                 // Re-check straight away rather than at the next interval: if
                 // the marked process was already seen and has since exited
                 // (the single-instance case), this is the moment to say so.

@@ -229,8 +229,9 @@ decides which:
   otherwise execs the last command of an `&&` list (confirmed live); `validate_exec_command()`
   refuses a `#` comment, which would swallow the `)`. A content-matching window without it is held as a
   fallback and taken once the marker was seen and then gone (`MarkerTracker`: "gone" means seen,
-  then gone, never merely absent) → `LaunchOwnership::Launched`, or after
-  `PID_MARKER_FALLBACK_GRACE` → `Adopted`. Windows the filter or title rejected are rechecked for a
+  then gone, never merely absent) → `LaunchOwnership::Launched` if its process started before every
+  marked one (`predates_launch()`, from `process_start_ticks()`; a failed command is gone too,
+  #124), else `Adopted`, or after `PID_MARKER_FALLBACK_GRACE` → `Adopted`. Windows the filter or title rejected are rechecked for a
   late app_id/class/title (`recheck_launched_windows()`) and reported as `UnmatchedWindow`s on
   timeout, with `exec_timeout_message()` explaining what was seen. With a title, a `Title` event
   re-runs `matches_window()` too, but only for a window whose `New` arrived during this run

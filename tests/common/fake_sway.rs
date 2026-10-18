@@ -324,6 +324,24 @@ impl Sway {
         token
     }
 
+    /// Starts a process that has nothing to do with any launch (no marker,
+    /// not descended from a launch's shell), standing in for one the user
+    /// started themselves, and returns its pid. Killed with the fake.
+    pub fn start_foreign_process(&mut self) -> u32 {
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .env_remove("SWAY_LAUNCH_PID_MARKER")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("failed to start a foreign process");
+        let pid = child.id();
+        self.launched_pids.push(pid);
+        thread::spawn(move || child.wait());
+        pid
+    }
+
     /// Runs `change` with the pid of the process carrying `token`'s marker,
     /// once one exists — the process a real launched app's window would
     /// belong to. Gives up after five seconds, which fails the test through

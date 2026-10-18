@@ -1166,6 +1166,60 @@ fn a_matching_window_is_ours_once_the_marked_process_has_come_and_gone() {
 }
 
 #[test]
+fn a_window_from_a_process_started_after_a_failed_launch_is_only_adopted() {
+    // #124: the launched command exits without a window (a bad flag, a
+    // crash), and meanwhile the user opens a matching window of their own.
+    // The marker was seen, then gone, but the window's process started after
+    // the launch, so it can't be the instance a hand-off went to, and
+    // --rollback-on-error must leave it open.
+    let mut opened = false;
+    let fake = FakeSway::start(SwayVersion::V1_11, move |sway, command| {
+        if command.starts_with("exec ") && !opened {
+            opened = true;
+            let token = sway.launch(command);
+            sway.when_marked(token, |sway, _| {
+                let foreign = sway.start_foreign_process();
+                let id = sway.open_window(Some("fake-app"), Some(foreign));
+                sway.emit("new", id);
+            });
+        }
+        Ok(())
+    });
+    let layout = TempToml::write(
+        "rollback-after-failed-launch",
+        "[[step]]\ncommand = \"sleep 0.3\"\napp_id = \"fake-app\"\n\n\
+         [[step]]\ncommand = \"sleep 30\"\napp_id = \"never-appears\"\ntimeout = 1\n",
+    );
+    let run = run(
+        &fake,
+        &[
+            "--layout",
+            layout.to_str().unwrap(),
+            "--rollback-on-error",
+            "--verbose",
+        ],
+    );
+    assert!(!run.succeeded());
+    assert!(
+        run.stderr()
+            .contains("its process started after the launch"),
+        "{}",
+        run.stderr()
+    );
+    assert_eq!(
+        run.json["rolled_back"],
+        serde_json::json!([]),
+        "{}",
+        run.json
+    );
+    assert!(
+        !fake.commands().contains(&"[con_id=100] kill".to_string()),
+        "{:?}",
+        fake.commands()
+    );
+}
+
+#[test]
 fn a_window_the_filter_rejects_is_named_in_the_timeout() {
     let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {
         if command.starts_with("exec ") {

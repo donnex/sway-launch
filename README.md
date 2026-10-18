@@ -1267,8 +1267,11 @@ such as an app launcher) can't be recognised this way.
 When no window is recognised, the first new window that matches the filters is taken as a
 fallback: at once if the launched process was seen running and has exited (the single-instance case:
 the request went to an already-running copy), and otherwise after a grace period of about 2 seconds.
-`--rollback-on-error` treats a window taken after the grace period as adopted and never closes it.
-This is why `-a`/`-c` matter for an application that may already be running.
+`--rollback-on-error` closes a fallback window only in the first case, and only when the window's
+process was already running before the launch, as an already-running copy is. A window taken after
+the grace period, or one from a process started after the launch (the launched command failed and
+exited while you opened a window of your own), is treated as adopted and never closed. This is why
+`-a`/`-c` matter for an application that may already be running.
 
 A client/server launcher always takes the slow path: `footclient` (with `foot --server` running),
 `emacsclient -c`, `code --wait`. The window belongs to the already-running server, so it never
