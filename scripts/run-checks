@@ -63,19 +63,35 @@ done
 
 cd "$(dirname "$0")/.."
 
+# Neither list below can contain a space or a newline inside a name (every
+# path in both is this repository's own), so splitting on newlines is safe.
+newline='
+'
+old_field_separator="$IFS"
+
 # shellcheck disable=SC2086 # the directory list is split deliberately
-shell_scripts="$(grep -rlE '^#!.*[ /](sh|bash|dash)$' $SHELL_SCRIPT_DIRECTORIES | sort)" ||
-  die "No shell scripts found under $SHELL_SCRIPT_DIRECTORIES."
+candidate_files="$(find $SHELL_SCRIPT_DIRECTORIES -type f)" ||
+  die "Could not list the files under $SHELL_SCRIPT_DIRECTORIES."
+shell_scripts=''
+IFS="$newline"
+for candidate_file in $candidate_files; do
+  IFS="$old_field_separator"
+  first_line="$(head -n 1 "$candidate_file")" ||
+    die "Could not read $candidate_file."
+  case "$first_line" in
+  '#!'*/sh | '#!'*' sh' | '#!'*/bash | '#!'*' bash' | '#!'*/dash | '#!'*' dash')
+    shell_scripts="$shell_scripts$candidate_file$newline"
+    ;;
+  esac
+done
+IFS="$old_field_separator"
+[ -n "$shell_scripts" ] || die "No shell scripts found under $SHELL_SCRIPT_DIRECTORIES."
+shell_scripts="$(printf '%s' "$shell_scripts" | sort)"
 # Tracked files only, so an untracked signal file (REVIEW.md, new-issues.md)
 # isn't linted; a new file is checked once it's staged.
 markdown_files="$(git ls-files -- '*.md')" || die 'Could not list tracked Markdown files.'
 [ -n "$markdown_files" ] || die 'No tracked Markdown files found.'
 
-# Neither list can contain a space or a newline inside a name (every path in
-# both is this repository's own), so splitting on newlines is safe.
-newline='
-'
-old_field_separator="$IFS"
 IFS="$newline"
 # shellcheck disable=SC2086 # split into one argument per line, deliberately
 set -- $shell_scripts
