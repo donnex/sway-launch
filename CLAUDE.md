@@ -34,7 +34,7 @@ rules both apply in full because of this — there's no "private repo" fallback 
 - Run: `cargo run -- [OPTIONS] [COMMAND]` (e.g. `cargo run -- -a foot foot`)
 - Format: `cargo fmt`
 - Lint: `cargo clippy`
-- Test: `cargo test` — runs the unit tests in `src/sway_launch/`'s modules and `src/main.rs` (covering all
+- Test: `cargo test` — runs the unit tests in `src/sway_launch/`'s modules, `src/main.rs` and `src/run.rs` (covering all
   pure/logic functions; see the Testing bullet under Rust conventions) plus the integration tests
   in `tests/` (driving the compiled binary directly, including against the fake Sway IPC server in
   `tests/fake_sway.rs` — see Architecture below). This never touches a real Sway compositor, so it
@@ -80,9 +80,15 @@ instruction set: where it disagrees with this file or the code, it's stale. The 
 ### Crate map
 
 - `src/main.rs` — the `clap` `Args` struct, `main()`'s dispatch (standalone modes first, then
-  `--layout`/`--template` through `run_layout()`/`run_template()` into the shared `run_steps()`,
-  then a single direct-CLI `SwayLaunch`), and everything about output: printing, `--json`, errors,
-  rollback.
+  `--layout`/`--template` through `run_layout()`/`run_template()` into `run.rs`'s shared
+  `run_steps()`, then a single direct-CLI `SwayLaunch`), and everything about output: printing,
+  `--json`, errors (`fail_with_rollback()` renders what a rollback did). Excluded from the coverage
+  gate, so it holds no run logic.
+- `src/run.rs` — the `--layout`/`--template` run (#134): `run_steps()`'s per-step loop
+  (`--continue-on-timeout`, `target_id` skipping), `plan_step()`/`plan_steps_offline()`,
+  `--concurrent`'s staging (`stage_launches()`/`arrange_staged()`/`release_staged()`), the run
+  lock (`acquire_run_lock()`) and `--rollback-on-error` (`rollback()`). A child of `main.rs`, so it
+  uses the printing helpers and `Args` directly; measured by the coverage gate like any module.
 - `src/layout.rs` — `--layout`'s TOML schema (`Layout`/`LayoutStep`) and
   `LayoutStep::to_sway_launch()`, which turns one step into a `SwayLaunch`.
 - `src/template.rs` — `--template`'s schemas (`Template`/`TemplateStep`, `Bindings`/`Binding`),
@@ -117,7 +123,8 @@ instruction set: where it disagrees with this file or the code, it's stale. The 
   its effect is confirmed in `confirmation.rs`.
 - Unit tests live in a sibling `tests.rs` (`#[cfg(test)] mod tests;`), never inline, so the
   coverage gate can exclude test code by filename. `test_support.rs` holds fixtures shared between
-  modules' tests. The same applies to `layout.rs`/`template.rs`.
+  modules' tests. The same applies to `layout.rs`/`template.rs`/`run.rs`, and to `main.rs`, whose tests are
+  `src/main/tests.rs` (a crate root's `mod tests;` would mean `src/tests.rs`, hence its `#[path]`).
 
 ### Input validation
 
@@ -791,9 +798,9 @@ comments, name things clearly instead" style). Two rule-specific overrides:
     every `tests.rs`, which is why unit tests live in sibling files rather than inline — an inline
     test module's bodies would count as covered production code and pad the total):
     `cargo llvm-cov --summary-only --ignore-filename-regex '(^|/)(main|test_support|tests)\.rs$'`
-    reproduces CI's figure. Measured that way (2026-10-18): 94.5% lines overall; `tree.rs` 99.1%,
-    `values.rs` 96.9%, `layout.rs` 98.0%, `template.rs` 98.0%, `ipc.rs` 94.6%, `confirmation.rs`
-    91.4%, `launch.rs` 85.4%, `query.rs` 85.6%. What's left uncovered is mostly IPC-error branches
+    reproduces CI's figure. Measured that way (2026-10-18, with `run.rs` split out of `main.rs`, #134): 94.4% lines
+    overall; `tree.rs` 98.8%, `values.rs` 97.3%, `layout.rs` 98.0%, `template.rs` 98.0%, `ipc.rs`
+    93.7%, `confirmation.rs` 93.3%, `run.rs` 89.6%, `launch.rs` 83.9%, `query.rs` 92.7%. What's left uncovered is mostly IPC-error branches
     (a `get_tree()` that fails mid-run) and `--debug-events`' event loop.
 
     **Keep the decision pure and let the IPC layer fetch** — the shape `expected_position`/
@@ -1638,8 +1645,8 @@ by name, markdownlint on every tracked Markdown file, black/ruff), then a `cargo
 step in both workflows, and had drifted between them; the shared script replaced both copies, and
 the separate `lint-scripts-and-docs` job folded into `check`. The gate excludes
 `main.rs` and the unit-test files themselves by filename (see the coverage bullet under Rust
-conventions above), and its thresholds sit a few points under the baseline measured on 2026-10-17,
-recorded in the comment above that step. Until #103 it also excluded the compositor-bound
+conventions above), and its thresholds sit under the baseline measured on 2026-10-17 (re-measured 2026-10-18 once
+`run.rs` joined the measured set, thresholds unchanged), recorded in the comment above that step. Until #103 it also excluded the compositor-bound
 `ipc.rs`/`query.rs`, and the `run_*` drivers were most of the gap; the fake-Sway suite reaches
 both. Re-measure
 and adjust the thresholds as their own deliberate decision (with the comment updated) rather than

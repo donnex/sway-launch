@@ -3388,7 +3388,7 @@ fn rollback_on_error_handles_a_launched_window_that_already_closed_itself() {
     // Regression test: if step 1's launched window closes on its own before
     // a later step's failure triggers --rollback-on-error, rollback()'s own
     // kill_container() call against that already-gone container must not be
-    // treated as fatal -- main.rs's rollback() doc comment already says a
+    // treated as fatal -- run.rs's rollback() doc comment already says a
     // kill failure (e.g. the window already closed) is logged and skipped,
     // not fatal, but this exact scenario had no dedicated test.
     //

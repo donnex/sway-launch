@@ -78,14 +78,18 @@ jobs:
         with:
           tool: cargo-llvm-cov@0.9.1
 
-      # Excluded by filename: main.rs (CLI wiring, covered by the tests/
-      # integration suites) and the unit-test files themselves
-      # (test_support.rs and every */tests.rs), so tests can't count as
-      # covered production code. The IPC layers (ipc.rs, query.rs) are
-      # measured: tests/fake_sway.rs drives them against a fake compositor
-      # (#103). Thresholds sit a few points under the baseline measured
-      # 2026-10-17 (90.58% regions, 92.20% lines, 91.81% functions); most of
-      # the gap is IPC-error branches and launch.rs's debug-events loop.
+      # Excluded by filename: main.rs (Args, dispatch and output, covered by
+      # the tests/ integration suites; the --layout/--template run itself is
+      # in run.rs, which is measured, #134) and the unit-test files
+      # themselves (test_support.rs and every */tests.rs), so tests can't
+      # count as covered production code. The IPC layers (ipc.rs, query.rs)
+      # are measured: tests/fake_sway.rs drives them against a fake
+      # compositor (#103). Thresholds were set a few points under the
+      # baseline measured 2026-10-17 (90.58% regions, 92.20% lines, 91.81%
+      # functions) and left there when run.rs joined the measured set;
+      # re-measured 2026-10-18 with it: 92.34% regions, 94.44% lines, 92.18%
+      # functions. Most of the gap is IPC-error branches and launch.rs's
+      # debug-events loop.
       - name: cargo llvm-cov (coverage regression gate)
         run: |
           cargo llvm-cov --locked --ignore-filename-regex '(^|/)(main|test_support|tests)\.rs$' \

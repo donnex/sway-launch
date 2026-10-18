@@ -24,7 +24,7 @@ pub struct RunOutcome {
     /// that was retargeted rather than launched (`--con-id`/`--existing`, and
     /// a layout step's `target_id`). Only `Some(LaunchOwnership::Launched)`
     /// means this invocation can prove the window is its own, which is what
-    /// `main.rs`'s `--rollback-on-error` keys its destructive cleanup off.
+    /// `run.rs`'s `--rollback-on-error` keys its destructive cleanup off.
     pub launch_ownership: Option<LaunchOwnership>,
     /// What went wrong with where the window opened, when
     /// `SwayLaunch::warn_on_misplaced_launch` asked (#160): each a complete

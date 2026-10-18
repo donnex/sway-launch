@@ -197,7 +197,7 @@ fn is_valid_param_name(name: &str) -> bool {
 }
 
 /// A template file's optional `[layout]` table: the workspace and/or output
-/// the run builds on. `main.rs` focuses it once before the first step (see
+/// the run builds on. `run.rs` focuses it once before the first step (see
 /// `sway_launch::BuildLocation`), so every window opens there and the shape
 /// is built in place. It used to be copied into every step as a per-step
 /// move instead, which built the shape on the old workspace and scrambled it
@@ -521,7 +521,7 @@ impl std::fmt::Display for ResolveError {
 /// own (#30): the bindings file is the user's, the template may be a
 /// built-in they can't edit. The workspace pair is replaced as a whole, so a
 /// binding's number never meets the step's name. The template's `[layout]`
-/// table isn't copied into steps; `main.rs` applies it once, before the
+/// table isn't copied into steps; `run.rs` applies it once, before the
 /// first step.
 ///
 /// A step field written as `"{name}"` takes the param's value: `overrides`

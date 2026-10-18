@@ -289,7 +289,7 @@ fn parse_rejects_a_template_sway_command_acting_on_the_session() {
 #[test]
 fn resolve_leaves_the_template_layout_context_to_the_run_rather_than_each_step() {
     // The run focuses [layout]'s workspace/output once before the first step
-    // (main.rs's BuildLocation); copying it into every step as a move built
+    // (run.rs's BuildLocation); copying it into every step as a move built
     // the shape elsewhere and scrambled it on arrival (#45).
     let mut template = minimal_template(vec![minimal_step()]);
     template.layout.workspace = Some("3".to_string());

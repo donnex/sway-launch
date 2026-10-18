@@ -161,7 +161,7 @@ pub(super) fn existing_container(container_id: i64) -> Result<Node, String> {
 }
 
 /// Which of `container_ids` are still present in the current tree, in the
-/// order given. Used by `main.rs`'s `--rollback-on-error` to tell a window
+/// order given. Used by `run.rs`'s `--rollback-on-error` to tell a window
 /// that actually closed from one whose close request Sway merely accepted:
 /// `kill` asks the client to close and replies before it has, and a client
 /// is free to keep its window open (an unsaved-changes prompt, say).

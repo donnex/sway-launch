@@ -305,7 +305,7 @@ pub(super) fn single_outcome_error<E: fmt::Display>(
 
 /// Why `kill_container()` failed, split by whether the compositor answered.
 ///
-/// The two call for different responses from `main.rs`'s
+/// The two call for different responses from `run.rs`'s
 /// `--rollback-on-error`. `Refused` is Sway replying that the kill failed —
 /// usually because the window already closed — which says nothing about the
 /// next window, so rollback moves on to it. `Unreachable` is a connection
@@ -331,7 +331,7 @@ impl fmt::Display for KillError {
     }
 }
 
-/// Kills `container_id` via `[con_id] kill`. Used by `main.rs`'s
+/// Kills `container_id` via `[con_id] kill`. Used by `run.rs`'s
 /// `--rollback-on-error`: best-effort cleanup of a window this invocation
 /// itself launched earlier in the same `--layout`/`--template` run, once a
 /// later step fails. `run_sway_command()` with its failure classified — see

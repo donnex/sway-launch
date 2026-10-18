@@ -20,7 +20,7 @@
 //! Architecture section for the reasoning behind each of these.
 //!
 //! This file itself is just the seam: module declarations, and the public
-//! surface `main.rs`, `layout.rs` and `template.rs` use.
+//! surface `main.rs`, `run.rs`, `layout.rs` and `template.rs` use.
 
 use std::time;
 
