@@ -737,9 +737,9 @@ comments, name things clearly instead" style). Two rule-specific overrides:
     every `tests.rs`, which is why unit tests live in sibling files rather than inline — an inline
     test module's bodies would count as covered production code and pad the total):
     `cargo llvm-cov --summary-only --ignore-filename-regex '(^|/)(main|test_support|tests)\.rs$'`
-    reproduces CI's figure. Measured that way (2026-10-17): 92.2% lines overall; `tree.rs` 98.9%,
-    `values.rs` 97.0%, `layout.rs` 97.4%, `template.rs` 96.7%, `ipc.rs` 94.3%, `confirmation.rs`
-    88.5%, `launch.rs` 80.1%, `query.rs` 74.8%. What's left uncovered is mostly IPC-error branches
+    reproduces CI's figure. Measured that way (2026-10-18): 94.5% lines overall; `tree.rs` 99.1%,
+    `values.rs` 96.9%, `layout.rs` 98.0%, `template.rs` 98.0%, `ipc.rs` 94.6%, `confirmation.rs`
+    91.4%, `launch.rs` 85.4%, `query.rs` 85.6%. What's left uncovered is mostly IPC-error branches
     (a `get_tree()` that fails mid-run) and `--debug-events`' event loop.
 
     **Keep the decision pure and let the IPC layer fetch** — the shape `expected_position`/
@@ -1694,14 +1694,14 @@ for adding other real URLs without the same explicit confirmation.
 **Approved exception:** `README.md:8`/`CLAUDE.md:7` (`https://swaywm.org/`, the window manager
 this tool is built for), this file's "Issues" section (`https://cli.github.com/`, the `gh` CLI's
 own site), and
-`Cargo.toml:9` (`https://doc.rust-lang.org/cargo/reference/manifest.html`, `cargo init`'s
+`Cargo.toml:10` (`https://doc.rust-lang.org/cargo/reference/manifest.html`, `cargo init`'s
 boilerplate "see more keys" comment pointing at Cargo's own manifest reference docs) are real
 URLs, but each is a necessary reference to the specific upstream project/tool the surrounding text
 is about, not a leak of unrelated real-world data — the user explicitly signed off on these after
 being asked (2026-08-15). Don't flag these specific ones in a future content-policy review, and
 don't use this as precedent for adding other real URLs without the same explicit confirmation.
 
-**Approved exception:** `Cargo.toml:7`'s `repository = "https://github.com/donnex/sway-launch"` is
+**Approved exception:** `Cargo.toml:8`'s `repository = "https://github.com/donnex/sway-launch"` is
 a real URL, but — like `README.md`'s Releases-page link above — it's self-referential (the repo
 describing its own location), not a leak of unrelated real-world data, and the user explicitly
 signed off on it after being asked (2026-08-19). Don't flag it in a future content-policy review.
