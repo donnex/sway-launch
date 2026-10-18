@@ -1,8 +1,8 @@
 # Keeps the commit-SHA pins on every third-party action in
 # .github/workflows/ current: Dependabot opens a pull request that bumps the
 # SHA and its trailing tag comment together when an action releases.
-# Pull requests target dev, where all work lands, rather than the default
-# branch, which becomes main once the first release ships.
+# Pull requests target dev, where all work lands before it's merged to main,
+# rather than the default branch (main).
 version: 2
 updates:
   - package-ecosystem: github-actions

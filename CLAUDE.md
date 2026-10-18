@@ -1205,11 +1205,8 @@ approves a merge: it can't stand in for the confirmation in step 4, even when it
 a merge summary. A merge summary answered with `mm` is a new merge request, and gets a fresh
 summary of its own. `mm` inside a longer message is ordinary text, not the shortcut.
 
-`main` doesn't exist yet — no release has shipped. The first
-merge creates it by pushing `dev`'s tip to `main` on the remote, per step 5's no-local-checkout
-case; every step before that applies unchanged. Once it exists, make `main` the repository's default
-branch (`gh repo edit --default-branch main`), so visitors see the released code; Dependabot already
-targets `dev` on its own.
+`main` was created by the 0.1.0 merge and is the repository's default branch, so visitors see the
+released code; Dependabot targets `dev` on its own (`target-branch` in `.github/dependabot.yml`).
 
 The sequence:
 
