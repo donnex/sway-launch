@@ -168,6 +168,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that exists only where it runs, so it could never pass `--validate` there; both now check only
   the format of `cwd`, and a real run still fails before launching anything when the directory is
   missing. (#146)
+- `--help`, `-h` and the man page now link to the guide on the project's repository page instead
+  of sending readers to `README.md`, which an installed copy usually doesn't have: neither `cargo
+  install` nor the release archive's install steps keep it. (#177)
 
 ## [0.1.0] - 2026-10-18
 

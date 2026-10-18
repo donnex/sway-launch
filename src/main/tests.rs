@@ -522,6 +522,11 @@ fn man_page_is_rendered_from_the_cli_definition() {
         page.contains("debug\\-events"),
         "every flag should be documented"
     );
+    let guide = concat!(env!("CARGO_PKG_REPOSITORY"), "#readme").replace('-', "\\-");
+    assert!(
+        page.contains(&guide),
+        "the EXAMPLES section should link to the guide"
+    );
 }
 
 #[test]
@@ -866,6 +871,22 @@ fn called_function_names_takes_names_outside_code_spans_too() {
         called_function_names("see run() and `a::b()`, not str::parse::<i32>() or ()"),
         ["run", "b"]
     );
+}
+
+#[test]
+fn help_points_at_the_online_guide_rather_than_a_local_readme() {
+    // An installed copy has no README.md beside it (#177), so every help
+    // surface links to the repository's README instead.
+    let guide = concat!(env!("CARGO_PKG_REPOSITORY"), "#readme");
+    let short = Args::command().render_help().to_string();
+    let long = Args::command().render_long_help().to_string();
+    for (name, rendered) in [("-h", &short), ("--help", &long)] {
+        assert!(rendered.contains(guide), "{name} should link to {guide}");
+        assert!(
+            !rendered.contains("README.md"),
+            "{name} should not name a README.md the reader may not have"
+        );
+    }
 }
 
 #[test]

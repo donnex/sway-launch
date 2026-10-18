@@ -187,7 +187,8 @@ const USAGE: &str = "sway-launch [OPTIONS] <COMMAND>
        sway-launch --template <NAME|FILE> <--apps APPS|--bindings FILE> [OPTIONS]
        sway-launch <--list-windows|--capture [WORKSPACE]|--list-templates|--debug-events>";
 
-const EXAMPLES: &str = "Examples:
+const EXAMPLES: &str = concat!(
+    "Examples:
   # Launch foot and print its container id
   sway-launch foot
   # Launch htop in foot as a floating window, half the screen wide
@@ -199,7 +200,10 @@ const EXAMPLES: &str = "Examples:
   # List the built-in layout templates
   sway-launch --list-templates
 
-The full guide, with layout files and templates, is in README.md.";
+The full guide, with layout files and templates, is at ",
+    env!("CARGO_PKG_REPOSITORY"),
+    "#readme"
+);
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None, override_usage = USAGE,
@@ -391,8 +395,8 @@ struct Args {
     /// Build the windows a TOML layout file describes (- reads stdin)
     ///
     /// Each step is the equivalent of one sway-launch call's flags, so the
-    /// per-window flags above can't be combined with it. See README.md for
-    /// the format.
+    /// per-window flags above can't be combined with it. The format is in
+    /// the guide linked at the end of this help.
     #[clap(long, value_name = "FILE",
         conflicts_with_all = per_window_and(&["debug_events", "bindings", "apps", "param"]),
         help_heading = HEADING_LAYOUTS, verbatim_doc_comment)]

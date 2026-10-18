@@ -1812,6 +1812,11 @@ a real URL, but — like `README.md`'s Releases-page link above — it's self-re
 describing its own location), not a leak of unrelated real-world data, and the user explicitly
 signed off on it after being asked (2026-08-19). Don't flag it in a future content-policy review.
 
+**Approved exception:** the `-h`/`--help` and man page link to `https://github.com/donnex/sway-launch#readme`
+(built from `Cargo.toml`'s `repository`), which README.md's help block repeats verbatim. It's
+self-referential for the same reason, and the user explicitly signed off on it after being asked
+(2026-10-18, #177). Don't flag it in a future content-policy review.
+
 **Standing exception:** `Cargo.lock` and `uv.lock` (package registry index URLs — `crates.io-index`,
 `pypi.org`, `pythonhosted.org`) are tool-generated lockfile content, not authored by anyone, and
 necessary for reproducible builds (`cargo build --locked`, `uv run` both depend on them). Out of

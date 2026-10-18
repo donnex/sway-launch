@@ -1471,5 +1471,5 @@ Examples:
   # List the built-in layout templates
   sway-launch --list-templates
 
-The full guide, with layout files and templates, is in README.md.
+The full guide, with layout files and templates, is at https://github.com/donnex/sway-launch#readme
 ```
