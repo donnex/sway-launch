@@ -503,6 +503,9 @@ generate-my-layout | sway-launch --layout -
 generate-my-bindings | sway-launch --template quad-grid --bindings -
 ```
 
+Besides its steps, a layout file takes one top-level key, `concurrent = true`, which runs it as
+[`--concurrent`](#running-layouts) does.
+
 The per-window flags (`--split`, `--floating`, ...) can't be combined with `--layout`, since it
 would be unclear which step they applied to. `--timeout`, `--wait-time`, `--verbose` and `--json`
 still apply, `--json` printing one object at the end (see [JSON output](#json-output)). Examples
@@ -563,7 +566,9 @@ A binding takes the keys that choose a window, as a layout step does (`command`,
 `command`/`con_id`/`existing = true`), plus the launch's `cwd` and `env`. It can also replace the
 step's `workspace`/`workspace_number`/`output` (where the window goes), `timeout`/`wait_time` (so
 the slot a slow application fills can wait longer than the rest) and `settle` (so the slot a browser
-fills can hold its size, see [Settle](#settle)).
+fills can hold its size, see [Settle](#settle)). Besides its bindings and `[params]`, a bindings
+file takes a top-level `concurrent = true`, which runs the template as
+[`--concurrent`](#running-layouts) does.
 
 A template step takes the same action keys a layout step has. Its window comes from `slot`, or from
 `target_id`, which acts again on an earlier slot's window (a slot's name is its step's `id`). Each
@@ -727,7 +732,20 @@ second each to start drops from about 4 seconds to just over 1. The whole file i
 anything starts, and a failure never leaves a window on the staging workspace. Focus visibly jumps
 to the staging workspace while the applications start. A single-instance application can't be
 told apart this way: when two steps' launches end up with the same window, the run fails, so run
-such layouts without `--concurrent`.
+such layouts without `--concurrent`. A layout file or a bindings file can ask for it itself with a
+top-level `concurrent = true`, so its callers needn't remember the flag:
+
+```toml
+concurrent = true
+
+[[step]]
+command = "foot"
+app_id = "foot"
+split = "h"
+```
+
+A template file can't: it names no applications, so it can't know whether they're safe to start
+together. That's the bindings file's to say.
 
 **Slow applications: `--continue-on-timeout`.** By default a step whose window doesn't appear within
 its `timeout` stops the run, so one slow application at the start leaves every later one unopened.

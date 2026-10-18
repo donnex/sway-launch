@@ -412,7 +412,8 @@ struct Args {
     /// place in step order, so the run takes about as long as its slowest
     /// application rather than all of them together. Fails if two steps'
     /// launches end up with the same window, as single-instance applications
-    /// can.
+    /// can. A layout or bindings file can also turn it on, with a top-level
+    /// concurrent = true.
     #[clap(long, help_heading = HEADING_LAYOUTS, verbatim_doc_comment)]
     concurrent: bool,
 
@@ -1368,7 +1369,12 @@ fn run_layout(path: &Path, args: &Args) -> ! {
         workspace: on_workspace(args),
         output: args.on_output.as_deref(),
     };
-    run_steps(&parsed_layout.step, build, args);
+    run_steps(
+        &parsed_layout.step,
+        build,
+        args.concurrent || parsed_layout.concurrent,
+        args,
+    );
 }
 
 /// Where `run_template()` gets each `--template` slot's application
@@ -1743,7 +1749,12 @@ fn run_template(path: &Path, bindings_source: BindingsSource, args: &Args) -> ! 
             .as_deref()
             .or(parsed_template.layout.output.as_deref()),
     };
-    run_steps(&resolved_steps, build, args);
+    run_steps(
+        &resolved_steps,
+        build,
+        args.concurrent || bindings.concurrent,
+        args,
+    );
 }
 
 /// `--on-workspace`/`--on-workspace-number` (clap allows at most one).
@@ -1821,7 +1832,12 @@ fn bindings_from_apps(
 /// directly (success or failure) rather than returning, matching the rest
 /// of main()'s error-handling style. Shared by `run_layout()` and
 /// `run_template()`, since a resolved template is just more layout steps.
-fn run_steps(steps: &[layout::LayoutStep], build: sway_launch::BuildLocation, args: &Args) -> ! {
+fn run_steps(
+    steps: &[layout::LayoutStep],
+    build: sway_launch::BuildLocation,
+    concurrent: bool,
+    args: &Args,
+) -> ! {
     // Checked before the --dry-run/--validate branches so all three modes
     // agree. A file with no steps parses fine (every field of a layout is
     // optional), so without this it "succeeded" silently: exit 0, no output,
@@ -1890,7 +1906,7 @@ fn run_steps(steps: &[layout::LayoutStep], build: sway_launch::BuildLocation, ar
         );
     }
 
-    let mut staged = if args.concurrent && launches {
+    let mut staged = if concurrent && launches {
         Some(stage_launches(steps, args))
     } else {
         None

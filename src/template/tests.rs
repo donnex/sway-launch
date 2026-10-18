@@ -872,6 +872,38 @@ fn parse_bindings_reads_a_representative_bindings_file() {
 }
 
 #[test]
+fn parse_bindings_reads_a_top_level_concurrent_key_off_by_default() {
+    let binding = "[[binding]]\nslot = \"editor\"\ncommand = \"foot\"\n";
+    assert!(
+        !parse_bindings(binding)
+            .expect("bindings should parse")
+            .concurrent
+    );
+    let concurrent =
+        parse_bindings(&format!("concurrent = true\n{binding}")).expect("bindings should parse");
+    assert!(concurrent.concurrent);
+}
+
+#[test]
+fn parse_rejects_a_concurrent_key_in_a_template() {
+    // Deliberate (#121): a template names no applications, so whether they
+    // can launch at once is the bindings file's to say, not the template's.
+    let result = parse(
+        r#"
+            concurrent = true
+
+            [template]
+            description = "A test template."
+            category = "Test"
+
+            [[step]]
+            slot = "editor"
+            "#,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
 fn parse_bindings_rejects_misspelled_field() {
     let result = parse_bindings(
         r#"
@@ -1368,6 +1400,7 @@ fn resolve_takes_param_overrides_in_order_of_precedence() {
             .iter()
             .map(|(name, value)| (name.to_string(), value.to_string()))
             .collect(),
+        ..Default::default()
     };
     let width = |bindings: &Bindings, overrides: &[(String, String)]| {
         resolve(&template, bindings, overrides).expect("should resolve")[1]
@@ -1402,6 +1435,7 @@ fn resolve_reports_a_bad_param_override_against_its_source() {
             })
             .collect(),
         params: [("stack-width".to_string(), "huge".to_string())].into(),
+        ..Default::default()
     };
     assert!(matches!(
         resolve(&template, &bindings, &[]),

@@ -396,6 +396,11 @@ pub struct Bindings {
     /// Overrides for the template's `[params]` defaults (#92).
     #[serde(default)]
     pub params: BTreeMap<String, String>,
+    /// `concurrent = true` runs the template as `--concurrent` does (#121).
+    /// It lives here rather than in the template, which names no
+    /// applications and so can't know whether they're safe to launch at once.
+    #[serde(default)]
+    pub concurrent: bool,
 }
 
 /// Parses a template file's contents. Kept separate from reading the file

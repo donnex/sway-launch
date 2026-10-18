@@ -329,7 +329,9 @@ checks those by hand, because the derive macro doesn't enforce `requires` reliab
   run, so a retarget-only run still makes no IPC call of its own), held until the process exits.
   `--no-lock` skips it; no runtime directory skips it with a `--verbose` note. It is why
   `rust-version` is 1.89.
-- `--concurrent` (#73) splits `run_steps()` in two: `stage_launches()` checks the whole plan
+- `--concurrent` (#73), or a top-level `concurrent = true` in a layout or bindings file (#121,
+  OR-ed with the flag into `run_steps()`'s `concurrent` argument; a template file can't set it, since
+  it names no applications), splits `run_steps()` in two: `stage_launches()` checks the whole plan
   (`plan_steps_offline()`), switches to a per-process staging workspace (`Staging`, in
   `launch.rs`) and runs every `command` step's launch at once on a thread each, actions stripped by
   `launch_only()`; `reject_shared_windows()` fails a later step whose window an earlier one already

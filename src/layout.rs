@@ -63,6 +63,11 @@ where
 pub struct Layout {
     #[serde(default)]
     pub step: Vec<LayoutStep>,
+    /// `concurrent = true` runs the layout as `--concurrent` does (#121):
+    /// the file names the applications, so it knows whether they can be
+    /// told apart when launched at once.
+    #[serde(default)]
+    pub concurrent: bool,
 }
 
 // Serialize is test-only, purely so main.rs's schema-parity test can read

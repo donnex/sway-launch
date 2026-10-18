@@ -42,6 +42,15 @@ fn parse_reads_a_representative_layout() {
 }
 
 #[test]
+fn parse_reads_a_top_level_concurrent_key_off_by_default() {
+    let step = "[[step]]\ncommand = \"foot\"\n";
+    assert!(!parse(step).expect("layout should parse").concurrent);
+    let concurrent = parse(&format!("concurrent = true\n{step}")).expect("layout should parse");
+    assert!(concurrent.concurrent);
+    assert!(parse(&format!("concurrent = \"yes\"\n{step}")).is_err());
+}
+
+#[test]
 fn parse_rejects_malformed_toml() {
     assert!(parse("this is not toml [[[").is_err());
 }

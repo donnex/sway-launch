@@ -5980,6 +5980,75 @@ fn concurrent_rollback_closes_every_staged_window_a_later_step_fails_after() {
     no_staging_workspace_is_left(&mut connection);
 }
 
+/// Runs `args` with `--verbose --json` and checks the run staged its
+/// launches (#121): the staging line is printed only by a concurrent run.
+/// Returns the run's container ids, each closed on drop.
+fn run_expecting_staged_launches(args: &[&str], expected_windows: usize) -> Vec<KillOnDrop> {
+    let mut connection = connect();
+    let build_workspace = focused_workspace_name(&mut connection);
+    let output = sway_launch_command()
+        .args(args)
+        .args(["--verbose", "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let result: serde_json::Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|_| panic!("stdout should be the --json result: {stdout}\n{stderr}"));
+    let guards: Vec<KillOnDrop> = result["container_ids"]
+        .as_array()
+        .map(|ids| {
+            ids.iter()
+                .filter_map(|id| id.as_i64())
+                .map(KillOnDrop)
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(output.status.success(), "{args:?} failed: {stderr}");
+    assert!(
+        stderr.contains(&format!("Launching {expected_windows} steps at once")),
+        "{args:?} should have staged its launches: {stderr}"
+    );
+    assert_eq!(guards.len(), expected_windows, "{stdout}");
+    for guard in &guards {
+        assert_eq!(workspace_of(&mut connection, guard.0), build_workspace);
+    }
+    no_staging_workspace_is_left(&mut connection);
+    guards
+}
+
+#[test]
+fn concurrent_key_in_a_layout_file_stages_its_launches() {
+    fresh_workspace();
+    let path = TempToml::write(
+        "concurrent-key-layout",
+        "concurrent = true\n\n\
+         [[step]]\ncommand = \"foot\"\napp_id = \"foot\"\nsplit = \"h\"\n\n\
+         [[step]]\ncommand = \"foot\"\napp_id = \"foot\"\n",
+    );
+    run_expecting_staged_launches(&["--layout", path.to_str().unwrap()], 2);
+}
+
+#[test]
+fn concurrent_key_in_a_bindings_file_stages_the_template_launches() {
+    fresh_workspace();
+    let path = TempToml::write(
+        "concurrent-key-bindings",
+        "concurrent = true\n\n\
+         [[binding]]\nslot = \"left\"\ncommand = \"foot\"\napp_id = \"foot\"\n\n\
+         [[binding]]\nslot = \"right\"\ncommand = \"foot\"\napp_id = \"foot\"\n",
+    );
+    run_expecting_staged_launches(
+        &[
+            "--template",
+            "dual-row",
+            "--bindings",
+            path.to_str().unwrap(),
+        ],
+        2,
+    );
+}
+
 #[test]
 fn concurrent_launch_that_times_out_leaves_the_others_on_the_build_workspace() {
     fresh_workspace();
