@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `--continue-on-timeout` run with a timed-out step no longer exits 0 when stdout is closed early.
+  Piped into a reader that stops after the first line (`sway-launch --layout ... | head -n1`
+  under `set -o pipefail`), the run reported success even though its layout was incomplete; it now exits 1 as it does with stdout open, with or without `--json`. (#165)
 - A `SWAYSOCK` left stale by a Sway restart, as a tmux or screen session keeps it, no longer
   ends in "is this running inside a Sway session?". When the socket it names isn't there, the error
   now says the variable is out of date and names the running Sway's socket to export instead. With

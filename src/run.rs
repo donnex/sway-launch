@@ -6,10 +6,11 @@ use std::path::Path;
 use std::{process, time};
 
 use crate::{
-    check_compositor_version, dry_run_step, exit_on_write_failure, fail, fail_with_rollback,
-    input_label, is_stdin, join_ids, layout, print_dry_run_steps, print_line,
+    check_compositor_version, dry_run_step, exit_on_write_failure_with_status, fail,
+    fail_with_rollback, input_label, is_stdin, join_ids, layout, print_dry_run_steps, print_line,
     print_line_deferring_failure, stderr_label, step_action_records_json, sway_launch,
-    unmatched_windows_json, Args, DryRunStep, PartialProgress, RollbackOutcome, Severity,
+    unmatched_windows_json, write_line, Args, DryRunStep, PartialProgress, RollbackOutcome,
+    Severity,
 };
 
 /// Runs every step sequentially, in the order they appear, stopping at the
@@ -261,6 +262,10 @@ pub(crate) fn run_steps(
         }
     }
 
+    // Each timed-out step was already reported as it happened; the status is
+    // what tells a calling script the layout is incomplete, so a closed
+    // stdout below exits with it too.
+    let status = if timed_out_steps.is_empty() { 0 } else { 1 };
     if args.json {
         let mut result = serde_json::json!({
             "container_ids": progress.container_ids,
@@ -276,15 +281,15 @@ pub(crate) fn run_steps(
         if !skipped_steps.is_empty() {
             result["skipped_steps"] = serde_json::json!(skipped_steps);
         }
-        print_line(&result.to_string());
+        if let Err(error) = write_line(&result.to_string()) {
+            exit_on_write_failure_with_status(&error, status);
+        }
     }
 
     if let Some(error) = stdout_failure {
-        exit_on_write_failure(&error);
+        exit_on_write_failure_with_status(&error, status);
     }
-    // Each timed-out step was already reported as it happened; the status is
-    // what tells a calling script the layout is incomplete.
-    process::exit(if timed_out_steps.is_empty() { 0 } else { 1 });
+    process::exit(status);
 }
 
 /// The layout half of a run lock's identity: the file by its canonical path,

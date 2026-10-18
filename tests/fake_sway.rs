@@ -1769,6 +1769,54 @@ app_id = "fake-app"
 }
 
 #[test]
+fn continue_on_timeout_still_exits_1_when_stdout_is_closed() {
+    // #165: a closed stdout used to exit 0 at the deferred id write, or at
+    // the --json result's, so `... | head -n1` under pipefail read a layout
+    // with a timed-out step as complete. The read end is closed before the
+    // process starts, so every write fails.
+    let layout = TempToml::write(
+        "continue-on-timeout-closed-stdout",
+        r#"
+[[step]]
+command = "sleep 30"
+app_id = "fake-app"
+
+[[step]]
+command = "sleep 30"
+app_id = "never-appears"
+timeout = 1
+"#,
+    );
+    for json in [false, true] {
+        let fake = FakeSway::start(
+            SwayVersion::V1_11,
+            opens_a_window_for_each_launch("fake-app"),
+        );
+        let (stdout_reader, stdout_writer) = std::io::pipe().expect("failed to create a pipe");
+        drop(stdout_reader);
+        let mut command = fake.sway_launch();
+        command.args([
+            "--layout",
+            layout.to_str().unwrap(),
+            "--continue-on-timeout",
+        ]);
+        if json {
+            command.arg("--json");
+        }
+        let output = command
+            .stdout(stdout_writer)
+            .output()
+            .expect("failed to run sway-launch");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "--json: {json}; {stderr}");
+        assert!(
+            stderr.contains("continuing: --continue-on-timeout"),
+            "--json: {json}; {stderr}"
+        );
+    }
+}
+
+#[test]
 fn concurrent_launches_every_step_on_a_staging_workspace_then_arranges_in_order() {
     // #73: both launches are sent before either window is arranged, on the
     // staging workspace; each window is then moved to the build workspace

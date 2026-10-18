@@ -918,7 +918,8 @@ fn write_line(line: &str) -> io::Result<()> {
 /// exiting there stopped a layout partway and reported success:
 /// `sway-launch --layout four.toml | head -n1` opened three windows, never
 /// ran step 4, and exited 0. The caller hands `failure` to
-/// `exit_on_write_failure()` once every step has finished instead.
+/// `exit_on_write_failure_with_status()` once every step has finished
+/// instead, with the status the steps earned.
 fn print_line_deferring_failure(line: &str, failure: &mut Option<io::Error>) {
     if failure.is_none() {
         if let Err(error) = write_line(line) {
@@ -940,10 +941,19 @@ fn print_str(text: &str) {
 }
 
 fn exit_on_write_failure(error: &io::Error) -> ! {
+    exit_on_write_failure_with_status(error, 0)
+}
+
+/// `exit_on_write_failure()` for a run whose exit status was already decided
+/// when the write failed: a closed stdout still exits silently, but with
+/// `status` rather than 0. A `--continue-on-timeout` run whose steps timed
+/// out exits 1, and a reader that closed the pipe early (`| head -n1` under
+/// `pipefail`) mustn't turn that into success (#165).
+fn exit_on_write_failure_with_status(error: &io::Error, status: i32) -> ! {
     if error.kind() == io::ErrorKind::BrokenPipe {
         // The reader is gone, so there's nothing left to say and nothing to
-        // report it to. A clean exit is the expected outcome here.
-        process::exit(0);
+        // report it to. The status is all that's left to tell the caller.
+        process::exit(status);
     }
     diagnostic!(
         "{}failed writing to stdout: {}",

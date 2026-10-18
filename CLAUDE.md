@@ -418,7 +418,8 @@ reliably. A new entry in
   `window_timed_out` (set only where no window was resolved: a launch's timeout and
   `--existing --wait`'s), recording it in `timed_out_steps`; a later `target_id` naming its id is
   skipped (`skipped_steps`). Any other failure still goes through `fail_step()`. The result object
-  still goes to stdout, then the run exits 1. A binding's `timeout`/`wait_time` override the step's
+  still goes to stdout, then the run exits 1, a closed stdout included
+  (`exit_on_write_failure_with_status()`, #165). A binding's `timeout`/`wait_time` override the step's
   like its placement does.
 - `run_steps()` installs the signal handlers (`interrupt::install()`: SIGINT, SIGTERM and SIGHUP,
   #15/#128) before its first step and checks them before each one; every wait that can run long (`run_batch()`,
