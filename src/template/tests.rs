@@ -698,6 +698,96 @@ fn resolve_target_id_step_has_no_id_and_no_target_fields() {
 }
 
 #[test]
+fn resolve_carries_every_binding_target_field_into_its_own_layout_step_field() {
+    let step_for = |slot: &str| TemplateStep {
+        slot: Some(slot.to_string()),
+        ..minimal_step()
+    };
+    let template = minimal_template(vec![
+        step_for("launched"),
+        step_for("by-class"),
+        step_for("by-mark"),
+        step_for("by-id"),
+    ]);
+    let launched = Binding {
+        slot: "launched".to_string(),
+        command: Some("launch-command".to_string()),
+        cwd: Some("launch-directory".to_string()),
+        env: [("LAUNCH_NAME".to_string(), "launch-value".to_string())].into(),
+        app_id: Some("launch-app-id".to_string()),
+        title: Some(crate::sway_launch::parse_title_pattern("launch-title").unwrap()),
+        ..minimal_binding()
+    };
+    let by_class = Binding {
+        slot: "by-class".to_string(),
+        command: None,
+        existing: true,
+        wait: true,
+        class: Some("existing-class".to_string()),
+        ..minimal_binding()
+    };
+    let by_mark = Binding {
+        slot: "by-mark".to_string(),
+        command: None,
+        existing: true,
+        mark_match: Some("existing-mark".to_string()),
+        ..minimal_binding()
+    };
+    let by_id = Binding {
+        slot: "by-id".to_string(),
+        command: None,
+        con_id: Some(4242),
+        ..minimal_binding()
+    };
+    let bindings = Bindings {
+        binding: vec![launched, by_class, by_mark, by_id],
+        ..Default::default()
+    };
+
+    let resolved = resolve(&template, &bindings, &[], DirectoryCheck::FormatOnly)
+        .expect("every binding is valid");
+    let [launched, by_class, by_mark, by_id] = &resolved[..] else {
+        panic!("expected four steps, got {}", resolved.len());
+    };
+
+    assert_eq!(launched.id.as_deref(), Some("launched"));
+    assert_eq!(launched.target_id, None);
+    assert_eq!(launched.command.as_deref(), Some("launch-command"));
+    assert_eq!(launched.cwd.as_deref(), Some("launch-directory"));
+    assert_eq!(
+        launched.env.get("LAUNCH_NAME").map(String::as_str),
+        Some("launch-value")
+    );
+    assert_eq!(launched.app_id.as_deref(), Some("launch-app-id"));
+    assert_eq!(launched.class, None);
+    assert_eq!(launched.mark_match, None);
+    assert_eq!(
+        launched.title.as_ref().map(|title| title.source()),
+        Some("launch-title")
+    );
+    assert_eq!(launched.con_id, None);
+    assert!(!launched.existing && !launched.wait);
+
+    assert_eq!(by_class.id.as_deref(), Some("by-class"));
+    assert_eq!(by_class.class.as_deref(), Some("existing-class"));
+    assert_eq!(by_class.app_id, None);
+    assert_eq!(by_class.command, None);
+    assert_eq!(by_class.cwd, None);
+    assert!(by_class.env.is_empty());
+    assert!(by_class.title.is_none());
+    assert!(by_class.existing && by_class.wait);
+
+    assert_eq!(by_mark.mark_match.as_deref(), Some("existing-mark"));
+    assert_eq!(by_mark.class, None);
+    assert!(by_mark.existing && !by_mark.wait);
+
+    assert_eq!(by_id.id.as_deref(), Some("by-id"));
+    assert_eq!(by_id.con_id, Some(4242));
+    assert!(!by_id.existing);
+    assert_eq!(by_id.command, None);
+}
+
+#[test]
 fn parse_reads_a_representative_template() {
     let template = parse(
         r#"

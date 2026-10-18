@@ -573,21 +573,8 @@ pub fn resolve(
             sway_launch::require_non_blank("target_id", target_id).map_err(step_error)?;
         }
 
-        let (
-            id,
-            target_id,
-            command,
-            con_id,
-            existing,
-            wait,
-            app_id,
-            class,
-            mark_match,
-            title,
-            cwd,
-            env,
-        ) = if let Some(slot) = step.slot.as_deref() {
-            let binding = bindings_by_slot
+        let binding = if let Some(slot) = step.slot.as_deref() {
+            let binding = *bindings_by_slot
                 .get(slot)
                 .ok_or_else(|| ResolveError::Bindings(format!("no binding for slot {:?}", slot)))?;
 
@@ -636,41 +623,11 @@ pub fn resolve(
             })?;
 
             used_slots.insert(slot);
-            (
-                Some(slot.to_string()),
-                None,
-                binding.command.clone(),
-                binding.con_id,
-                binding.existing,
-                binding.wait,
-                binding.app_id.clone(),
-                binding.class.clone(),
-                binding.mark_match.clone(),
-                binding.title.clone(),
-                binding.cwd.clone(),
-                binding.env.clone(),
-            )
+            Some(binding)
         } else {
-            (
-                None,
-                step.target_id.clone(),
-                None,
-                None,
-                false,
-                false,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Default::default(),
-            )
+            None
         };
 
-        let binding = step
-            .slot
-            .as_deref()
-            .and_then(|slot| bindings_by_slot.get(slot).copied());
         let (workspace, workspace_number) = match binding {
             Some(binding) if binding.sets_workspace() => {
                 (binding.workspace.clone(), binding.workspace_number)
@@ -681,19 +638,21 @@ pub fn resolve(
             .and_then(|binding| binding.output.clone())
             .or_else(|| step.output.clone());
 
-        steps.push(LayoutStep {
-            command,
-            cwd,
-            env,
-            con_id,
-            existing,
-            wait,
-            target_id,
-            id,
-            app_id,
-            class,
-            mark_match,
-            title,
+        // Every field written out, so a new one doesn't compile until it's
+        // wired here; the target fields are then set by name per branch.
+        let actions_and_placement = LayoutStep {
+            command: None,
+            cwd: None,
+            env: Default::default(),
+            con_id: None,
+            existing: false,
+            wait: false,
+            target_id: None,
+            id: None,
+            app_id: None,
+            class: None,
+            mark_match: None,
+            title: None,
             split: step.split,
             floating: step.floating,
             sticky: step.sticky,
@@ -715,6 +674,26 @@ pub fn resolve(
                 .and_then(|binding| binding.wait_time)
                 .or(step.wait_time),
             settle: binding.and_then(|binding| binding.settle).or(step.settle),
+        };
+        steps.push(match binding {
+            Some(binding) => LayoutStep {
+                id: step.slot.clone(),
+                command: binding.command.clone(),
+                cwd: binding.cwd.clone(),
+                env: binding.env.clone(),
+                con_id: binding.con_id,
+                existing: binding.existing,
+                wait: binding.wait,
+                app_id: binding.app_id.clone(),
+                class: binding.class.clone(),
+                mark_match: binding.mark_match.clone(),
+                title: binding.title.clone(),
+                ..actions_and_placement
+            },
+            None => LayoutStep {
+                target_id: step.target_id.clone(),
+                ..actions_and_placement
+            },
         });
     }
 
