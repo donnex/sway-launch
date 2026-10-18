@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   quote there, so the rest could become a comment that cut off the command: nothing launched, and
   the run waited out `--timeout` and then blamed `PATH`. Put the backslash outside the quotes, or
   use double quotes. (#151)
+- A launch that times out no longer says its command exited, and to check `PATH`, while the
+  command is in fact still running. A program started with a cleared environment (`env -i`, or a
+  launcher that does the same) or one whose environment can't be read (a setgid program, or one
+  that hides it, as some password managers do) was reported as exited, pointing away from the real
+  fix, a longer `--timeout`. It is now reported as still running. (#152)
 - `--completions` no longer crashes when its output can't be written. Piped into a reader that
   quits early it now exits quietly, and writing to a full disk reports `failed writing to stdout`
   and exits 1, like every other mode, instead of panicking with exit status 101. (#138)

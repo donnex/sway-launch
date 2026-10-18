@@ -1328,6 +1328,29 @@ fn a_launch_whose_command_is_still_running_says_so() {
 }
 
 #[test]
+fn a_launch_whose_command_cleared_its_environment_is_still_running() {
+    // `env -i` drops the marker, so only the launch's own shell, alive for as
+    // long as the command runs, shows it hasn't exited (#152).
+    let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {
+        if command.starts_with("exec ") {
+            sway.launch(command);
+        }
+        Ok(())
+    });
+    let run = run(
+        &fake,
+        &["-a", "fake-app", "--timeout", "1", "env -i sleep 30"],
+    );
+    assert!(!run.succeeded());
+    assert!(
+        run.error()
+            .contains("the launched command is still running"),
+        "{}",
+        run.error()
+    );
+}
+
+#[test]
 fn a_launch_runs_in_its_cwd_with_its_env() {
     let (sender, receiver) = std::sync::mpsc::channel();
     let fake = FakeSway::start(SwayVersion::V1_11, move |sway, command| {

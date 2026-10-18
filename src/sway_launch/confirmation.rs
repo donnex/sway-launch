@@ -20,9 +20,10 @@ use super::ipc::{
 };
 use super::outcome::{ActionOutcome, LaunchOwnership, RunError, UnmatchedWindow};
 use super::process_marker::{
-    generate_pid_marker_token, is_sibling_launchs_window, launch_evidence, process_start_ticks,
-    register_launch, scan_marker_presence, LaunchEvidence, MarkerPresence, MarkerTracker,
-    MARKER_SCAN_INTERVAL, PID_MARKER_FALLBACK_GRACE, PID_MARKER_VAR,
+    generate_pid_marker_token, is_sibling_launchs_window, launch_evidence, launch_shell_running,
+    launched_command_running, process_start_ticks, register_launch, scan_marker_presence,
+    LaunchEvidence, MarkerPresence, MarkerTracker, MARKER_SCAN_INTERVAL, PID_MARKER_FALLBACK_GRACE,
+    PID_MARKER_VAR,
 };
 use super::query::{
     awaited_existing_container_id, container_state, container_state_on, ensure_container_exists,
@@ -1252,11 +1253,10 @@ impl ExecAction<'_> {
                 // Only worth asking when nothing else explains the timeout: a
                 // rejected window already says what went wrong.
                 let command_running = if unmatched_windows.is_empty() {
-                    match scan_marker_presence(PID_MARKER_VAR, &token, marker.previously_seen()) {
-                        MarkerPresence::Present(_) => Some(true),
-                        MarkerPresence::Absent => Some(false),
-                        MarkerPresence::Unknown | MarkerPresence::Unavailable => None,
-                    }
+                    launched_command_running(
+                        &scan_marker_presence(PID_MARKER_VAR, &token, marker.previously_seen()),
+                        || launch_shell_running(&token),
+                    )
                 } else {
                     None
                 };
@@ -1725,7 +1725,8 @@ fn unfiltered_fallback_hint(filter: Option<LaunchFilter>) -> &'static str {
 /// rejected windows are named, with the filter to check; with none, a launched
 /// command that's no longer running (`command_running == Some(false)`) is
 /// called out as such; and only a command still running gets the hint that it
-/// may simply be slow. `None` means the marker scan couldn't tell, and adds
+/// may simply be slow. `launched_command_running()` decides which, from the
+/// marker and the launch's own shell; `None` means it couldn't tell, and adds
 /// nothing.
 fn exec_timeout_message(
     timeout: time::Duration,

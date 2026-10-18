@@ -411,6 +411,51 @@ pub(super) fn scan_marker_presence(
     )
 }
 
+/// Whether the shell Sway started for the launch with `token` is still
+/// running: a process whose `/proc/<pid>/cmdline` gives `token` through
+/// `launch_shell_token()`. `ExecAction::sway_command()` keeps that shell
+/// alive for as long as the command runs (#96), and a command line stays
+/// readable for every process, so this answers where the environment can't:
+/// a command that cleared its environment (`env -i`), or one whose `environ`
+/// is unreadable (non-dumpable, setgid, file capabilities). `None` when
+/// `/proc` can't be listed.
+pub(super) fn launch_shell_running(token: &str) -> Option<bool> {
+    let entries = std::fs::read_dir("/proc").ok()?;
+    Some(
+        entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().to_str()?.parse::<i32>().ok())
+            .any(|pid| {
+                std::fs::read(format!("/proc/{}/cmdline", pid))
+                    .ok()
+                    .as_deref()
+                    .and_then(launch_shell_token)
+                    .is_some_and(|carried| carried == token)
+            }),
+    )
+}
+
+/// Whether a launch's command is still running, for a timeout's message
+/// (#152): `Some(true)` when a process carries the marker or the launch's
+/// shell is alive (`launch_shell_running`, asked only when the marker scan
+/// alone can't say so), `Some(false)` only when neither is found, and `None`
+/// when that can't be told. A marker scan's `Absent` alone is not "exited":
+/// a command that cleared its environment, or whose `environ` can't be read,
+/// shows no marker while it runs.
+pub(super) fn launched_command_running(
+    presence: &MarkerPresence,
+    launch_shell_running: impl FnOnce() -> Option<bool>,
+) -> Option<bool> {
+    if matches!(presence, MarkerPresence::Present(_)) {
+        return Some(true);
+    }
+    match (presence, launch_shell_running()) {
+        (_, Some(true)) => Some(true),
+        (MarkerPresence::Absent, shell) => shell,
+        _ => None,
+    }
+}
+
 /// What `run_wait_matching_exec_event()` has learned about its marked
 /// process so far, accumulated across `scan_marker_presence()` calls. Kept
 /// apart from the scanning and the event loop so the "seen, then gone" rule is

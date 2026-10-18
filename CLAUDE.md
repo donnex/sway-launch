@@ -251,7 +251,8 @@ confirmed by one engine, `run_batch()` (#133), whether it is sent in a batch or 
   marked one (`predates_launch()`, from `process_start_ticks()`; a failed command is gone too,
   #124), else `Adopted`, or after `PID_MARKER_FALLBACK_GRACE` → `Adopted`. Windows the filter or title rejected are rechecked for a
   late app_id/class/title (`recheck_launched_windows()`) and reported as `UnmatchedWindow`s on
-  timeout, with `exec_timeout_message()` explaining what was seen. With a title, a `Title` event
+  timeout, with `exec_timeout_message()` explaining what was seen (whether the command still runs is
+  `launched_command_running()`'s call: the marker, or failing that the launch's own shell, #152). With a title, a `Title` event
   re-runs `matches_window()` too, but only for a window whose `New` arrived during this run
   (`opened_this_run`): an older window renaming itself is never this launch's.
 - **Batched** (#32) — consecutive kinds `ActionKind::joins_batch()` accepts (`Split`,

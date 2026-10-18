@@ -8250,6 +8250,26 @@ fn launch_timeout_says_when_the_command_exited_without_a_window() {
     );
 }
 
+#[test]
+fn launch_timeout_says_a_command_that_cleared_its_environment_is_still_running() {
+    fresh_workspace();
+    // `env -i` drops the marker, so only Sway's own shell for the launch,
+    // alive while the command runs, shows it hasn't exited (#152).
+    let output = sway_launch_command()
+        .args(["--timeout", "1", "env -i sleep 3"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        !output.status.success(),
+        "nothing can open a window: {stderr}"
+    );
+    assert!(
+        stderr.contains("the launched command is still running"),
+        "the error should say the command is still running: {stderr}"
+    );
+}
+
 /// `--list-windows --json`'s `windows` array, run with `extra_args`.
 fn list_windows(extra_args: &[&str]) -> Vec<serde_json::Value> {
     let output = sway_launch_command()

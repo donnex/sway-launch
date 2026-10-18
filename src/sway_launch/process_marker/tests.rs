@@ -359,3 +359,74 @@ fn launch_evidence_finds_the_launch_shell_above_a_program_without_the_marker() {
     assert_eq!(evidence, Some(LaunchEvidence::Ancestor(shell_pid)));
     assert_eq!(other, None);
 }
+
+// launched_command_running / launch_shell_running
+
+#[test]
+fn launched_command_running_is_true_while_the_marker_is_present_without_asking_for_the_shell() {
+    assert_eq!(
+        launched_command_running(&MarkerPresence::Present(vec![7]), || {
+            panic!("the shell scan should not run")
+        }),
+        Some(true)
+    );
+}
+
+#[test]
+fn launched_command_running_without_the_marker_follows_the_launch_shell() {
+    for presence in [
+        MarkerPresence::Absent,
+        MarkerPresence::Unknown,
+        MarkerPresence::Unavailable,
+    ] {
+        assert_eq!(
+            launched_command_running(&presence, || Some(true)),
+            Some(true),
+            "{presence:?}"
+        );
+    }
+    assert_eq!(
+        launched_command_running(&MarkerPresence::Absent, || Some(false)),
+        Some(false)
+    );
+    assert_eq!(
+        launched_command_running(&MarkerPresence::Absent, || None),
+        None
+    );
+}
+
+#[test]
+fn launched_command_running_never_says_exited_while_the_marker_scan_is_unsure() {
+    for presence in [MarkerPresence::Unknown, MarkerPresence::Unavailable] {
+        for shell in [Some(false), None] {
+            assert_eq!(
+                launched_command_running(&presence, || shell),
+                None,
+                "{presence:?}, {shell:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn launch_shell_running_finds_a_live_launch_shell_by_its_token_only() {
+    let token = format!("{}-launch-shell-test", std::process::id());
+    let mut shell = std::process::Command::new("sh")
+        .args([
+            "-c",
+            &format!("export {}={} && ( sleep 30 )", PID_MARKER_VAR, token),
+        ])
+        .spawn()
+        .expect("failed to start a shell");
+    let deadline = time::Instant::now() + time::Duration::from_secs(5);
+    while launch_shell_running(&token) != Some(true) && time::Instant::now() < deadline {
+        std::thread::sleep(time::Duration::from_millis(10));
+    }
+    let found = launch_shell_running(&token);
+    let other = launch_shell_running(&format!("{}-other", token));
+    shell.kill().expect("failed to kill the shell");
+    shell.wait().expect("failed to reap the shell");
+    assert_eq!(found, Some(true));
+    assert_eq!(other, Some(false));
+    assert_eq!(launch_shell_running(&token), Some(false));
+}
