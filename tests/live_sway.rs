@@ -8167,6 +8167,68 @@ fn on_workspace_number_builds_a_layout_on_the_numbered_workspace() {
     assert!(!workspace_names(&mut connection).contains(&"48".to_string()));
 }
 
+/// Turns on `workspace_auto_back_and_forth` and turns it off again when
+/// dropped, even on assertion panic, so no later test in this shared session
+/// inherits it.
+struct AutoBackAndForth;
+
+impl AutoBackAndForth {
+    fn enable(connection: &mut Connection) -> Self {
+        run_command_ok(connection, "workspace_auto_back_and_forth yes");
+        AutoBackAndForth
+    }
+}
+
+impl Drop for AutoBackAndForth {
+    fn drop(&mut self) {
+        let _ = connect().run_command("workspace_auto_back_and_forth no");
+    }
+}
+
+#[test]
+fn on_workspace_builds_on_the_focused_workspace_under_auto_back_and_forth() {
+    let home = fresh_workspace();
+    let mut connection = connect();
+    run_command_ok(
+        &mut connection,
+        "workspace live-auto-back-and-forth-previous",
+    );
+    run_command_ok(&mut connection, &format!("workspace \"{home}\""));
+    let _auto_back_and_forth = AutoBackAndForth::enable(&mut connection);
+    let path = TempToml::write(
+        "on-workspace-auto-back-and-forth",
+        "[[step]]\ncommand = \"foot\"\napp_id = \"foot\"\n",
+    );
+
+    let output = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--on-workspace",
+            &home,
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("--json output should be valid JSON");
+    let container_id = json["container_ids"][0]
+        .as_i64()
+        .unwrap_or_else(|| panic!("no container id in {json}"));
+    let _guard = KillOnDrop(container_id);
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        workspace_containing(&tree, container_id, None),
+        Some(home.as_str())
+    );
+    assert_eq!(focused_workspace_name(&mut connection), home);
+}
+
 #[test]
 fn existing_wait_arranges_a_window_something_else_starts() {
     fresh_workspace();

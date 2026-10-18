@@ -330,7 +330,7 @@ checks those by hand, because the derive macro doesn't enforce `requires` reliab
 - A step's `id` names its container; a later `target_id` resolves to it through `resolved_ids`. A
   template's `slot` becomes the step's `id`, so templates use the same mechanism.
 - `run_steps()` applies the run's `BuildLocation` (a template's `[layout]` table, or
-  `--on-workspace`/`--on-output`, each overriding its half of it) once before the first step, so the shape is built in place. It warns when that
+  `--on-workspace`/`--on-output`, each overriding its half of it) once before the first step, so the shape is built in place. Every workspace switch goes through `focus_command()`, whose `--no-auto-back-and-forth` keeps Sway's `workspace_auto_back_and_forth` from switching to the previous workspace instead (#142). It warns when that
   workspace already holds tiled windows, and sets `require_launch_on_focused_workspace`, which
   fails a launch if focus moved while it waited (`focus_moved_during_launch()`, #45/#105).
 - `run_steps()` takes a run lock (`acquire_run_lock()`, #55) before `BuildLocation::apply()`: an

@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--on-workspace`, `--on-workspace-number` and a template's `[layout] workspace` no longer build
+  the layout on the previous workspace when Sway's `workspace_auto_back_and_forth` is on and the
+  named workspace already has focus. Sway's back-and-forth switched away from it, and the run then
+  built the whole layout there and reported success. The workspace is now always focused as named.
+  (#142)
 - `--rollback-on-error` no longer closes a window you opened yourself while a launch was failing.
   When the launched command exited early (a mistyped flag, a crash) and a matching window opened
   meanwhile, that window was counted as one the run had launched, so a later step's failure closed

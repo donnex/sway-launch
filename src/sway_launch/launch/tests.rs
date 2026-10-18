@@ -467,11 +467,17 @@ fn build_location_focuses_the_output_then_the_workspace_by_name_or_number() {
     };
     assert_eq!(
         by_name.commands(),
-        ["focus output \"HEADLESS-1\"", "workspace \"2: web\""]
+        [
+            "focus output \"HEADLESS-1\"",
+            "workspace --no-auto-back-and-forth \"2: web\""
+        ]
     );
     let by_number = BuildLocation {
         workspace: Some(WorkspaceTarget::Number(2)),
         output: None,
     };
-    assert_eq!(by_number.commands(), ["workspace number 2"]);
+    assert_eq!(
+        by_number.commands(),
+        ["workspace --no-auto-back-and-forth number 2"]
+    );
 }

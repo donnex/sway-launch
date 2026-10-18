@@ -165,7 +165,7 @@ fn template_layout_context_switches_to_its_output_and_workspace_before_the_first
     let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
     assert_eq!(
         stdout,
-        "1. focus output \"HDMI-A-1\"\n2. workspace \"3\"\n3. launch code\n"
+        "1. focus output \"HDMI-A-1\"\n2. workspace --no-auto-back-and-forth \"3\"\n3. launch code\n"
     );
 }
 
@@ -193,7 +193,7 @@ fn template_layout_context_leaves_a_step_s_own_workspace_move_in_place() {
     let stdout = String::from_utf8(output.stdout).expect("stdout should be valid utf8");
     assert_eq!(
         stdout,
-        "1. focus output \"HDMI-A-1\"\n2. workspace \"3\"\n3. launch code\n4. move workspace \"5\"\n"
+        "1. focus output \"HDMI-A-1\"\n2. workspace --no-auto-back-and-forth \"3\"\n3. launch code\n4. move workspace \"5\"\n"
     );
 }
 
@@ -1200,7 +1200,10 @@ fn on_workspace_overrides_the_template_layout_workspace_in_the_preview() {
     assert!(output.status.success());
     let json: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("stdout should be a JSON object");
-    assert_eq!(json["setup"], serde_json::json!(["workspace \"9\""]));
+    assert_eq!(
+        json["setup"],
+        serde_json::json!(["workspace --no-auto-back-and-forth \"9\""])
+    );
 }
 
 #[test]
@@ -1223,14 +1226,17 @@ fn workspace_number_reaches_the_preview_from_the_layout_table_and_the_flag() {
         json["setup"].clone()
     };
 
-    assert_eq!(setup(&[]), serde_json::json!(["workspace number 3"]));
+    assert_eq!(
+        setup(&[]),
+        serde_json::json!(["workspace --no-auto-back-and-forth number 3"])
+    );
     assert_eq!(
         setup(&["--on-workspace-number", "9"]),
-        serde_json::json!(["workspace number 9"])
+        serde_json::json!(["workspace --no-auto-back-and-forth number 9"])
     );
     assert_eq!(
         setup(&["--on-workspace", "9"]),
-        serde_json::json!(["workspace \"9\""])
+        serde_json::json!(["workspace --no-auto-back-and-forth \"9\""])
     );
 }
 

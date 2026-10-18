@@ -362,6 +362,17 @@ impl WorkspaceTarget<'_> {
         }
     }
 
+    /// The Sway command that focuses this workspace. Without
+    /// `--no-auto-back-and-forth`, a config with `workspace_auto_back_and_forth
+    /// yes` makes Sway switch to the previous workspace instead when this one
+    /// already has focus (#142, confirmed live).
+    pub(super) fn focus_command(&self) -> String {
+        format!(
+            "workspace --no-auto-back-and-forth {}",
+            self.sway_argument()
+        )
+    }
+
     /// Whether a workspace called `name`, numbered `number`, is this one.
     /// Names compare ignoring case, as Sway compares them; a number matches
     /// any workspace whose name starts with it, which is what Sway's `num`

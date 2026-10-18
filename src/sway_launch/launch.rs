@@ -112,9 +112,7 @@ impl BuildLocation<'_> {
         let output = self
             .output
             .map(|output| format!("focus output {}", quote_sway_string(output)));
-        let workspace = self
-            .workspace
-            .map(|workspace| format!("workspace {}", workspace.sway_argument()));
+        let workspace = self.workspace.map(|workspace| workspace.focus_command());
         output.into_iter().chain(workspace).collect()
     }
 
@@ -154,10 +152,7 @@ impl Staging {
             staging_workspace: format!("sway-launch-staging-{}", std::process::id()),
         };
         staging.send(
-            &format!(
-                "workspace {}",
-                WorkspaceTarget::Name(&staging.staging_workspace).sway_argument()
-            ),
+            &WorkspaceTarget::Name(&staging.staging_workspace).focus_command(),
             verbose,
         )?;
         Ok(staging)
@@ -166,10 +161,7 @@ impl Staging {
     /// Focuses the build workspace again.
     pub fn leave(&self, verbose: bool) -> Result<(), String> {
         self.send(
-            &format!(
-                "workspace {}",
-                WorkspaceTarget::Name(&self.build_workspace).sway_argument()
-            ),
+            &WorkspaceTarget::Name(&self.build_workspace).focus_command(),
             verbose,
         )
     }

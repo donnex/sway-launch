@@ -1534,7 +1534,7 @@ fn concurrent_launches_every_step_on_a_staging_workspace_then_arranges_in_order(
     );
     assert!(run.succeeded(), "{}", run.stderr());
     let commands = fake.commands();
-    let staging = "workspace \"sway-launch-staging-";
+    let staging = "workspace --no-auto-back-and-forth \"sway-launch-staging-";
     let position = |wanted: &str| {
         commands
             .iter()
