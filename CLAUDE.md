@@ -373,7 +373,11 @@ checks those by hand, because the derive macro doesn't enforce `requires` reliab
   launch timeout or interrupt watches `LATE_WINDOW_GRACE` more for a marked window
   (`late_marked_window()`, which doesn't use `interrupt::recv()`, since the first signal is still
   set and a second exits on its own) and hands it to rollback as the failed step's `Launched`
-  container (#127).
+  container (#127). A timeout also hands over every still-open window the filter rejected whose
+  process carries the marker (`launched_by_this_run`): the first as `container_id` when no late
+  window came, the rest in `RunError.also_launched`; `failed_launch_windows()` lists them for
+  `run_steps()` and `release_staged()`, and under `--concurrent` each is brought off the staging
+  workspace first, the failure `take_staging_failure()` picked included (#168).
 - `--rollback-on-error` closes only windows whose `launch_ownership` is `Launched` — never
   retargeted or `Adopted` ones — most recent first (`rollback()`, `send_rollback_kills()`), waits
   `ROLLBACK_CLOSE_GRACE` for each to actually close, and stops at the first unanswered kill. It

@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--rollback-on-error` now closes a launched window that timed out only because it opened under a
+  different app_id, class or title than the step names, the commonest way a launch times out. The
+  run already knew the window was its own, and reported it as `launched_by_this_run`, but left it
+  open while reporting the rest as rolled back; with `--concurrent` it stayed out of sight on the
+  hidden staging workspace. It's now closed with the others, after being brought back from the
+  staging workspace under `--concurrent`. (#168)
 - A `--layout` or `--template` run now warns when your own Sway config put a step's window
   somewhere other than where the layout builds it: an `assign` or `for_window` rule that sent it to
   another workspace or the scratchpad, or floated it. The run reported success with nothing said

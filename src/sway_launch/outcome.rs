@@ -91,6 +91,11 @@ pub struct RunError {
     pub unmatched_windows: Vec<UnmatchedWindow>,
     pub container_id: Option<i64>,
     pub launch_ownership: Option<LaunchOwnership>,
+    /// Further windows a timed-out launch proved it opened, beyond
+    /// `container_id`, each `LaunchOwnership::Launched`: an application can
+    /// open several under an app_id its filter didn't name (#168). Empty
+    /// for every other failure.
+    pub also_launched: Vec<i64>,
     /// The run's window never appeared within `--timeout`: a launch that saw
     /// no matching window, or `--existing --wait` that saw none open. The one
     /// failure `--continue-on-timeout` lets a layout carry on past (#19),
@@ -105,6 +110,7 @@ impl From<String> for RunError {
             unmatched_windows: Vec::new(),
             container_id: None,
             launch_ownership: None,
+            also_launched: Vec::new(),
             window_timed_out: false,
         }
     }

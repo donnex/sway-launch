@@ -789,7 +789,10 @@ windows are reported as unconfirmed at once rather than each waiting out the sam
 `"rolled_back": [123, 456], "rollback_failed": [789]` (see [JSON output](#json-output)). A launch
 that times out or is interrupted keeps watching up to 2 more seconds for its window under
 `--rollback-on-error`, and rolls that one back too rather than leaving it to appear after the run
-has failed.
+has failed. A launch that timed out because its window opened under another app_id, class or title
+than the step names also closes that window, when its process proves this run launched it (the
+`unmatched_windows` entry's `launched_by_this_run`); with `--concurrent`, it's first brought back
+from the staging workspace.
 
 **Interrupting a run.** Ctrl-C (SIGINT) or SIGTERM (a `timeout(1)` wrapper, a stopped service) ends
 a run within a moment as a failure of the step it was on, so `--rollback-on-error` closes what the

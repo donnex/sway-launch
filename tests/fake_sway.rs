@@ -1388,7 +1388,9 @@ fn existing_refuses_to_guess_between_two_matching_windows() {
     assert!(run.error().contains("100"), "{}", run.error());
 }
 
-/// Two steps: a launch that opens its window, then one that never does.
+/// Two steps: a launch that opens its window, then one whose window opens
+/// under an app_id it doesn't name, so it times out; that window carries
+/// the launch's marker, so it's this run's to roll back too (#168).
 const LAYOUT_WHOSE_SECOND_STEP_TIMES_OUT: &str = r#"
 [[step]]
 command = "sleep 30"
@@ -1404,8 +1406,11 @@ timeout = 1
 fn rollback_closes_the_window_an_earlier_step_launched() {
     let mut opens = opens_a_window_for_each_launch("fake-app");
     let fake = FakeSway::start(SwayVersion::V1_11, move |sway, command| {
-        if command == "[con_id=100] kill" {
-            sway.remove(100);
+        if let Some(id) = command
+            .strip_prefix("[con_id=")
+            .and_then(|rest| rest.strip_suffix("] kill"))
+        {
+            sway.remove(id.parse().expect("a kill names a container id"));
             return Ok(());
         }
         opens(sway, command)
@@ -1417,12 +1422,18 @@ fn rollback_closes_the_window_an_earlier_step_launched() {
     );
     assert!(!run.succeeded());
     assert_eq!(
+        run.json["unmatched_windows"][0]["launched_by_this_run"], true,
+        "{}",
+        run.json
+    );
+    assert_eq!(
         run.json["rolled_back"],
-        serde_json::json!([100]),
+        serde_json::json!([101, 100]),
         "{}",
         run.json
     );
     assert!(run.json["rollback_failed"].is_null(), "{}", run.json);
+    assert!(!fake.sway().contains(101));
 }
 
 #[test]
@@ -1452,7 +1463,7 @@ fn rollback_reports_a_window_that_stayed_open_after_its_kill() {
     );
     assert_eq!(
         run.json["rollback_failed"],
-        serde_json::json!([100]),
+        serde_json::json!([101, 100]),
         "{}",
         run.json
     );
@@ -1924,6 +1935,123 @@ fn rollback_closes_a_window_that_opens_just_after_its_launch_timed_out() {
         run.json
     );
     assert!(!fake.sway().contains(101));
+}
+
+/// A handler that opens a window for each launch once its process exists,
+/// under `fake-app`, or `count` windows under `other-app` for a command
+/// naming `sleep 31`, and closes a window on `kill`.
+fn opens_wrong_app_id_windows_for_sleep_31(
+    count: usize,
+) -> impl FnMut(&mut Sway, &str) -> Result<(), String> + Send + 'static {
+    move |sway, command| {
+        if let Some(id) = command
+            .strip_prefix("[con_id=")
+            .and_then(|rest| rest.strip_suffix("] kill"))
+        {
+            sway.remove(id.parse().expect("a kill names a container id"));
+        } else if command.starts_with("exec ") {
+            let windows = if command.contains("sleep 31") {
+                vec!["other-app"; count]
+            } else {
+                vec!["fake-app"]
+            };
+            let token = sway.launch(command);
+            sway.when_marked(token, move |sway, pid| {
+                for app_id in windows {
+                    let id = sway.open_window(Some(app_id), Some(pid));
+                    sway.emit("new", id);
+                }
+            });
+        }
+        Ok(())
+    }
+}
+
+const LAYOUT_WHOSE_SECOND_STEP_NAMES_THE_WRONG_APP_ID: &str = "[[step]]\ncommand = \"sleep 30\"\n\
+     app_id = \"fake-app\"\n\n[[step]]\ncommand = \"sleep 31\"\napp_id = \"fake-app\"\ntimeout = 1\n";
+
+#[test]
+fn rollback_closes_every_launched_window_its_filter_rejected() {
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        opens_wrong_app_id_windows_for_sleep_31(2),
+    );
+    let layout = TempToml::write(
+        "rollback-wrong-app-id-twice",
+        LAYOUT_WHOSE_SECOND_STEP_NAMES_THE_WRONG_APP_ID,
+    );
+    let run = run(
+        &fake,
+        &["--layout", layout.to_str().unwrap(), "--rollback-on-error"],
+    );
+    assert!(!run.succeeded());
+    assert_eq!(
+        run.json["rolled_back"],
+        serde_json::json!([102, 101, 100]),
+        "{}",
+        run.json
+    );
+    assert!(!fake.sway().contains(101) && !fake.sway().contains(102));
+}
+
+#[test]
+fn without_rollback_a_launched_window_its_filter_rejected_is_left_open() {
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        opens_wrong_app_id_windows_for_sleep_31(1),
+    );
+    let layout = TempToml::write(
+        "wrong-app-id-no-rollback",
+        LAYOUT_WHOSE_SECOND_STEP_NAMES_THE_WRONG_APP_ID,
+    );
+    let run = run(&fake, &["--layout", layout.to_str().unwrap()]);
+    assert!(!run.succeeded());
+    assert!(run.json["container_id"].is_null(), "{}", run.json);
+    assert!(fake.sway().contains(101));
+}
+
+#[test]
+fn concurrent_rollback_brings_back_and_closes_a_launched_window_its_filter_rejected() {
+    // #168: the failing staged launch's window used to stay on the staging
+    // workspace, out of sight, and was never closed.
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        opens_wrong_app_id_windows_for_sleep_31(1),
+    );
+    let layout = TempToml::write(
+        "concurrent-rollback-wrong-app-id",
+        LAYOUT_WHOSE_SECOND_STEP_NAMES_THE_WRONG_APP_ID,
+    );
+    let run = run(
+        &fake,
+        &[
+            "--layout",
+            layout.to_str().unwrap(),
+            "--concurrent",
+            "--rollback-on-error",
+        ],
+    );
+    assert!(!run.succeeded());
+    let rejected = run.json["unmatched_windows"][0]["container_id"]
+        .as_i64()
+        .unwrap_or_else(|| panic!("no rejected window: {}", run.json));
+    let commands = fake.commands();
+    for id in [100, 101] {
+        assert!(
+            commands.iter().any(|command| command
+                .starts_with(&format!("[con_id={id}] move container to workspace"))),
+            "{id} never left the staging workspace: {commands:?}"
+        );
+    }
+    let mut rolled_back: Vec<i64> = run.json["rolled_back"]
+        .as_array()
+        .unwrap_or_else(|| panic!("nothing rolled back: {}", run.json))
+        .iter()
+        .map(|id| id.as_i64().unwrap())
+        .collect();
+    rolled_back.sort_unstable();
+    assert_eq!(rolled_back, [100, 101], "{}", run.json);
+    assert!(!fake.sway().contains(rejected));
 }
 
 #[test]

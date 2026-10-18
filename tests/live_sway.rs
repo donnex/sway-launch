@@ -7849,7 +7849,9 @@ fn layout_launch_timeout_reports_its_step_and_rolls_back_earlier_steps() {
     fresh_workspace();
     // A wrong app_id in a layout step is the timeout a real user hits most,
     // and the one --rollback-on-error exists for: the error must name the
-    // step, arrive at --timeout, and close what earlier steps launched.
+    // step, arrive at --timeout, and close what earlier steps launched --
+    // and step 2's own window, which its filter rejected but whose process
+    // carries the marker (#168).
     let path = TempToml::write(
         "timeout-rollback",
         "[[step]]\ncommand = \"foot --app-id=timeout-step-one\"\napp_id = \"timeout-step-one\"\n\n\
@@ -7900,14 +7902,23 @@ fn layout_launch_timeout_reports_its_step_and_rolls_back_earlier_steps() {
     let rolled_back = error["rolled_back"]
         .as_array()
         .unwrap_or_else(|| panic!("expected rolled_back in {error}"));
-    assert_eq!(rolled_back.len(), 1, "{error}");
-    let step_one_id = rolled_back[0]
+    let step_two_id = error["unmatched_windows"][0]["container_id"]
+        .as_i64()
+        .unwrap_or_else(|| panic!("expected step 2's rejected window in {error}"));
+    assert_eq!(
+        error["unmatched_windows"][0]["launched_by_this_run"], true,
+        "{error}"
+    );
+    assert_eq!(rolled_back.len(), 2, "{error}");
+    assert_eq!(rolled_back[0], step_two_id, "most recent first: {error}");
+    let step_one_id = rolled_back[1]
         .as_i64()
         .expect("rolled_back should hold container ids");
     let _step_one_guard = KillOnDrop(step_one_id);
 
     let mut connection = connect();
     wait_for_container_gone(&mut connection, step_one_id);
+    wait_for_container_gone(&mut connection, step_two_id);
 }
 
 #[test]

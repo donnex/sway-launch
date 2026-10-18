@@ -1916,10 +1916,14 @@ fn run_steps(
         .as_mut()
         .and_then(|staged| take_staging_failure(&mut staged.windows, args.continue_on_timeout))
     {
-        // As a sequential launch's failure is: a window it caught late is
-        // its progress, and rolled back when it's this run's.
-        if let (Some(container_id), Some(ownership)) = (error.container_id, error.launch_ownership)
-        {
+        // As a sequential launch's failure is: a window it caught late, or
+        // one its filter rejected that carries its marker, is its progress,
+        // brought back from the staging workspace and rolled back when it's
+        // this run's.
+        for (container_id, ownership) in failed_launch_windows(&error) {
+            if let Some(staged) = staged.as_ref() {
+                bring_back(&staged.staging, container_id, args.verbose);
+            }
             container_ids.push(container_id);
             if ownership == sway_launch::LaunchOwnership::Launched {
                 launched_container_ids.push(container_id);
@@ -2096,11 +2100,11 @@ fn run_steps(
                 // failure), so listing it among the open windows would assert
                 // something this run never saw. error.container_id still
                 // names it either way.
-                if let (Some(container_id), Some(ownership)) =
-                    (error.container_id, error.launch_ownership)
+                for (position, (container_id, ownership)) in
+                    failed_launch_windows(&error).into_iter().enumerate()
                 {
                     container_ids.push(container_id);
-                    if let Some(id) = step.id.as_deref() {
+                    if let (0, Some(id)) = (position, step.id.as_deref()) {
                         resolved_ids.insert(id.to_string(), container_id);
                     }
                     if ownership == sway_launch::LaunchOwnership::Launched {
@@ -2555,28 +2559,57 @@ fn release_staged(
 ) {
     let Some(staged) = staged.take() else { return };
     for (index, result) in staged.windows {
-        let (container_id, ownership) = match result {
-            Ok(outcome) => (outcome.container_id, outcome.launch_ownership),
-            Err(error) => match (error.container_id, error.launch_ownership) {
-                (Some(container_id), Some(ownership)) => (container_id, Some(ownership)),
-                _ => continue,
-            },
+        let windows = match result {
+            Ok(outcome) => vec![(outcome.container_id, outcome.launch_ownership)],
+            Err(error) => failed_launch_windows(&error)
+                .into_iter()
+                .map(|(container_id, ownership)| (container_id, Some(ownership)))
+                .collect(),
         };
-        if let Err(error) = staged.staging.bring(container_id, false, verbose) {
-            diagnostic!(
-                "{}{}",
-                stderr_label(Severity::Warning),
-                sway_launch::escape_control_characters(&error, false)
-            );
-        }
-        container_ids.push(container_id);
-        if let Some(id) = steps[index].id.as_deref() {
-            resolved_ids.insert(id.to_string(), container_id);
-        }
-        if ownership == Some(sway_launch::LaunchOwnership::Launched) {
-            launched_container_ids.push(container_id);
+        for (position, (container_id, ownership)) in windows.into_iter().enumerate() {
+            bring_back(&staged.staging, container_id, verbose);
+            container_ids.push(container_id);
+            if let (0, Some(id)) = (position, steps[index].id.as_deref()) {
+                resolved_ids.insert(id.to_string(), container_id);
+            }
+            if ownership == Some(sway_launch::LaunchOwnership::Launched) {
+                launched_container_ids.push(container_id);
+            }
         }
     }
+}
+
+/// Moves a staged window to the build workspace, unfocused, warning rather
+/// than failing when it can't: the run is already failing.
+fn bring_back(staging: &sway_launch::Staging, container_id: i64, verbose: bool) {
+    if let Err(error) = staging.bring(container_id, false, verbose) {
+        diagnostic!(
+            "{}{}",
+            stderr_label(Severity::Warning),
+            sway_launch::escape_control_characters(&error, false)
+        );
+    }
+}
+
+/// Every window a failed step is known to have opened or resolved, with its
+/// ownership: `container_id` first, then any further window a timed-out
+/// launch proved it opened (`also_launched`, #168).
+fn failed_launch_windows(
+    error: &sway_launch::RunError,
+) -> Vec<(i64, sway_launch::LaunchOwnership)> {
+    let first = match (error.container_id, error.launch_ownership) {
+        (Some(container_id), Some(ownership)) => Some((container_id, ownership)),
+        _ => None,
+    };
+    first
+        .into_iter()
+        .chain(
+            error
+                .also_launched
+                .iter()
+                .map(|&container_id| (container_id, sway_launch::LaunchOwnership::Launched)),
+        )
+        .collect()
 }
 
 /// `plan_step()` over every step without running any, for `--dry-run` and

@@ -1280,11 +1280,29 @@ impl ExecAction<'_> {
                         LATE_WINDOW_GRACE.as_secs()
                     ));
                 }
+                // A window the filter rejected but whose process carries the
+                // marker is this launch's too, and is handed over for
+                // rollback to close like a late one (#168). `rechecks` holds
+                // exactly those still open as of the last recheck.
+                let mut launched: Vec<i64> = late_window.into_iter().collect();
+                if self.catch_late_window {
+                    launched.extend(
+                        unmatched_windows
+                            .iter()
+                            .filter(|window| {
+                                window.launched_by_this_run
+                                    && rechecks.contains(&window.container_id)
+                            })
+                            .map(|window| window.container_id),
+                    );
+                }
+                let container_id = launched.first().copied();
                 return Err(RunError {
                     message,
                     unmatched_windows,
-                    container_id: late_window,
-                    launch_ownership: late_window.map(|_| LaunchOwnership::Launched),
+                    container_id,
+                    launch_ownership: container_id.map(|_| LaunchOwnership::Launched),
+                    also_launched: launched.into_iter().skip(1).collect(),
                     window_timed_out: true,
                 });
             }
@@ -1393,6 +1411,7 @@ impl ExecAction<'_> {
                         unmatched_windows: Vec::new(),
                         container_id: late_window,
                         launch_ownership: late_window.map(|_| LaunchOwnership::Launched),
+                        also_launched: Vec::new(),
                         window_timed_out: false,
                     });
                 }
