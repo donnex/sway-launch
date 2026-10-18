@@ -1398,9 +1398,15 @@ fn a_window_the_filter_rejects_is_named_in_the_timeout() {
     });
     let run = run(&fake, &["-a", "fake-app", "--timeout", "1", "sleep 30"]);
     assert!(!run.succeeded());
+    // The window isn't this launch's (#161), so the command's own state
+    // leads and the window follows as context.
     assert!(
-        run.error()
-            .contains("1 other new window did (con_id 100, app_id \"other-app\")"),
+        run.error().contains(
+            "the launched command is still running — it may be slow to start (see --timeout) \
+             or not open a window at all; meanwhile 1 other new window opened, not traced to \
+             this command (con_id 100, app_id \"other-app\") — if it is this app's, check \
+             --app-id/--class"
+        ),
         "{}",
         run.error()
     );

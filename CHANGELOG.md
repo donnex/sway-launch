@@ -38,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A launch that timed out while some other program opened a window no longer blames
+  `--app-id`/`--class`. Any window the filter rejected used to become the whole explanation, so a
+  mistyped command was reported as `1 other new window did (...) — check --app-id/--class` when a
+  chat app or browser pop-up happened to open meanwhile. The error now leads with what happened to
+  the launched command (it exited, or is still running) and lists the other window after it as
+  context; a rejected window the command itself opened is still reported as before. (#161)
 - `--settle` no longer mistakes a window that closed while its size was being held, or a moment when
   the window's state couldn't be read, for the application changing its size. A closed window had
   its geometry sent again, and the run then failed with Sway's `No matching node.` under the name

@@ -8384,6 +8384,63 @@ fn launch_timeout_says_when_the_command_exited_without_a_window() {
 }
 
 #[test]
+fn launch_timeout_blames_the_command_not_the_filter_for_another_program_s_window() {
+    fresh_workspace();
+    // Another program opening a window during the wait used to replace the
+    // explanation: a typo'd command was reported as a wrong --app-id (#161).
+    let child = sway_launch_command()
+        .args([
+            "--timeout",
+            "3",
+            "--json",
+            "--app-id",
+            "foot",
+            "sway-launch-no-such-command-probe",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to run sway-launch binary");
+    run_command_ok(
+        &mut connect(),
+        "exec sleep 0.5 && foot --app-id=foreign-window-probe",
+    );
+    let output = child
+        .wait_with_output()
+        .expect("failed to wait for sway-launch");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        !output.status.success(),
+        "nothing can open a matching window: {stderr}"
+    );
+    let last_line = stderr.lines().next_back().unwrap_or_default();
+    let error: serde_json::Value =
+        serde_json::from_str(last_line).expect("the last stderr line should be a JSON error");
+    let unmatched = error["unmatched_windows"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected unmatched_windows in {error}"));
+    assert_eq!(unmatched.len(), 1, "{error}");
+    let container_id = unmatched[0]["container_id"]
+        .as_i64()
+        .expect("container_id should be an integer");
+    let _guard = KillOnDrop(container_id);
+    assert_eq!(unmatched[0]["app_id"], "foreign-window-probe", "{error}");
+    assert_eq!(unmatched[0]["launched_by_this_run"], false, "{error}");
+
+    let message = error["error"].as_str().expect("error should be a string");
+    let exited = message
+        .find("exited without opening a window")
+        .unwrap_or_else(|| panic!("the error should say the command exited: {message}"));
+    let foreign = message
+        .find("not traced to this command")
+        .unwrap_or_else(|| panic!("the error should list the other window: {message}"));
+    assert!(
+        exited < foreign && message.contains(&format!("con_id {container_id}")),
+        "the command's exit should lead, the other window follow: {message}"
+    );
+}
+
+#[test]
 fn launch_timeout_says_a_command_that_cleared_its_environment_is_still_running() {
     fresh_workspace();
     // `env -i` drops the marker, so only Sway's own shell for the launch,

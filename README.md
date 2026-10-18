@@ -1333,6 +1333,10 @@ error: launch "footx": no window appeared within 2 sec: the launched command exi
   The rejected window stays open, and `--json` lists it under `unmatched_windows`.
 - The command exited without a window: it probably isn't on `PATH` in Sway's environment, or
   failed; its own error is in Sway's log (see [Launching a command](#launching-a-command)).
+- A window some other program opened during the wait (not traced to this command) is listed after
+  the explanation as `meanwhile 1 other new window opened, not traced to this command (...)`,
+  rather than replacing it. It only points at `--app-id`/`--class` when that window is really
+  this application's, handed off to another process (a client/server launcher).
 - The application is just slow to start: raise `--timeout`, or a binding's `timeout` for its slot.
 - A `warning: Sway 1.7.0 is older than 1.9` (or `... is not Sway`) line came first: the
   compositor is one `sway-launch` doesn't support, and the timeout may be that difference

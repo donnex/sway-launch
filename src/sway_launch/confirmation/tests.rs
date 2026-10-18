@@ -51,7 +51,10 @@ fn exec_timeout_message_lists_several_rejected_windows() {
         filter("", "Firefox"),
         None,
         &[
-            unmatched(12, Some("foot"), None),
+            UnmatchedWindow {
+                launched_by_this_run: true,
+                ..unmatched(12, Some("foot"), None)
+            },
             unmatched(13, None, Some("XTerm")),
             unmatched(14, None, None),
         ],
@@ -60,10 +63,11 @@ fn exec_timeout_message_lists_several_rejected_windows() {
     assert_eq!(
         message,
         "no window with class \"Firefox\" appeared within 5 sec; 3 other new windows did \
-             (con_id 12, app_id \"foot\"), (con_id 13, class \"XTerm\"), \
-             (con_id 14, no app_id or class) — check --app-id/--class"
+             (con_id 12, app_id \"foot\", opened by this command), (con_id 13, class \"XTerm\"), \
+             (con_id 14, no app_id or class) — check --app-id/--class (a window opened by this \
+             command was rechecked until the timeout, in case the app sets its app_id/class \
+             after mapping)"
     );
-    assert!(!message.contains("rechecked"), "{message}");
 }
 
 #[test]
@@ -154,16 +158,60 @@ fn exec_timeout_message_adds_nothing_when_the_command_s_state_is_unknown() {
 }
 
 #[test]
-fn exec_timeout_message_prefers_rejected_windows_over_the_command_s_state() {
+fn exec_timeout_message_prefers_this_command_s_rejected_window_over_its_state() {
     let message = exec_timeout_message(
         time::Duration::from_secs(2),
         filter("notfoot", ""),
         None,
-        &[unmatched(12, Some("foot"), None)],
+        &[UnmatchedWindow {
+            launched_by_this_run: true,
+            ..unmatched(12, Some("foot"), None)
+        }],
         Some(false),
     );
     assert!(message.contains("check --app-id/--class"), "{message}");
     assert!(!message.contains("exited"), "{message}");
+}
+
+#[test]
+fn exec_timeout_message_leads_with_an_exited_command_over_a_foreign_window() {
+    let message = exec_timeout_message(
+        time::Duration::from_secs(2),
+        filter("foot", ""),
+        None,
+        &[unmatched(7, Some("other"), None)],
+        Some(false),
+    );
+    assert_eq!(
+        message,
+        "no window with app_id \"foot\" appeared within 2 sec: the launched command exited \
+             without opening a window — check that it is on PATH in Sway's environment; \
+             meanwhile 1 other new window opened, not traced to this command \
+             (con_id 7, app_id \"other\") — if it is this app's, check --app-id/--class"
+    );
+}
+
+#[test]
+fn exec_timeout_message_leads_with_a_running_command_over_foreign_windows() {
+    let message = exec_timeout_message(
+        time::Duration::from_secs(2),
+        filter("foot", ""),
+        None,
+        &[
+            unmatched(7, Some("other"), None),
+            unmatched(8, None, Some("XTerm")),
+        ],
+        Some(true),
+    );
+    assert_eq!(
+        message,
+        "no window with app_id \"foot\" appeared within 2 sec; the launched command is still \
+             running — it may be slow to start (see --timeout) or not open a window at all; \
+             meanwhile 2 other new windows opened, not traced to this command \
+             (con_id 7, app_id \"other\"), (con_id 8, class \"XTerm\") — if one is this \
+             app's, check --app-id/--class"
+    );
+    assert!(!message.contains("rechecked"), "{message}");
 }
 
 #[test]
@@ -933,8 +981,9 @@ fn exec_timeout_message_names_the_title_it_waited_for() {
             }],
             None
         ),
-        "no window with title matching \"project-a\" appeared within 3 sec; 1 other new window \
-         did (con_id 12, app_id \"foot\", no title) — check --app-id/--class/--title"
+        "no window with title matching \"project-a\" appeared within 3 sec; meanwhile 1 other \
+         new window opened, not traced to this command (con_id 12, app_id \"foot\", no title) \
+         — if it is this app's, check --app-id/--class/--title"
     );
 }
 

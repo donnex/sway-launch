@@ -1341,8 +1341,13 @@ impl ExecAction<'_> {
                     return Ok((container_id, LaunchOwnership::Adopted));
                 }
                 // Only worth asking when nothing else explains the timeout: a
-                // rejected window already says what went wrong.
-                let command_running = if unmatched_windows.is_empty() {
+                // rejected window this command opened already says what went
+                // wrong, but one some other program opened says nothing about
+                // this command (#161).
+                let command_running = if !unmatched_windows
+                    .iter()
+                    .any(|window| window.launched_by_this_run)
+                {
                     launched_command_running(
                         &scan_marker_presence(PID_MARKER_VAR, &token, marker.previously_seen()),
                         || launch_shell_running(&token),
@@ -1811,13 +1816,19 @@ fn unfiltered_fallback_hint(filter: Option<LaunchFilter>) -> &'static str {
 /// The common causes otherwise look identical: a `--app-id`/`--class` that
 /// doesn't match what the application actually reports (it varies with
 /// version, packaging and backend — an XWayland window has no app_id at all),
-/// and a command that never started (Sway's `exec` gives no feedback). So:
-/// rejected windows are named, with the filter to check; with none, a launched
+/// and a command that never started (Sway's `exec` gives no feedback). So: a
+/// rejected window this command opened (`launched_by_this_run`) is the
+/// explanation, named with the filter to check. Without one, a launched
 /// command that's no longer running (`command_running == Some(false)`) is
-/// called out as such; and only a command still running gets the hint that it
+/// called out as such, and only a command still running gets the hint that it
 /// may simply be slow. `launched_command_running()` decides which, from the
 /// marker and the launch's own shell; `None` means it couldn't tell, and adds
-/// nothing.
+/// nothing. Rejected windows not traced to this command come after that
+/// explanation rather than replacing it (#161): on a desktop another program
+/// opening a window during the wait is ordinary, and leading with it would
+/// send the user to fix a filter that was right. They're still listed, with
+/// the filter hint, for a window handed off to a process the marker can't
+/// follow (a client/server launcher).
 fn exec_timeout_message(
     timeout: time::Duration,
     filter: Option<LaunchFilter>,
@@ -1836,50 +1847,44 @@ fn exec_timeout_message(
         criteria,
         timeout.as_secs()
     );
+    let flags = if title.is_some() {
+        "--app-id/--class/--title"
+    } else {
+        "--app-id/--class"
+    };
+    let described = unmatched_windows
+        .iter()
+        .map(|window| format!("({})", describe_unmatched_window(window, title.is_some())))
+        .collect::<Vec<String>>()
+        .join(", ");
+    let noun = if unmatched_windows.len() == 1 {
+        "window"
+    } else {
+        "windows"
+    };
 
-    if !unmatched_windows.is_empty() {
-        let described: Vec<String> = unmatched_windows
-            .iter()
-            .map(|window| format!("({})", describe_unmatched_window(window, title.is_some())))
-            .collect();
-        let noun = if unmatched_windows.len() == 1 {
-            "window"
-        } else {
-            "windows"
-        };
+    if unmatched_windows
+        .iter()
+        .any(|window| window.launched_by_this_run)
+    {
         let properties = if title.is_some() {
             "app_id/class/title"
         } else {
             "app_id/class"
         };
-        let recheck_note = if unmatched_windows
-            .iter()
-            .any(|window| window.launched_by_this_run)
-        {
-            format!(
-                " (a window opened by this command was rechecked until the timeout, in case the \
-                 app sets its {} after mapping)",
-                properties
-            )
-        } else {
-            String::new()
-        };
         return format!(
-            "{}; {} other new {} did {} — check {}{}",
+            "{}; {} other new {} did {} — check {} (a window opened by this command was \
+             rechecked until the timeout, in case the app sets its {} after mapping)",
             base,
             unmatched_windows.len(),
             noun,
-            described.join(", "),
-            if title.is_some() {
-                "--app-id/--class/--title"
-            } else {
-                "--app-id/--class"
-            },
-            recheck_note
+            described,
+            flags,
+            properties
         );
     }
 
-    match command_running {
+    let explanation = match command_running {
         Some(false) => format!(
             "{}: the launched command exited without opening a window — check that it is on \
              PATH in Sway's environment",
@@ -1891,7 +1896,24 @@ fn exec_timeout_message(
             base
         ),
         None => base,
+    };
+    if unmatched_windows.is_empty() {
+        return explanation;
     }
+    format!(
+        "{}; meanwhile {} other new {} opened, not traced to this command {} — if {} this \
+         app's, check {}",
+        explanation,
+        unmatched_windows.len(),
+        noun,
+        described,
+        if unmatched_windows.len() == 1 {
+            "it is"
+        } else {
+            "one is"
+        },
+        flags
+    )
 }
 
 /// `--existing --wait` (#108): the one window `criteria` accepts, waiting
