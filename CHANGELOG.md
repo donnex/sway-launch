@@ -70,6 +70,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fullscreen window as filling its whole split, so an even split was written with a 100% width
   step. The file now makes the window fullscreen in a final step of its own and sizes it from its
   siblings, and the README explains how to place fullscreen in a layout file of your own. (#189)
+- `--capture` now refuses a workspace holding a split container floated as a whole (several
+  windows floating together), as it already refused a tabbed one. It used to keep only the first
+  window in it and rebuild that one tiled, so the file silently described a different workspace.
+  A floating container holding a single window now keeps its floating state, size and position.
+  (#153)
 - A `--layout` or `--template` run now works alongside a daemon that renames workspaces as windows
   open on them (workspace-icon helpers that turn `1` into `1: <icons>`). A step could fail with a
   "focus moved" error although focus never left the workspace, and a

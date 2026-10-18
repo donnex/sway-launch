@@ -5949,6 +5949,36 @@ app_id = "foot"
 }
 
 #[test]
+fn capture_refuses_a_split_container_floated_as_a_whole() {
+    fresh_workspace();
+    // #153: Sway floats a split container as one floating node holding
+    // ordinary windows. A capture used to keep only its first window, tiled;
+    // it must refuse instead, as it does a tabbed container.
+    let mut connection = connect();
+    let built = focused_workspace_name(&mut connection);
+    let (_tiled, _tiled_guard) = launch_foot(&[]);
+    let (_top, _top_guard) = launch_foot(&["--split", "v"]);
+    let (bottom, _bottom_guard) = launch_foot(&[]);
+    run_command_ok(&mut connection, &format!("[con_id={bottom}] focus"));
+    run_command_ok(&mut connection, "focus parent");
+    run_command_ok(&mut connection, "floating enable");
+    let output = sway_launch_command()
+        .args(["--capture", &built])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "captured a floating split:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        stderr.contains("it holds a floating container of 2 windows"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn capture_never_replays_an_app_id_as_shell_code() {
     fresh_workspace();
     // #125: an app_id is the client's to set (foot takes one from an escape

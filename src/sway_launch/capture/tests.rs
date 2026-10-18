@@ -367,3 +367,46 @@ fn capture_makes_a_floating_fullscreen_window_fullscreen_after_its_geometry() {
     assert!(!captured[0].contains("fullscreen"), "{captured:?}");
     assert_eq!(captured[1], r#"target_id = "foot"; fullscreen = true"#);
 }
+
+/// A split container Sway floated as a whole: a `floating_con` whose
+/// children are ordinary `con` windows.
+fn floating_container(nodes: Vec<serde_json::Value>) -> serde_json::Value {
+    let mut container = split(30, "splith", 1.0, nodes);
+    container["type"] = serde_json::json!("floating_con");
+    container["rect"] = serde_json::json!({"x": 150, "y": 230, "width": 800, "height": 570});
+    container["deco_rect"] = serde_json::json!({"x": 100, "y": 200, "width": 800, "height": 30});
+    container["sticky"] = serde_json::json!(true);
+    container
+}
+
+#[test]
+fn capture_refuses_a_floating_container_of_several_windows() {
+    let workspace = workspace(
+        "splith",
+        vec![window(10, "foot", 1.0)],
+        vec![floating_container(vec![
+            window(31, "a", 0.5),
+            window(32, "b", 0.5),
+        ])],
+    );
+    assert_eq!(
+        capture(&workspace).expect_err("a floating split can't be rebuilt"),
+        "workspace \"dev\": it holds a floating container of 2 windows, and only a floating \
+         window on its own can be rebuilt"
+    );
+}
+
+#[test]
+fn capture_takes_a_floating_containers_geometry_for_the_one_window_in_it() {
+    let workspace = workspace(
+        "splith",
+        vec![],
+        vec![floating_container(vec![window(31, "a", 1.0)])],
+    );
+    assert_eq!(
+        steps(&capture(&workspace).expect("captures")),
+        [
+            r#"id = "a"; command = "a"; app_id = "a"; floating = true; sticky = true; width = "800px"; height = "600px"; position = "100,200""#,
+        ]
+    );
+}

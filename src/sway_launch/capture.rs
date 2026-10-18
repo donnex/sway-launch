@@ -23,7 +23,7 @@
 
 use super::tree::node_position;
 use super::values::escape_control_characters;
-use swayipc::{Node, NodeLayout, NodeType};
+use swayipc::{Node, NodeLayout};
 
 #[cfg(test)]
 mod tests;
@@ -73,6 +73,15 @@ impl<'a> Shape<'a> {
         match self {
             Shape::Window(node) => node,
             Shape::Split { children, .. } => children[0].1.first_window(),
+        }
+    }
+
+    fn window_count(&self) -> usize {
+        match self {
+            Shape::Window(_) => 1,
+            Shape::Split { children, .. } => {
+                children.iter().map(|(_, child)| child.window_count()).sum()
+            }
         }
     }
 }
@@ -141,8 +150,16 @@ impl<'a> Capture<'a> {
     }
 
     /// A step launching `window`, guessing its command from its app_id or
-    /// class, and carrying its marks and state.
-    fn launch(&mut self, window: &'a Node, split: Option<bool>) -> Result<(), String> {
+    /// class, and carrying its marks and state. A floating window's
+    /// `floating` node is the workspace's floating node holding it: the
+    /// window itself, or a container Sway floated as a whole, which is what
+    /// carries the floating state, the size and the position.
+    fn launch(
+        &mut self,
+        window: &'a Node,
+        split: Option<bool>,
+        floating: Option<&'a Node>,
+    ) -> Result<(), String> {
         let (key, value) = identity(window).ok_or_else(|| {
             format!(
                 "window {} has no app_id or class to guess a command from",
@@ -171,20 +188,17 @@ impl<'a> Capture<'a> {
         if is_fullscreen(window) {
             self.fullscreen.push(window);
         }
-        if window.node_type == NodeType::FloatingCon {
+        if let Some(frame) = floating {
             fields.push(("floating", "true".to_string()));
-            if window.sticky {
+            if frame.sticky {
                 fields.push(("sticky", "true".to_string()));
             }
-            fields.push(("width", toml_string(&format!("{}px", window.rect.width))));
+            fields.push(("width", toml_string(&format!("{}px", frame.rect.width))));
             fields.push((
                 "height",
-                toml_string(&format!(
-                    "{}px",
-                    window.rect.height + window.deco_rect.height
-                )),
+                toml_string(&format!("{}px", frame.rect.height + frame.deco_rect.height)),
             ));
-            let (x, y) = node_position(window, self.workspace.rect);
+            let (x, y) = node_position(frame, self.workspace.rect);
             fields.push(("position", toml_string(&format!("{},{}", x, y))));
         }
         self.steps.push(Step {
@@ -231,7 +245,7 @@ impl<'a> Capture<'a> {
     /// and focused when this is called.
     fn build(&mut self, children: &[(f64, Shape<'a>)]) -> Result<(), String> {
         for (_, child) in &children[1..] {
-            self.launch(child.first_window(), None)?;
+            self.launch(child.first_window(), None, None)?;
         }
         for (_, child) in children {
             if let Shape::Split {
@@ -396,21 +410,30 @@ pub(super) fn capture(workspace: &Node) -> Result<String, String> {
         workspace,
     };
     match &tiled {
-        Some(Shape::Window(window)) => capture.launch(window, None).map_err(in_workspace)?,
+        Some(Shape::Window(window)) => capture.launch(window, None, None).map_err(in_workspace)?,
         Some(Shape::Split {
             horizontal,
             children,
         }) => {
             capture
-                .launch(children[0].1.first_window(), Some(*horizontal))
+                .launch(children[0].1.first_window(), Some(*horizontal), None)
                 .map_err(in_workspace)?;
             capture.build(children).map_err(in_workspace)?;
         }
         None => {}
     }
-    for window in &workspace.floating_nodes {
-        let window = Shape::of(window).map_err(in_workspace)?.first_window();
-        capture.launch(window, None).map_err(in_workspace)?;
+    for floating in &workspace.floating_nodes {
+        let shape = Shape::of(floating).map_err(in_workspace)?;
+        if let Shape::Split { .. } = shape {
+            return Err(in_workspace(format!(
+                "it holds a floating container of {} windows, and only a floating window on its \
+                 own can be rebuilt",
+                shape.window_count()
+            )));
+        }
+        capture
+            .launch(shape.first_window(), None, Some(floating))
+            .map_err(in_workspace)?;
     }
     if let Some(shape) = &tiled {
         capture.size_steps(shape);

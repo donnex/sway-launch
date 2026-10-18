@@ -724,8 +724,9 @@ code, and the file notes it at the top. Each step
 carries a comment with the window's title, to help tell them apart. Every built-in template
 rebuilds its exact shape from its own capture.
 
-Two things can't be captured exactly. Tabbed and stacked containers aren't supported, and
-`--capture` refuses a workspace holding one. And some uneven sizes come out approximate, since Sway
+Two things can't be captured exactly. Tabbed and stacked containers aren't supported, nor is a
+split container floated as a whole (several windows floating together), and `--capture` refuses a
+workspace holding one. And some uneven sizes come out approximate, since Sway
 shares each resize with a window's siblings, and Sway 1.12 shares it differently from older
 versions: two windows, three whose outer two are the same size, and even splits are exact on every
 version; any other three are exact on Sway 1.9 to 1.11; four or more uneven ones are approximate.
