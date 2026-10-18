@@ -509,7 +509,8 @@ struct Args {
     /// Check a --layout/--template run's files without running it
     ///
     /// For --template, also checks the --bindings/--apps resolution. Never
-    /// touches Sway or launches anything.
+    /// touches Sway or launches anything, and checks only the format of a
+    /// cwd, not that the directory exists on this machine.
     #[clap(long, conflicts_with = "debug_events", help_heading = HEADING_RUN,
         verbatim_doc_comment)]
     validate: bool,
@@ -776,13 +777,17 @@ fn main() {
         }
     };
 
-    let launch_setup =
-        match sway_launch::launch_setup(args.command.is_some(), args.cwd.as_deref(), &args.env) {
-            Ok(launch_setup) => launch_setup,
-            Err(error) => Args::command()
-                .error(ErrorKind::InvalidValue, format!("--cwd/--env: {}", error))
-                .exit(),
-        };
+    let launch_setup = match sway_launch::launch_setup(
+        args.command.is_some(),
+        args.cwd.as_deref(),
+        &args.env,
+        sway_launch::DirectoryCheck::for_offline(args.dry_run),
+    ) {
+        Ok(launch_setup) => launch_setup,
+        Err(error) => Args::command()
+            .error(ErrorKind::InvalidValue, format!("--cwd/--env: {}", error))
+            .exit(),
+    };
 
     let settle =
         match sway_launch::settle_duration(args.settle, args.height, args.width, args.position) {

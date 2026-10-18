@@ -151,13 +151,16 @@ impl LayoutStep {
     /// their own `timeout`/`wait_time` inherit the caller's defaults
     /// (typically the top-level `--timeout`/`--wait-time` CLI values).
     /// `resolved_ids` maps every earlier step's `id` to the container id it
-    /// resolved to, for `target_id` lookups.
+    /// resolved to, for `target_id` lookups. `directory_check` says whether
+    /// a `cwd` must exist here: `--validate`/`--dry-run` check only its
+    /// format (#146).
     pub fn to_sway_launch<'a>(
         &'a self,
         default_timeout: time::Duration,
         default_wait_time: time::Duration,
         verbose: bool,
         resolved_ids: &HashMap<String, i64>,
+        directory_check: sway_launch::DirectoryCheck,
     ) -> Result<sway_launch::SwayLaunch<'a>, String> {
         if let Some(id) = self.id.as_deref() {
             sway_launch::require_non_blank("id", id)?;
@@ -279,8 +282,12 @@ impl LayoutStep {
             .iter()
             .map(|(name, value)| (name.clone(), value.clone()))
             .collect();
-        let launch_setup =
-            sway_launch::launch_setup(self.command.is_some(), self.cwd.as_deref(), &env)?;
+        let launch_setup = sway_launch::launch_setup(
+            self.command.is_some(),
+            self.cwd.as_deref(),
+            &env,
+            directory_check,
+        )?;
 
         Ok(sway_launch::SwayLaunch {
             target,

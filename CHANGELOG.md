@@ -103,6 +103,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   near `--timeout` or past it. The `--timeout` clock started before the `--wait-time` pause rather
   than when the command was sent, so the window took every action and the run still reported a
   timeout; `--wait-time 5000` failed README's own quick-start example this way. (#143)
+- `--validate` and `--dry-run` no longer fail a layout or bindings file whose `cwd` doesn't exist on
+  the machine checking it. A file checked in CI or kept in a dotfiles repository names a directory
+  that exists only where it runs, so it could never pass `--validate` there; both now check only
+  the format of `cwd`, and a real run still fails before launching anything when the directory is
+  missing. (#146)
 
 ## [0.1.0] - 2026-10-18
 

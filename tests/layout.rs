@@ -1091,6 +1091,37 @@ fn a_step_s_cwd_and_env_appear_in_the_preview_and_need_a_command() {
 }
 
 #[test]
+fn validate_and_dry_run_accept_a_cwd_missing_on_this_machine() {
+    // #146: a file checked in CI or a dotfiles repository names a directory
+    // that exists only where it is run for real.
+    let layout = "[[step]]\ncommand = \"foot\"\ncwd = \"/nonexistent/sway-launch-146\"\n";
+    let output = run_with_stdin(&["--layout", "-", "--validate"], layout);
+    assert!(output.status.success(), "{output:?}");
+
+    let output = run_with_stdin(&["--layout", "-", "--dry-run"], layout);
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains("launch cd '/nonexistent/sway-launch-146' && foot"),
+        "{output:?}"
+    );
+
+    let output = sway_launch()
+        .args(["--cwd", "/nonexistent/sway-launch-146", "--dry-run", "foot"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(output.status.success(), "{output:?}");
+
+    let output = run_with_stdin(&["--layout", "-", "--no-lock"], layout);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("cwd: /nonexistent/sway-launch-146 is not a directory"),
+        "{output:?}"
+    );
+}
+
+#[test]
 fn a_quote_split_across_sway_commands_entries_is_refused_by_validate() {
     // #123: each entry but the first is balanced on its own, and joined
     // they would run an `exec` behind [con_id=N].

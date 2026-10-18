@@ -1045,6 +1045,7 @@ fn every_builtin_template_resolves_and_converts_without_a_compositor() {
                 std::time::Duration::from_millis(20),
                 false,
                 &resolved_ids,
+                sway_launch::DirectoryCheck::FormatOnly,
             )
             .unwrap_or_else(|error| panic!("{name} step {}: {error}", index + 1));
             if let Some(id) = step.id.as_deref() {

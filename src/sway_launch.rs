@@ -59,8 +59,8 @@ pub use values::{
     validate_exec_command, validate_non_blank_argument, validate_output_argument,
     validate_settle_argument, validate_settle_milliseconds, validate_sway_command,
     validate_sway_string_argument, validate_timeout_argument, validate_timeout_seconds,
-    validate_workspace_argument, validate_workspace_number, Position, Size, Split, TitlePattern,
-    WorkspaceTarget,
+    validate_workspace_argument, validate_workspace_number, DirectoryCheck, Position, Size, Split,
+    TitlePattern, WorkspaceTarget,
 };
 
 /// The upper bound `run_batch()` polls `get_tree()` for a

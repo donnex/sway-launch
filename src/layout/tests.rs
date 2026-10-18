@@ -16,6 +16,7 @@ fn convert_with<'a>(
         time::Duration::from_millis(20),
         false,
         resolved_ids,
+        sway_launch::DirectoryCheck::Exists,
     )
 }
 

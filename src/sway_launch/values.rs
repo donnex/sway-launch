@@ -918,10 +918,13 @@ pub fn parse_env_assignment(value: &str) -> Result<(String, String), String> {
 }
 
 /// The directory a launched command starts in (`--cwd`/`cwd`, #113): a
-/// leading `~` is the home directory, a relative path is relative to the
-/// caller's working directory, and it must be an existing directory, checked
-/// here so `--validate` catches a typo before anything launches.
-fn resolve_launch_directory(value: &str) -> Result<PathBuf, String> {
+/// leading `~` is the home directory and a relative path is relative to the
+/// caller's working directory. With `DirectoryCheck::Exists` it must also be
+/// an existing directory, checked here so a real run fails before anything
+/// launches. `--validate` and `--dry-run` pass `DirectoryCheck::FormatOnly`
+/// (#146): they check a file meant for another machine too (CI, a dotfiles
+/// repository), where `~/projects/website` needn't exist.
+fn resolve_launch_directory(value: &str, check: DirectoryCheck) -> Result<PathBuf, String> {
     let expanded = match value.strip_prefix('~') {
         Some(rest) if rest.is_empty() || rest.starts_with('/') => {
             let home = std::env::var_os("HOME")
@@ -937,26 +940,49 @@ fn resolve_launch_directory(value: &str) -> Result<PathBuf, String> {
             .map_err(|error| format!("can't read the current directory: {}", error))?
             .join(expanded)
     };
-    if !absolute.is_dir() {
+    if check == DirectoryCheck::Exists && !absolute.is_dir() {
         return Err(format!("{} is not a directory", absolute.display()));
     }
     Ok(absolute)
 }
 
+/// Whether `launch_setup()` requires `--cwd`/`cwd` to exist on this machine:
+/// a real run does, `--validate`/`--dry-run` check only its format (#146).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DirectoryCheck {
+    /// A real run: the directory must exist.
+    Exists,
+    /// `--validate`/`--dry-run`: only the value's format is checked.
+    FormatOnly,
+}
+
+impl DirectoryCheck {
+    /// `FormatOnly` for a run that plans without launching.
+    pub fn for_offline(offline: bool) -> Self {
+        if offline {
+            DirectoryCheck::FormatOnly
+        } else {
+            DirectoryCheck::Exists
+        }
+    }
+}
+
 /// `--cwd`/`--env` (or a step's `cwd`/`env`) checked and rendered for a
 /// launch: the directory resolved by `resolve_launch_directory()`, then
 /// `render_launch_setup()`. Both only apply to a launched command, so either
-/// one without a command is an error.
+/// one without a command is an error. `check` says whether the directory
+/// must exist here (see `resolve_launch_directory()`).
 pub fn launch_setup(
     launches: bool,
     cwd: Option<&str>,
     env: &[(String, String)],
+    check: DirectoryCheck,
 ) -> Result<Option<String>, String> {
     if !launches && (cwd.is_some() || !env.is_empty()) {
         return Err("cwd and env only apply to a launched command".to_string());
     }
     let directory = cwd
-        .map(resolve_launch_directory)
+        .map(|value| resolve_launch_directory(value, check))
         .transpose()
         .map_err(|error| format!("cwd: {}", error))?;
     render_launch_setup(directory.as_deref(), env)

@@ -495,6 +495,7 @@ fn plan_step<'a>(
         time::Duration::from_millis(args.wait_time),
         args.verbose,
         resolved_ids,
+        sway_launch::DirectoryCheck::for_offline(args.dry_run || args.validate),
     )
 }
 

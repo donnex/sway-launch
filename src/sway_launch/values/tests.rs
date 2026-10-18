@@ -657,29 +657,54 @@ fn launch_setup_quotes_the_directory_and_each_variable() {
         true,
         Some("/"),
         &[("A".to_string(), "it's, ok".to_string())],
+        DirectoryCheck::Exists,
     )
     .unwrap();
     assert_eq!(setup.as_deref(), Some("cd '/' && export A='it'\\''s, ok'"));
-    assert_eq!(launch_setup(true, None, &[]).unwrap(), None);
+    assert_eq!(
+        launch_setup(true, None, &[], DirectoryCheck::Exists).unwrap(),
+        None
+    );
 }
 
 #[test]
 fn launch_setup_refuses_settings_without_a_launch_and_a_missing_directory() {
-    assert!(launch_setup(false, Some("/"), &[]).is_err());
-    assert!(launch_setup(false, None, &[("A".to_string(), "1".to_string())]).is_err());
-    let error = launch_setup(true, Some("/nonexistent/sway-launch-test"), &[]).unwrap_err();
+    let check = DirectoryCheck::Exists;
+    assert!(launch_setup(false, Some("/"), &[], check).is_err());
+    assert!(launch_setup(false, None, &[("A".to_string(), "1".to_string())], check).is_err());
+    let error = launch_setup(true, Some("/nonexistent/sway-launch-test"), &[], check).unwrap_err();
     assert!(error.contains("is not a directory"), "{error}");
+}
+
+#[test]
+fn launch_setup_checks_only_the_format_of_a_directory_offline() {
+    // #146: --validate/--dry-run check a file meant for another machine too.
+    let check = DirectoryCheck::FormatOnly;
+    let setup = launch_setup(true, Some("/nonexistent/sway-launch-test"), &[], check).unwrap();
+    assert_eq!(setup.as_deref(), Some("cd '/nonexistent/sway-launch-test'"));
+    assert!(launch_setup(false, Some("/nonexistent"), &[], check).is_err());
+    let error = launch_setup(true, Some("/nonexistent/$HOME"), &[], check).unwrap_err();
+    assert!(error.contains("config variable"), "{error}");
+}
+
+#[test]
+fn directory_check_for_offline_skips_the_existence_check_only_offline() {
+    assert_eq!(
+        DirectoryCheck::for_offline(true),
+        DirectoryCheck::FormatOnly
+    );
+    assert_eq!(DirectoryCheck::for_offline(false), DirectoryCheck::Exists);
 }
 
 #[test]
 fn resolve_launch_directory_expands_home_and_keeps_absolute_paths() {
     let home = std::env::var("HOME").expect("HOME should be set for the tests");
     assert_eq!(
-        resolve_launch_directory("~").unwrap(),
+        resolve_launch_directory("~", DirectoryCheck::Exists).unwrap(),
         std::path::PathBuf::from(&home)
     );
     assert_eq!(
-        resolve_launch_directory("/").unwrap(),
+        resolve_launch_directory("/", DirectoryCheck::Exists).unwrap(),
         std::path::PathBuf::from("/")
     );
 }

@@ -227,7 +227,8 @@ that ran `sway-launch`:
   in Sway's log.
 
 `--cwd <DIR>` starts the command in a directory (`~` is your home directory; a relative path is
-relative to where you run `sway-launch`, and it must exist), and `--env KEY=VALUE` (repeatable)
+relative to where you run `sway-launch`, and it must exist when the command launches; `--validate`
+and `--dry-run` check only its format), and `--env KEY=VALUE` (repeatable)
 sets a variable for it. A layout step or binding takes the same as `cwd = "~/project"` and
 `env = { GDK_BACKEND = "x11" }`. Both apply only to a launched command, and a value can't contain a
 `$`, which Sway would replace with one of its config variables.
@@ -1239,7 +1240,8 @@ would skip one (that needs the live window), and a `target_id` resolves against 
 
 `--validate` checks a `--layout` or `--template` file (and, for a template, its `--bindings`/`--apps`)
 without launching anything or touching Sway: every value's format, each step's target keys, and
-`target_id` references. Useful in CI or a dotfiles repository.
+`target_id` references. Useful in CI or a dotfiles repository. It checks the file, not this machine:
+a `cwd` that doesn't exist here passes, and a real run is what fails on a missing directory.
 
 ```console
 $ sway-launch --layout layout.toml --validate
