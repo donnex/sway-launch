@@ -1334,10 +1334,10 @@ fn print_dry_run_steps(setup: &[String], steps: &[DryRunStep], json: bool) {
 /// `print_dry_run_steps()`'s plain-text lines: one per setup command, step
 /// target and command sent, so actions a real run sends together as one
 /// command (#32) share a line, joined the way Sway receives them. Control
-/// characters in a command, mark or name are escaped (see
-/// `sway_launch::escape_control_characters()`), so a layout file can't use a
-/// carriage return or a terminal escape to make the preview show something
-/// other than what it will run.
+/// and bidirectional formatting characters in a command, mark or name are
+/// escaped (see `sway_launch::escape_control_characters()`), so a layout file
+/// can't use a carriage return, a terminal escape or a right-to-left override
+/// to make the preview show something other than what it will run.
 fn dry_run_plain_lines(setup: &[String], steps: &[DryRunStep]) -> Vec<String> {
     let mut texts: Vec<String> = setup.to_vec();
     for step in steps {

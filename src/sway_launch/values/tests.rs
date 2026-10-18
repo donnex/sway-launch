@@ -226,6 +226,38 @@ fn escape_control_characters_renders_each_control_character_visibly() {
 }
 
 #[test]
+fn escape_control_characters_renders_each_bidi_formatting_character_visibly() {
+    // Regression test (#182): these are Unicode category Cf, not Cc, so
+    // `char::is_control` passed them through, and a terminal implementing
+    // bidi reordered the line around them.
+    for (first, last) in [
+        ('\u{061c}', '\u{061c}'),
+        ('\u{200e}', '\u{200f}'),
+        ('\u{202a}', '\u{202e}'),
+        ('\u{2066}', '\u{2069}'),
+    ] {
+        for character in first..=last {
+            let text = format!("a{character}b");
+            let expected = format!("a\\u{{{:x}}}b", u32::from(character));
+            assert_eq!(escape_control_characters(&text, false), expected);
+            assert_eq!(escape_control_characters(&text, true), expected);
+        }
+    }
+}
+
+#[test]
+fn escape_control_characters_leaves_neighbouring_format_characters_untouched() {
+    for character in ['\u{200d}', '\u{2060}', '\u{2065}', '\u{206a}', '\u{2029}'] {
+        let text = format!("a{character}b");
+        assert_eq!(
+            escape_control_characters(&text, false),
+            text,
+            "{character:?}"
+        );
+    }
+}
+
+#[test]
 fn escape_control_characters_leaves_ordinary_text_untouched() {
     let text = "foot -T \"a,b\" 'x' \\ ünïcode";
     assert_eq!(escape_control_characters(text, false), text);

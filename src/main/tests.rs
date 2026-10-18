@@ -30,6 +30,18 @@ fn builtin_name_hint_is_empty_when_no_builtin_matches_the_stem() {
 }
 
 #[test]
+fn dry_run_plain_lines_escape_a_bidi_override_in_a_command() {
+    let steps = [DryRunStep {
+        target: "launch foot -e echo '\u{202e}\u{2066}ok\u{2069}'".to_string(),
+        actions: vec![],
+    }];
+    assert_eq!(
+        dry_run_plain_lines(&[], &steps),
+        ["1. launch foot -e echo '\\u{202e}\\u{2066}ok\\u{2069}'"]
+    );
+}
+
+#[test]
 fn dry_run_plain_lines_number_continuously_and_escape_control_characters() {
     let steps = [
         DryRunStep {

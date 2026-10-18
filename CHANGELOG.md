@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   terminal can send, so a captured `foot && rm ...` ran as shell code the next time the layout was
   replayed. An app_id or class that isn't a plain program name is now written as a single quoted
   word (`command = ["..."]`), with a note at the top of the file. (#125)
+- `--dry-run` no longer prints Unicode bidirectional formatting characters (right-to-left
+  overrides, embeddings, isolates and marks) as they are. In a terminal that implements bidi, a
+  layout file's command carrying them could be drawn reordered, so that the preview showed
+  something other than what the step runs. They are now shown as visible escapes (`\u{202e}`), as
+  control characters already were, in `--dry-run`, in `--list-windows`' table, in `--capture`'s
+  comments and in error messages quoting a file. (#182)
 - `--verbose` no longer prints a window's app_id or class to the terminal unescaped. Both are set
   by the window's client, so a window whose app_id carried a terminal escape sequence could act on
   the terminal through the "Event mismatch" line; control characters in them are now shown as

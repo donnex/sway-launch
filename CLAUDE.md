@@ -335,7 +335,8 @@ Never an error: an unreachable compositor skips the check and is left for the ru
   closed stderr.
 - Errors go to stderr through `fail()`/`fail_with_rollback()`: labelled plain text
   (`severity_label()`, colored only when `stderr_wants_color()`), or a JSON object under `--json`.
-  Text that can quote a user's file is passed through `escape_control_characters()`.
+  Text that can quote a user's file is passed through `escape_control_characters()`, which also
+  escapes the bidi formatting characters a terminal would reorder the line around (#182).
 - `--json` success is `RunOutcome` rendered by `actions_json()`/`action_record_json()`: each action
   has `kind` (`flag_name()`), `command` (absent when skipped) and a `status` of `changed`,
   `already_satisfied`, `unconfirmed` or `skipped` (with `reason`). A failed run's error object

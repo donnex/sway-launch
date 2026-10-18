@@ -546,27 +546,51 @@ fn reject_keyword(value: &str, keywords: &[&str], kind: &str) -> Result<(), Stri
     }
 }
 
-/// `text` with every control character rendered as a visible Rust escape
-/// (`\r`, `\u{1b}`, ...), for printing user-supplied text — a layout's
-/// `command`, a TOML error quoting a file's line — to a terminal.
+/// `text` with every control character and bidirectional formatting
+/// character rendered as a visible Rust escape (`\r`, `\u{1b}`,
+/// `\u{202e}`, ...), for printing user-supplied text — a layout's `command`,
+/// a TOML error quoting a file's line — to a terminal.
 ///
-/// A TOML string can carry any control character through an escape, so a
-/// layout file printed verbatim could use a carriage return and an
-/// erase-line sequence to make `--dry-run` show a different command from the
-/// one it runs, or put a terminal escape in a comment so that the parse
-/// error quoting it acts on the terminal. `keep_newlines` leaves `\n` as a
-/// real line break, for a multi-line message whose newlines are its own
-/// formatting rather than file content.
+/// A TOML string can carry any character through an escape, so a layout file
+/// printed verbatim could use a carriage return and an erase-line sequence to
+/// make `--dry-run` show a different command from the one it runs, or put a
+/// terminal escape in a comment so that the parse error quoting it acts on
+/// the terminal. The bidirectional formatting characters
+/// (`BIDI_FORMATTING_CHARACTERS`) aren't control characters to
+/// `char::is_control`, but a terminal that implements bidi reorders how a
+/// line is drawn around them ("Trojan Source", CVE-2021-42574), so text
+/// outside a quoted string can look as if it sits inside one; they are
+/// escaped too (#182). `keep_newlines` leaves `\n` as a real line break, for
+/// a multi-line message whose newlines are its own formatting rather than
+/// file content.
 pub fn escape_control_characters(text: &str, keep_newlines: bool) -> String {
     let mut escaped = String::with_capacity(text.len());
     for character in text.chars() {
-        if character.is_control() && !(keep_newlines && character == '\n') {
+        if is_bidi_formatting_character(character) {
+            escaped.extend(character.escape_unicode());
+        } else if character.is_control() && !(keep_newlines && character == '\n') {
             escaped.extend(character.escape_debug());
         } else {
             escaped.push(character);
         }
     }
     escaped
+}
+
+/// The Unicode bidirectional formatting characters: the Arabic letter mark,
+/// the left-to-right and right-to-left marks, the embeddings and overrides
+/// (U+202A to U+202E) and the isolates (U+2066 to U+2069).
+const BIDI_FORMATTING_CHARACTERS: [std::ops::RangeInclusive<char>; 4] = [
+    '\u{061c}'..='\u{061c}',
+    '\u{200e}'..='\u{200f}',
+    '\u{202a}'..='\u{202e}',
+    '\u{2066}'..='\u{2069}',
+];
+
+fn is_bidi_formatting_character(character: char) -> bool {
+    BIDI_FORMATTING_CHARACTERS
+        .iter()
+        .any(|range| range.contains(&character))
 }
 
 /// Validates the command a launch hands to Sway's `exec` — the positional
