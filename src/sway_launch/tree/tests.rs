@@ -1476,3 +1476,27 @@ fn unnamed_build_workspace_is_the_focused_one_or_the_one_an_output_shows() {
     assert_eq!(name(Some("HEADLESS-1")), Some("1: web"));
     assert_eq!(name(Some("HEADLESS-3")), None);
 }
+
+// position_shows
+
+#[test]
+fn position_shows_compares_the_window_against_its_own_workspace() {
+    let mut leaf = leaf_node_value(42, Some("foot"), None);
+    leaf["deco_rect"] = serde_json::json!({"x": 10, "y": 20, "width": 400, "height": 25});
+    let tree = state_tree("1", leaf);
+    assert!(position_shows(
+        &tree,
+        42,
+        &Position::Coordinates { x: 10, y: 20 }
+    ));
+    assert!(!position_shows(
+        &tree,
+        42,
+        &Position::Coordinates { x: 20, y: 10 }
+    ));
+    assert!(!position_shows(
+        &tree,
+        43,
+        &Position::Coordinates { x: 10, y: 20 }
+    ));
+}

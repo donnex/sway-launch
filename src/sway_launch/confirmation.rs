@@ -27,16 +27,18 @@ use super::process_marker::{
 };
 use super::query::{
     awaited_existing_container_id, container_state, container_state_on, ensure_container_exists,
-    existing_container, node_by_id, parent_node_layout, position_matches,
-    recheck_launched_windows_now,
+    existing_container, missing_container_error, node_by_id, parent_node_layout, position_matches,
+    recheck_launched_windows_now, tree_on,
 };
 use super::target::{LaunchFilter, WindowCriteria};
-use super::tree::{height_matches, is_window, width_matches, ContainerState};
+use super::tree::{
+    find_node, height_matches, is_window, position_shows, width_matches, ContainerState,
+};
 use super::values::{escape_control_characters, Size, Split, TitlePattern};
 use super::{MOVE_POLL_GRACE, WAIT_TIME_POLL_GRACE, WAIT_TIME_POLL_INTERVAL};
 use std::sync::mpsc;
 use std::{fmt, time};
-use swayipc::{Connection, Event, EventType, NodeLayout, WindowChange, WindowEvent};
+use swayipc::{Connection, Event, EventType, Node, NodeLayout, WindowChange, WindowEvent};
 
 enum WindowEventMatch {
     WindowAppId,
@@ -465,6 +467,39 @@ impl SwayAction<'_> {
         }
     }
 
+    /// Whether `tree` still shows the geometry this action set, for
+    /// `hold_geometry()`: a pixel size or a position, judged as
+    /// `poll_matches()` judges it, but from a tree the caller already read.
+    /// `false` for every kind `is_held_geometry()` rejects, and when the
+    /// container isn't in `tree`.
+    fn geometry_shows(&self, tree: &Node) -> bool {
+        let container_id = self.container_id;
+        match self.kind {
+            ActionKind::Height(Size::Pixels(pixels)) => {
+                find_node(tree, container_id).is_some_and(|node| height_matches(node, pixels))
+            }
+            ActionKind::Width(Size::Pixels(pixels)) => {
+                find_node(tree, container_id).is_some_and(|node| width_matches(node, pixels))
+            }
+            ActionKind::Position(position) => position_shows(tree, container_id, &position),
+            ActionKind::Height(Size::Percent(_))
+            | ActionKind::Width(Size::Percent(_))
+            | ActionKind::Split(_)
+            | ActionKind::Floating
+            | ActionKind::Sticky
+            | ActionKind::Fullscreen
+            | ActionKind::Focus
+            | ActionKind::NewColumn
+            | ActionKind::NewRow
+            | ActionKind::Workspace(_)
+            | ActionKind::Output(_)
+            | ActionKind::WorkspaceToOutput { .. }
+            | ActionKind::Mark(_)
+            | ActionKind::SwayCommand(_)
+            | ActionKind::Scratchpad => false,
+        }
+    }
+
     /// Snapshots whatever state a wait-time action's `poll_matches()` needs
     /// to compare against *after* the command runs — captured *before* it
     /// runs. Only `NewColumn`/`NewRow` need one (their own current `rect`);
@@ -554,11 +589,18 @@ impl ActionKind<'_> {
 /// The one command a batch sends: every action's verb behind a single
 /// `[con_id=N]`, which Sway applies to each `,`-separated part.
 pub(super) fn batch_command(container_id: i64, actions: &[&SwayAction<'_>]) -> String {
-    let verbs: Vec<String> = actions
+    format!("[con_id={}] {}", container_id, batch_verbs(actions))
+}
+
+/// Every action's verb, `,`-separated as `batch_command()` sends them: the
+/// prefix for an error that belongs to the batch as a whole rather than to
+/// one of its actions, which for a lone action is just its own verb.
+fn batch_verbs(actions: &[&SwayAction<'_>]) -> String {
+    actions
         .iter()
         .map(|action| action.sway_command_verb())
-        .collect();
-    format!("[con_id={}] {}", container_id, verbs.join(", "))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The error for the first part of a batch Sway refused, prefixed with that
@@ -631,6 +673,9 @@ impl BatchProgress {
 /// Every error is prefixed with the failing action's Sway command verb, so a
 /// timeout in an invocation with several actions, or a layout's
 /// `step N: ...`, says which one failed rather than only how long it waited.
+/// An error that belongs to no one action (the window closing, a failed IPC
+/// call, a signal) is prefixed with the verbs of every action it stopped:
+/// the whole batch before the command is sent, and what was sent after.
 ///
 /// Every event wakes one state read that settles every action whose event
 /// has arrived; polled actions are polled every `WAIT_TIME_POLL_INTERVAL` in
@@ -656,6 +701,10 @@ pub(super) fn run_batch(
     let fail = |action: &SwayAction<'_>, error: String| -> RunError {
         format!("{}: {}", action.sway_command_verb(), error).into()
     };
+    let all_actions: Vec<&SwayAction<'_>> = actions.iter().collect();
+    let all_verbs = batch_verbs(&all_actions);
+    let fail_batch =
+        |verbs: &str, error: String| -> RunError { format!("{verbs}: {error}").into() };
 
     if verbose {
         for action in actions {
@@ -666,7 +715,8 @@ pub(super) fn run_batch(
         }
     }
 
-    let container = existing_container(container_id).map_err(|error| fail(first, error))?;
+    let container =
+        existing_container(container_id).map_err(|error| fail_batch(&all_verbs, error))?;
     if let Some(action) = actions
         .iter()
         .find(|action| action.kind.needs_a_window() && !is_window(&container))
@@ -684,13 +734,15 @@ pub(super) fn run_batch(
         .map(|action| action.timing);
 
     let event_stream = match event_timeout {
-        Some(_) => Some(event_loop(&[EventType::Window]).map_err(|error| fail(first, error))?),
+        Some(_) => {
+            Some(event_loop(&[EventType::Window]).map_err(|error| fail_batch(&all_verbs, error))?)
+        }
         None => None,
     };
 
     let mut progress = vec![BatchProgress::Waiting; actions.len()];
     if event_timeout.is_some() {
-        let state = container_state(container_id).map_err(|error| fail(first, error))?;
+        let state = container_state(container_id).map_err(|error| fail_batch(&all_verbs, error))?;
         for (action, progress) in actions.iter().zip(progress.iter_mut()) {
             if action.kind.is_skipped_when_already_in_effect()
                 && action.state_satisfies(state.as_ref())
@@ -714,6 +766,7 @@ pub(super) fn run_batch(
         return Ok(progress.iter().map(|progress| progress.outcome()).collect());
     }
     let sent_actions: Vec<&SwayAction<'_>> = sent.iter().map(|&index| &actions[index]).collect();
+    let sent_verbs = batch_verbs(&sent_actions);
     let sends_polled = sent_actions
         .iter()
         .any(|action| !action.kind.is_event_confirmed());
@@ -725,7 +778,7 @@ pub(super) fn run_batch(
     event_timeout
         .map(deadline_after)
         .transpose()
-        .map_err(|error| fail(first, error))?;
+        .map_err(|error| fail_batch(&sent_verbs, error))?;
 
     // The existence check above is a fast fail: --wait-time is the caller's
     // own knob and deliberately unbounded, so sleeping it out only to report
@@ -743,8 +796,8 @@ pub(super) fn run_batch(
                 wait_time.as_millis()
             );
         }
-        interrupt::sleep(wait_time).map_err(|error| fail(first, error))?;
-        ensure_container_exists(container_id).map_err(|error| fail(first, error))?;
+        interrupt::sleep(wait_time).map_err(|error| fail_batch(&sent_verbs, error))?;
+        ensure_container_exists(container_id).map_err(|error| fail_batch(&sent_verbs, error))?;
         poll_connection = new_connection().ok();
     }
     // Before the command, not after: see poll_baseline().
@@ -761,15 +814,15 @@ pub(super) fn run_batch(
     let deadline = event_timeout
         .map(deadline_after)
         .transpose()
-        .map_err(|error| fail(first, error))?;
+        .map_err(|error| fail_batch(&sent_verbs, error))?;
     if verbose {
         diagnostic!(
             "Sway command: {}",
             escape_control_characters(&command, false)
         );
     }
-    let outcomes =
-        run_sway_commands(&command, sent_actions.len()).map_err(|error| fail(first, error))?;
+    let outcomes = run_sway_commands(&command, sent_actions.len())
+        .map_err(|error| fail_batch(&sent_verbs, error))?;
     let sent_at = time::Instant::now();
     if let Some(error) = batch_failure(&sent_actions, &outcomes) {
         return Err(error.into());
@@ -862,7 +915,8 @@ pub(super) fn run_batch(
             if !polling {
                 break;
             }
-            interrupt::sleep(WAIT_TIME_POLL_INTERVAL).map_err(|error| fail(first, error))?;
+            interrupt::sleep(WAIT_TIME_POLL_INTERVAL)
+                .map_err(|error| fail_batch(&sent_verbs, error))?;
             continue;
         };
 
@@ -942,8 +996,7 @@ pub(super) fn run_batch(
     }
 
     if let (Some(settle), Some(connection)) = (settle, poll_connection.as_mut()) {
-        hold_geometry(actions, &mut progress, settle, connection)
-            .map_err(|error| fail(first, error))?;
+        hold_geometry(actions, &mut progress, settle, connection)?;
     }
 
     // What couldn't be confirmed (a solo window's clamped resize, a move
@@ -956,7 +1009,7 @@ pub(super) fn run_batch(
             .any(|&index| progress[index] == BatchProgress::Unconfirmed)
         {
             interrupt::sleep(wait_time.saturating_sub(sent_at.elapsed()))
-                .map_err(|error| fail(first, error))?;
+                .map_err(|error| fail_batch(&sent_verbs, error))?;
         }
     }
 
@@ -1003,16 +1056,27 @@ fn is_held_geometry(kind: ActionKind<'_>) -> bool {
 /// command sent again a moment later always stuck.
 ///
 /// An action that was never confirmed (a clamped resize) isn't held, since
-/// nothing says it could ever show. After `MAX_GEOMETRY_REAPPLIES`, or once
-/// the tree can't be read, whatever still doesn't match is reported
-/// `Unconfirmed` rather than failing the run: the window exists and was
-/// sent what was asked, but the client has the last word.
+/// nothing says it could ever show. After `MAX_GEOMETRY_REAPPLIES`, whatever
+/// still doesn't match is reported `Unconfirmed` rather than failing the
+/// run: the window exists and was sent what was asked, but the client has
+/// the last word. A tree that can't be read ends the hold the same way, with
+/// every held action `Unconfirmed`, since nothing can then say whether it
+/// still shows, and nothing is sent again on a guess.
+///
+/// A window that closes during the hold fails the run with the usual
+/// "no longer exists" error, prefixed with the held actions' verbs, without
+/// sending anything: re-sending would only get Sway's `No matching node.`
+/// back (and a re-send that does, the window closing in between, reports
+/// the same error). Each tick reads the tree once, through `tree_on()`, so these three
+/// cases (gone, unreadable, no longer matching) stay apart; `poll_matches()`
+/// folds the first two into the third, which is right for confirming and
+/// wrong here.
 fn hold_geometry(
     actions: &[SwayAction<'_>],
     progress: &mut [BatchProgress],
     settle: time::Duration,
     connection: &mut Connection,
-) -> Result<(), String> {
+) -> Result<(), RunError> {
     let held: Vec<usize> = (0..actions.len())
         .filter(|&index| {
             progress[index] == BatchProgress::Changed && is_held_geometry(actions[index].kind)
@@ -1025,17 +1089,38 @@ fn hold_geometry(
     let verbose = actions[first].verbose;
     let held_actions: Vec<&SwayAction<'_>> = held.iter().map(|&index| &actions[index]).collect();
     let command = batch_command(container_id, &held_actions);
+    let held_verbs = batch_verbs(&held_actions);
+    let fail = |error: String| -> RunError { format!("{held_verbs}: {error}").into() };
 
     let mut reapplies = 0;
     let mut quiet_since = time::Instant::now();
     while quiet_since.elapsed() < settle {
-        interrupt::sleep(
-            WAIT_TIME_POLL_INTERVAL.min(settle.saturating_sub(quiet_since.elapsed())),
-        )?;
+        interrupt::sleep(WAIT_TIME_POLL_INTERVAL.min(settle.saturating_sub(quiet_since.elapsed())))
+            .map_err(fail)?;
+        let tree = match tree_on(connection) {
+            Ok(tree) => tree,
+            Err(error) => {
+                if verbose {
+                    diagnostic!(
+                        "Can't read the tree to hold the geometry, leaving it: {} (container id: \
+                         {})",
+                        error,
+                        container_id
+                    );
+                }
+                for &index in &held {
+                    progress[index] = BatchProgress::Unconfirmed;
+                }
+                return Ok(());
+            }
+        };
+        if find_node(&tree, container_id).is_none() {
+            return Err(fail(missing_container_error(container_id)));
+        }
         let drifted: Vec<usize> = held
             .iter()
             .copied()
-            .filter(|&index| !actions[index].poll_matches(connection, None))
+            .filter(|&index| !actions[index].geometry_shows(&tree))
             .collect();
         if drifted.is_empty() {
             continue;
@@ -1063,9 +1148,14 @@ fn hold_geometry(
                 escape_control_characters(&command, false)
             );
         }
-        let outcomes = run_sway_commands(&command, held_actions.len())?;
+        let outcomes = run_sway_commands(&command, held_actions.len()).map_err(fail)?;
         if let Some(error) = batch_failure(&held_actions, &outcomes) {
-            return Err(error);
+            // A window closing between the read and the re-send fails it with
+            // Sway's "No matching node.", which says less than our own error.
+            if tree_on(connection).is_ok_and(|tree| find_node(&tree, container_id).is_none()) {
+                return Err(fail(missing_container_error(container_id)));
+            }
+            return Err(error.into());
         }
         quiet_since = time::Instant::now();
     }

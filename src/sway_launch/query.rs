@@ -12,12 +12,11 @@ use super::capture::capture;
 use super::ipc::{ipc_error, new_connection};
 use super::target::{LaunchFilter, WindowCriteria};
 use super::tree::{
-    con_id_target_problem, existing_candidates, expected_position, find_node, find_parent_layout,
-    find_workspace, find_workspace_node, focused_workspace, launch_placement_problems,
-    move_skip_reason, node_position, present_ids, recheck_launched_windows,
-    resolve_awaited_matches, resolve_matches, tiled_window_count, unnamed_build_workspace,
-    window_listing, workspace_named, ContainerState, ListedWindow, MoveDirection, RecheckedWindow,
-    WorkspaceIdentity, WorkspaceLookup,
+    con_id_target_problem, existing_candidates, find_node, find_parent_layout, find_workspace,
+    focused_workspace, launch_placement_problems, move_skip_reason, position_shows, present_ids,
+    recheck_launched_windows, resolve_awaited_matches, resolve_matches, tiled_window_count,
+    unnamed_build_workspace, window_listing, workspace_named, ContainerState, ListedWindow,
+    MoveDirection, RecheckedWindow, WorkspaceIdentity, WorkspaceLookup,
 };
 use super::values::{Position, TitlePattern};
 use swayipc::{Connection, Node, NodeLayout};
@@ -154,12 +153,18 @@ pub(super) fn ensure_con_id_target(container_id: i64) -> Result<(), String> {
 /// caller that needs to know what kind of container it is.
 pub(super) fn existing_container(container_id: i64) -> Result<Node, String> {
     let tree = fetch_tree()?;
-    find_node(&tree, container_id).cloned().ok_or_else(|| {
-        format!(
-            "container id {} no longer exists — window may have closed",
-            container_id
-        )
-    })
+    find_node(&tree, container_id)
+        .cloned()
+        .ok_or_else(|| missing_container_error(container_id))
+}
+
+/// The message every existence check reports for a container that closed
+/// since it was resolved (see `ensure_container_exists()`).
+pub(super) fn missing_container_error(container_id: i64) -> String {
+    format!(
+        "container id {} no longer exists — window may have closed",
+        container_id
+    )
 }
 
 /// Which of `container_ids` are still present in the current tree, in the
@@ -262,6 +267,13 @@ pub(super) fn container_state_on(
     ContainerState::from_tree(&tree, container_id)
 }
 
+/// The whole tree, read on the caller's `connection`, with a failure worded
+/// by `ipc_error()`: for `hold_geometry()`, which has to tell a tree it
+/// couldn't read from a window that no longer matches.
+pub(super) fn tree_on(connection: &mut Connection) -> Result<Node, String> {
+    connection.get_tree().map_err(ipc_error)
+}
+
 /// The tree node with id `container_id`, or `None` if it can't be read
 /// (transient IPC error, or the container's gone) — used by
 /// `SwayAction::poll_matches()`'s `Height`/`Width`/`Position` arms to read
@@ -288,14 +300,7 @@ pub(super) fn position_matches(
     container_id: i64,
     position: &Position,
 ) -> bool {
-    let Ok(tree) = connection.get_tree() else {
-        return false;
-    };
-    let Some(node) = find_node(&tree, container_id) else {
-        return false;
-    };
-    let Some(workspace) = find_workspace_node(&tree, container_id) else {
-        return false;
-    };
-    node_position(node, workspace.rect) == expected_position(position, node, workspace.rect)
+    connection
+        .get_tree()
+        .is_ok_and(|tree| position_shows(&tree, container_id, position))
 }

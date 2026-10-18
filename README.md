@@ -1001,7 +1001,9 @@ sway-launch -a firefox --floating --width 1100px --height 800px --position 20,20
 ```
 
 Each re-apply starts the hold over; after three, the application is left to have its way and what
-it changed is reported `unconfirmed` rather than failing the run. A `ppt` size can't be held, so
+it changed is reported `unconfirmed` rather than failing the run. If the window's state can't be
+read during the hold, the hold ends there, with the held actions reported `unconfirmed`; if the
+window closes during it, the run fails saying so. A `ppt` size can't be held, so
 `--settle` needs a pixel size or a position. It takes 1 to 60000 ms, and a run with it takes at
 least that long, so use it only for applications that need it. In a template, a binding's `settle`
 replaces the step's, since the binding knows which slot is a browser.

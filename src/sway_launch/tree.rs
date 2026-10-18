@@ -757,6 +757,20 @@ pub(super) fn node_position(node: &Node, workspace_rect: swayipc::Rect) -> (i32,
     }
 }
 
+/// Whether `container_id`'s window in `tree` sits where `position` requests:
+/// `node_position()` against `expected_position()`, both relative to the
+/// window's own workspace. `false` when the container or its workspace isn't
+/// in `tree`.
+pub(super) fn position_shows(tree: &Node, container_id: i64, position: &Position) -> bool {
+    let Some(node) = find_node(tree, container_id) else {
+        return false;
+    };
+    let Some(workspace) = find_workspace_node(tree, container_id) else {
+        return false;
+    };
+    node_position(node, workspace.rect) == expected_position(position, node, workspace.rect)
+}
+
 /// The workspace-relative `(x, y)` `position_matches()` expects `node`'s frame
 /// to be at (see `node_position()` for why the workspace is the origin): the
 /// requested coordinates as given, or for `Position::Center`, the frame

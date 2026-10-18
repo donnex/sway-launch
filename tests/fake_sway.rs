@@ -896,6 +896,144 @@ fn settle_gives_up_on_a_client_that_keeps_resizing_itself() {
     );
 }
 
+/// `arranges_on_command()`, plus `change` 100 ms after the first
+/// `resize set width`, once the width has been confirmed and is being held.
+fn arranges_then_mid_hold(
+    change: impl FnOnce(&mut Sway) + Send + 'static,
+) -> impl FnMut(&mut Sway, &str) -> Result<(), String> + Send + 'static {
+    let mut change = Some(change);
+    move |sway, command| {
+        if command.contains("resize set width") {
+            if let Some(change) = change.take() {
+                sway.after(Duration::from_millis(100), change);
+            }
+        }
+        arranges_on_command(sway, command)
+    }
+}
+
+#[test]
+fn settle_fails_without_re_sending_when_the_window_closes_mid_hold() {
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        arranges_then_mid_hold(|sway| {
+            sway.remove(FLOATING);
+        }),
+    );
+    let run = run(
+        &fake,
+        &[
+            "--con-id",
+            &FLOATING.to_string(),
+            "--width",
+            "700px",
+            "--position",
+            "10,20",
+            "--settle",
+            "1000",
+        ],
+    );
+    assert!(!run.succeeded());
+    assert_eq!(
+        run.error(),
+        format!(
+            "resize set width 700px, move position 10 20: container id {FLOATING} no longer \
+             exists — window may have closed"
+        )
+    );
+    assert_eq!(fake.commands().len(), 1, "sent {:?}", fake.commands());
+}
+
+#[test]
+fn settle_names_the_closed_window_when_it_closes_just_before_a_re_send() {
+    let mut resizes = 0;
+    let fake = FakeSway::start(SwayVersion::V1_11, move |sway, command| {
+        if command.contains("resize set width") {
+            resizes += 1;
+            if resizes == 2 {
+                sway.remove(FLOATING);
+                return Err("No matching node.".into());
+            }
+            sway.after(Duration::from_millis(100), |sway| {
+                sway.node_mut(FLOATING)["rect"]["width"] = 956.into();
+            });
+        }
+        arranges_on_command(sway, command)
+    });
+    let run = run(
+        &fake,
+        &[
+            "--con-id",
+            &FLOATING.to_string(),
+            "--width",
+            "700px",
+            "--settle",
+            "1000",
+        ],
+    );
+    assert!(!run.succeeded());
+    assert_eq!(
+        run.error(),
+        format!(
+            "resize set width 700px: container id {FLOATING} no longer exists — window may have \
+             closed"
+        )
+    );
+}
+
+#[test]
+fn settle_reports_unconfirmed_without_re_sending_when_the_tree_cannot_be_read_mid_hold() {
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        arranges_then_mid_hold(Sway::refuse_tree_reads),
+    );
+    let run = run(
+        &fake,
+        &[
+            "--con-id",
+            &FLOATING.to_string(),
+            "--width",
+            "700px",
+            "--settle",
+            "1000",
+            "--verbose",
+        ],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert_eq!(run.action_status(), "unconfirmed");
+    assert_eq!(fake.commands().len(), 1, "sent {:?}", fake.commands());
+    let stderr = run.stderr();
+    assert!(
+        stderr.contains("Can't read the tree to hold the geometry"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn an_error_belonging_to_no_one_action_names_the_whole_batch() {
+    let fake = FakeSway::accepting_everything(SwayVersion::V1_11);
+    fake.sway().after(Duration::from_millis(200), |sway| {
+        sway.remove(TILED);
+    });
+    let run = run(
+        &fake,
+        &[
+            "--con-id",
+            "5",
+            "--split",
+            "v",
+            "--sticky",
+            "--wait-time",
+            "800",
+        ],
+    );
+    assert!(!run.succeeded());
+    assert_eq!(
+        run.error(),
+        "splitv, sticky enable: container id 5 no longer exists — window may have closed"
+    );
+}
+
 #[test]
 fn settle_without_pixel_geometry_is_refused_before_anything_runs() {
     let fake = FakeSway::accepting_everything(SwayVersion::V1_11);

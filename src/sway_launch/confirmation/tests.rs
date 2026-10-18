@@ -1062,3 +1062,44 @@ fn a_batch_whose_entries_split_a_quote_between_them_is_refused_before_sending() 
     let command = batch_command(42, &[&first, &second]);
     assert!(sway_command_split_problem(&command, 2).is_some());
 }
+
+#[test]
+fn batch_verbs_joins_every_verb_and_is_a_lone_action_s_own_verb() {
+    let split = targeted(ActionKind::Split(Split::V));
+    let sticky = targeted(ActionKind::Sticky);
+    assert_eq!(batch_verbs(&[&split, &sticky]), "splitv, sticky enable");
+    assert_eq!(batch_verbs(&[&sticky]), "sticky enable");
+}
+
+// geometry_shows (#159)
+
+fn held_window_tree() -> Node {
+    let mut leaf = leaf_node_value(42, Some("foot"), None);
+    leaf["rect"] = serde_json::json!({"x": 10, "y": 45, "width": 700, "height": 375});
+    leaf["deco_rect"] = serde_json::json!({"x": 10, "y": 20, "width": 700, "height": 25});
+    state_tree("1", leaf)
+}
+
+#[test]
+fn geometry_shows_judges_held_sizes_and_positions_from_the_given_tree() {
+    let tree = held_window_tree();
+    assert!(targeted(ActionKind::Width(Size::Pixels(700))).geometry_shows(&tree));
+    assert!(!targeted(ActionKind::Width(Size::Pixels(800))).geometry_shows(&tree));
+    assert!(targeted(ActionKind::Height(Size::Pixels(400))).geometry_shows(&tree));
+    assert!(!targeted(ActionKind::Height(Size::Pixels(375))).geometry_shows(&tree));
+    assert!(
+        targeted(ActionKind::Position(Position::Coordinates { x: 10, y: 20 }))
+            .geometry_shows(&tree)
+    );
+    assert!(
+        !targeted(ActionKind::Position(Position::Coordinates { x: 0, y: 0 })).geometry_shows(&tree)
+    );
+}
+
+#[test]
+fn geometry_shows_nothing_for_a_container_not_in_the_tree_or_a_kind_it_does_not_hold() {
+    let tree = state_tree("1", leaf_node_value(7, Some("foot"), None));
+    assert!(!targeted(ActionKind::Width(Size::Pixels(0))).geometry_shows(&tree));
+    assert!(!targeted(ActionKind::Width(Size::Percent(50))).geometry_shows(&held_window_tree()));
+    assert!(!targeted(ActionKind::Floating).geometry_shows(&held_window_tree()));
+}

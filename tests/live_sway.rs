@@ -1614,6 +1614,51 @@ fn settle_applies_the_geometry_again_after_something_else_changes_it() {
 }
 
 #[test]
+fn settle_fails_without_re_sending_when_the_window_closes_mid_hold() {
+    // #159: a closed window used to read as the client undoing the size, so
+    // the geometry was sent again and the run failed with Sway's own
+    // "No matching node." under the wrong action's name. The run may still
+    // re-apply the width before the window goes (seen live: twice), so only
+    // how it ends is asserted.
+    fresh_workspace();
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&["--floating"]);
+
+    let child = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--width",
+            "400px",
+            "--settle",
+            "3000",
+            "--json",
+            "--verbose",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to run sway-launch binary");
+    std::thread::sleep(Duration::from_millis(600));
+    for outcome in connection
+        .run_command(format!("[con_id={container_id}] kill"))
+        .expect("the kill should be sent")
+    {
+        outcome.expect("the kill should succeed");
+    }
+    let output = child.wait_with_output().expect("sway-launch should finish");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "sway-launch succeeded: {stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "resize set width 400px: container id {container_id} no longer exists"
+        )),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("No matching node"), "{stderr}");
+}
+
+#[test]
 fn swaysock_wins_over_a_stale_i3sock() {
     fresh_workspace();
     // Sway exports both SWAYSOCK and I3SOCK to everything it spawns, so the way

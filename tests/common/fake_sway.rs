@@ -87,6 +87,7 @@ pub struct Sway {
     subscribers: Vec<UnixStream>,
     handler: Option<Handler>,
     launched_pids: Vec<u32>,
+    refusing_tree_reads: bool,
     shared: Weak<Mutex<Sway>>,
 }
 
@@ -213,6 +214,7 @@ impl Sway {
             subscribers: Vec::new(),
             handler,
             launched_pids: Vec::new(),
+            refusing_tree_reads: false,
             shared: shared.clone(),
             tree,
         }
@@ -231,6 +233,13 @@ impl Sway {
     /// compositor the fixtures weren't recorded from: an older Sway, or i3.
     pub fn set_version_reply(&mut self, reply: Value) {
         self.version_reply = reply;
+    }
+
+    /// From now on, closes a connection that asks for the tree instead of
+    /// answering, the way a broken connection or a compositor going away
+    /// looks to the binary: the read fails.
+    pub fn refuse_tree_reads(&mut self) {
+        self.refusing_tree_reads = true;
     }
 
     pub fn contains(&self, id: i64) -> bool {
@@ -479,6 +488,7 @@ fn serve(mut stream: UnixStream, shared: Weak<Mutex<Sway>>) {
                 json!({ "success": true })
             }
             GET_OUTPUTS => sway.outputs.clone(),
+            GET_TREE if sway.refusing_tree_reads => return,
             GET_TREE => sway.tree.clone(),
             GET_VERSION => sway.version_reply.clone(),
             other => panic!("the fake Sway doesn't answer message type {other}"),

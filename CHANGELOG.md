@@ -38,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--settle` no longer mistakes a window that closed while its size was being held, or a moment when
+  the window's state couldn't be read, for the application changing its size. A closed window had
+  its geometry sent again, and the run then failed with Sway's `No matching node.` under the name
+  of an unrelated action (`floating enable: resize set width 700px: ...`); it now fails at once
+  saying the window closed. An unreadable state was retried as a resize three times; the hold now
+  ends there, with the held size and position reported `unconfirmed`. An error that belongs to no
+  single action, such as the window closing during `--wait-time`, is now prefixed with every
+  action it stopped rather than with the first one, which may never have been sent. (#159)
 - A mistake in a template binding's `cwd` or `env` (a missing directory, a bad variable name, a `$`
   in a value) is now reported against the bindings file, like every other binding mistake. It was
   blamed on the template's step instead, which with a built-in template such as `dual-column` read

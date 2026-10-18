@@ -270,7 +270,10 @@ confirmed by one engine, `run_batch()` (#133), whether it is sent in a batch or 
   changes what the next action is judged against. With `--settle`
   (#17, `settle_duration()`), `hold_geometry()` then holds the confirmed pixel sizes and position,
   sending them again together when the client undoes them (at most `MAX_GEOMETRY_REAPPLIES`
-  times, then `Unconfirmed`).
+  times, then `Unconfirmed`). It reads the tree itself once per tick (`tree_on()`), not through
+  `poll_matches()`, which folds a failed read and a closed window into "doesn't match": an
+  unreadable tree ends the hold `Unconfirmed`, and a closed window fails without re-sending. An
+  error belonging to no one action is prefixed with every verb it stopped (`batch_verbs()`).
 
 **Every `ActionKind` match in `confirmation.rs` names each variant** (no `_` arm), so a new kind
 doesn't compile until both its confirmation path and its state/poll arms are decided.
