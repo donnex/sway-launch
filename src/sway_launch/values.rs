@@ -540,6 +540,11 @@ pub fn escape_control_characters(text: &str, keep_newlines: bool) -> String {
 ///   command in.
 /// - an unclosed quote or a trailing unpaired backslash (#123), which would
 ///   run on into that `)` the same way.
+/// - a backslash before a `'` inside single quotes (#151), the one place
+///   Sway's quoting and the shell's disagree: Sway reads `\'` there as an
+///   escaped quote and keeps the span open, while the shell has no escapes
+///   inside `'...'` and ends it, so the scan above would judge the rest of
+///   the command (a `#`, a `,`) as quoted when the shell doesn't.
 ///
 /// Blank values aren't this function's concern: the CLI's own "Missing
 /// COMMAND" check and `to_sway_launch()`'s target logic already report those
@@ -568,6 +573,14 @@ pub fn validate_exec_command(value: &str) -> Result<String, String> {
             open.describe()
         ));
     }
+    if has_escaped_quote_in_single_quotes(value) {
+        return Err(
+            "Must not contain \\' inside single quotes — Sway reads it as an escaped quote, \
+             but the shell ends the quote there, so the two would read the rest of the command \
+             differently. Put the backslash outside the quotes ('a'\\'b') or use double quotes"
+                .to_string(),
+        );
+    }
     if has_unquoted_comment(value) {
         return Err(
             "Must not contain a shell comment (an unquoted \"#\" starting a word) — the command \
@@ -584,6 +597,13 @@ pub fn validate_exec_command(value: &str) -> Result<String, String> {
 /// on; see `first_unquoted()`.
 fn unquoted_command_separator(value: &str) -> Option<char> {
     first_unquoted(value, |character, _| matches!(character, ',' | ';'))
+}
+
+/// Whether `value` holds a `\'` inside single quotes, which Sway reads as an
+/// escaped quote and the shell as a backslash and the closing quote; see
+/// `validate_exec_command()`.
+fn has_escaped_quote_in_single_quotes(value: &str) -> bool {
+    scan_unquoted(value, |_, _| false).escaped_quote_in_single_quotes
 }
 
 /// Whether `value` holds a shell comment: an unquoted `#` starting a word.
@@ -626,15 +646,20 @@ impl OpenQuoting {
 }
 
 /// The result of `scan_unquoted()`: the first wanted character, and, for a
-/// scan that read the whole value, what quoting it ended inside, if any.
+/// scan that read the whole value, what quoting it ended inside, if any, and
+/// whether it passed a `\'` inside single quotes, where the shell's reading
+/// differs from Sway's.
 struct QuoteScan {
     found: Option<char>,
     open: Option<OpenQuoting>,
+    escaped_quote_in_single_quotes: bool,
 }
 
 /// Scans `value` with the rules Sway's `argsep()` uses, which match the
 /// shell's closely enough for this: `"`/`'` quote, a backslash escapes the
-/// next character, and only a character outside both counts. Stops at the
+/// next character, and only a character outside both counts. The one
+/// difference that changes where a quote ends, a `\'` inside single quotes,
+/// is recorded rather than modelled. Stops at the
 /// first character outside quotes for which `wanted` is true, given it and
 /// the character before it.
 fn scan_unquoted(value: &str, mut wanted: impl FnMut(char, Option<char>) -> bool) -> QuoteScan {
@@ -642,7 +667,11 @@ fn scan_unquoted(value: &str, mut wanted: impl FnMut(char, Option<char>) -> bool
     let mut in_single_quotes = false;
     let mut escaped = false;
     let mut previous = None;
+    let mut escaped_quote_in_single_quotes = false;
     for character in value.chars() {
+        if character == '\'' && escaped && in_single_quotes {
+            escaped_quote_in_single_quotes = true;
+        }
         match character {
             '"' if !in_single_quotes && !escaped => in_double_quotes = !in_double_quotes,
             '\'' if !in_double_quotes && !escaped => in_single_quotes = !in_single_quotes,
@@ -659,6 +688,7 @@ fn scan_unquoted(value: &str, mut wanted: impl FnMut(char, Option<char>) -> bool
                 return QuoteScan {
                     found: Some(character),
                     open: None,
+                    escaped_quote_in_single_quotes,
                 };
             }
             _ => {}
@@ -675,7 +705,11 @@ fn scan_unquoted(value: &str, mut wanted: impl FnMut(char, Option<char>) -> bool
     } else {
         None
     };
-    QuoteScan { found: None, open }
+    QuoteScan {
+        found: None,
+        open,
+        escaped_quote_in_single_quotes,
+    }
 }
 
 /// What quoting `value` ends inside, if any: an unclosed quote or a trailing

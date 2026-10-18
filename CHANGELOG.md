@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A launch command with `\'` inside single quotes (`foot -T 'a\' #x'`) is now refused before
+  anything runs. Sway reads it as an escaped quote, but the shell that runs the command ends the
+  quote there, so the rest could become a comment that cut off the command: nothing launched, and
+  the run waited out `--timeout` and then blamed `PATH`. Put the backslash outside the quotes, or
+  use double quotes. (#151)
 - `--completions` no longer crashes when its output can't be written. Piped into a reader that
   quits early it now exits quietly, and writing to a full disk reports `failed writing to stdout`
   and exits 1, like every other mode, instead of panicking with exit status 101. (#138)

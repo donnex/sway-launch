@@ -154,8 +154,9 @@ what it rejects and why:
   `sway_argument()` renders it (a number unquoted after `number`, or Sway reads it as a name) and
   `WorkspaceTarget::matches()` decides it against a workspace's name and `num` (#43).
 - `validate_exec_command()` — the launch command is sent raw, so it rejects what Sway's own parser
-  would split on (an unquoted `,`/`;`, any newline/CR/NUL), and a shell comment, which would cut
-  the `( ... )` it runs in short. `run_single_sway_command()` backs it
+  would split on (an unquoted `,`/`;`, any newline/CR/NUL), and a shell comment, an unclosed
+  quote or a `\'` inside single quotes (where Sway's quoting and sh's disagree, #151), any of which
+  would cut the `( ... )` it runs in short. `run_single_sway_command()` backs it
   up twice: the pre-send `sway_command_split_problem()` check (below), and treating a
   multi-outcome reply as an error.
 - `render_argv()` — a step's or binding's `command` given as a list of words (#77), turned into one

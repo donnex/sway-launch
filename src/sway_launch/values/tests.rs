@@ -930,6 +930,35 @@ fn validate_exec_command_rejects_a_command_ending_inside_quoting() {
     assert!(validate_exec_command("foot -T 'a\\\\'").is_ok());
 }
 
+#[test]
+fn validate_exec_command_rejects_an_escaped_quote_inside_single_quotes() {
+    // #151: Sway reads `\'` inside '...' as an escaped quote, the shell as
+    // the closing one, so the shell would read the first `#x'` as a comment
+    // swallowing the subshell's `)`, while the scan saw it quoted.
+    for command in [
+        "foot -T 'a\\' #x'",
+        "foot -T 'a\\', b'",
+        "foot -T 'a\\\\\\' #x'",
+    ] {
+        let error = validate_exec_command(command).expect_err(command);
+        assert!(
+            error.contains("inside single quotes"),
+            "{command}: {error:?}"
+        );
+    }
+    for command in [
+        "foot -T 'a'\\''b'",
+        "foot -T \"a\\'b\"",
+        "foot -T 'a\\b'",
+        "foot -T 'a\\\\' b",
+    ] {
+        assert!(validate_exec_command(command).is_ok(), "{command:?}");
+    }
+    // Still an unclosed quote to Sway, reported as that.
+    let error = validate_exec_command("foot -T 'a\\' #x").expect_err("open quote");
+    assert!(error.contains("Must not end in"), "{error:?}");
+}
+
 // sway_command_split_problem
 
 #[test]
