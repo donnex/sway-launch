@@ -35,7 +35,19 @@ pub struct TestTempDir(PathBuf);
 
 impl TestTempDir {
     pub fn new() -> Self {
-        let parent = std::env::temp_dir();
+        Self::new_in(&std::env::temp_dir())
+    }
+
+    /// A `TestTempDir` for a Unix socket, under `/tmp` rather than `TMPDIR`
+    /// (#130). A socket path is limited to about 108 bytes, so a long `TMPDIR`
+    /// (a sandbox's or CI container's per-session directory) leaves no room
+    /// for the socket's own name and `bind()` fails. `scripts/` does the same
+    /// for the compositor's `XDG_RUNTIME_DIR`.
+    pub fn for_sockets() -> Self {
+        Self::new_in(Path::new("/tmp"))
+    }
+
+    fn new_in(parent: &Path) -> Self {
         for _ in 0..16 {
             let path = parent.join(format!(
                 "sway-launch-test-{}-{:016x}",

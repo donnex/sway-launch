@@ -78,7 +78,10 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-sway_runtime_dir="$(mktemp -d)"
+# A Unix socket path is limited to about 100 bytes, and Sway puts its IPC
+# socket in XDG_RUNTIME_DIR, so the directory goes under /tmp rather than a
+# possibly long TMPDIR (#130).
+sway_runtime_dir="$(mktemp -d -p /tmp)"
 
 printf 'Starting headless Sway\n'
 env \

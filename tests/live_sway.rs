@@ -518,7 +518,7 @@ fn a_stalled_sway_socket_fails_instead_of_hanging_forever() {
     // returned even after the request path was fixed (#51). All three are run
     // concurrently so the test still costs one IPC_ROUND_TRIP_TIMEOUT, not
     // three.
-    let temp_dir = TestTempDir::new();
+    let temp_dir = TestTempDir::for_sockets();
     let socket_path = temp_dir.join("stalled-sway.sock");
     let listener =
         std::os::unix::net::UnixListener::bind(&socket_path).expect("failed to bind test socket");
@@ -637,7 +637,7 @@ fn rollback_on_error_stops_trying_once_the_compositor_stops_answering() {
     // and holds new ones without ever answering -- the same silence
     // a_stalled_sway_socket_fails_instead_of_hanging_forever reproduces, but
     // only after three real windows have launched through it.
-    let temp_dir = TestTempDir::new();
+    let temp_dir = TestTempDir::for_sockets();
     let socket_path = temp_dir.join("stalling-proxy.sock");
     let listener =
         std::os::unix::net::UnixListener::bind(&socket_path).expect("failed to bind proxy socket");

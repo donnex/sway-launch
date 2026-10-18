@@ -202,8 +202,7 @@ def build_bindings_toml(slots, font_sizes, font, launcher_dir):
         if not re.fullmatch(r"[A-Za-z0-9_./-]+", str(launcher_path)):
             die(
                 f"temporary directory path {str(launcher_dir)!r} contains "
-                "characters that can't be passed through a Sway command; "
-                "set TMPDIR to a plain path"
+                "characters that can't be passed through a Sway command"
             )
         write_slot_launcher(launcher_path, slot, font_size, color, font)
         blocks.append(
@@ -241,8 +240,11 @@ class HeadlessSway:
         # TemporaryDirectory rather than mkdtemp so the directory owns its own
         # cleanup, per CLAUDE.md's Scripts conventions; __exit__ below still
         # calls it explicitly, since the compositor has to be stopped first.
+        # A Unix socket path is limited to about 100 bytes, and Sway puts its
+        # IPC socket in XDG_RUNTIME_DIR, so the directory goes under /tmp
+        # rather than a possibly long TMPDIR (#130).
         self._runtime_dir = tempfile.TemporaryDirectory(
-            prefix="sway-launch-screenshots-"
+            dir="/tmp", prefix="sway-launch-shots-"
         )
         self.runtime_dir = Path(self._runtime_dir.name)
         # Python only calls __exit__ once __enter__ has returned, so a failure

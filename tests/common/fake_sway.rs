@@ -115,7 +115,7 @@ impl FakeSway {
     }
 
     fn start_with(version: SwayVersion, handler: Option<Handler>) -> Self {
-        let directory = TestTempDir::new();
+        let directory = TestTempDir::for_sockets();
         let socket = directory.join("sway-ipc.sock");
         let listener = UnixListener::bind(&socket).expect("failed to bind the fake Sway socket");
         let shared = Arc::new_cyclic(|shared| Mutex::new(Sway::load(version, handler, shared)));

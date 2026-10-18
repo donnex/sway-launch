@@ -449,6 +449,11 @@ follow-up:
   files, `sway_launch_without_a_compositor()`, `assert_conflict_error()`); add new ones there. A
   flag-conflict test uses `assert_conflict_error()`, never a bare failure check, which keeps
   passing after the conflict is dropped.
+- **A Unix socket's directory goes under `/tmp`, never `TMPDIR`** (#130): a socket path is
+  limited to about 108 bytes, which a long `TMPDIR` (a sandbox's or CI container's per-session
+  directory) uses up. A test binding one takes its directory from `TestTempDir::for_sockets()`;
+  the scripts that start Sway create its `XDG_RUNTIME_DIR` with `mktemp -d -p /tmp` (or
+  `dir="/tmp"` in Python).
 - **Fake-Sway tests** (`tests/fake_sway.rs`, part of `cargo test`) drive the binary against
   `tests/common/fake_sway.rs`, a fake Sway IPC server on the far side of `SWAYSOCK` (#103): no
   production code knows it exists. It replays a recorded tree, outputs and missing-container reply
@@ -616,7 +621,7 @@ only requires them non-blank), so pasting a slot or `--font` into that string le
 it into separate words (`slot = "main editor"` silently measured and labeled nothing) and a
 quote, `;`, `$` or backtick run as shell code. The launcher `shlex`-quotes both values and hands
 them to `figlet` as positional arguments; the only thing left in the Sway-parsed string is the
-launcher's own path, which the tool refuses (with a `TMPDIR` hint) if it contains anything
+launcher's own path, which the tool refuses if it contains anything
 outside `[A-Za-z0-9_./-]`. The bindings TOML escapes control characters too and is parsed back
 with `tomllib` before use, so a slot name TOML can't carry raw fails there rather than inside
 `sway-launch` against a temporary file the user never saw. A slot containing a control character
