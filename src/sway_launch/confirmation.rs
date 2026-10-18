@@ -621,7 +621,9 @@ impl BatchProgress {
 /// then the already-there check (one state read, for every kind
 /// `is_skipped_when_already_in_effect()`; the subscription has to come first,
 /// see there), then, if anything polled is sent, `--wait-time` with the
-/// existence check after it, then the command. An action already in its
+/// existence check after it, then the command. `--timeout` starts when the
+/// command is sent, as it does for a lone event-confirmed action, so a long
+/// `--wait-time` never eats into it (#143). An action already in its
 /// state is left out of the command, and a batch left with nothing to send
 /// sends nothing. `NewColumn`/`NewRow` take their `poll_baseline()` just
 /// before the command, from the poll connection.
@@ -716,7 +718,11 @@ pub(super) fn run_batch(
         .iter()
         .any(|action| !action.kind.is_event_confirmed());
 
-    let deadline = event_timeout
+    // Checked here only so an unrepresentable --timeout errors before
+    // --wait-time is slept out; the deadline itself is taken just before the
+    // command is sent, below, so --timeout covers the wait for the event and
+    // not the --wait-time sleep too (#143).
+    event_timeout
         .map(deadline_after)
         .transpose()
         .map_err(|error| fail(first, error))?;
@@ -752,6 +758,10 @@ pub(super) fn run_batch(
         .collect();
 
     let command = batch_command(container_id, &sent_actions);
+    let deadline = event_timeout
+        .map(deadline_after)
+        .transpose()
+        .map_err(|error| fail(first, error))?;
     if verbose {
         diagnostic!(
             "Sway command: {}",

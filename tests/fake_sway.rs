@@ -612,6 +612,34 @@ fn a_batched_action_whose_event_never_comes_times_out_naming_it() {
 }
 
 #[test]
+fn a_batch_s_timeout_starts_when_its_command_is_sent_not_before_the_wait_time() {
+    // #143: the polled width makes the batch sleep out --wait-time first; a
+    // --timeout counted from before that sleep had already run out by the
+    // time the floating event could arrive.
+    let fake = FakeSway::start(SwayVersion::V1_11, arranges_on_command);
+    let run = run(
+        &fake,
+        &[
+            "--con-id",
+            "5",
+            "--floating",
+            "--width",
+            "800px",
+            "--timeout",
+            "1",
+            "--wait-time",
+            "1200",
+        ],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    let changed = |kind: &str| (kind.to_string(), "changed".to_string());
+    assert_eq!(
+        action_statuses(&run),
+        vec![changed("floating"), changed("width")]
+    );
+}
+
+#[test]
 fn a_batch_with_nothing_left_to_send_sends_nothing() {
     let fake = FakeSway::accepting_everything(SwayVersion::V1_11);
     let run = run(

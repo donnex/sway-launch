@@ -1242,7 +1242,8 @@ sway-launch --debug-events --json | jq -r 'select(.event == "window" and .change
 ## Timing: timeout and wait time
 
 `--timeout <SECONDS>` (default 5, at least 1) bounds how long a run waits for the launched window,
-and for each action's confirmation. A layout step's or binding's `timeout` replaces it for that
+and for each action's confirmation. An action's wait counts from when its command is sent, so the
+`--wait-time` below never shortens it. A layout step's or binding's `timeout` replaces it for that
 step. Each single request to Sway is bounded separately, at 10 seconds, so a compositor that stops
 answering fails with a clear message rather than hanging.
 

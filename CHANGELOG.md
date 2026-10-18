@@ -41,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   closed the earlier steps' windows and the run exited, and then the slow application's window
   appeared and stayed. The run now waits up to 2 seconds for it, as it already did after a launch
   timeout, and closes it with the rest. (#127)
+- A run combining an action Sway reports with an event (`--floating`, `--fullscreen`, `--focus`,
+  `--mark`) and one it doesn't (`--width`, `--height`, `--position`, `--split`, `--sticky`,
+  `--sway-command`) no longer fails with "no matching window event" when `--wait-time` is raised to
+  near `--timeout` or past it. The `--timeout` clock started before the `--wait-time` pause rather
+  than when the command was sent, so the window took every action and the run still reported a
+  timeout; `--wait-time 5000` failed README's own quick-start example this way. (#143)
 
 ## [0.1.0] - 2026-10-18
 

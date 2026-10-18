@@ -1218,6 +1218,52 @@ fn floating_with_width_and_height_applies_all_three() {
 }
 
 #[test]
+fn a_wait_time_past_the_timeout_still_confirms_a_floating_and_width_batch() {
+    // #143: --timeout counts from when the batch's command is sent, so the
+    // --wait-time sleep before it doesn't use the floating event's time up.
+    fresh_workspace();
+    let (container_id, _guard) = launch_foot(&[]);
+
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--floating",
+            "--width",
+            "400px",
+            "--timeout",
+            "1",
+            "--wait-time",
+            "1200",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout is the --json result");
+    let statuses: Vec<(&str, &str)> = result["actions"]
+        .as_array()
+        .expect("actions is an array")
+        .iter()
+        .map(|action| {
+            (
+                action["kind"].as_str().unwrap(),
+                action["status"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        statuses,
+        vec![("floating", "changed"), ("width", "changed")]
+    );
+}
+
+#[test]
 fn follow_up_actions_reach_sway_as_one_command_and_are_each_confirmed() {
     // #32: everything after the window is found goes to Sway in one command,
     // and each action is still confirmed on its own: floating and the mark by
