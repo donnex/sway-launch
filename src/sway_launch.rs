@@ -11,7 +11,7 @@
 //! - `action` — what a single action is, and the command it renders to.
 //! - `confirmation` — deciding whether that command took effect.
 //! - `outcome` — what a run reports back.
-//! - `interrupt` — turning SIGINT/SIGTERM into an ordinary failure.
+//! - `interrupt` — turning SIGINT/SIGTERM/SIGHUP into an ordinary failure.
 //! - `launch` — turning one invocation into an ordered plan, and running it.
 //!
 //! The `tree`/`query` boundary is the load-bearing one: everything that needs

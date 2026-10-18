@@ -8421,6 +8421,57 @@ fn sigint_during_a_layout_rolls_back_what_it_launched() {
 }
 
 #[test]
+fn sighup_during_a_concurrent_layout_rolls_back_and_leaves_no_staging_workspace() {
+    let build_workspace = fresh_workspace();
+    let mut connection = connect();
+    // #128: the hangup a closed terminal sends, while both staged launches
+    // are still starting. Left uncaught it killed the run with focus on the
+    // staging workspace and both windows on it.
+    let path = TempToml::write(
+        "hangup-concurrent-layout",
+        "concurrent = true\n\n\
+         [[step]]\ncommand = \"sleep 1 && foot --app-id=live-hangup\"\napp_id = \"live-hangup\"\n\n\
+         [[step]]\ncommand = \"sleep 1 && foot --app-id=live-hangup\"\napp_id = \"live-hangup\"\n",
+    );
+    let child = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--rollback-on-error",
+            "--json",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to start sway-launch binary");
+    std::thread::sleep(Duration::from_millis(500));
+    let killed = std::process::Command::new("kill")
+        .args(["-HUP", &child.id().to_string()])
+        .status()
+        .expect("failed to run kill");
+    assert!(killed.success());
+
+    let output = child.wait_with_output().expect("sway-launch should exit");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(129), "{stderr}");
+    let error: serde_json::Value = serde_json::from_str(stderr.lines().next_back().unwrap())
+        .unwrap_or_else(|error| panic!("no JSON error on stderr ({error}): {stderr}"));
+    assert!(
+        error["error"]
+            .as_str()
+            .unwrap()
+            .contains("interrupted by SIGHUP"),
+        "{error}"
+    );
+    no_staging_workspace_is_left(&mut connection);
+    assert_eq!(focused_workspace_name(&mut connection), build_workspace);
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let left_open = containers_with_app_id(&tree, "live-hangup");
+    let _guards: Vec<_> = left_open.iter().map(|&id| KillOnDrop(id)).collect();
+    assert!(left_open.is_empty(), "{error}");
+}
+
+#[test]
 fn rollback_closes_a_window_that_opens_just_after_its_launch_timed_out() {
     fresh_workspace();
     let mut connection = connect();

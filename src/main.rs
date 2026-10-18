@@ -1897,12 +1897,12 @@ fn run_steps(
     let mut missing_ids = HashSet::new();
     let mut skipped_steps = Vec::new();
 
-    // From here on windows get launched, so a SIGINT/SIGTERM fails the run
+    // From here on windows get launched, so a SIGINT/SIGTERM/SIGHUP fails the run
     // through fail_step(), with rollback and partial progress, rather than
     // killing it outright (#15).
     if let Err(error) = sway_launch::interrupt::install() {
         diagnostic!(
-            "{}couldn't catch SIGINT/SIGTERM ({}); an interrupted run won't roll back",
+            "{}couldn't catch SIGINT/SIGTERM/SIGHUP ({}); an interrupted run won't roll back",
             stderr_label(Severity::Warning),
             error
         );

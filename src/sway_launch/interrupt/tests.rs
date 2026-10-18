@@ -38,8 +38,12 @@ fn sleep_waits_its_whole_duration_without_a_signal() {
 }
 
 #[test]
-fn signal_names_name_the_two_caught_signals() {
+fn signal_names_name_every_caught_signal() {
     assert_eq!(signal_name(signal_hook::consts::SIGINT), "SIGINT");
     assert_eq!(signal_name(signal_hook::consts::SIGTERM), "SIGTERM");
+    assert_eq!(signal_name(signal_hook::consts::SIGHUP), "SIGHUP");
+    for signal in CAUGHT_SIGNALS {
+        assert_ne!(signal_name(signal), "a signal");
+    }
     assert_eq!(signal_name(9), "a signal");
 }

@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Closing the terminal a layout or template run was started from, or losing the ssh session it ran
+  in, now ends the run the way Ctrl-C does: `--rollback-on-error` closes what it launched,
+  `--json` reports its partial progress, and with `--concurrent` the windows are brought back from
+  the hidden staging workspace instead of being left there with focus. The hangup signal (SIGHUP)
+  used to kill the run on the spot; it now exits 129. (#128)
 - An `existing = true` step ahead of a step launching the same application now works the same with
   `--concurrent` (or `concurrent = true`) as without it. The later step's window, already open on
   the staging workspace, counted as a match: a plain `existing` step failed with "2 windows match",

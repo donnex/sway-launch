@@ -1,11 +1,13 @@
-//! SIGINT/SIGTERM during a `--layout`/`--template` run (#15).
+//! SIGINT/SIGTERM/SIGHUP during a `--layout`/`--template` run (#15, #128).
 //!
-//! Left to the default disposition, either signal killed the process on the
-//! spot: every window launched so far stayed open, `--rollback-on-error` never
+//! Left to the default disposition, each of these signals killed the process
+//! on the spot (SIGHUP is what a run gets when the terminal it was started
+//! from closes, or an ssh session drops): every window launched so far stayed open, `--rollback-on-error` never
 //! ran, and `--json` reported nothing. `install()` turns a signal into a flag
 //! instead, and every wait that can last long checks it at least every
 //! `CHECK_INTERVAL`, so the run fails through its ordinary error path, with
-//! rollback and partial progress, a moment later.
+//! rollback and partial progress, a moment later. That error path writes only
+//! through `diagnostic!`, which tolerates the closed stderr a hangup leaves.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, OnceLock};
@@ -21,7 +23,14 @@ struct Received {
 
 static RECEIVED: OnceLock<Received> = OnceLock::new();
 
-/// Catches SIGINT and SIGTERM from here on. A second one, of either kind,
+/// The signals `install()` catches.
+const CAUGHT_SIGNALS: [i32; 3] = [
+    signal_hook::consts::SIGINT,
+    signal_hook::consts::SIGTERM,
+    signal_hook::consts::SIGHUP,
+];
+
+/// Catches `CAUGHT_SIGNALS` from here on. A second one, of any of them,
 /// exits at once with the usual `128 + signal` status, skipping cleanup, so a
 /// rollback that is itself stuck can still be cut short.
 pub fn install() -> io::Result<()> {
@@ -29,7 +38,7 @@ pub fn install() -> io::Result<()> {
         any: Arc::new(AtomicBool::new(false)),
         signal: Arc::new(AtomicUsize::new(0)),
     });
-    for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
+    for signal in CAUGHT_SIGNALS {
         // Registered first, so it runs before this signal sets `any` and
         // only sees an earlier one.
         signal_hook::flag::register_conditional_shutdown(
@@ -62,6 +71,7 @@ pub(super) fn signal_name(signal: i32) -> &'static str {
     match signal {
         signal_hook::consts::SIGINT => "SIGINT",
         signal_hook::consts::SIGTERM => "SIGTERM",
+        signal_hook::consts::SIGHUP => "SIGHUP",
         _ => "a signal",
     }
 }

@@ -798,11 +798,12 @@ than the step names also closes that window, when its process proves this run la
 `unmatched_windows` entry's `launched_by_this_run`); with `--concurrent`, it's first brought back
 from the staging workspace.
 
-**Interrupting a run.** Ctrl-C (SIGINT) or SIGTERM (a `timeout(1)` wrapper, a stopped service) ends
-a run within a moment as a failure of the step it was on, so `--rollback-on-error` closes what the
+**Interrupting a run.** Ctrl-C (SIGINT), SIGTERM (a `timeout(1)` wrapper, a stopped service) or
+SIGHUP (the terminal it was started from closing, an ssh session dropping) ends a run within a
+moment as a failure of the step it was on, so `--rollback-on-error` closes what the
 run launched and `--json` reports its partial progress. If the step's application is still
 starting, `--rollback-on-error` first waits up to 2 seconds for its window, so that one is closed
-too. The run exits 130 or 143. A second signal exits at once, skipping the cleanup.
+too. The run exits 130, 143 or 129. A second signal exits at once, skipping the cleanup.
 
 **Focus moving away.** A step whose application is still starting when focus moves to another
 workspace (a keybinding, a notification click, another script) fails, naming both workspaces:
@@ -1106,8 +1107,8 @@ template), or the `--json` object. Everything else goes to stderr, so
 whose output is the point (`--list-windows`, `--capture`, `--list-templates`, `--show-template`,
 `--dry-run`, `--validate`, `--debug-events`, `--completions`) print it to stdout.
 
-The exit status is 0 on success, 1 when the run fails, 2 for invalid arguments, and 130 or 143 when
-a layout or template run is interrupted by SIGINT or SIGTERM. A failure's message on stderr starts
+The exit status is 0 on success, 1 when the run fails, 2 for invalid arguments, and 130, 143 or 129
+when a layout or template run is interrupted by SIGINT, SIGTERM or SIGHUP. A failure's message on stderr starts
 with `error:` (and a rollback problem with `warning:`), colored only when stderr is a terminal and
 `NO_COLOR` is unset.
 
