@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-18
+
+The first release.
+
 ### Added
 
 - Launching an application and blocking until its window actually appears, via Sway's IPC event
