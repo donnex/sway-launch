@@ -7725,24 +7725,18 @@ fn debug_events_line_arrives(
     }
 }
 
-#[test]
-fn a_second_run_of_a_layout_on_the_same_workspace_is_refused_while_the_first_runs() {
-    let workspace = fresh_workspace();
-    // A double-triggered layout used to interleave its windows with the first
-    // run's (#55); the run lock now refuses the second run at once. Its first
-    // step takes about a second to map, so the first run is still going.
+/// Starts a run of a layout whose one window takes about a second to map,
+/// then a second run of the same layout with `second_args` while the first is
+/// still going, and asserts the run lock refused the second one.
+fn assert_second_run_is_refused(first_args: &[&str], second_args: &[&str]) {
     let path = TempToml::write(
         "run-lock",
         "[[step]]\ncommand = 'sh -c \"sleep 1 && exec foot --app-id=lock-probe\"'\n\
          app_id = \"lock-probe\"\n",
     );
     let first = sway_launch_command()
-        .args([
-            "--layout",
-            path.to_str().unwrap(),
-            "--on-workspace",
-            &workspace,
-        ])
+        .args(["--layout", path.to_str().unwrap()])
+        .args(first_args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -7750,12 +7744,8 @@ fn a_second_run_of_a_layout_on_the_same_workspace_is_refused_while_the_first_run
     std::thread::sleep(Duration::from_millis(300));
 
     let second = sway_launch_command()
-        .args([
-            "--layout",
-            path.to_str().unwrap(),
-            "--on-workspace",
-            &workspace,
-        ])
+        .args(["--layout", path.to_str().unwrap()])
+        .args(second_args)
         .output()
         .expect("failed to run sway-launch binary");
     let first = first
@@ -7771,6 +7761,58 @@ fn a_second_run_of_a_layout_on_the_same_workspace_is_refused_while_the_first_run
     assert!(
         String::from_utf8_lossy(&second.stderr).contains("is still in progress"),
         "{second:?}"
+    );
+}
+
+#[test]
+fn a_second_run_of_a_layout_on_the_same_workspace_is_refused_while_the_first_runs() {
+    let workspace = fresh_workspace();
+    // A double-triggered layout used to interleave its windows with the first
+    // run's (#55); the run lock now refuses the second run at once.
+    assert_second_run_is_refused(
+        &["--on-workspace", &workspace],
+        &["--on-workspace", &workspace],
+    );
+}
+
+#[test]
+fn the_run_lock_holds_however_the_second_run_names_the_workspace() {
+    // Every spelling of one workspace takes the same lock (#129): a name in
+    // another case, the focused workspace with no --on-workspace at all, and
+    // a workspace number against the numbered workspace it focuses, even once
+    // a daemon has renamed it (#178).
+    let workspace = fresh_workspace();
+    assert_second_run_is_refused(
+        &["--on-workspace", &workspace],
+        &["--on-workspace", &workspace.to_uppercase()],
+    );
+    assert_second_run_is_refused(&["--on-workspace", &workspace], &[]);
+
+    let mut connection = connect();
+    let numbered = format!("47: {workspace}");
+    run_command_ok(&mut connection, &format!("workspace \"{numbered}\""));
+    assert_second_run_is_refused(&["--on-workspace-number", "47"], &[]);
+    run_command_ok(
+        &mut connection,
+        &format!("rename workspace \"{numbered}\" to \"47: renamed-{workspace}\""),
+    );
+    assert_second_run_is_refused(&[], &["--on-workspace", "47"]);
+}
+
+#[test]
+fn the_run_lock_with_only_on_output_names_the_workspace_that_output_shows() {
+    // With only --on-output, the lock used to name the workspace focused
+    // before the run moved to that output (#129).
+    let workspace = fresh_workspace();
+    let mut connection = connect();
+    let created = CreatedOutput::new(&mut connection);
+    let other = format!("{workspace}-other");
+    run_command_ok(&mut connection, &format!("focus output {}", created.name()));
+    run_command_ok(&mut connection, &format!("workspace \"{other}\""));
+    run_command_ok(&mut connection, &format!("workspace \"{workspace}\""));
+    assert_second_run_is_refused(
+        &["--on-output", created.name()],
+        &["--on-workspace", &other],
     );
 }
 

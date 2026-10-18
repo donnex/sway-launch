@@ -15,9 +15,9 @@ use super::tree::{
     con_id_target_problem, existing_candidates, expected_position, find_node, find_parent_layout,
     find_workspace, find_workspace_node, focused_workspace, launch_placement_problems,
     move_skip_reason, node_position, present_ids, recheck_launched_windows,
-    resolve_awaited_matches, resolve_matches, tiled_window_count, window_listing, workspace_named,
-    ContainerState, ListedWindow, MoveDirection, RecheckedWindow, WorkspaceIdentity,
-    WorkspaceLookup,
+    resolve_awaited_matches, resolve_matches, tiled_window_count, unnamed_build_workspace,
+    window_listing, workspace_named, ContainerState, ListedWindow, MoveDirection, RecheckedWindow,
+    WorkspaceIdentity, WorkspaceLookup,
 };
 use super::values::{Position, TitlePattern};
 use swayipc::{Connection, Node, NodeLayout};
@@ -251,6 +251,16 @@ pub(super) fn launch_placement_problems_now(
         moves_itself,
         floats_itself,
     ))
+}
+
+/// `unnamed_build_workspace()` over a fresh tree: the name of the workspace
+/// a run with no `--on-workspace` builds on, for its run lock (#129).
+pub fn unnamed_build_workspace_name(output: Option<&str>) -> Result<Option<String>, String> {
+    let tree = match new_connection()?.get_tree() {
+        Ok(tree) => tree,
+        Err(error) => return Err(ipc_error(error)),
+    };
+    Ok(unnamed_build_workspace(&tree, output).and_then(|workspace| workspace.name.clone()))
 }
 
 /// The focused workspace's name and how many tiled windows it already holds,

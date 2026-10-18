@@ -990,6 +990,58 @@ fn a_second_run_of_a_layout_is_refused_while_the_first_holds_its_lock() {
 }
 
 #[test]
+fn layouts_piped_on_stdin_take_a_lock_of_their_own_contents() {
+    // Every layout read from stdin is called `-`, so its lock is keyed on its
+    // contents (#129): a different piped layout runs while one is held, the
+    // same one is refused.
+    use std::io::Write;
+    let runtime_dir = common::TestTempDir::new();
+    let run = |layout: &str| {
+        let mut child = sway_launch_without_a_compositor()
+            .env("XDG_RUNTIME_DIR", &*runtime_dir)
+            .args(["--layout", "-"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to run sway-launch binary");
+        child
+            .stdin
+            .take()
+            .expect("stdin should be piped")
+            .write_all(layout.as_bytes())
+            .expect("stdin should accept the layout");
+        child
+            .wait_with_output()
+            .expect("failed to wait for sway-launch")
+    };
+    let lock_files = || -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(runtime_dir.join("sway-launch"))
+            .map(|entries| entries.map(|entry| entry.unwrap().path()).collect())
+            .unwrap_or_default()
+    };
+
+    let first = run("[[step]]\ncon_id = 42\n");
+    assert!(first.status.success(), "{first:?}");
+    let files = lock_files();
+    let [lock_path] = files.as_slice() else {
+        panic!("the run should have created one lock file: {files:?}");
+    };
+    let held = std::fs::File::open(lock_path).expect("lock file should open");
+    held.try_lock()
+        .expect("the finished run should have released its lock");
+
+    let other = run("[[step]]\ncon_id = 43\n");
+    assert!(other.status.success(), "{other:?}");
+    let same = run("[[step]]\ncon_id = 42\n");
+    assert_eq!(same.status.code(), Some(1), "{same:?}");
+    assert!(
+        String::from_utf8_lossy(&same.stderr).contains("still in progress"),
+        "{same:?}"
+    );
+}
+
+#[test]
 fn a_step_command_given_as_words_is_quoted_for_sway_and_the_shell() {
     // A word list reaches the program exactly (#77): the preview shows the
     // quoted command, and a word Sway would rewrite is refused at parse time.

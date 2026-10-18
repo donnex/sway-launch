@@ -49,6 +49,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "focus moved" error although focus never left the workspace, and a
   `--concurrent` run built the rest of the layout on a second, new workspace under the old name
   while reporting success. The build workspace is now followed through a rename. (#178)
+- The run lock that stops a layout or template being built twice on one workspace at the same time
+  now recognises the workspace however it's named. `--on-workspace Dev` and `dev`,
+  `--on-workspace-number 3` and a run started on `3: web`, and a workspace before and after an icon
+  daemon renamed it each took separate locks, so the second run went ahead and interleaved its
+  windows with the first's. A numbered workspace is now known by its number and any other by its
+  name ignoring case. With only `--on-output`, the lock now names the workspace that output shows
+  rather than the one focused before the run, and two different layouts piped in on stdin no longer
+  block each other. (#129)
 - `--rollback-on-error` now closes a launched window that timed out only because it opened under a
   different app_id, class or title than the step names, the commonest way a launch times out. The
   run already knew the window was its own, and reported it as `launched_by_this_run`, but left it

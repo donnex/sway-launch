@@ -713,6 +713,47 @@ fn workspace_target_matches_a_name_ignoring_case_and_a_number_by_num() {
 }
 
 #[test]
+fn sway_workspace_number_reads_the_leading_digits_as_sway_does() {
+    assert_eq!(sway_workspace_number("3"), Some(3));
+    assert_eq!(sway_workspace_number("3: web"), Some(3));
+    assert_eq!(sway_workspace_number("12web"), Some(12));
+    assert_eq!(sway_workspace_number("web 3"), None);
+    assert_eq!(sway_workspace_number(" 3"), None);
+    assert_eq!(sway_workspace_number("-3"), None);
+    assert_eq!(sway_workspace_number(""), None);
+    assert_eq!(sway_workspace_number("99999999999"), None);
+}
+
+#[test]
+fn workspace_target_run_lock_key_agrees_across_spellings_of_one_workspace() {
+    let key = |target: WorkspaceTarget| target.run_lock_key();
+    assert_eq!(
+        key(WorkspaceTarget::Name("Dev")),
+        key(WorkspaceTarget::Name("dev"))
+    );
+    assert_eq!(
+        key(WorkspaceTarget::Number(3)),
+        key(WorkspaceTarget::Name("3: web"))
+    );
+    assert_eq!(
+        key(WorkspaceTarget::Name("3")),
+        key(WorkspaceTarget::Name("3: <icons>"))
+    );
+    assert_ne!(
+        key(WorkspaceTarget::Name("dev")),
+        key(WorkspaceTarget::Name("web"))
+    );
+    assert_ne!(
+        key(WorkspaceTarget::Number(3)),
+        key(WorkspaceTarget::Number(4))
+    );
+    assert_ne!(
+        key(WorkspaceTarget::Name("number 3")),
+        key(WorkspaceTarget::Number(3))
+    );
+}
+
+#[test]
 fn workspace_target_quotes_a_name_but_not_a_number() {
     assert_eq!(
         WorkspaceTarget::Name("2: web").sway_argument(),

@@ -403,6 +403,33 @@ pub(super) fn find_workspace(tree: &Node, lookup: WorkspaceLookup) -> Option<Wor
     })
 }
 
+/// The workspace a run that names no workspace builds on: the one `focus
+/// output <output>` would show, which is the output's most recently focused
+/// workspace (the first workspace in its `focus` list), or with no output the
+/// focused workspace. `None` when that output or workspace isn't in the tree.
+/// Output names compare ignoring case, as Sway compares them.
+pub(super) fn unnamed_build_workspace<'a>(
+    tree: &'a Node,
+    output: Option<&str>,
+) -> Option<&'a Node> {
+    let Some(output) = output else {
+        return focused_workspace(tree);
+    };
+    let output = descendants(tree).find(|node| {
+        node.node_type == NodeType::Output
+            && node
+                .name
+                .as_deref()
+                .is_some_and(|name| name.eq_ignore_ascii_case(output))
+    })?;
+    output.focus.iter().find_map(|id| {
+        output
+            .nodes
+            .iter()
+            .find(|node| node.id == *id && node.node_type == NodeType::Workspace)
+    })
+}
+
 /// The workspace named `name`, compared ignoring case as Sway does.
 pub(super) fn workspace_named<'a>(tree: &'a Node, name: &str) -> Option<&'a Node> {
     descendants(tree).find(|node| {

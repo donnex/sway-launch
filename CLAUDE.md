@@ -344,8 +344,12 @@ checks those by hand, because the derive macro doesn't enforce `requires` reliab
   after `arrange_staged()` has moved it.
 - `run_steps()` takes a run lock (`acquire_run_lock()`, #55) before `BuildLocation::apply()`: an
   exclusive `File::try_lock()` on `$XDG_RUNTIME_DIR/sway-launch/<hash>.lock`, keyed on the
-  canonical file or template name plus the build workspace (the focused one only for a launching
-  run, so a retarget-only run still makes no IPC call of its own), held until the process exits.
+  canonical file or template name (stdin by its contents, `run_lock_source()`) plus the build
+  workspace's `WorkspaceTarget::run_lock_key()`: its number when its name starts with one (Sway's
+  `num`, which a rename keeps, #178), else its name lowercased, so every spelling of one workspace
+  takes one lock (#129). With no `--on-workspace`, only a launching run reads it from the tree
+  (`unnamed_build_workspace()`: the focused one, or the one `--on-output` shows), so a
+  retarget-only run still makes no IPC call of its own. Held until the process exits.
   `--no-lock` skips it; no runtime directory skips it with a `--verbose` note. It is why
   `rust-version` is 1.89.
 - `--concurrent` (#73), or a top-level `concurrent = true` in a layout or bindings file (#121,

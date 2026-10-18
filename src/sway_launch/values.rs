@@ -385,6 +385,32 @@ impl WorkspaceTarget<'_> {
             WorkspaceTarget::Number(wanted) => number == Some(*wanted),
         }
     }
+
+    /// What the `--layout`/`--template` run lock keys this workspace on
+    /// (#129): its number when it has one, so `--on-workspace-number 3`, a
+    /// run focused on `3: web` and the same workspace after an icon daemon
+    /// renamed it (#178) all take one lock; otherwise its name lowercased,
+    /// since Sway compares names ignoring case. Two workspaces sharing a
+    /// number (`3: web`, `3: mail`) share a lock too, which only ever refuses
+    /// a run that `--no-lock` lets through.
+    pub fn run_lock_key(&self) -> String {
+        match self {
+            WorkspaceTarget::Name(name) => sway_workspace_number(name).map_or_else(
+                || format!("name {}", name.to_ascii_lowercase()),
+                |number| format!("number {}", number),
+            ),
+            WorkspaceTarget::Number(number) => format!("number {}", number),
+        }
+    }
+}
+
+/// The `num` Sway gives a workspace called `name`: the number its name starts
+/// with, or `None` (Sway's -1) when it doesn't start with a digit. Sway reads
+/// it with `atoi()` after checking the first character, so `3: web` is 3 and
+/// ` 3` is unnumbered; a number past `i32::MAX` counts as none here.
+pub(super) fn sway_workspace_number(name: &str) -> Option<i32> {
+    let digits = name.len() - name.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+    name[..digits].parse().ok()
 }
 
 /// The name, or `number N`: how messages and the run lock name it.

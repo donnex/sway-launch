@@ -47,6 +47,7 @@ pub use outcome::{
 pub use process_marker::ConcurrentLaunches;
 pub use query::{
     capture_workspace, containers_still_present, focused_workspace_occupancy, list_windows,
+    unnamed_build_workspace_name,
 };
 pub use target::{FieldStyle, Target, TargetError, TargetFields, WindowCriteria, WindowMatch};
 pub use tree::ListedWindow;

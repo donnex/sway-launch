@@ -1375,6 +1375,7 @@ fn run_layout(path: &Path, args: &Args) -> ! {
         &parsed_layout.step,
         build,
         args.concurrent || parsed_layout.concurrent,
+        &run_lock_source(path, &contents),
         args,
     );
 }
@@ -1755,6 +1756,7 @@ fn run_template(path: &Path, bindings_source: BindingsSource, args: &Args) -> ! 
         &resolved_steps,
         build,
         args.concurrent || bindings.concurrent,
+        &run_lock_source(path, &contents),
         args,
     );
 }
@@ -1838,6 +1840,7 @@ fn run_steps(
     steps: &[layout::LayoutStep],
     build: sway_launch::BuildLocation,
     concurrent: bool,
+    lock_source: &str,
     args: &Args,
 ) -> ! {
     // Checked before the --dry-run/--validate branches so all three modes
@@ -1863,7 +1866,7 @@ fn run_steps(
     // Held until the process exits, so a second run of the same layout on
     // the same workspace can't interleave its windows with this one's.
     let launches = steps.iter().any(|step| step.command.is_some());
-    let _run_lock = match acquire_run_lock(build, launches, args) {
+    let _run_lock = match acquire_run_lock(build, launches, lock_source, args) {
         Ok(lock) => lock,
         Err(error) => fail(args.json, &format!("{}: {}", steps_source(args), error)),
     };
@@ -2180,25 +2183,30 @@ fn run_steps(
 /// returned for `--json`'s `"warnings"`. A failure to read the tree only
 /// skips the warning: the run itself will report a compositor that isn't
 /// answering.
-/// What a `--layout`/`--template` run's lock is keyed on: the file (by its
-/// canonical path, so `./x.toml` and its absolute path agree) or built-in
-/// template name, and the workspace the run builds on. Two runs of the same
-/// layout on different workspaces don't block each other.
-fn run_lock_identity(args: &Args, workspace: &str) -> String {
-    let source = args
-        .layout
-        .as_deref()
-        .or(args.template.as_deref())
-        .map(|path| {
-            if is_stdin(path) {
-                "<stdin>".to_string()
-            } else {
-                std::fs::canonicalize(path)
-                    .unwrap_or_else(|_| path.to_path_buf())
-                    .display()
-                    .to_string()
-            }
-        })
+/// The layout half of a run lock's identity: the file by its canonical path,
+/// so `./x.toml` and its absolute path agree, or the built-in template's
+/// name. Everything piped in on stdin is called `-`, so a layout read from
+/// there is told apart by its contents instead (#129): two different
+/// generated layouts don't block each other, and the same one still does.
+fn run_lock_source(path: &Path, contents: &str) -> String {
+    if is_stdin(path) {
+        format!("<stdin>\0{}", contents)
+    } else {
+        std::fs::canonicalize(path)
+            .unwrap_or_else(|_| path.to_path_buf())
+            .display()
+            .to_string()
+    }
+}
+
+/// What a `--layout`/`--template` run's lock is keyed on: its source
+/// (`run_lock_source()`) and the workspace it builds on, through
+/// `WorkspaceTarget::run_lock_key()`, so every spelling of one workspace
+/// takes the same lock (#129). Two runs of the same layout on different
+/// workspaces don't block each other; `None` locks on the source alone.
+fn run_lock_identity(source: &str, workspace: Option<sway_launch::WorkspaceTarget>) -> String {
+    let workspace = workspace
+        .map(|workspace| workspace.run_lock_key())
         .unwrap_or_default();
     format!("{}\0{}", source, workspace)
 }
@@ -2216,13 +2224,16 @@ fn run_lock_file_name(identity: &str) -> String {
 
 /// Takes the run's lock (#55): an exclusive lock on a file under
 /// `$XDG_RUNTIME_DIR/sway-launch/`, held for the life of the process and
-/// released by the kernel when it exits, even on a crash. The workspace comes
-/// from the run's build location, or for a launching run the focused one.
-/// `None` when locking
-/// is off (`--no-lock`) or there is no runtime directory to put it in.
+/// released by the kernel when it exits, even on a crash. It is taken before
+/// `BuildLocation::apply()`, so a refused run changes nothing; the workspace
+/// is the one the build location names, or for a launching run the one it
+/// will build on, read from the tree: the focused workspace, or with only
+/// `--on-output` the workspace that output shows. `None` when locking is off
+/// (`--no-lock`) or there is no runtime directory to put it in.
 fn acquire_run_lock(
     build: sway_launch::BuildLocation,
     launches: bool,
+    lock_source: &str,
     args: &Args,
 ) -> Result<Option<std::fs::File>, String> {
     if args.no_lock {
@@ -2237,19 +2248,22 @@ fn acquire_run_lock(
     };
     // A run that only retargets existing windows makes no IPC call of its
     // own here, so it locks on the file alone.
-    let workspace = match build.workspace {
-        Some(workspace) => workspace.to_string(),
-        None if !launches => String::new(),
-        None => sway_launch::focused_workspace_occupancy()
+    let unnamed_workspace = match build.workspace {
+        None if launches => sway_launch::unnamed_build_workspace_name(build.output)
             .ok()
-            .flatten()
-            .map(|(workspace, _)| workspace)
-            .unwrap_or_default(),
+            .flatten(),
+        _ => None,
     };
+    let workspace = build.workspace.or(unnamed_workspace
+        .as_deref()
+        .map(sway_launch::WorkspaceTarget::Name));
     let directory = Path::new(&runtime_dir).join("sway-launch");
     std::fs::create_dir_all(&directory)
         .map_err(|error| format!("run lock: {}: {}", directory.display(), error))?;
-    let path = directory.join(run_lock_file_name(&run_lock_identity(args, &workspace)));
+    let path = directory.join(run_lock_file_name(&run_lock_identity(
+        lock_source,
+        workspace,
+    )));
     let file = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -2258,7 +2272,11 @@ fn acquire_run_lock(
         .map_err(|error| format!("run lock: {}: {}", path.display(), error))?;
     match file.try_lock() {
         Ok(()) => Ok(Some(file)),
-        Err(std::fs::TryLockError::WouldBlock) => Err(run_lock_held_message(&workspace)),
+        Err(std::fs::TryLockError::WouldBlock) => Err(run_lock_held_message(
+            &workspace
+                .map(|workspace| workspace.to_string())
+                .unwrap_or_default(),
+        )),
         Err(std::fs::TryLockError::Error(error)) => {
             Err(format!("run lock: {}: {}", path.display(), error))
         }
@@ -3122,6 +3140,38 @@ mod tests {
         assert_eq!(here, run_lock_file_name("/layouts/dev.toml\0ws-3"));
         assert_ne!(here, run_lock_file_name("/layouts/dev.toml\0ws-4"));
         assert!(here.ends_with(".lock") && here.len() == 21, "{here}");
+    }
+
+    #[test]
+    fn run_lock_identity_is_one_lock_per_layout_and_workspace_however_spelled() {
+        use sway_launch::WorkspaceTarget::{Name, Number};
+        let identity = |workspace| run_lock_identity("/layouts/dev.toml", workspace);
+        assert_eq!(identity(Some(Name("Dev"))), identity(Some(Name("dev"))));
+        assert_eq!(identity(Some(Number(3))), identity(Some(Name("3: web"))));
+        assert_eq!(
+            identity(Some(Name("1"))),
+            identity(Some(Name("1: <icons>")))
+        );
+        assert_ne!(identity(Some(Name("dev"))), identity(Some(Name("web"))));
+        assert_ne!(identity(Some(Name("dev"))), identity(None));
+        assert_ne!(
+            identity(Some(Name("dev"))),
+            run_lock_identity("/layouts/web.toml", Some(Name("dev")))
+        );
+    }
+
+    #[test]
+    fn run_lock_source_tells_stdin_layouts_apart_by_their_contents() {
+        let stdin = Path::new("-");
+        assert_eq!(
+            run_lock_source(stdin, "[[step]]\ncommand = \"foot\"\n"),
+            run_lock_source(stdin, "[[step]]\ncommand = \"foot\"\n")
+        );
+        assert_ne!(
+            run_lock_source(stdin, "[[step]]\ncommand = \"foot\"\n"),
+            run_lock_source(stdin, "[[step]]\ncommand = \"thunar\"\n")
+        );
+        assert_eq!(run_lock_source(Path::new("quad-grid"), ""), "quad-grid");
     }
 
     #[test]

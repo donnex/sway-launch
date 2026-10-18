@@ -1445,3 +1445,34 @@ fn find_workspace_by_name_ignores_case_and_by_container_finds_its_workspace() {
     );
     assert_eq!(find_workspace(&tree, WorkspaceLookup::Holding(99)), None);
 }
+
+/// Two outputs: `HEADLESS-1` showing `1: web` (id 2, focused window 10),
+/// with `2` (id 3) behind it, and `HEADLESS-2` showing `9` (id 5) after
+/// most recently showing it, with `8` (id 6) behind it.
+fn two_output_tree() -> Node {
+    let mut window = leaf_node_value(10, Some("foot"), None);
+    window["focused"] = serde_json::json!(true);
+    let first = named_node_value(2, "workspace", "1: web", vec![window]);
+    let second = named_node_value(3, "workspace", "2", vec![]);
+    let mut left = named_node_value(1, "output", "HEADLESS-1", vec![first, second]);
+    left["focus"] = serde_json::json!([2, 3]);
+    let behind = named_node_value(6, "workspace", "8", vec![]);
+    let shown = named_node_value(5, "workspace", "9", vec![]);
+    let mut right = named_node_value(4, "output", "HEADLESS-2", vec![behind, shown]);
+    right["focus"] = serde_json::json!([5, 6]);
+    serde_json::from_value(named_node_value(0, "root", "root", vec![left, right]))
+        .expect("valid Node test fixture")
+}
+
+#[test]
+fn unnamed_build_workspace_is_the_focused_one_or_the_one_an_output_shows() {
+    let tree = two_output_tree();
+    let name = |output| {
+        unnamed_build_workspace(&tree, output).and_then(|workspace| workspace.name.as_deref())
+    };
+    assert_eq!(name(None), Some("1: web"));
+    assert_eq!(name(Some("HEADLESS-2")), Some("9"));
+    assert_eq!(name(Some("headless-2")), Some("9"));
+    assert_eq!(name(Some("HEADLESS-1")), Some("1: web"));
+    assert_eq!(name(Some("HEADLESS-3")), None);
+}

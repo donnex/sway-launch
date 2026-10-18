@@ -813,7 +813,12 @@ every later step would otherwise open on the other workspace and split the layou
 it builds on, so a second run of the same layout on the same workspace (a key pressed twice, a login
 script still running when you start it by hand) stops at once with `another run of this layout on
 workspace "3" is still in progress`, instead of interleaving its windows with the first run's.
-Different layouts, or the same one on different workspaces, run side by side. The lock lives under
+A workspace is the same however it's named: `--on-workspace Dev` and `dev` are one workspace, and
+a numbered workspace is known by its number, so `--on-workspace-number 3`, a run started on `3: web`
+and that workspace after an icon daemon renamed it all take one lock (two workspaces sharing a
+number share it too). With only `--on-output`, the workspace is the one that output shows. A layout
+piped in on stdin is known by its contents. Different layouts, or the same one on different
+workspaces, run side by side. The lock lives under
 `$XDG_RUNTIME_DIR/sway-launch/` and is released when the run ends, even if it crashes. `--no-lock`
 runs anyway.
 
