@@ -43,7 +43,8 @@ rules both apply in full because of this — there's no "private repo" fallback 
   - Run with debug output: `cargo test -- --nocapture`
 - Live-Sway test: `scripts/run-live-sway-tests` — starts a throwaway headless Sway compositor, runs
   `tests/live_sway.rs` (gated behind the `live-sway-tests` Cargo feature) against it, then tears it
-  down. This is what checks the IPC-touching code against real Sway behavior rather than a
+  down. On a failure it first says whether Sway is still running and prints the tail of Sway's own
+  log, which the teardown deletes (#184). This is what checks the IPC-touching code against real Sway behavior rather than a
   scripted fake's, plus anything else worth confirming live rather than assuming it. Requires `sway`, `swaymsg`, and `foot` on `PATH`, and prints
   `sway --version` first. **Supported Sway: 1.9 and newer** (README.md says the same), so CI runs it
   in two jobs of `.github/workflows/check.yml`, both separate from the main `check` job so a

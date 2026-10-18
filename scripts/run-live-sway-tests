@@ -64,6 +64,8 @@ done
 sway_version="$(sway --version)" || die 'Could not read the Sway version.'
 printf '%s\n' "$sway_version"
 
+readonly FAILURE_LOG_LINES=50
+
 sway_pid=''
 sway_runtime_dir=''
 
@@ -132,5 +134,17 @@ if XDG_RUNTIME_DIR="$sway_runtime_dir" \
   cargo test --locked --features live-sway-tests --test live_sway -- --test-threads=1; then
   printf '✓ Live-Sway tests passed\n'
 else
+  # The runtime dir, and Sway's log with it, is removed on exit, and a
+  # compositor that crashed mid-run shows up only as every later test's IPC
+  # error, so its state and the log's tail go into the output first (#184).
+  if kill -0 "$sway_pid" 2>/dev/null; then
+    printf '\nSway is still running.\n' >&2
+  else
+    printf '\nSway is no longer running: it exited or crashed during the tests.\n' >&2
+  fi
+  printf -- '--- Last %s lines of the Sway log ---\n' "$FAILURE_LOG_LINES" >&2
+  tail -n "$FAILURE_LOG_LINES" "$sway_runtime_dir/sway.log" >&2 ||
+    printf '(could not read the Sway log)\n' >&2
+  printf -- '--- End of the Sway log ---\n' >&2
   die "Live-Sway tests failed."
 fi
