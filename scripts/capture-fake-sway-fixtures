@@ -13,7 +13,6 @@ print_usage() {
   printf '  version.json                 get_version\n'
   printf '  tree.json                    get_tree\n'
   printf '  outputs.json                 get_outputs\n'
-  printf '  window-events.jsonl          every window event, one per line\n'
   printf '  missing-container-reply.json a command for a container that does not exist\n'
   printf '\n'
   printf 'tests/fake-sway/ holds one such directory per supported Sway version.\n'
@@ -81,7 +80,6 @@ done
 mkdir -p "$output_dir" || die "Could not create $output_dir."
 
 sway_pid=''
-subscriber_pid=''
 foot_pids=''
 runtime_dir=''
 
@@ -89,7 +87,6 @@ cleanup() {
   for foot_pid in $foot_pids; do
     kill "$foot_pid" >/dev/null 2>&1 || true
   done
-  [ -n "$subscriber_pid" ] && kill "$subscriber_pid" >/dev/null 2>&1
   [ -n "$sway_pid" ] && kill "$sway_pid" >/dev/null 2>&1
   [ -n "$sway_pid" ] && wait "$sway_pid" 2>/dev/null
   [ -n "$runtime_dir" ] && rm -rf "$runtime_dir"
@@ -133,10 +130,6 @@ for wayland_socket in "$runtime_dir"/wayland-*; do
 done
 [ -n "$wayland_display" ] || die "Could not find a Wayland display socket under $runtime_dir."
 
-swaymsg -t subscribe -m '["window"]' >"$output_dir/window-events.jsonl" &
-subscriber_pid="$!"
-sleep 0.3
-
 window_count() {
   swaymsg -t get_tree | grep -c "\"app_id\": \"fixture-" || true
 }
@@ -166,9 +159,8 @@ sleep 0.3
 swaymsg -r -t get_version >"$output_dir/version.json" || die 'get_version failed.'
 swaymsg -r -t get_tree >"$output_dir/tree.json" || die 'get_tree failed.'
 swaymsg -r -t get_outputs >"$output_dir/outputs.json" || die 'get_outputs failed.'
-# swaymsg exits non-zero when Sway reports the command failed, which is one
-# of the two answers worth recording.
+# swaymsg exits non-zero when Sway reports the command failed, which is the
+# answer being recorded.
 swaymsg -r '[con_id=2147480000] floating enable' >"$output_dir/missing-container-reply.json" || true
 
-sleep 0.3
 printf '✓ Wrote %s fixtures to %s\n' "$(sway --version)" "$output_dir"

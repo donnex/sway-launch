@@ -685,21 +685,23 @@ stated goal (safer internals, less repeated parsing) to actually land.
   semantics can instead escalate and relocate the whole workspace to the next output in that
   direction. `SwayLaunch::run()` guards against this (see below) rather than silently moving the
   window to a different monitor. Before actually running its command, `run_wait_time()` also calls
-  `ensure_container_exists()` (a `get_tree()` lookup) and errors clearly if the container is gone —
-  without this, a `[con_id=N]` criteria matching zero containers is treated by Sway as success
-  rather than a failure, so a container that closed between an earlier action resolving it and this
-  one running used to silently no-op instead of erroring; confirmed by `tests/live_sway.rs`'s
-  `wait_time_action_errors_clearly_when_its_container_already_closed`. That "Sway treats a missing
-  `[con_id=N]` as success" behavior is itself Sway-version-dependent, the same kind of split
-  `node_is_floating()` (below) documents for a different field: confirmed live, Sway 1.9 silently
-  no-ops, while Sway 1.11 already errors clearly
-  with `"No matching node."` on its own. `ensure_container_exists()` is therefore redundant on 1.11 but
-  still required for 1.9 — don't remove it on the strength of testing against a newer Sway alone.
+  `ensure_container_exists()` (a `get_tree()` lookup) and errors clearly if the container is gone,
+  naming it ("container id N no longer exists — window may have closed"); pinned by
+  `tests/live_sway.rs`'s `wait_time_action_errors_clearly_when_its_container_already_closed`. This
+  was long documented as a Sway 1.9 correctness requirement, on the belief that 1.9 answers a
+  `[con_id=N]` command for a missing container with success and silently does nothing. It doesn't:
+  re-checked live (#158) against Sway 1.9 in an `ubuntu:24.04` container, with the container
+  confirmed gone from the tree first, `splith`, `floating enable`, `resize set width`,
+  `move position`, `sticky enable`, `move right` and a two-part batch all answered
+  `"No matching node."`, exactly as 1.11 does and as `tests/fake-sway/sway-1.9/` records. The
+  belief most likely came from a command sent while a `kill` was still being processed, which
+  succeeds on any version because the window is still there. So the check is a fast fail with a
+  clearer message, not something Sway needs.
 
   It's called **twice**, on either side of the pre-command sleep, and both calls earn their keep.
-  The one after the sleep is the correctness check above: it's what guarantees the container is
-  still there at the moment the command is actually sent, covering a window that closes *during*
-  the wait. The one before it is a fast fail, added after an external review pointed out that
+  The one after the sleep covers a window that closes *during* the wait: Sway would refuse the
+  command anyway, but with a message that doesn't say which container or why, and a
+  `--rollback-on-error` run's error is read by whoever has to work out what closed. The one before it is a fast fail, added after an external review pointed out that
   `--wait-time` is an unbounded caller-supplied number slept *before* anything is validated — so a
   step with `wait_time = 3600000` against an already-closed window sat for an hour before reporting
   a foregone answer. Declined in the same review: capping `--wait-time`. It's the caller's own

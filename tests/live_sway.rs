@@ -3365,11 +3365,10 @@ fn rollback_on_error_kills_earlier_launched_windows_when_a_later_step_fails() {
     // run_steps() kills every window this invocation itself launched
     // before reporting the failure. The second step targets a con_id that
     // was never opened, so --mark against it fails reliably and immediately
-    // -- via run_batch()'s own existence check on
-    // every Sway version (before that check existed this failed only
-    // incidentally, through Sway 1.11's "No matching node."; on Sway 1.9 it
-    // instead waited out the full --timeout first) -- without launching
-    // anything of its own to roll back.
+    // -- via run_batch()'s own existence check, before any subscription is
+    // opened (Sway's own "No matching node." would fail it too, on every
+    // supported version) -- without launching anything of its own to roll
+    // back.
     let mut connection = connect();
     connection
         .run_command("[app_id=foot] kill")
@@ -5091,15 +5090,12 @@ fn an_unfiltered_launch_matched_by_fallback_says_to_pass_a_filter() {
 #[test]
 fn wait_time_action_errors_clearly_when_its_container_already_closed() {
     fresh_workspace();
-    // Regression test: on Sway 1.9, a [con_id=N] criteria matching zero
-    // containers is treated as success, not an error, so a wait-time action
-    // (Split/NewColumn/NewRow/Height/Width/Position) used to silently no-op
-    // instead of erroring if the container closed between an earlier action
-    // resolving it and this one running. run_batch()'s existence
-    // check is what's under test here — still required on 1.9, though
-    // confirmed live to be redundant on Sway 1.11, which already errors
-    // clearly ("No matching node.") on its own; see ensure_container_exists()'s doc
-    // comment for that version split.
+    // A wait-time action (Split/NewColumn/NewRow/Height/Width/Position)
+    // against a container that closed after it was resolved must fail and
+    // name the container. Sway alone answers "No matching node." (on 1.9 and
+    // 1.11 alike, confirmed live), which says neither; run_batch()'s
+    // existence check is what's under test here, see
+    // ensure_container_exists()'s doc comment.
     let mut connection = connect();
     let (container_id, guard) = launch_foot(&[]);
     connection
@@ -5186,11 +5182,10 @@ fn event_confirmed_action_errors_clearly_when_its_container_already_closed() {
     // an event-confirmed one (here --mark, which has no already-in-effect
     // arm) sent its command and then waited out the full --timeout for a
     // confirmation event that could never arrive, reporting "N sec timeout
-    // reached" instead of naming the closed window. On Sway 1.11
-    // run_sway_command() already errors on its own, so the assertion below
-    // is on the *message* rather than just a non-zero exit -- that is what
-    // makes this meaningful on Sway 1.9, where the
-    // command would otherwise be reported as a success.
+    // reached" instead of naming the closed window. Sway's own reply ("No
+    // matching node.", on every supported version) already fails the
+    // command, so the assertion below is on the *message* and the time taken
+    // rather than just a non-zero exit.
     let mut connection = connect();
     let (container_id, guard) = launch_foot(&[]);
     connection
@@ -5204,7 +5199,7 @@ fn event_confirmed_action_errors_clearly_when_its_container_already_closed() {
                              // in the tree when sway-launch reads it, the guard under test passes and
                              // the command instead fails via Sway 1.11's own "No matching node."
                              // (which doesn't name the id) -- a correct failure, but not the one this
-                             // test exists to pin, and not the path Sway 1.9 would take at all.
+                             // test exists to pin.
     wait_for_container_gone(&mut connection, container_id);
 
     let started = Instant::now();

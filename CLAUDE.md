@@ -231,8 +231,9 @@ confirmed by one engine, `run_batch()` (#133), whether it is sent in a batch or 
   the kinds Sway only reports for views (`ActionKind::needs_a_window()`, #93).
 - **Polled** (`Split`, `Sticky`, `NewColumn`, `NewRow`, `Height`, `Width`, `Position`,
   `WorkspaceToOutput`, and `SwayCommand`, which `polls()` never confirms) — the container's
-  existence is checked before *and* after the `--wait-time` sleep (both are load-bearing: fast
-  failure, and Sway 1.9 treating a missing `[con_id=N]` as success), `poll_baseline()` is taken,
+  existence is checked before *and* after the `--wait-time` sleep (fast failure, and an error naming
+  the closed container; Sway itself refuses a missing `[con_id=N]` on every supported version,
+  #158), `poll_baseline()` is taken,
   then the command is sent and polled for. `polls()` decides whether a kind can be confirmed at
   all; `poll_matches()` reads the tree on one shared connection; the grace is `poll_grace()`
   (`WAIT_TIME_POLL_GRACE`, or the shorter `MOVE_POLL_GRACE` for the `poll_baseline()`-based

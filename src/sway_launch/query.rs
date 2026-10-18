@@ -132,11 +132,13 @@ pub(super) fn current_move_skip_reason(
 /// Errors with the one message every action driver reports for a container
 /// that closed since it was resolved, so every existence check in
 /// `confirmation.rs` (this and `existing_container()`) can't drift into
-/// different wording for the same condition. Needed on Sway 1.9, which treats a `[con_id=N]` criteria matching zero containers
-/// as success rather than an error; Sway 1.11 already errors clearly ("No
-/// matching node."), confirmed live, which makes this redundant there but
-/// still required for 1.9 — see `node_is_floating()`'s doc comment for the
-/// same version split.
+/// different wording for the same condition. Not a correctness requirement:
+/// every supported Sway answers a `[con_id=N]` command for a container that
+/// is gone with `No matching node.` (confirmed live on 1.9 and 1.11, and
+/// recorded in `tests/fake-sway/`), so the command would fail anyway. The
+/// checks earn their tree reads by failing fast (before a subscription is
+/// opened, before `--wait-time` is slept out) and with a message that names
+/// the container and says why, which Sway's own doesn't.
 pub(super) fn ensure_container_exists(container_id: i64) -> Result<(), String> {
     existing_container(container_id).map(|_| ())
 }

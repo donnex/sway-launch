@@ -731,9 +731,9 @@ pub(super) fn run_batch(
     // own knob and deliberately unbounded, so sleeping it out only to report
     // that the target had already closed is pure delay (`wait_time = 3600000`
     // would sit for an hour before saying so). The one after the sleep covers
-    // a window closing *during* it: on Sway 1.9 a [con_id=N] criteria matching
-    // nothing is "success" for a polled command, which would silently no-op.
-    // Sway 1.11 errors on its own ("No matching node."), confirmed live.
+    // a window closing *during* it. Sway would refuse the command anyway ("No
+    // matching node.", on 1.9 and 1.11 alike, confirmed live); the check is
+    // there for the message, which names the container and says it closed.
     let mut poll_connection = None;
     if let (true, Some(wait_time)) = (sends_polled, wait_time) {
         if verbose {
