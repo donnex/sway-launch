@@ -640,12 +640,13 @@ fn main() {
     let args = Args::parse();
 
     if let Some(shell) = args.completions {
-        clap_complete::generate(
-            shell,
-            &mut Args::command(),
-            "sway-launch",
-            &mut io::stdout(),
-        );
+        // Generated into a buffer rather than straight to stdout:
+        // clap_complete::generate() panics on a failed write, so a closed pipe
+        // or a full disk ended in exit 101 instead of going through
+        // print_str()'s clean exit.
+        let mut script = Vec::new();
+        clap_complete::generate(shell, &mut Args::command(), "sway-launch", &mut script);
+        print_str(&String::from_utf8_lossy(&script));
         process::exit(0);
     }
 

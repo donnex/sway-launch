@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--completions` no longer crashes when its output can't be written. Piped into a reader that
+  quits early it now exits quietly, and writing to a full disk reports `failed writing to stdout`
+  and exits 1, like every other mode, instead of panicking with exit status 101. (#138)
 - Closing the terminal a layout or template run was started from, or losing the ssh session it ran
   in, now ends the run the way Ctrl-C does: `--rollback-on-error` closes what it launched,
   `--json` reports its partial progress, and with `--concurrent` the windows are brought back from
