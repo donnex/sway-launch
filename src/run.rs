@@ -84,7 +84,7 @@ pub(crate) fn run_steps(
     // is one value for the whole session, so a step can't trust it to still
     // be where this run put it.
     let build_workspace = if launches {
-        match build.anchor() {
+        match build.anchor(args.verbose) {
             Ok(build_workspace) => Some(build_workspace),
             Err(error) => fail(args.json, &format!("{}: {}", steps_source(args), error)),
         }

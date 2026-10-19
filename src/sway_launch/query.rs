@@ -12,12 +12,12 @@ use super::capture::capture;
 use super::ipc::{ipc_error, new_connection};
 use super::target::{LaunchFilter, WindowCriteria};
 use super::tree::{
-    build_workspace_anchor, con_id_target_problem, existing_candidates, find_node, find_workspace,
-    focused_workspace, launch_placement_problems, move_skip_reason, present_ids,
-    recheck_launched_windows, resolve_awaited_matches, resolve_matches, tiled_window_count,
-    unnamed_build_workspace, window_listing, window_processes, workspace_to_capture,
-    ContainerState, ListedWindow, MoveDirection, RecheckedWindow, SkipReason, WorkspaceIdentity,
-    WorkspaceLookup,
+    build_output_placement, build_workspace_anchor, con_id_target_problem, existing_candidates,
+    find_node, find_workspace, focused_workspace, launch_placement_problems, move_skip_reason,
+    present_ids, recheck_launched_windows, resolve_awaited_matches, resolve_matches,
+    tiled_window_count, unnamed_build_workspace, window_listing, window_processes,
+    workspace_to_capture, BuildOutputPlacement, ContainerState, ListedWindow, MoveDirection,
+    RecheckedWindow, SkipReason, WorkspaceIdentity, WorkspaceLookup,
 };
 use super::values::{TitlePattern, WorkspaceTarget};
 use swayipc::{Connection, Node};
@@ -208,6 +208,16 @@ pub(super) fn build_workspace_anchor_now(
 ) -> Result<WorkspaceIdentity, String> {
     let tree = fetch_tree()?;
     build_workspace_anchor(&tree, workspace, output)
+}
+
+/// `build_output_placement()` over a fresh tree: whether a layout run's
+/// build workspace is on the output it was asked to build on (#166).
+pub(super) fn build_output_placement_now(
+    workspace_id: i64,
+    output: &str,
+) -> Result<BuildOutputPlacement, String> {
+    let tree = fetch_tree()?;
+    build_output_placement(&tree, workspace_id, output)
 }
 
 /// `find_workspace()` over a fresh tree: the workspace `lookup` names, by id

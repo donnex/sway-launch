@@ -1671,6 +1671,62 @@ fn build_workspace_anchor_refuses_focus_another_run_took_first() {
     }
 }
 
+// build_output_placement
+
+#[test]
+fn build_output_placement_accepts_a_workspace_already_on_the_output() {
+    let tree = two_output_tree();
+    assert_eq!(
+        build_output_placement(&tree, 2, "headless-1"),
+        Ok(BuildOutputPlacement::OnOutput)
+    );
+    assert_eq!(
+        build_output_placement(&tree, 5, "HEADLESS-2"),
+        Ok(BuildOutputPlacement::OnOutput)
+    );
+}
+
+#[test]
+fn build_output_placement_moves_an_empty_workspace_from_another_output() {
+    // #166: an empty workspace focused on the wrong output is moved.
+    let tree = two_output_tree();
+    assert_eq!(
+        build_output_placement(&tree, 3, "HEADLESS-2"),
+        Ok(BuildOutputPlacement::MoveFrom("HEADLESS-1".to_string()))
+    );
+}
+
+#[test]
+fn build_output_placement_refuses_a_workspace_with_windows_on_another_output() {
+    let tree = two_output_tree();
+    let error = build_output_placement(&tree, 2, "HEADLESS-2").expect_err("it holds a window");
+    assert!(
+        error.contains("workspace \"1: web\" is on output \"HEADLESS-1\", not \"HEADLESS-2\"")
+            && error.contains("holds 1 window(s)"),
+        "{error}"
+    );
+}
+
+#[test]
+fn build_output_placement_counts_a_floating_window_as_one_the_workspace_holds() {
+    let floating = leaf_node_value(10, Some("foot"), None);
+    let mut workspace = named_node_value(2, "workspace", "3", vec![]);
+    workspace["floating_nodes"] = serde_json::json!([floating]);
+    let left = named_node_value(1, "output", "HEADLESS-1", vec![workspace]);
+    let right = named_node_value(4, "output", "HEADLESS-2", vec![]);
+    let tree: Node = serde_json::from_value(named_node_value(0, "root", "root", vec![left, right]))
+        .expect("valid Node test fixture");
+    let error = build_output_placement(&tree, 2, "HEADLESS-2").expect_err("it holds a window");
+    assert!(error.contains("holds 1 window(s)"), "{error}");
+}
+
+#[test]
+fn build_output_placement_reports_a_workspace_that_is_gone() {
+    let error = build_output_placement(&two_output_tree(), 99, "HEADLESS-2")
+        .expect_err("no such workspace");
+    assert!(error.contains("is gone"), "{error}");
+}
+
 // position_shows
 
 #[test]

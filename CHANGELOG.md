@@ -65,6 +65,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--on-output` (and `output` in a template's `[layout]` table) is no longer silently ignored
+  alongside `--on-workspace` when that workspace already exists on another output, or your Sway
+  config assigns it to one (`workspace 3 output DP-1`). Sway switches to such a workspace where it
+  is, so the whole layout was built on the other monitor and the run still exited 0. Now an empty
+  workspace is moved to the requested output before anything launches, and one that already holds
+  windows fails the run, naming both outputs. (#166)
 - Two layouts or templates started at the same moment on different workspaces no longer build into
   one workspace while both report success. Every new window opens wherever focus is, and focus is
   one value for the whole Sway session, so the second run's switch to its workspace took focus from

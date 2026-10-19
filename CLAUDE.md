@@ -421,7 +421,10 @@ reliably. A new entry in
   `--on-workspace`/`--on-output`, each overriding its half of it) once before the first step, so the shape is built in place. Every workspace switch goes through `focus_command()`, whose `--no-auto-back-and-forth` keeps Sway's `workspace_auto_back_and_forth` from switching to the previous workspace instead (#142). It warns when that
   workspace already holds tiled windows. A launching run then records the build workspace once
   (`BuildLocation::anchor()`, deciding in `tree::build_workspace_anchor()`: the focused workspace,
-  refused unless it is the one the location names, #156) and hands it to every step as
+  refused unless it is the one the location names, #156; with both a workspace and an output,
+  `place_on_output()` then moves an empty build workspace that is on another output there and
+  confirms the move, and refuses one holding windows, deciding in `tree::build_output_placement()`,
+  #166) and hands it to every step as
   `SwayLaunch.build_workspace`, which fails a launch if focus isn't on it as the step starts or left
   it while the window opened (`focus_moved_during_launch()`, #45/#105), never against focus as
   the step started, since another run's switch in between would make both runs build there; and

@@ -18,11 +18,13 @@ use super::outcome::{
     ActionOutcome, ActionRecord, ActionStatus, LaunchOwnership, RunError, RunOutcome,
 };
 use super::query::{
-    build_workspace_anchor_now, current_move_skip_reason, ensure_con_id_target,
-    find_existing_container_id, launch_placement_problems_now, workspace_now,
+    build_output_placement_now, build_workspace_anchor_now, current_move_skip_reason,
+    ensure_con_id_target, find_existing_container_id, launch_placement_problems_now, workspace_now,
 };
 use super::target::Target;
-use super::tree::{MoveDirection, SkipReason, WorkspaceIdentity, WorkspaceLookup};
+use super::tree::{
+    BuildOutputPlacement, MoveDirection, SkipReason, WorkspaceIdentity, WorkspaceLookup,
+};
 use super::values::{Position, Size, Split, WorkspaceTarget};
 use std::io::Write;
 use std::time;
@@ -144,9 +146,15 @@ impl BuildLocation<'_> {
 
     /// The workspace the run builds on, read once right after `apply()`, and
     /// refused when it isn't the one this location names
-    /// (`tree::build_workspace_anchor()`, #156).
-    pub fn anchor(&self) -> Result<BuildWorkspace, String> {
-        build_workspace_anchor_now(self.workspace, self.output).map(BuildWorkspace)
+    /// (`tree::build_workspace_anchor()`, #156). With both a workspace and
+    /// an output, the workspace must also be on that output, or be moved
+    /// there (`place_on_output()`, #166).
+    pub fn anchor(&self, verbose: bool) -> Result<BuildWorkspace, String> {
+        let identity = build_workspace_anchor_now(self.workspace, self.output)?;
+        if let (Some(_), Some(output)) = (self.workspace, self.output) {
+            place_on_output(&identity, output, verbose)?;
+        }
+        Ok(BuildWorkspace(identity))
     }
 
     pub fn apply(&self, verbose: bool) -> Result<(), String> {
@@ -161,6 +169,54 @@ impl BuildLocation<'_> {
         }
         Ok(())
     }
+}
+
+/// Makes sure the build workspace `identity` is on `output` (#166). An
+/// existing workspace is focused on whatever output it is on, whatever
+/// `focus output` said before it: one holding no windows is moved to
+/// `output` (`move workspace to output`, which acts on the focused workspace
+/// and keeps it focused) and the move confirmed from the tree, since Sway
+/// accepts it even when it changes nothing; one holding windows is refused
+/// by `tree::build_output_placement()` before anything launches.
+fn place_on_output(
+    identity: &WorkspaceIdentity,
+    output: &str,
+    verbose: bool,
+) -> Result<(), String> {
+    let BuildOutputPlacement::MoveFrom(from) = build_output_placement_now(identity.id, output)?
+    else {
+        return Ok(());
+    };
+    let command = format!("move workspace to output {}", quote_sway_string(output));
+    if verbose {
+        diagnostic!(
+            "Workspace {:?} is on output {:?}, not {:?}; moving it",
+            super::values::escape_control_characters(&identity.name, false),
+            super::values::escape_control_characters(&from, false),
+            super::values::escape_control_characters(output, false)
+        );
+        diagnostic!(
+            "Sway command: {}",
+            super::values::escape_control_characters(&command, false)
+        );
+    }
+    run_sway_command(&command).map_err(|error| format!("{}: {}", command, error))?;
+    match build_output_placement_now(identity.id, output)? {
+        BuildOutputPlacement::OnOutput => Ok(()),
+        BuildOutputPlacement::MoveFrom(still) => Err(build_output_move_failed_message(
+            &identity.name,
+            &still,
+            output,
+        )),
+    }
+}
+
+fn build_output_move_failed_message(workspace: &str, actual: &str, output: &str) -> String {
+    format!(
+        "workspace {:?} is on output {:?}, not {:?} where this run was asked to build, and Sway \
+         didn't move it there",
+        workspace, actual, output
+    )
 }
 
 /// A layout run's build workspace, by node id (`WorkspaceIdentity`), as

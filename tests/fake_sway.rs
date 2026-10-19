@@ -3652,3 +3652,130 @@ fn launching_layout_runs_in_one_session_wait_for_each_other_up_to_their_timeout(
         "the patient run launched while the first was still running: {first_status:?}"
     );
 }
+
+/// Adds an empty output `name` with node id `id` beside the fixture's own.
+fn add_output(sway: &mut Sway, id: i64, name: &str) {
+    let mut output = sway.node(3).clone();
+    output["id"] = serde_json::json!(id);
+    output["name"] = serde_json::json!(name);
+    output["focused"] = serde_json::json!(false);
+    output["nodes"] = serde_json::json!([]);
+    output["focus"] = serde_json::json!([]);
+    sway.node_mut(1)["nodes"]
+        .as_array_mut()
+        .expect("nodes is an array")
+        .push(output);
+}
+
+/// Empties workspace `1` of the fixture's windows and focuses it, the way
+/// Sway shows a freshly created workspace.
+fn empty_the_focused_workspace(sway: &mut Sway) {
+    sway.remove(TILED);
+    sway.remove(FLOATING);
+    sway.node_mut(WORKSPACE)["focus"] = serde_json::json!([]);
+    sway.node_mut(WORKSPACE)["focused"] = serde_json::json!(true);
+}
+
+const ONE_LAUNCH_LAYOUT: &str = "[[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n";
+
+fn run_on_workspace_1_of_headless_2(fake: &FakeSway, name: &str) -> Run {
+    let layout = TempToml::write(name, ONE_LAUNCH_LAYOUT);
+    run(
+        fake,
+        &[
+            "--layout",
+            layout.to_str().unwrap(),
+            "--on-workspace",
+            "1",
+            "--on-output",
+            "HEADLESS-2",
+        ],
+    )
+}
+
+fn launches_sent(fake: &FakeSway) -> usize {
+    fake.commands()
+        .iter()
+        .filter(|command| command.starts_with("exec "))
+        .count()
+}
+
+#[test]
+fn a_build_workspace_with_windows_on_another_output_fails_before_launching() {
+    // #166: `focus output` only decides where a new workspace is created;
+    // an existing one is focused where it is. Workspace 1 already holds
+    // windows on HEADLESS-1, so the run used to build there and exit 0.
+    let fake = FakeSway::accepting_everything(SwayVersion::V1_11);
+    add_output(&mut fake.sway(), 60, "HEADLESS-2");
+    let run = run_on_workspace_1_of_headless_2(&fake, "occupied-elsewhere");
+    assert!(!run.succeeded(), "{}", run.json);
+    assert!(
+        run.error()
+            .contains("workspace \"1\" is on output \"HEADLESS-1\", not \"HEADLESS-2\"")
+            && run.error().contains("holds 2 window(s)"),
+        "{}",
+        run.error()
+    );
+    assert_eq!(launches_sent(&fake), 0, "{:?}", fake.commands());
+    assert!(
+        !fake
+            .commands()
+            .iter()
+            .any(|command| command.starts_with("move workspace")),
+        "{:?}",
+        fake.commands()
+    );
+}
+
+#[test]
+fn an_empty_build_workspace_on_another_output_is_moved_there_first() {
+    // #166: an empty workspace focused on the wrong output (an existing one,
+    // or one a config `workspace 1 output ...` line created there) is moved
+    // to the requested output before anything launches.
+    let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {
+        if command == "move workspace to output \"HEADLESS-2\"" {
+            let workspace = sway.remove(WORKSPACE);
+            sway.node_mut(60)["nodes"]
+                .as_array_mut()
+                .expect("nodes is an array")
+                .push(workspace);
+        } else if command.starts_with("exec ") {
+            let token = sway.launch(command);
+            sway.when_marked(token, |sway, pid| {
+                let id = sway.open_window(Some("fake-app"), Some(pid));
+                sway.emit("new", id);
+            });
+        }
+        Ok(())
+    });
+    add_output(&mut fake.sway(), 60, "HEADLESS-2");
+    empty_the_focused_workspace(&mut fake.sway());
+    let run = run_on_workspace_1_of_headless_2(&fake, "empty-elsewhere");
+    assert!(run.succeeded(), "{}", run.stderr());
+    let commands = fake.commands();
+    let moved = commands
+        .iter()
+        .position(|command| command == "move workspace to output \"HEADLESS-2\"")
+        .unwrap_or_else(|| panic!("never moved: {commands:?}"));
+    let launched = commands
+        .iter()
+        .position(|command| command.starts_with("exec "))
+        .unwrap_or_else(|| panic!("never launched: {commands:?}"));
+    assert!(moved < launched, "{commands:?}");
+    assert_eq!(fake.sway().workspace_of(100), WORKSPACE);
+}
+
+#[test]
+fn a_build_workspace_move_sway_accepts_but_never_makes_fails_the_run() {
+    let fake = FakeSway::accepting_everything(SwayVersion::V1_11);
+    add_output(&mut fake.sway(), 60, "HEADLESS-2");
+    empty_the_focused_workspace(&mut fake.sway());
+    let run = run_on_workspace_1_of_headless_2(&fake, "move-never-made");
+    assert!(!run.succeeded(), "{}", run.json);
+    assert!(
+        run.error().contains("and Sway didn't move it there"),
+        "{}",
+        run.error()
+    );
+    assert_eq!(launches_sent(&fake), 0, "{:?}", fake.commands());
+}

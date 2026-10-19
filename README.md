@@ -617,7 +617,11 @@ output = "HDMI-A-1"
 ```
 
 The run switches to that workspace before the first step, focusing the output first so a new
-workspace is created there, and builds the whole shape in place. The command-line options win over
+workspace is created there, and builds the whole shape in place. A workspace that already exists
+on another output, or that your Sway config assigns to one (`workspace 3 output DP-1`), is switched
+to where it is, so with both set the run checks where it landed: an empty one is moved to the
+requested output (`move workspace to output`) before anything launches, and one that already holds
+windows fails the run, naming both outputs, rather than building on the wrong monitor. The command-line options win over
 the table. A step's own `workspace`/`output` still moves that one window afterwards. A binding's
 `workspace`/`workspace_number`/`output` replaces the step's, so a built-in that places windows on
 fixed workspaces or outputs works on your setup without copying the file:

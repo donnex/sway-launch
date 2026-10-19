@@ -459,8 +459,9 @@ pub(super) fn unnamed_build_workspace<'a>(
 /// the other run's workspace this run's build workspace, and both would
 /// build there, each reporting success. A named workspace is checked by
 /// `WorkspaceTarget::matches()`; with only an output, the workspace must be
-/// on that output (with both, the workspace wins: an existing workspace on
-/// another output is focused where it is).
+/// on that output (with both, the workspace wins here: an existing workspace
+/// on another output is focused where it is, and `build_output_placement()`
+/// then decides what to do about it, #166).
 pub(super) fn build_workspace_anchor(
     tree: &Node,
     workspace: Option<WorkspaceTarget>,
@@ -496,6 +497,51 @@ pub(super) fn build_workspace_anchor(
             name,
         }),
     }
+}
+
+/// What a run naming both a workspace and an output finds once it switched
+/// there (#166): `focus output` only decides where a *new* workspace is
+/// created, so a workspace that already existed on another output, or that
+/// the user's Sway config assigns to one, is focused where it is.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum BuildOutputPlacement {
+    /// The build workspace is on the requested output.
+    OnOutput,
+    /// The build workspace is on this other output and holds no windows, so
+    /// it can be moved to the requested one.
+    MoveFrom(String),
+}
+
+/// Where the build workspace `workspace_id` is relative to the requested
+/// `output` (names compared ignoring case, as Sway does). One that is on
+/// another output and holds any window, tiled or floating, is refused naming
+/// both outputs: moving it would carry those windows along, and building
+/// around them where it is would ignore the output the run was asked for.
+pub(super) fn build_output_placement(
+    tree: &Node,
+    workspace_id: i64,
+    output: &str,
+) -> Result<BuildOutputPlacement, String> {
+    let path = ancestors_of(tree, workspace_id)
+        .ok_or_else(|| "the workspace this run switched to build on is gone".to_string())?;
+    let workspace = path[path.len() - 1];
+    let name = workspace.name.as_deref().unwrap_or_default();
+    let actual = name_of_nearest(&path, NodeType::Output).unwrap_or_default();
+    if actual.eq_ignore_ascii_case(output) {
+        return Ok(BuildOutputPlacement::OnOutput);
+    }
+    let windows = descendants(workspace)
+        .filter(|node| is_window(node))
+        .count();
+    if windows == 0 {
+        return Ok(BuildOutputPlacement::MoveFrom(actual));
+    }
+    Err(format!(
+        "workspace {:?} is on output {:?}, not {:?} where this run was asked to build: it already \
+         existed there (or your Sway config assigns it there), and it holds {} window(s), so it \
+         can't be moved — close or move them, or build on another workspace",
+        name, actual, output, windows
+    ))
 }
 
 /// The workspace named `name`, compared ignoring case as Sway does.

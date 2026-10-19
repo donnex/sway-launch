@@ -9376,6 +9376,104 @@ fn on_output_builds_a_layout_on_that_output() {
 }
 
 #[test]
+fn on_output_refuses_a_build_workspace_holding_windows_on_another_output() {
+    // #166: `focus output` only decides where a new workspace is created, so
+    // an existing one is focused where it is. One holding windows on another
+    // output fails the run before anything launches, naming both outputs.
+    let workspace = fresh_workspace();
+    let mut connection = connect();
+    let (_occupant, _occupant_guard) = launch_foot(&[]);
+    let created_output = CreatedOutput::new(&mut connection);
+    let new_output = created_output.name().to_string();
+    let path = TempToml::write(
+        "on-output-occupied-elsewhere",
+        "[[step]]\ncommand = \"foot\"\napp_id = \"foot\"\n",
+    );
+    let windows_before = count_app_id_windows(&connection.get_tree().expect("get_tree"), "foot");
+
+    let output = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--on-workspace",
+            &workspace,
+            "--on-output",
+            &new_output,
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "workspace \\\"{workspace}\\\" is on output \\\"{}\\\", not \\\"{new_output}\\\"",
+            original_output()
+        )) && stderr.contains("holds 1 window(s)"),
+        "{stderr}"
+    );
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        count_app_id_windows(&tree, "foot"),
+        windows_before,
+        "nothing launched"
+    );
+}
+
+#[test]
+fn on_output_moves_an_empty_build_workspace_its_config_assigns_elsewhere() {
+    // #166: a config `workspace <name> output <output>` line creates the
+    // build workspace on the other output, empty, whatever output was
+    // focused first; the run moves it to the requested output and builds
+    // there.
+    let workspace = format!("{}-assigned", fresh_workspace());
+    let mut connection = connect();
+    run_command_ok(
+        &mut connection,
+        &format!("workspace \"{workspace}\" output {}", original_output()),
+    );
+    let created_output = CreatedOutput::new(&mut connection);
+    let new_output = created_output.name().to_string();
+    let path = TempToml::write(
+        "on-output-assigned-elsewhere",
+        "[[step]]\ncommand = \"foot\"\napp_id = \"foot\"\n",
+    );
+
+    let output = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--on-workspace",
+            &workspace,
+            "--on-output",
+            &new_output,
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("--json output should be valid JSON");
+    let container_id = json["container_ids"][0]
+        .as_i64()
+        .unwrap_or_else(|| panic!("no container id in {json}"));
+    let _guard = KillOnDrop(container_id);
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        workspace_containing(&tree, container_id, None),
+        Some(workspace.as_str())
+    );
+    assert_eq!(
+        output_containing(&tree, container_id, None),
+        Some(new_output.as_str())
+    );
+}
+
+#[test]
 fn on_workspace_number_builds_a_layout_on_the_numbered_workspace() {
     fresh_workspace();
     let mut connection = connect();
