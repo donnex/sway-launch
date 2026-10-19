@@ -9354,13 +9354,13 @@ fn continue_on_timeout_moves_a_slow_step_s_late_window_to_the_scratchpad() {
     let mut connection = connect();
     let layout = TempToml::write(
         "continue-on-timeout-late-window",
-        "[[step]]\nid = \"one\"\ncommand = \"foot --app-id=live-late -T one\"\n\
+        "[[step]]\nid = \"one\"\ncommand = \"foot --app-id=live-late -T one sleep 60\"\n\
          app_id = \"live-late\"\nsplit = \"v\"\n\n\
-         [[step]]\nid = \"slow\"\ncommand = \"sleep 1.5 && foot --app-id=live-late -T slow\"\n\
+         [[step]]\nid = \"slow\"\ncommand = \"sleep 1.5 && foot --app-id=live-late -T slow sleep 60\"\n\
          app_id = \"live-late\"\ntimeout = 1\n\n\
-         [[step]]\nid = \"three\"\ncommand = \"sleep 2 && foot --app-id=live-late -T three\"\n\
+         [[step]]\nid = \"three\"\ncommand = \"sleep 2 && foot --app-id=live-late -T three sleep 60\"\n\
          app_id = \"live-late\"\nsplit = \"h\"\n\n\
-         [[step]]\nid = \"four\"\ncommand = \"foot --app-id=live-late -T four\"\n\
+         [[step]]\nid = \"four\"\ncommand = \"foot --app-id=live-late -T four sleep 60\"\n\
          app_id = \"live-late\"\n",
     );
 
