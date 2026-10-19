@@ -415,7 +415,11 @@ struct Args {
 
     /// Commands for the template's slots, comma-separated, in slot order
     ///
-    /// Requires --template; conflicts with --bindings.
+    /// Each slot launches with no app_id/class filter, so its window is the
+    /// first new one that can't be traced to another launch. For an
+    /// application that may already be running (most browsers and editors),
+    /// use --bindings with app_id/class instead. Requires --template;
+    /// conflicts with --bindings.
     #[clap(long, conflicts_with = "bindings", help_heading = HEADING_LAYOUTS,
         verbatim_doc_comment)]
     apps: Option<String>,

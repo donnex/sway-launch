@@ -249,8 +249,9 @@ copy, and the window it opens can't be traced back to this launch, so `sway-laun
 the first new window that appears within a short grace period. Without a filter that can be any
 window (a notification, another application finishing its own start), and every action then lands
 on it. With `-a`/`-c` only the right application's window can match. The same goes for
-`app_id`/`class` in a layout step or a template binding. `--verbose` points it out when an
-unfiltered launch was matched that way.
+`app_id`/`class` in a layout step or a template binding. `--apps` has no way to set either, so
+fill a template with `--bindings` when one of its applications might already be running.
+`--verbose` points it out when an unfiltered launch was matched that way.
 
 `--app-id` and `--class` can't be combined: a native Wayland application has an `app_id` and no
 `class`; one running under XWayland has a `class` and no `app_id`. Both compare the whole value
@@ -550,8 +551,12 @@ sway-launch --template template.toml --apps code,foot
 ```
 
 `--apps` splits on plain commas, with no escaping, and trims each entry, so a command that itself
-contains a comma needs `--bindings` instead. A bindings file gives each slot its own entry,
-including matching an already-open window instead of launching one:
+contains a comma needs `--bindings` instead. It also launches every slot **with no `app_id`/`class`
+filter**, so when an application may already be running (an editor or browser that hands the
+request to its open copy), a slot can take whichever new window appears first; see
+[Matching the right window](#matching-the-right-window). Use `--bindings` with `app_id`/`class`
+for such a slot. A bindings file gives each slot its own entry, including the filter, or matching
+an already-open window instead of launching one:
 
 ```toml
 [[binding]]
@@ -641,7 +646,7 @@ width = "{stack-width}"
 in a bindings file, with `--param` winning over both:
 
 ```shell
-sway-launch --template master-dual-stack --apps code,foot,foot --param stack-width=40ppt
+sway-launch --template master-dual-stack --apps foot,foot,foot --param stack-width=40ppt
 ```
 
 A value is a plain substitution: there are no expressions, and a param can't stand for part of a
@@ -1160,7 +1165,7 @@ holding tiled windows, or one with a window your Sway config placed elsewhere (s
 [Templates](#templates)), adds a `warnings` list:
 
 ```console
-$ sway-launch --template quad-grid --apps foot,foot,code,foot --json
+$ sway-launch --template quad-grid --apps foot,foot,foot,foot --json
 {"actions":[{"command":"splith","kind":"split","status":"changed","step":1},{"command":"splitv","kind":"split","status":"changed","step":2},{"command":"move down","kind":"new_row","status":"changed","step":3},{"command":"splith","kind":"split","status":"changed","step":3}],"container_ids":[437,438,439,440],"containers":{"bottom-left":439,"bottom-right":440,"top-left":437,"top-right":438}}
 ```
 
@@ -1224,8 +1229,8 @@ launching anything or touching Sway, so it works with no Sway session at all. It
 command or a layout or template:
 
 ```console
-$ sway-launch --template master-triple-stack --apps code,foot,foot,foot --dry-run
-1. launch code
+$ sway-launch --template master-triple-stack --apps foot,foot,foot,foot --dry-run
+1. launch foot
 2. splith
 3. launch foot
 4. splitv, resize set width 30ppt
