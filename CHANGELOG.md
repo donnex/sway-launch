@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-19
+
+Mostly the outcome of a four-run code review: six security fixes, a handful of new flags and
+warnings, and a long list of fixes, plus internal restructuring and test work not listed here.
+
 ### Security
 
 - `--env` values (and a step's or binding's `env`) are no longer readable by every local user while
@@ -130,8 +135,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `--concurrent` run now says when a launch may still open its window on the run's hidden
   staging workspace, where the README promised no window was ever left. A launch that timed out or
   was interrupted before its window appeared has nothing to bring back, and an application slower
-  than the run opens its window there afterwards, out of sight. The run now names each such step when it ends, with a warning on stderr and under
-  `--json`'s new `unresolved_launches` field (`step`, `staging_workspace`), on failure and on a
+  than the run opens its window there afterwards, out of sight. The run now names each such step
+  when it ends, with a warning on stderr and under `--json`'s new `unresolved_launches` field (`step`, `staging_workspace`), on failure and on a
   `--continue-on-timeout` run alike; under `--rollback-on-error` such a launch still watches 2 more
   seconds for its window and closes it. (#126)
 - Under `--continue-on-timeout`, a slow application's window no longer joins the layout after its
@@ -158,7 +163,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`-` in the table, `null` in `--json`). (#174)
 - A `--continue-on-timeout` run with a timed-out step no longer exits 0 when stdout is closed early.
   Piped into a reader that stops after the first line (`sway-launch --layout ... | head -n1`
-  under `set -o pipefail`), the run reported success even though its layout was incomplete; it now exits 1 as it does with stdout open, with or without `--json`. (#165)
+  under `set -o pipefail`), the run reported success even though its layout was incomplete; it now
+  exits 1 as it does with stdout open, with or without `--json`. (#165)
 - A `SWAYSOCK` left stale by a Sway restart, as a tmux or screen session keeps it, no longer
   ends in "is this running inside a Sway session?". When the socket it names isn't there, the error
   now says the variable is out of date and names the running Sway's socket to export instead. With
