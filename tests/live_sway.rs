@@ -1147,10 +1147,11 @@ fn ancestor_command_lines(pid: u32) -> Vec<String> {
 fn a_binding_s_cwd_and_env_reach_its_slot_s_launched_command() {
     fresh_workspace();
     // A bindings file's cwd/env (#113) go through the same launch setup as
-    // --cwd/--env, checked against the bindings file in resolve() (#157).
+    // --cwd/--env, checked against the bindings file in resolve() (#157). A
+    // relative cwd is the bindings file's own directory, not the caller's
+    // (#176), so the run starts from somewhere else.
     let temp_dir = TestTempDir::new();
-    let project_directory = temp_dir.join("binding-project");
-    std::fs::create_dir_all(&project_directory).expect("failed to create the directory");
+    let caller_directory = TestTempDir::new();
     let working_directory_file = temp_dir.join("binding-working-directory");
     let environment_file = temp_dir.join("binding-environment");
     let launched_command = format!(
@@ -1164,11 +1165,14 @@ fn a_binding_s_cwd_and_env_reach_its_slot_s_launched_command() {
             "[[binding]]\nslot = \"top\"\ncommand = {launched_command:?}\ncwd = {:?}\n\
              env = {{ SWAY_LAUNCH_LIVE_TEST_ENV = \"a value, with; syntax\" }}\n\n\
              [[binding]]\nslot = \"bottom\"\ncommand = \"foot\"\n",
-            project_directory.to_str().unwrap()
+            "binding-project"
         ),
     );
+    let project_directory = bindings.parent().unwrap().join("binding-project");
+    std::fs::create_dir(&project_directory).expect("failed to create the directory");
 
     let output = sway_launch_command()
+        .current_dir(&*caller_directory)
         .args([
             "--template",
             "dual-column",

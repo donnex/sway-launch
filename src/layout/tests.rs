@@ -598,3 +598,53 @@ fn to_sway_launch_carries_settle_and_refuses_it_without_geometry() {
         Some("settle: needs a height or width in px, or a position, to hold".to_string())
     );
 }
+
+#[test]
+fn anchor_cwds_anchors_each_step_s_relative_cwd_to_the_file_s_directory() {
+    // #176: the layout's directory, not the caller's, is what a relative
+    // cwd means; ~, absolute and absent cwds are left alone.
+    let mut layout = parse(
+        r#"
+            [[step]]
+            command = "foot"
+            cwd = "src"
+
+            [[step]]
+            command = "foot"
+            cwd = "~/notes"
+
+            [[step]]
+            command = "foot"
+            cwd = "/srv"
+
+            [[step]]
+            command = "foot"
+        "#,
+    )
+    .unwrap();
+    layout
+        .anchor_cwds(Path::new("/home/example-user/site"))
+        .unwrap();
+    let cwds: Vec<Option<&str>> = layout.step.iter().map(|step| step.cwd.as_deref()).collect();
+    assert_eq!(
+        cwds,
+        [
+            Some("/home/example-user/site/src"),
+            Some("~/notes"),
+            Some("/srv"),
+            None
+        ]
+    );
+}
+
+#[test]
+fn anchor_cwds_names_the_step_whose_cwd_it_cannot_anchor() {
+    use std::os::unix::ffi::OsStrExt;
+    let mut layout =
+        parse("[[step]]\ncommand = \"foot\"\n\n[[step]]\ncommand = \"foot\"\ncwd = \"src\"\n")
+            .unwrap();
+    let error = layout
+        .anchor_cwds(Path::new(std::ffi::OsStr::from_bytes(b"/tmp/\xff")))
+        .unwrap_err();
+    assert!(error.starts_with("step 2: cwd: "), "{error}");
+}

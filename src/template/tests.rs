@@ -1751,3 +1751,46 @@ fn resolve_lets_a_binding_set_its_slot_s_settle() {
         "{error:?}"
     );
 }
+
+#[test]
+fn anchor_cwds_anchors_each_binding_s_relative_cwd_to_the_file_s_directory() {
+    // #176: a bindings file's relative cwd is the bindings file's.
+    let mut bindings = parse_bindings(
+        r#"
+            [[binding]]
+            slot = "left"
+            command = "foot"
+            cwd = "src"
+
+            [[binding]]
+            slot = "right"
+            command = "foot"
+            cwd = "~"
+        "#,
+    )
+    .unwrap();
+    bindings
+        .anchor_cwds(Path::new("/home/example-user/site"))
+        .unwrap();
+    let cwds: Vec<Option<&str>> = bindings
+        .binding
+        .iter()
+        .map(|binding| binding.cwd.as_deref())
+        .collect();
+    assert_eq!(cwds, [Some("/home/example-user/site/src"), Some("~")]);
+}
+
+#[test]
+fn anchor_cwds_names_the_slot_whose_cwd_it_cannot_anchor() {
+    use std::os::unix::ffi::OsStrExt;
+    let mut bindings =
+        parse_bindings("[[binding]]\nslot = \"left\"\ncommand = \"foot\"\ncwd = \"src\"\n")
+            .unwrap();
+    let error = bindings
+        .anchor_cwds(Path::new(std::ffi::OsStr::from_bytes(b"/tmp/\xff")))
+        .unwrap_err();
+    assert!(
+        error.starts_with("binding for slot \"left\": cwd: "),
+        "{error}"
+    );
+}

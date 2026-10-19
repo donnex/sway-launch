@@ -1092,6 +1092,50 @@ fn a_step_s_cwd_and_env_appear_in_the_preview_and_need_a_command() {
 }
 
 #[test]
+fn a_relative_cwd_in_a_layout_file_resolves_against_the_file_s_directory() {
+    // #176: the same file previews (and runs) the same directory whichever
+    // directory it's run from; a layout read from stdin has no directory of
+    // its own, so it keeps the caller's, like --cwd.
+    let layout_directory = common::TestTempDir::new();
+    fs::create_dir(layout_directory.join("project")).unwrap();
+    let layout_path = layout_directory.join("layout.toml");
+    let layout = "[[step]]\ncommand = \"foot\"\ncwd = \"project\"\n";
+    fs::write(&layout_path, layout).unwrap();
+    let caller_directory = common::TestTempDir::new();
+    fs::create_dir(caller_directory.join("project")).unwrap();
+
+    let output = sway_launch()
+        .current_dir(&*caller_directory)
+        .args(["--layout", layout_path.to_str().unwrap(), "--dry-run"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(output.status.success(), "{output:?}");
+    let expected = layout_directory.canonicalize().unwrap().join("project");
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains(&format!("launch cd '{}' && foot", expected.display())),
+        "{output:?}"
+    );
+
+    let mut child = sway_launch()
+        .current_dir(&*caller_directory)
+        .args(["--layout", "-", "--dry-run"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to run sway-launch binary");
+    std::io::Write::write_all(&mut child.stdin.take().unwrap(), layout.as_bytes()).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let expected = caller_directory.canonicalize().unwrap().join("project");
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains(&format!("launch cd '{}' && foot", expected.display())),
+        "{output:?}"
+    );
+}
+
+#[test]
 fn validate_and_dry_run_accept_a_cwd_missing_on_this_machine() {
     // #146: a file checked in CI or a dotfiles repository names a directory
     // that exists only where it is run for real.

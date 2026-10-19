@@ -1444,6 +1444,18 @@ fn read_input(path: &Path) -> std::io::Result<String> {
     }
 }
 
+/// The directory a `--layout`/`--bindings` file's relative `cwd` is
+/// anchored to (#176): the file's canonical parent, so a symlinked file
+/// resolves against where it really lives. `None` for stdin, which has no
+/// directory and keeps resolving against the caller's.
+fn input_directory(path: &Path) -> Result<Option<PathBuf>, String> {
+    if is_stdin(path) {
+        return Ok(None);
+    }
+    let canonical = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
+    Ok(canonical.parent().map(Path::to_path_buf))
+}
+
 /// Reads and parses a `--layout` file, then hands its steps to `run_steps()`.
 fn run_layout(path: &Path, args: &Args) -> ! {
     let contents = match read_input(path) {
@@ -1451,10 +1463,16 @@ fn run_layout(path: &Path, args: &Args) -> ! {
         Err(error) => fail(args.json, &format!("{}: {}", input_label(path), error)),
     };
 
-    let parsed_layout = match layout::parse(&contents) {
+    let mut parsed_layout = match layout::parse(&contents) {
         Ok(parsed_layout) => parsed_layout,
         Err(error) => fail(args.json, &format!("{}: {}", input_label(path), error)),
     };
+    if let Err(error) = input_directory(path).and_then(|directory| match directory {
+        Some(directory) => parsed_layout.anchor_cwds(&directory),
+        None => Ok(()),
+    }) {
+        fail(args.json, &format!("{}: {}", input_label(path), error));
+    }
 
     let build = sway_launch::BuildLocation {
         workspace: on_workspace(args),
@@ -1798,13 +1816,24 @@ fn run_template(path: &Path, bindings_source: BindingsSource, args: &Args) -> ! 
                     &format!("{}: {}", input_label(bindings_path), error),
                 ),
             };
-            match template::parse_bindings(&contents) {
+            let mut bindings = match template::parse_bindings(&contents) {
                 Ok(bindings) => bindings,
                 Err(error) => fail(
                     args.json,
                     &format!("{}: {}", input_label(bindings_path), error),
                 ),
+            };
+            if let Err(error) = input_directory(bindings_path).and_then(|directory| match directory
+            {
+                Some(directory) => bindings.anchor_cwds(&directory),
+                None => Ok(()),
+            }) {
+                fail(
+                    args.json,
+                    &format!("{}: {}", input_label(bindings_path), error),
+                );
             }
+            bindings
         }
         BindingsSource::Apps(apps) => match bindings_from_apps(&parsed_template, apps) {
             Ok(bindings) => bindings,

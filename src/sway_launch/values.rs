@@ -1100,16 +1100,43 @@ pub fn parse_env_assignment(value: &str) -> Result<(String, String), String> {
     Ok((name.to_string(), assigned.to_string()))
 }
 
+/// The rest of a `~` or `~/...` path, the home-directory form
+/// `resolve_launch_directory()` expands; `None` for any other value (a
+/// `~user` path included, which is an ordinary relative name).
+fn home_relative(value: &str) -> Option<&str> {
+    value
+        .strip_prefix('~')
+        .filter(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
+/// A layout or bindings file's `cwd` anchored to the file's own directory
+/// (#176): a relative value is joined onto `file_directory`, so the file
+/// starts its command in the same place whichever directory runs it (from a
+/// keybinding, that's Sway's). A `~` or absolute value comes back unchanged.
+/// Applied once, as the file is read; `--cwd` and a file read from stdin
+/// keep resolving against the caller's directory.
+pub fn anchor_launch_directory(value: &str, file_directory: &Path) -> Result<String, String> {
+    if home_relative(value).is_some() || Path::new(value).is_absolute() {
+        return Ok(value.to_string());
+    }
+    let anchored = file_directory.join(value);
+    anchored
+        .to_str()
+        .map(str::to_string)
+        .ok_or_else(|| format!("cwd: {} is not valid UTF-8", anchored.display()))
+}
+
 /// The directory a launched command starts in (`--cwd`/`cwd`, #113): a
 /// leading `~` is the home directory and a relative path is relative to the
-/// caller's working directory. With `DirectoryCheck::Exists` it must also be
+/// caller's working directory (a file's `cwd` was already anchored to the
+/// file by `anchor_launch_directory()`). With `DirectoryCheck::Exists` it must also be
 /// an existing directory, checked here so a real run fails before anything
 /// launches. `--validate` and `--dry-run` pass `DirectoryCheck::FormatOnly`
 /// (#146): they check a file meant for another machine too (CI, a dotfiles
 /// repository), where `~/projects/website` needn't exist.
 fn resolve_launch_directory(value: &str, check: DirectoryCheck) -> Result<PathBuf, String> {
-    let expanded = match value.strip_prefix('~') {
-        Some(rest) if rest.is_empty() || rest.starts_with('/') => {
+    let expanded = match home_relative(value) {
+        Some(rest) => {
             let home = std::env::var_os("HOME")
                 .ok_or_else(|| "~ needs $HOME, which isn't set".to_string())?;
             PathBuf::from(home).join(rest.trim_start_matches('/'))

@@ -184,7 +184,10 @@ what it rejects and why:
   command string", by decision.
 - `launch_setup()` — `--cwd`/`--env` and a step's or binding's `cwd`/`env` (#113): the directory is
   resolved (`~`, relative to the caller's directory, must exist; `DirectoryCheck::FormatOnly` under
-  `--validate`/`--dry-run` skips only the existence check, #146), then both are rendered as a
+  `--validate`/`--dry-run` skips only the existence check, #146; a layout or bindings file's
+  relative `cwd` was already joined onto the file's canonical directory as `main()` read it, by
+  `anchor_launch_directory()`, #176, so nothing later knows it came from a file, while stdin keeps
+  the caller's), then both are rendered as a
   `cd '…' && export NAME='…'` prefix with `render_argv()`'s quoting, carried as
   `SwayLaunch.launch_setup`. At launch, `SetupFile::write()` puts it in a 0600 file under
   `$XDG_RUNTIME_DIR/sway-launch/` and `ExecAction::sway_command()` puts only `. '<file>' && rm -f

@@ -237,8 +237,13 @@ that ran `sway-launch`:
 relative to where you run `sway-launch`, and it must exist when the command launches; `--validate`
 and `--dry-run` check only its format), and `--env KEY=VALUE` (repeatable)
 sets a variable for it. A layout step or binding takes the same as `cwd = "~/project"` and
-`env = { GDK_BACKEND = "x11" }`. Both apply only to a launched command, and a value can't contain a
-`$`, which Sway would replace with one of its config variables.
+`env = { GDK_BACKEND = "x11" }`, except that a relative `cwd` in a file is relative to the file's
+own directory (after following a symlink to it), so the file starts its commands in the same place
+whether you run it from a terminal or from a Sway keybinding. A file read from stdin (`-`) has no
+directory, so its relative `cwd` is relative to where you run `sway-launch`, like `--cwd`. A
+relative `command` path is still found the usual way (see above), not next to the file. Both apply
+only to a launched command, and a value can't contain a `$`, which Sway would replace with one of
+its config variables.
 
 The variables and the directory don't go on the launch's command line, which every local user can
 read (`ps`, `/proc/<pid>/cmdline`) for as long as the program runs. `sway-launch` writes them to a
@@ -479,7 +484,9 @@ A step's keys mirror the CLI flags of the same name: `cwd`, `env`, `app_id`, `cl
 `mark_match`, `title`, `con_id`, `existing`, `wait`, `split`, `floating`, `sticky`, `fullscreen`,
 `focus`, `mark`, `new_column`, `new_row`, `workspace`, `workspace_number`, `output`, `height`,
 `width`, `position`, `settle`, `scratchpad`, `timeout`, `wait_time`, and `sway_commands` (a list,
-one `--sway-command` per entry). Each is validated the same way as its flag, and a step without its
+one `--sway-command` per entry). Each is validated the same way as its flag, except that a
+relative `cwd` is relative to the layout file's directory rather than yours (see
+[Launching a command](#launching-a-command)), and a step without its
 own `timeout`/`wait_time` takes the command line's `--timeout`/`--wait-time`. A step's `command` is
 checked against the same Sway-parsing rules as the command line's (see
 [Launching a command](#launching-a-command)), so `--validate` catches an unquoted `,`/`;` or an
@@ -586,7 +593,7 @@ sway-launch --template template.toml --bindings bindings.toml
 
 A binding takes the keys that choose a window, as a layout step does (`command`, `con_id`,
 `existing`, `wait`, `app_id`, `class`, `mark_match`, `title`, with exactly one of
-`command`/`con_id`/`existing = true`), plus the launch's `cwd` and `env`. It can also replace the
+`command`/`con_id`/`existing = true`), plus the launch's `cwd` (a relative one is relative to the bindings file) and `env`. It can also replace the
 step's `workspace`/`workspace_number`/`output` (where the window goes), `timeout`/`wait_time` (so
 the slot a slow application fills can wait longer than the rest) and `settle` (so the slot a browser
 fills can hold its size, see [Settle](#settle)). Besides its bindings and `[params]`, a bindings

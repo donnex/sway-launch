@@ -742,6 +742,41 @@ fn resolve_launch_directory_expands_home_and_keeps_absolute_paths() {
 }
 
 #[test]
+fn anchor_launch_directory_joins_only_a_relative_path_onto_the_file_s_directory() {
+    // #176: a file's relative cwd is the file's, whoever runs it; ~ and
+    // absolute paths already say where they are.
+    let file_directory = Path::new("/home/example-user/projects/site");
+    assert_eq!(
+        anchor_launch_directory("src", file_directory),
+        Ok("/home/example-user/projects/site/src".to_string())
+    );
+    assert_eq!(
+        anchor_launch_directory("../other", file_directory),
+        Ok("/home/example-user/projects/site/../other".to_string())
+    );
+    // ~user isn't the home-directory form, so it's an ordinary name here,
+    // as resolve_launch_directory() treats it.
+    assert_eq!(
+        anchor_launch_directory("~example-user", file_directory),
+        Ok("/home/example-user/projects/site/~example-user".to_string())
+    );
+    for unchanged in ["~", "~/projects", "/srv/site"] {
+        assert_eq!(
+            anchor_launch_directory(unchanged, file_directory),
+            Ok(unchanged.to_string())
+        );
+    }
+}
+
+#[test]
+fn anchor_launch_directory_refuses_a_file_directory_that_is_not_utf8() {
+    use std::os::unix::ffi::OsStrExt;
+    let file_directory = Path::new(std::ffi::OsStr::from_bytes(b"/tmp/\xff"));
+    let error = anchor_launch_directory("src", file_directory).unwrap_err();
+    assert!(error.contains("is not valid UTF-8"), "{error}");
+}
+
+#[test]
 fn parse_workspace_number_accepts_a_whole_number_from_zero() {
     assert_eq!(parse_workspace_number("2"), Ok(2));
     assert_eq!(parse_workspace_number("0"), Ok(0));

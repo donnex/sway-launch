@@ -1,6 +1,7 @@
 use crate::sway_launch::{self, Split};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::path::Path;
 use std::time;
 
 /// A step's or binding's `command`: a string, sent to Sway's `exec` as
@@ -141,6 +142,23 @@ pub struct LayoutStep {
 /// to the caller.
 pub fn parse(contents: &str) -> Result<Layout, String> {
     toml::from_str(contents).map_err(|error| error.to_string())
+}
+
+impl Layout {
+    /// Anchors every step's relative `cwd` to `file_directory`, the layout
+    /// file's own directory (#176; see `anchor_launch_directory()`). Not
+    /// called for a layout read from stdin, which has no directory.
+    pub fn anchor_cwds(&mut self, file_directory: &Path) -> Result<(), String> {
+        for (index, step) in self.step.iter_mut().enumerate() {
+            if let Some(cwd) = &step.cwd {
+                step.cwd = Some(
+                    sway_launch::anchor_launch_directory(cwd, file_directory)
+                        .map_err(|error| format!("step {}: {}", index + 1, error))?,
+                );
+            }
+        }
+        Ok(())
+    }
 }
 
 impl LayoutStep {

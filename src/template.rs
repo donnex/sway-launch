@@ -3,6 +3,7 @@ use crate::sway_launch::{self, Split};
 use include_dir::{include_dir, Dir};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::Path;
 
 /// The contents of `templates/` at compile time — the single source of
 /// truth for both the shipped example files and the built-in templates
@@ -380,6 +381,24 @@ pub struct Bindings {
     /// applications and so can't know whether they're safe to launch at once.
     #[serde(default)]
     pub concurrent: bool,
+}
+
+impl Bindings {
+    /// Anchors every binding's relative `cwd` to `file_directory`, the
+    /// bindings file's own directory (#176; see `anchor_launch_directory()`).
+    /// Not called for `--apps` or a bindings file read from stdin.
+    pub fn anchor_cwds(&mut self, file_directory: &Path) -> Result<(), String> {
+        for binding in &mut self.binding {
+            if let Some(cwd) = &binding.cwd {
+                binding.cwd = Some(
+                    sway_launch::anchor_launch_directory(cwd, file_directory).map_err(|error| {
+                        format!("binding for slot {:?}: {}", binding.slot, error)
+                    })?,
+                );
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Parses a template file's contents. Kept separate from reading the file

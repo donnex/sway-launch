@@ -1762,6 +1762,44 @@ fn a_launch_runs_in_its_cwd_with_its_env() {
 }
 
 #[test]
+fn a_layout_s_relative_cwd_is_the_layout_file_s_not_the_caller_s() {
+    // #176: run from a keybinding, the caller's directory is Sway's, so a
+    // file's relative cwd has to mean the file's own directory.
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        launches_recording_what_the_process_saw(sender),
+    );
+    let layout_directory = TestTempDir::new();
+    std::fs::create_dir(layout_directory.join("project")).unwrap();
+    let layout = layout_directory.join("layout.toml");
+    std::fs::write(
+        &layout,
+        "[[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\ncwd = \"project\"\n",
+    )
+    .unwrap();
+    let caller_directory = TestTempDir::new();
+    let output = fake
+        .sway_launch()
+        .current_dir(&*caller_directory)
+        .args(["--layout", layout.to_str().unwrap()])
+        .output()
+        .expect("failed to run sway-launch");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let (cwd, _, _) = receiver
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the launched process was never seen");
+    assert_eq!(
+        cwd,
+        Some(layout_directory.join("project").canonicalize().unwrap())
+    );
+}
+
+#[test]
 fn without_a_runtime_directory_env_goes_on_the_command_line_with_a_warning() {
     let (sender, receiver) = std::sync::mpsc::channel();
     let fake = FakeSway::start(

@@ -63,6 +63,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Sway 1.7. The run still goes ahead after the warning, and `--verbose` now prints the version it
   found. (#147)
 
+### Changed
+
+- A relative `cwd` in a layout or bindings file now resolves against that file's own directory, not
+  the directory `sway-launch` is run from. The same file used to start its commands somewhere else,
+  or fail with "is not a directory", when run from a Sway keybinding, whose directory is Sway's,
+  rather than from a terminal in the file's project. `--cwd` on the command line and a file read
+  from stdin (`-`) still resolve against the current directory, and a relative `command` path is
+  still found the same way as before. (#176)
+
 ### Fixed
 
 - `--on-output` (and `output` in a template's `[layout]` table) is no longer silently ignored
