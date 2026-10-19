@@ -353,7 +353,8 @@ Never an error: an unreachable compositor skips the check and is left for the ru
   `already_satisfied`, `unconfirmed` or `skipped` (with `reason`). A failed run's error object
   carries `container_ids`/`containers` for steps that completed, `container_id` for the failing
   step's container, `unmatched_windows`, and the three non-overlapping rollback lists
-  (`PartialProgress`, `RollbackOutcome`, `classify_rollback()`).
+  (`PartialProgress`, `RollbackOutcome`, `classify_rollback()`), plus `--concurrent`'s
+  `unresolved_launches`.
 
 ### Standalone modes
 
@@ -429,7 +430,12 @@ reliably. A new entry in
   shape matches, `every_shipped_template_builds_the_same_shape_with_concurrent`), then the step
   runs against `Target::ConId` with the launch's ownership carried over. Every failure path goes
   through `RunProgress::fail()`, which calls `release_staged()` first, so no window is left on the staging workspace and each counts as
-  progress and for rollback. While staged windows wait, a step's `SwayLaunch.excluded_containers`
+  progress and for rollback. A staged launch that timed out or was interrupted with no window
+  resolved (`RunError.unresolved_launch`) has nothing to bring back, and a late window opens on the
+  staging workspace, which Sway recreates: `unresolved_steps()` lists them once staging ends, as
+  `UnresolvedLaunch`es reported when the run ends either way (`--json`'s `unresolved_launches`,
+  through `PartialProgress` on failure; #126). Under `--rollback-on-error` `launch_only()` keeps
+  `catch_late_window`, so a window within `LATE_WINDOW_GRACE` is still caught and closed. While staged windows wait, a step's `SwayLaunch.excluded_containers`
   holds them (`staged_window_owners()`), so `Existing` resolution (`tree::existing_candidates()`)
   sees what a sequential run would; a `ConId` naming one fails before acting (#190).
 - A run tracks a workspace by its node id (`tree::WorkspaceIdentity`, read through

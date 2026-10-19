@@ -749,7 +749,13 @@ window is in place, so it takes as long as all of its applications' startups add
 `--concurrent` starts them all at once on a workspace of their own (`sway-launch-staging-<pid>`),
 then moves each window to the build workspace in step order and applies its step's actions there,
 so it lands exactly where it would have opened. A four-window grid of applications taking about a
-second each to start drops from about 4 seconds to just over 1. A failure never leaves a window on the staging workspace. An `existing` step
+second each to start drops from about 4 seconds to just over 1. When the run fails, every window
+already open is brought to the build workspace first. A launch that timed out or was interrupted
+before its window appeared can't be: its application may still open that window, and Sway then
+puts it on the staging workspace, out of sight. So the run names each such step when it ends, with
+a warning on stderr and under `--json`'s `unresolved_launches` (`step`, `staging_workspace`, see
+[JSON output](#json-output)). Under `--rollback-on-error` the launch first watches up to 2 more
+seconds for its window and closes it, so only an application slower than that is left. An `existing` step
 sees the same windows it would in a sequential run: a later step's window, already open on the
 staging workspace, is never one it chooses between or waits for. Focus visibly jumps to the
 staging workspace while the applications start. A single-instance application can't be told apart
@@ -1198,6 +1204,10 @@ $ sway-launch --json --con-id 999999 --floating
 - `rolled_back` lists the windows `--rollback-on-error` closed, and `rollback_failed` (present only
   when non-empty) the ones it asked to close but couldn't confirm closed. The lists never overlap:
   `container_ids` are still open, `rolled_back` are gone, `rollback_failed` are worth checking.
+- `unresolved_launches` (present only when non-empty) lists the `--concurrent` steps whose launch
+  timed out or was interrupted before any window appeared, each as `step` and `staging_workspace`:
+  the application may still open its window there, out of sight. A `--continue-on-timeout` run
+  that succeeds otherwise reports it in its result object too.
 
 ```console
 $ sway-launch --layout layout.toml --json

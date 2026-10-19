@@ -2240,6 +2240,150 @@ fn concurrent_launches_that_end_up_with_the_same_window_fail() {
     );
 }
 
+/// A handler for a two-step `--concurrent` layout whose steps run `sleep 30`
+/// and `sleep 31`: the first launch's window opens at once, the second's
+/// after `slow_delay`, or never when it's `None`.
+fn first_launch_opens_and_second_after(
+    slow_delay: Option<Duration>,
+) -> impl FnMut(&mut Sway, &str) -> Result<(), String> + Send + 'static {
+    move |sway, command| {
+        if let Some(id) = command
+            .strip_prefix("[con_id=")
+            .and_then(|rest| rest.strip_suffix("] kill"))
+        {
+            sway.remove(id.parse().expect("a kill names a container id"));
+        } else if command.starts_with("exec ") {
+            let delay = if command.contains("sleep 31") {
+                slow_delay
+            } else {
+                Some(Duration::ZERO)
+            };
+            let token = sway.launch(command);
+            if let Some(delay) = delay {
+                sway.when_marked(token, move |sway, pid| {
+                    sway.after(delay, move |sway| {
+                        let id = sway.open_window(Some("fake-app"), Some(pid));
+                        sway.emit("new", id);
+                    });
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+const SLOW_SECOND_STEP_LAYOUT: &str = "[[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n\n\
+     [[step]]\ncommand = \"sleep 31\"\napp_id = \"fake-app\"\ntimeout = 1\n";
+
+fn assert_reports_step_2_unresolved(run: &Run) {
+    let unresolved = &run.json["unresolved_launches"];
+    assert_eq!(unresolved.as_array().map(Vec::len), Some(1), "{}", run.json);
+    assert_eq!(unresolved[0]["step"], 2, "{}", run.json);
+    assert!(
+        unresolved[0]["staging_workspace"]
+            .as_str()
+            .is_some_and(|name| name.starts_with("sway-launch-staging-")),
+        "{}",
+        run.json
+    );
+}
+
+#[test]
+fn a_concurrent_launch_that_times_out_is_reported_as_unresolved() {
+    // #126: its window may still open, on the staging workspace.
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        first_launch_opens_and_second_after(None),
+    );
+    let layout = TempToml::write("concurrent-unresolved", SLOW_SECOND_STEP_LAYOUT);
+    let run = run(
+        &fake,
+        &["--layout", layout.to_str().unwrap(), "--concurrent"],
+    );
+    assert!(!run.succeeded());
+    assert!(run.error().contains("step 2"), "{}", run.json);
+    assert_reports_step_2_unresolved(&run);
+}
+
+#[test]
+fn a_concurrent_continue_on_timeout_run_reports_its_unresolved_launch() {
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        first_launch_opens_and_second_after(None),
+    );
+    let layout = TempToml::write("concurrent-unresolved-continue", SLOW_SECOND_STEP_LAYOUT);
+    let arguments = [
+        "--layout",
+        layout.to_str().unwrap(),
+        "--concurrent",
+        "--continue-on-timeout",
+    ];
+    let output = fake
+        .sway_launch()
+        .args(arguments)
+        .arg("--json")
+        .output()
+        .expect("failed to run sway-launch");
+    assert_eq!(output.status.code(), Some(1));
+    let run = Run {
+        json: serde_json::from_slice(&output.stdout).expect("stdout is the --json result"),
+        output,
+    };
+    assert_eq!(run.json["timed_out_steps"][0]["step"], 2, "{}", run.json);
+    assert_reports_step_2_unresolved(&run);
+
+    let plain = fake
+        .sway_launch()
+        .args(arguments)
+        .output()
+        .expect("failed to run sway-launch");
+    let stderr = String::from_utf8_lossy(&plain.stderr);
+    assert!(
+        stderr.contains(
+            "step 2: its application may still open a window, on workspace \"sway-launch-staging-"
+        ),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn concurrent_rollback_closes_a_staged_launch_s_late_window() {
+    // #126: a staged launch that times out watches for its window as a
+    // sequential one does, so rollback closes it rather than leaving it to
+    // open on the staging workspace.
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        first_launch_opens_and_second_after(Some(Duration::from_millis(1500))),
+    );
+    let layout = TempToml::write("concurrent-late-rollback", SLOW_SECOND_STEP_LAYOUT);
+    let run = run(
+        &fake,
+        &[
+            "--layout",
+            layout.to_str().unwrap(),
+            "--concurrent",
+            "--rollback-on-error",
+        ],
+    );
+    assert!(!run.succeeded());
+    assert!(
+        run.error().contains("opened within 2 sec after that"),
+        "{}",
+        run.json
+    );
+    assert_eq!(
+        run.json["rolled_back"].as_array().map(Vec::len),
+        Some(2),
+        "{}",
+        run.json
+    );
+    assert!(
+        run.json.get("unresolved_launches").is_none(),
+        "{}",
+        run.json
+    );
+}
+
 /// A handler that opens a window with `app_id` for each launch and marks
 /// whatever window a `[con_id=N] mark` names.
 fn launches_and_marks(

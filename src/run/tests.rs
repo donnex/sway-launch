@@ -339,3 +339,39 @@ fn launch_only_keeps_the_launch_and_drops_every_action() {
     assert!(launch.build_actions_for_preview().is_empty());
     assert_eq!(launch.actions.settle, None);
 }
+
+#[test]
+fn unresolved_steps_lists_only_launches_left_without_a_window() {
+    let unresolved = || {
+        Err(sway_launch::RunError {
+            unresolved_launch: true,
+            ..sway_launch::RunError::from("interrupted".to_string())
+        })
+    };
+    let windows: StagedWindows = [
+        (0, staged(10)),
+        (1, unresolved()),
+        (2, timed_out()),
+        (3, Err(failed_launch())),
+        (4, unresolved()),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(unresolved_steps(&windows), [1, 4]);
+}
+
+#[test]
+fn an_unresolved_launch_names_its_step_and_the_staging_workspace() {
+    let launch = UnresolvedLaunch {
+        source: "layout.toml".to_string(),
+        step: 2,
+        staging_workspace: "sway-launch-staging-42".to_string(),
+    };
+    assert_eq!(
+        launch.json(),
+        serde_json::json!({ "step": 2, "staging_workspace": "sway-launch-staging-42" })
+    );
+    assert!(launch
+        .message()
+        .starts_with("layout.toml: step 2: its application may still open a window, on workspace \"sway-launch-staging-42\""));
+}

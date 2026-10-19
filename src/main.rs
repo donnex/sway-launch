@@ -1121,6 +1121,10 @@ impl RollbackOutcome {
 struct PartialProgress {
     container_ids: Vec<i64>,
     containers: HashMap<String, i64>,
+    /// `--concurrent` launches that may still open a window on the staging
+    /// workspace (#126): reported, under `--json` as `unresolved_launches`,
+    /// whether or not anything else was.
+    unresolved_launches: Vec<run::UnresolvedLaunch>,
 }
 
 impl PartialProgress {
@@ -1176,6 +1180,13 @@ fn fail_with_rollback(
             value["container_ids"] = serde_json::json!(progress.container_ids);
             value["containers"] = serde_json::json!(progress.containers);
         }
+        if !progress.unresolved_launches.is_empty() {
+            value["unresolved_launches"] = progress
+                .unresolved_launches
+                .iter()
+                .map(run::UnresolvedLaunch::json)
+                .collect();
+        }
         diagnostic!("{}", value);
     } else {
         // Ahead of the message rather than after it, so the error itself
@@ -1206,6 +1217,13 @@ fn fail_with_rollback(
                 "failed to roll back {} container(s): {} — check whether they are still open",
                 rollback.failed.len(),
                 join_ids(&rollback.failed)
+            );
+        }
+        for launch in &progress.unresolved_launches {
+            diagnostic!(
+                "{}{}",
+                stderr_label(Severity::Warning),
+                sway_launch::escape_control_characters(&launch.message(), true)
             );
         }
     }

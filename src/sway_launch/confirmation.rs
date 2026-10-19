@@ -1383,6 +1383,7 @@ impl ExecAction<'_> {
                     launch_ownership: container_id.map(|_| LaunchOwnership::Launched),
                     also_launched: launched.into_iter().skip(1).collect(),
                     window_timed_out: true,
+                    unresolved_launch: container_id.is_none(),
                 });
             }
 
@@ -1492,6 +1493,7 @@ impl ExecAction<'_> {
                         launch_ownership: late_window.map(|_| LaunchOwnership::Launched),
                         also_launched: Vec::new(),
                         window_timed_out: false,
+                        unresolved_launch: late_window.is_none(),
                     });
                 }
             };

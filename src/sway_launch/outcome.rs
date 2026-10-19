@@ -102,6 +102,12 @@ pub struct RunError {
     /// failure `--continue-on-timeout` lets a layout carry on past (#19),
     /// since nothing was resolved for a later step to act on by mistake.
     pub window_timed_out: bool,
+    /// A launch's command ran, but it timed out or was interrupted without
+    /// this run resolving any window for it: its application may still open
+    /// one, or already opened one under another app_id/class/title than the
+    /// step names. `--concurrent` reports these, since such a window opens on
+    /// the staging workspace, out of sight (#126).
+    pub unresolved_launch: bool,
 }
 
 impl From<String> for RunError {
@@ -113,6 +119,7 @@ impl From<String> for RunError {
             launch_ownership: None,
             also_launched: Vec::new(),
             window_timed_out: false,
+            unresolved_launch: false,
         }
     }
 }

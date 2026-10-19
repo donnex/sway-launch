@@ -44,6 +44,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `--concurrent` run now says when a launch may still open its window on the run's hidden
+  staging workspace, where the README promised no window was ever left. A launch that timed out or
+  was interrupted before its window appeared has nothing to bring back, and an application slower
+  than the run opens its window there afterwards, out of sight. The run now names each such step when it ends, with a warning on stderr and under
+  `--json`'s new `unresolved_launches` field (`step`, `staging_workspace`), on failure and on a
+  `--continue-on-timeout` run alike; under `--rollback-on-error` such a launch still watches 2 more
+  seconds for its window and closes it. (#126)
 - A `--layout` or `--template` run no longer opens half a layout before reporting a mistake in a
   later step. A typo such as `height = "50pct"` in step 3 used to be found only after steps 1 and 2
   had opened their windows; the whole file is now checked before the first window opens, as

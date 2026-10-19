@@ -6900,6 +6900,57 @@ fn concurrent_launch_that_times_out_leaves_the_others_on_the_build_workspace() {
     let _guard = KillOnDrop(foot);
     assert_eq!(workspace_of(&mut connection, foot), build_workspace);
     no_staging_workspace_is_left(&mut connection);
+    // #126: the launch that never opened a window may still open one, on
+    // the staging workspace, so the run names it.
+    assert_eq!(error["unresolved_launches"][0]["step"], 2, "{stderr}");
+}
+
+#[test]
+fn concurrent_rollback_closes_a_staged_launch_s_late_window() {
+    fresh_workspace();
+    // #126: a staged launch whose window opens just after its timeout has
+    // it closed by rollback, rather than left to open on the staging
+    // workspace once the run has gone.
+    let mut connection = connect();
+    connection
+        .run_command("[app_id=foot] kill")
+        .expect("kill should succeed");
+    let path = TempToml::write(
+        "concurrent-late-window",
+        "[[step]]\ncommand = \"foot\"\napp_id = \"foot\"\n\n\
+         [[step]]\ncommand = \"sleep 1.5 && foot\"\napp_id = \"foot\"\ntimeout = 1\n",
+    );
+    let output = sway_launch_command()
+        .args([
+            "--layout",
+            path.to_str().unwrap(),
+            "--concurrent",
+            "--rollback-on-error",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(!output.status.success(), "the second step should time out");
+    let error: serde_json::Value =
+        serde_json::from_str(stderr.trim()).expect("stderr is the --json error");
+    assert!(
+        error["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("opened within 2 sec after that"),
+        "{stderr}"
+    );
+    assert_eq!(
+        error["rolled_back"].as_array().map(Vec::len),
+        Some(2),
+        "{stderr}"
+    );
+    assert!(error.get("unresolved_launches").is_none(), "{stderr}");
+    std::thread::sleep(Duration::from_millis(500));
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(count_app_id_windows(&tree, "foot"), 0, "{stderr}");
+    no_staging_workspace_is_left(&mut connection);
 }
 
 #[test]
@@ -6930,6 +6981,7 @@ fn concurrent_continue_on_timeout_arranges_the_windows_that_did_open() {
         .unwrap_or_else(|| panic!("foot should be arranged: {result}"));
     let _guard = KillOnDrop(foot);
     assert_eq!(result["timed_out_steps"][0]["step"], 1, "{result}");
+    assert_eq!(result["unresolved_launches"][0]["step"], 1, "{result}");
     assert!(node_is_floating(&get_node(&mut connection, foot)));
     assert_eq!(workspace_of(&mut connection, foot), build_workspace);
     no_staging_workspace_is_left(&mut connection);

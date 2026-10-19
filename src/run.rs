@@ -275,6 +275,16 @@ pub(crate) fn run_steps(
     // what tells a calling script the layout is incomplete, so a closed
     // stdout below exits with it too.
     let status = if timed_out_steps.is_empty() { 0 } else { 1 };
+    let unresolved_launches = staged.map(|staged| staged.unresolved).unwrap_or_default();
+    if !args.json {
+        for launch in &unresolved_launches {
+            diagnostic!(
+                "{}{}",
+                stderr_label(Severity::Warning),
+                sway_launch::escape_control_characters(&launch.message(), true)
+            );
+        }
+    }
     if args.json {
         let mut result = serde_json::json!({
             "container_ids": progress.container_ids,
@@ -289,6 +299,12 @@ pub(crate) fn run_steps(
         }
         if !skipped_steps.is_empty() {
             result["skipped_steps"] = serde_json::json!(skipped_steps);
+        }
+        if !unresolved_launches.is_empty() {
+            result["unresolved_launches"] = unresolved_launches
+                .iter()
+                .map(UnresolvedLaunch::json)
+                .collect();
         }
         if let Err(error) = write_line(&result.to_string()) {
             exit_on_write_failure_with_status(&error, status);
@@ -530,6 +546,48 @@ fn plan_step<'a>(
 struct StagedLaunches {
     staging: sway_launch::Staging,
     windows: StagedWindows,
+    /// The launches whose window was never resolved (`unresolved_steps()`),
+    /// reported when the run ends however it ends.
+    unresolved: Vec<UnresolvedLaunch>,
+}
+
+/// A `--concurrent` launch that timed out or was interrupted with no window
+/// resolved for it (`RunError::unresolved_launch`, #126). Sway opens a
+/// window on the workspace its `exec` ran on, recreating it if it's gone, so
+/// an application slower than the run opens its window on the staging
+/// workspace, out of sight; nothing this run does can bring it back, so the
+/// run says where to look instead: `--json`'s `unresolved_launches`, or a
+/// warning on stderr.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct UnresolvedLaunch {
+    /// The `--layout`/`--template` argument (`steps_source()`).
+    source: String,
+    /// The step's 1-based number.
+    step: usize,
+    staging_workspace: String,
+}
+
+impl UnresolvedLaunch {
+    pub(crate) fn json(&self) -> serde_json::Value {
+        serde_json::json!({ "step": self.step, "staging_workspace": self.staging_workspace })
+    }
+
+    pub(crate) fn message(&self) -> String {
+        format!(
+            "{}: step {}: its application may still open a window, on workspace {:?} where \
+             --concurrent started it rather than on the build workspace",
+            self.source, self.step, self.staging_workspace
+        )
+    }
+}
+
+/// The staged launches, in step order, that `UnresolvedLaunch` describes.
+fn unresolved_steps(windows: &StagedWindows) -> Vec<usize> {
+    windows
+        .iter()
+        .filter(|(_, result)| result.as_ref().is_err_and(|error| error.unresolved_launch))
+        .map(|(index, _)| *index)
+        .collect()
 }
 
 type StagedWindows =
@@ -669,7 +727,19 @@ fn stage_launches(steps: &[layout::LayoutStep], args: &Args) -> StagedLaunches {
     }
 
     reject_shared_windows(&mut windows);
-    StagedLaunches { staging, windows }
+    let unresolved = unresolved_steps(&windows)
+        .into_iter()
+        .map(|index| UnresolvedLaunch {
+            source: steps_source(args),
+            step: index + 1,
+            staging_workspace: staging.staging_workspace().to_string(),
+        })
+        .collect();
+    StagedLaunches {
+        staging,
+        windows,
+        unresolved,
+    }
 }
 
 /// A step's `SwayLaunch` reduced to its launch, for `stage_launches()`: its
@@ -737,6 +807,9 @@ struct RunProgress {
     /// (`Target::Exec`), not ones it merely retargeted via
     /// con_id/existing/target_id — see `fail_step()`'s doc comment.
     launched_container_ids: Vec<i64>,
+    /// `--concurrent`'s unresolved launches, once `release_staged()` has
+    /// taken them from the staging.
+    unresolved_launches: Vec<UnresolvedLaunch>,
 }
 
 impl RunProgress {
@@ -826,6 +899,7 @@ impl RunProgress {
                 .filter(|(_, id)| !attempted.contains(id))
                 .map(|(name, id)| (name.clone(), *id))
                 .collect(),
+            unresolved_launches: self.unresolved_launches.clone(),
         }
     }
 
@@ -847,7 +921,9 @@ impl RunProgress {
 /// Before a `--concurrent` run fails, moves every staged window its turn
 /// never came for to the build workspace, rather than leaving it on the
 /// staging workspace out of sight, and counts it as progress: reported, and
-/// rolled back under `--rollback-on-error` when this run launched it.
+/// rolled back under `--rollback-on-error` when this run launched it. The
+/// launches with no window to bring back are recorded for the failure to
+/// report (`UnresolvedLaunch`).
 fn release_staged(
     staged: &mut Option<StagedLaunches>,
     steps: &[layout::LayoutStep],
@@ -855,6 +931,7 @@ fn release_staged(
     progress: &mut RunProgress,
 ) {
     let Some(staged) = staged.take() else { return };
+    progress.unresolved_launches = staged.unresolved;
     for (index, result) in &staged.windows {
         for container_id in progress.record_staged(&steps[*index], result) {
             bring_back(&staged.staging, container_id, verbose);
