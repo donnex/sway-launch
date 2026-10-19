@@ -10,6 +10,14 @@
 
 use std::time;
 
+/// Whether a process with this pid exists, for telling whether a staging
+/// workspace's owner is gone (#132). A pid since reused by another process
+/// reads as running, so a left-behind workspace can be missed, never a live
+/// run's reported.
+pub(super) fn process_is_running(pid: u32) -> bool {
+    std::path::Path::new(&format!("/proc/{}", pid)).exists()
+}
+
 /// Environment variable name `run_wait_matching_exec_event()` tags a
 /// launched command's environment with, to correlate a matching `New`
 /// window event back to the specific process this invocation spawned. See

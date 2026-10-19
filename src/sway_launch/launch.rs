@@ -24,6 +24,7 @@ use super::query::{
 use super::target::Target;
 use super::tree::{
     BuildOutputPlacement, MoveDirection, SkipReason, WorkspaceIdentity, WorkspaceLookup,
+    STAGING_WORKSPACE_PREFIX,
 };
 use super::values::{Position, Size, Split, WorkspaceTarget};
 use std::io::Write;
@@ -287,7 +288,7 @@ impl Staging {
         build_workspace.check_focus(FocusCheck::BeforeStaging)?;
         let staging = Staging {
             build_workspace: std::cell::RefCell::new(build_workspace.0.clone()),
-            staging_workspace: format!("sway-launch-staging-{}", std::process::id()),
+            staging_workspace: format!("{}{}", STAGING_WORKSPACE_PREFIX, std::process::id()),
         };
         staging.send(
             &WorkspaceTarget::Name(&staging.staging_workspace).focus_command(),

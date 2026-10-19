@@ -51,6 +51,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A `--concurrent` run now warns about windows an earlier `--concurrent` run left on its hidden
+  staging workspace (`sway-launch-staging-<pid>`) when it was killed outright, crashed, or was
+  interrupted twice. Nothing pointed to those windows before; the only way to find them was to
+  notice an unfamiliar workspace in the bar. The warning names each such workspace and how many
+  windows it holds, on stderr or under `--json`'s `warnings`, and the windows are left where they
+  are rather than pulled into the new layout. `--list-windows` flags them `orphaned`
+  (`orphaned_staging` under `--json`). (#132)
 - `--capture-number N` captures a workspace by its number, the way Sway's `workspace number N`
   finds it, so `--capture-number 1` captures a workspace named `1: term`. `--capture` only takes an
   exact name, so with workspaces named `<number>: <label>` the README's own `--capture 3` example

@@ -475,6 +475,7 @@ fn listed_window(container_id: i64) -> sway_launch::ListedWindow {
         floating: false,
         focused: false,
         split_container: false,
+        orphaned_staging: false,
     }
 }
 
@@ -516,12 +517,27 @@ fn window_listing_json_keeps_every_field_and_the_full_title() {
     let mut window = listed_window(5);
     window.identity.title = Some("t".repeat(80));
     window.split_container = true;
+    window.orphaned_staging = true;
     let json = window_listing_json(&[window]);
     assert_eq!(json["windows"][0]["container_id"], 5);
     assert_eq!(json["windows"][0]["app_id"], serde_json::Value::Null);
     assert_eq!(json["windows"][0]["title"].as_str().unwrap().len(), 80);
     assert_eq!(json["windows"][0]["output"], "HEADLESS-1");
     assert_eq!(json["windows"][0]["split_container"], true);
+    assert_eq!(json["windows"][0]["orphaned_staging"], true);
+}
+
+#[test]
+fn window_listing_table_flags_a_window_an_orphaned_staging_workspace_holds() {
+    let mut window = listed_window(3);
+    window.workspace = Some("sway-launch-staging-4242".to_string());
+    window.orphaned_staging = true;
+    let table = window_listing_table(&[window]);
+    assert!(
+        table[1].contains("sway-launch-staging-4242  orphaned"),
+        "{:?}",
+        table
+    );
 }
 
 #[cfg(feature = "generate-man")]

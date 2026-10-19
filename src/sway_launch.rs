@@ -55,10 +55,10 @@ pub use outcome::{
 pub use process_marker::ConcurrentLaunches;
 pub use query::{
     capture_workspace, containers_still_present, focused_workspace_occupancy, list_windows,
-    unnamed_build_workspace_name,
+    orphaned_staging_workspaces_now, unnamed_build_workspace_name,
 };
 pub use target::{FieldStyle, Target, TargetError, TargetFields, WindowCriteria, WindowMatch};
-pub use tree::{ListedWindow, SkipReason, WindowIdentity};
+pub use tree::{ListedWindow, OrphanedStaging, SkipReason, WindowIdentity};
 pub use values::{
     anchor_launch_directory, check_relative_move, escape_control_characters, launch_setup,
     parse_env_assignment, parse_position, parse_size, parse_title_pattern, parse_workspace_number,

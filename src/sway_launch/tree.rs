@@ -196,18 +196,31 @@ pub struct ListedWindow {
     /// when it carries a mark, since a mark is the one matcher that can
     /// resolve `--existing` to one.
     pub split_container: bool,
+    /// Whether the window sits on a staging workspace whose `--concurrent`
+    /// run is no longer running (`orphaned_staging_workspaces()`, #132).
+    pub orphaned_staging: bool,
 }
 
 /// Every window in `tree`, scratchpad included, plus every marked split
 /// container, in tree order — narrowed to the ones `criteria` accepts, so
-/// this lists exactly what `--existing` would choose between.
-pub(super) fn window_listing(tree: &Node, criteria: WindowCriteria) -> Vec<ListedWindow> {
+/// this lists exactly what `--existing` would choose between. `is_running`
+/// says whether a staging workspace's owner is still alive, as for
+/// `orphaned_staging_workspaces()`.
+pub(super) fn window_listing(
+    tree: &Node,
+    criteria: WindowCriteria,
+    is_running: impl Fn(u32) -> bool,
+) -> Vec<ListedWindow> {
     descendants(tree)
         .filter(|node| is_listable_candidate(node) && criteria.matches(node))
         .map(|node| {
             let path = ancestors_of(tree, node.id).unwrap_or_default();
             let workspace = name_of_nearest(&path, NodeType::Workspace);
             let scratchpad = is_scratchpad_workspace(workspace.as_deref());
+            let orphaned_staging = workspace
+                .as_deref()
+                .and_then(staging_workspace_owner)
+                .is_some_and(|owner| !is_running(owner));
             ListedWindow {
                 identity: WindowIdentity::of(node),
                 marks: node.marks.clone(),
@@ -217,7 +230,57 @@ pub(super) fn window_listing(tree: &Node, criteria: WindowCriteria) -> Vec<Liste
                 floating: node_is_floating(node),
                 focused: node.focused,
                 split_container: !is_window(node),
+                orphaned_staging,
             }
+        })
+        .collect()
+}
+
+/// What every `--concurrent` run's staging workspace is named, followed by
+/// the pid of the process that owns it (`Staging::enter()`).
+pub(super) const STAGING_WORKSPACE_PREFIX: &str = "sway-launch-staging-";
+
+/// The pid a staging workspace's name encodes, or `None` for any other
+/// workspace.
+pub(super) fn staging_workspace_owner(name: &str) -> Option<u32> {
+    let digits = name.strip_prefix(STAGING_WORKSPACE_PREFIX)?;
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
+}
+
+/// A staging workspace left behind by a `--concurrent` run that is no longer
+/// running, and how many windows it holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrphanedStaging {
+    pub workspace: String,
+    pub owner_pid: u32,
+    pub windows: usize,
+}
+
+/// Every staging workspace in `tree` whose owner `is_running` says is gone
+/// (#132). A run killed outright (SIGKILL, a second Ctrl-C, a crash) never
+/// brings its windows back, and a timed-out launch's late window can open
+/// there after the run ended; nothing else points the user to them. Sway
+/// destroys an empty workspace once focus leaves it, so one listed here
+/// holds at least one window, tiled or floating.
+pub(super) fn orphaned_staging_workspaces(
+    tree: &Node,
+    is_running: impl Fn(u32) -> bool,
+) -> Vec<OrphanedStaging> {
+    descendants(tree)
+        .filter(|node| matches!(node.node_type, NodeType::Workspace))
+        .filter_map(|workspace| {
+            let name = workspace.name.as_deref()?;
+            let owner_pid = staging_workspace_owner(name)?;
+            (!is_running(owner_pid)).then(|| OrphanedStaging {
+                workspace: name.to_string(),
+                owner_pid,
+                windows: descendants(workspace)
+                    .filter(|node| is_window(node))
+                    .count(),
+            })
         })
         .collect()
 }

@@ -215,6 +215,21 @@ fn occupied_workspace_message_names_the_workspace_and_the_way_out() {
     assert!(message.contains("--on-workspace"));
 }
 
+#[test]
+fn orphaned_staging_message_names_the_workspace_its_windows_and_its_dead_owner() {
+    let message = orphaned_staging_message(&sway_launch::OrphanedStaging {
+        workspace: "sway-launch-staging-4242".to_string(),
+        owner_pid: 4242,
+        windows: 3,
+    });
+    assert!(
+        message.contains("workspace \"sway-launch-staging-4242\" holds 3 window(s)"),
+        "{message}"
+    );
+    assert!(message.contains("(pid 4242)"), "{message}");
+    assert!(message.contains("leaves them there"), "{message}");
+}
+
 fn staged(container_id: i64) -> Result<sway_launch::RunOutcome, sway_launch::RunError> {
     Ok(sway_launch::RunOutcome {
         container_id,

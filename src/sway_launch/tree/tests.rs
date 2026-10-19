@@ -200,7 +200,7 @@ fn listing_tree() -> Node {
 
 #[test]
 fn window_listing_lists_windows_and_marked_split_containers_in_tree_order() {
-    let ids: Vec<i64> = window_listing(&listing_tree(), WindowCriteria::default())
+    let ids: Vec<i64> = window_listing(&listing_tree(), WindowCriteria::default(), |_| true)
         .iter()
         .map(|window| window.identity.container_id)
         .collect();
@@ -209,7 +209,7 @@ fn window_listing_lists_windows_and_marked_split_containers_in_tree_order() {
 
 #[test]
 fn window_listing_describes_each_window() {
-    let listing = window_listing(&listing_tree(), WindowCriteria::default());
+    let listing = window_listing(&listing_tree(), WindowCriteria::default(), |_| true);
     assert_eq!(
         listing[1],
         ListedWindow {
@@ -226,6 +226,7 @@ fn window_listing_describes_each_window() {
             floating: false,
             focused: true,
             split_container: false,
+            orphaned_staging: false,
         }
     );
     assert!(listing[2].split_container);
@@ -236,7 +237,7 @@ fn window_listing_describes_each_window() {
 
 #[test]
 fn window_listing_reports_a_scratchpad_window_without_a_workspace_or_output() {
-    let dropdown = &window_listing(&listing_tree(), WindowCriteria::default())[0];
+    let dropdown = &window_listing(&listing_tree(), WindowCriteria::default(), |_| true)[0];
     assert!(dropdown.scratchpad);
     assert_eq!(dropdown.workspace, None);
     assert_eq!(dropdown.output, None);
@@ -245,7 +246,7 @@ fn window_listing_reports_a_scratchpad_window_without_a_workspace_or_output() {
 #[test]
 fn window_listing_with_a_filter_lists_what_existing_chooses_between() {
     let ids = |filter| -> Vec<i64> {
-        window_listing(&listing_tree(), by(filter))
+        window_listing(&listing_tree(), by(filter), |_| true)
             .iter()
             .map(|window| window.identity.container_id)
             .collect()
@@ -264,12 +265,93 @@ fn a_title_alone_never_matches_a_workspace_output_root_or_the_scratchpad() {
         title: Some(&pattern),
     };
     let tree = listing_tree();
-    let listed: Vec<i64> = window_listing(&tree, criteria)
+    let listed: Vec<i64> = window_listing(&tree, criteria, |_| true)
         .iter()
         .map(|window| window.identity.container_id)
         .collect();
     assert_eq!(matching_container_ids(&tree, criteria), vec![10]);
     assert_eq!(listed, vec![10]);
+}
+
+// staging_workspace_owner / orphaned_staging_workspaces (#132)
+
+/// root → HEADLESS-1 → workspace "1" (one foot), a live run's staging
+/// workspace (pid 100, one foot) and a dead run's (pid 200, a tiled foot
+/// inside a split and a floating one), plus a workspace merely named like
+/// one.
+fn staging_tree() -> Node {
+    let plain = named_node_value(
+        2,
+        "workspace",
+        "1",
+        vec![leaf_node_value(10, Some("foot"), None)],
+    );
+    let live = named_node_value(
+        3,
+        "workspace",
+        "sway-launch-staging-100",
+        vec![leaf_node_value(11, Some("foot"), None)],
+    );
+    let split = container_node_value(12, vec![leaf_node_value(13, Some("foot"), None)], vec![]);
+    let mut floating = leaf_node_value(14, Some("foot"), None);
+    floating["type"] = serde_json::json!("floating_con");
+    let mut dead = named_node_value(4, "workspace", "sway-launch-staging-200", vec![split]);
+    dead["floating_nodes"] = serde_json::json!([floating]);
+    let lookalike = named_node_value(
+        5,
+        "workspace",
+        "sway-launch-staging-notes",
+        vec![leaf_node_value(15, Some("foot"), None)],
+    );
+    let output = named_node_value(
+        1,
+        "output",
+        "HEADLESS-1",
+        vec![plain, live, dead, lookalike],
+    );
+    serde_json::from_value(named_node_value(0, "root", "root", vec![output]))
+        .expect("valid Node test fixture")
+}
+
+#[test]
+fn staging_workspace_owner_reads_only_a_staging_name_with_a_pid() {
+    assert_eq!(
+        staging_workspace_owner("sway-launch-staging-4242"),
+        Some(4242)
+    );
+    assert_eq!(staging_workspace_owner("sway-launch-staging-"), None);
+    assert_eq!(staging_workspace_owner("sway-launch-staging-+12"), None);
+    assert_eq!(staging_workspace_owner("sway-launch-staging-12a"), None);
+    assert_eq!(staging_workspace_owner("1"), None);
+    assert_eq!(
+        staging_workspace_owner(&format!("{}{}", STAGING_WORKSPACE_PREFIX, 7)),
+        Some(7)
+    );
+}
+
+#[test]
+fn orphaned_staging_workspaces_lists_only_a_dead_owners_with_every_window_counted() {
+    let orphaned = orphaned_staging_workspaces(&staging_tree(), |pid| pid == 100);
+    assert_eq!(
+        orphaned,
+        vec![OrphanedStaging {
+            workspace: "sway-launch-staging-200".to_string(),
+            owner_pid: 200,
+            windows: 2,
+        }]
+    );
+    assert!(orphaned_staging_workspaces(&staging_tree(), |_| true).is_empty());
+}
+
+#[test]
+fn window_listing_flags_only_windows_on_an_orphaned_staging_workspace() {
+    let flagged: Vec<i64> =
+        window_listing(&staging_tree(), WindowCriteria::default(), |pid| pid == 100)
+            .iter()
+            .filter(|window| window.orphaned_staging)
+            .map(|window| window.identity.container_id)
+            .collect();
+    assert_eq!(flagged, vec![13, 14]);
 }
 
 // window_app_id / window_class / WindowIdentity (#174)
@@ -309,7 +391,7 @@ fn window_identity_reads_an_empty_app_id_or_class_as_none() {
 #[test]
 fn an_empty_app_id_reads_as_none_in_the_listing_and_in_a_recheck() {
     let tree = node_tree(1, vec![leaf_node_value(12, Some(""), None)], vec![]);
-    let listing = window_listing(&tree, WindowCriteria::default());
+    let listing = window_listing(&tree, WindowCriteria::default(), |_| true);
     assert_eq!(listing[0].identity.app_id, None);
     let rechecked = recheck_launched_windows(&tree, &[12], filter("foot", ""), None);
     assert_eq!(rechecked[0].identity.app_id, None);

@@ -6880,6 +6880,75 @@ fn concurrent_retarget_by_id_layout_resolves_a_staged_window_by_name() {
     no_staging_workspace_is_left(&mut connection);
 }
 
+#[test]
+fn concurrent_run_warns_about_a_dead_runs_staging_workspace_and_leaves_it_alone() {
+    // #132: a staging workspace whose pid no longer runs is named in a
+    // --concurrent run's warnings and flagged by --list-windows, but its
+    // window is never moved into the layout.
+    let build_workspace = fresh_workspace();
+    let mut connection = connect();
+    let mut exited = std::process::Command::new("true")
+        .spawn()
+        .expect("true should start");
+    let dead_pid = exited.id();
+    exited.wait().expect("true should exit");
+    let orphan = format!("sway-launch-staging-{dead_pid}");
+    run_command_ok(&mut connection, &format!("workspace {orphan}"));
+    let (left_behind, left_behind_guard) = launch_foot(&[]);
+    run_command_ok(&mut connection, &format!("workspace {build_workspace}"));
+
+    let listing = sway_launch_command()
+        .args(["--list-windows", "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(listing.status.success());
+    let listing: serde_json::Value =
+        serde_json::from_slice(&listing.stdout).expect("--list-windows --json prints JSON");
+    let row = listing["windows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|window| window["container_id"] == left_behind)
+        .unwrap_or_else(|| panic!("{left_behind} should be listed: {listing}"));
+    assert_eq!(row["workspace"], orphan.as_str());
+    assert_eq!(row["orphaned_staging"], true, "{row}");
+
+    let path = TempToml::write(
+        "orphaned-staging",
+        "[[step]]\ncommand = \"foot\"\napp_id = \"foot\"\n",
+    );
+    let output = sway_launch_command()
+        .args(["--layout", path.to_str().unwrap(), "--concurrent", "--json"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "--concurrent layout failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("--json prints JSON");
+    let _built = KillOnDrop(parsed["container_ids"][0].as_i64().unwrap());
+    let warnings: Vec<&str> = parsed["warnings"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a warnings list should be present: {parsed}"))
+        .iter()
+        .filter_map(|warning| warning.as_str())
+        .collect();
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains(&format!("workspace {orphan:?} holds 1 window(s)"))),
+        "{warnings:?}"
+    );
+    assert_eq!(workspace_of(&mut connection, left_behind), orphan);
+    // Closed and gone before the next test, whose own check for a leftover
+    // staging workspace would otherwise find this one.
+    drop(left_behind_guard);
+    wait_for_container_gone(&mut connection, left_behind);
+    no_staging_workspace_is_left(&mut connection);
+}
+
 /// Every container in `node` (scratchpad included) whose app_id is `app_id`.
 fn containers_with_app_id(node: &Node, app_id: &str) -> Vec<i64> {
     let own = (node.app_id.as_deref() == Some(app_id)).then_some(node.id);

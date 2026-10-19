@@ -471,6 +471,12 @@ reliably. A new entry in
   `catch_late_window`, so a window within `LATE_WINDOW_GRACE` is still caught and closed. While staged windows wait, a step's `SwayLaunch.excluded_containers`
   holds them (`staged_window_owners()`), so `Existing` resolution (`tree::existing_candidates()`)
   sees what a sequential run would; a `ConId` naming one fails before acting (#190).
+  Before staging, `orphaned_staging_warnings()` warns about every staging workspace whose pid
+  (`tree::staging_workspace_owner()`, after `STAGING_WORKSPACE_PREFIX`) no longer runs
+  (`process_is_running()`, a `/proc/<pid>` check), deciding in
+  `tree::orphaned_staging_workspaces()`: a run killed outright leaves its windows there. Warn only,
+  by decision (#132): their windows are never moved. `window_listing()` takes the same liveness
+  check, for `--list-windows`' `orphaned` flag.
 - A run tracks a workspace by its node id (`tree::WorkspaceIdentity`, read through
   `query::workspace_now()` with a `WorkspaceLookup`), never by a name read earlier: workspace-icon
   daemons rename a workspace whenever a window opens on it, keeping its id (#178). So

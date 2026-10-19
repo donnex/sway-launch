@@ -98,6 +98,9 @@ pub(crate) fn run_steps(
     } else {
         Vec::new()
     };
+    if launches && concurrent {
+        warnings.extend(orphaned_staging_warnings(args));
+    }
 
     let mut progress = RunProgress::default();
     // Every action across every step, each tagged with its 1-based step
@@ -666,6 +669,33 @@ fn occupied_workspace_message(workspace: &str, tiled_windows: usize) -> String {
         "workspace {:?} already has {} tiled window(s); the layout will be built around them — \
          run it on an empty workspace (--on-workspace) for the shape it describes",
         workspace, tiled_windows
+    )
+}
+
+/// The warnings a `--concurrent` run gives about staging workspaces an
+/// earlier `--concurrent` run left behind when it died (#132): one per
+/// workspace, on stderr and for `--json`'s `"warnings"`, as
+/// `occupied_workspace_warning()` does. Their windows are only named, never
+/// moved: which layout they belonged to, and whether they're still wanted, is
+/// the user's to say. A failure to read the tree only skips the warnings.
+fn orphaned_staging_warnings(args: &Args) -> Vec<String> {
+    let Ok(orphaned) = sway_launch::orphaned_staging_workspaces_now() else {
+        return Vec::new();
+    };
+    let warnings: Vec<String> = orphaned.iter().map(orphaned_staging_message).collect();
+    if !args.json {
+        for warning in &warnings {
+            diagnostic!("{}{}", stderr_label(Severity::Warning), warning);
+        }
+    }
+    warnings
+}
+
+fn orphaned_staging_message(orphaned: &sway_launch::OrphanedStaging) -> String {
+    format!(
+        "workspace {:?} holds {} window(s) an earlier --concurrent run (pid {}) left behind when \
+         it stopped; this run leaves them there — switch to it to move or close them",
+        orphaned.workspace, orphaned.windows, orphaned.owner_pid
     )
 }
 

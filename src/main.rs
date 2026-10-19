@@ -1673,6 +1673,10 @@ fn window_listing_json(windows: &[sway_launch::ListedWindow]) -> serde_json::Val
                 ("floating", serde_json::json!(window.floating)),
                 ("focused", serde_json::json!(window.focused)),
                 ("split_container", serde_json::json!(window.split_container)),
+                (
+                    "orphaned_staging",
+                    serde_json::json!(window.orphaned_staging),
+                ),
             ] {
                 value[key] = field;
             }
@@ -1715,6 +1719,7 @@ fn window_listing_table(windows: &[sway_launch::ListedWindow]) -> Vec<String> {
             (window.focused, "focused"),
             (window.floating, "floating"),
             (window.split_container, "split"),
+            (window.orphaned_staging, "orphaned"),
         ]
         .into_iter()
         .filter_map(|(set, name)| set.then_some(name))

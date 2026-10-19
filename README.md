@@ -290,7 +290,10 @@ ID  APP_ID   CLASS  WORKSPACE     FLAGS     MARKS     TITLE
 
 A missing value prints as `-`, and a title longer than 50 characters is shortened. `--json` prints
 `{"windows": [...]}`, one object per row with the full title and each window's `output`,
-`scratchpad`, `floating`, `focused` and `split_container` fields (a missing value is `null`).
+`scratchpad`, `floating`, `focused`, `split_container` and `orphaned_staging` fields (a missing
+value is `null`). A window flagged `orphaned` (`orphaned_staging` under `--json`) sits on the
+staging workspace of a `--concurrent` run that is no longer running (see
+[Running layouts](#running-layouts)).
 `-a`/`-c`/`--mark-match`/`--title` narrow the list to the windows `--existing` would choose between,
 so `sway-launch --list-windows -a foot` shows what `sway-launch --existing -a foot` would act on. A
 split container carrying a mark is listed too, with the flag `split`, since `--mark-match` can
@@ -787,8 +790,13 @@ sees the same windows it would in a sequential run: a later step's window, alrea
 staging workspace, is never one it chooses between or waits for. Focus visibly jumps to the
 staging workspace while the applications start. A single-instance application can't be told apart
 this way: when two steps' launches end up with the same window, the run fails, so run such layouts
-without `--concurrent`. A layout file or a bindings file can ask for it itself with a top-level
-`concurrent = true`, so its callers needn't remember the flag:
+without `--concurrent`. A run that is killed outright (`SIGKILL`, a second Ctrl-C, a crash) can't
+bring its windows back, so a `--concurrent` run first looks for staging workspaces whose run is no
+longer running and warns about each one, with how many windows it holds (on stderr, or under
+`--json`'s `warnings`). It never moves them into the layout it builds: switch to that workspace to
+move or close them yourself. `--list-windows` flags their windows `orphaned`. A layout file or a
+bindings file can ask for it itself with a top-level `concurrent = true`, so its callers needn't
+remember the flag:
 
 ```toml
 concurrent = true
@@ -1232,8 +1240,9 @@ $ sway-launch --json --floating --mark pinned foot
 For a layout or template, `container_ids` lists every step's container id in order, `containers`
 maps each *named* step (one with an `id`, or a template `slot`) to its id, and `actions` covers
 every step, each action tagged with its 1-based `step`. A run that built on a workspace already
-holding tiled windows, or one with a window your Sway config placed elsewhere (see
-[Templates](#templates)), adds a `warnings` list:
+holding tiled windows, one with a window your Sway config placed elsewhere (see
+[Templates](#templates)), or a `--concurrent` run that found an earlier run's staging workspace
+left behind (see [Running layouts](#running-layouts)), adds a `warnings` list:
 
 ```console
 $ sway-launch --template quad-grid --apps foot,foot,foot,foot --json

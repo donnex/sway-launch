@@ -2347,6 +2347,127 @@ fn concurrent_launches_every_step_on_a_staging_workspace_then_arranges_in_order(
     assert!(position(&format!("[con_id={second}] mark \"second\"")) > second_moved);
 }
 
+/// The pid of a process that has already exited, for a staging workspace
+/// whose run is gone.
+fn dead_pid() -> u32 {
+    let mut exited = std::process::Command::new("true")
+        .spawn()
+        .expect("true should start");
+    let pid = exited.id();
+    exited.wait().expect("true should exit");
+    pid
+}
+
+/// Moves the fixture's floating window onto a new workspace named the way a
+/// `--concurrent` run with pid `owner` names its staging workspace, and
+/// returns that name.
+fn leave_a_staging_workspace(sway: &mut Sway, owner: u32) -> String {
+    let name = format!("sway-launch-staging-{owner}");
+    let window = sway.remove(FLOATING);
+    let mut workspace = sway.node(WORKSPACE).clone();
+    workspace["id"] = serde_json::json!(80);
+    workspace["name"] = serde_json::json!(name);
+    workspace["num"] = serde_json::json!(-1);
+    workspace["focused"] = serde_json::json!(false);
+    workspace["nodes"] = serde_json::json!([]);
+    workspace["floating_nodes"] = serde_json::json!([window]);
+    workspace["focus"] = serde_json::json!([FLOATING]);
+    sway.node_mut(3)["nodes"]
+        .as_array_mut()
+        .expect("nodes is an array")
+        .push(workspace);
+    name
+}
+
+#[test]
+fn a_concurrent_run_warns_about_a_dead_runs_staging_workspace_without_touching_it() {
+    // #132: the warning names the workspace and its window count; the
+    // window itself is never sent a command.
+    let mut launches = opens_a_window_for_each_launch("fake-app");
+    let fake = FakeSway::start(SwayVersion::V1_11, move |sway, command| {
+        if command.starts_with("exec ") {
+            launches(sway, command)
+        } else if command.starts_with("[con_id=") {
+            arranges_on_command(sway, command)
+        } else {
+            Ok(())
+        }
+    });
+    let orphan = leave_a_staging_workspace(&mut fake.sway(), dead_pid());
+    let layout = TempToml::write("orphaned-staging", ONE_LAUNCH_LAYOUT);
+    let run = run(
+        &fake,
+        &["--layout", layout.to_str().unwrap(), "--concurrent"],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    let warnings = run.json["warnings"].to_string();
+    assert!(
+        warnings.contains(&format!("workspace \\\"{orphan}\\\" holds 1 window(s)")),
+        "{warnings}"
+    );
+    assert!(
+        !fake
+            .commands()
+            .iter()
+            .any(|command| command.contains(&format!("[con_id={FLOATING}]"))),
+        "{:?}",
+        fake.commands()
+    );
+}
+
+#[test]
+fn a_live_runs_staging_workspace_is_neither_warned_about_nor_flagged() {
+    let mut launches = opens_a_window_for_each_launch("fake-app");
+    let fake = FakeSway::start(SwayVersion::V1_11, move |sway, command| {
+        if command.starts_with("exec ") {
+            launches(sway, command)
+        } else if command.starts_with("[con_id=") {
+            arranges_on_command(sway, command)
+        } else {
+            Ok(())
+        }
+    });
+    leave_a_staging_workspace(&mut fake.sway(), std::process::id());
+    let layout = TempToml::write("live-staging", ONE_LAUNCH_LAYOUT);
+    let run = run(
+        &fake,
+        &["--layout", layout.to_str().unwrap(), "--concurrent"],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert!(
+        !run.json["warnings"].to_string().contains("left behind"),
+        "{}",
+        run.json
+    );
+    let listing = run_list_windows(&fake);
+    assert_eq!(window_row(&listing, FLOATING)["orphaned_staging"], false);
+}
+
+#[test]
+fn list_windows_flags_a_window_a_dead_runs_staging_workspace_holds() {
+    let fake = FakeSway::accepting_everything(SwayVersion::V1_11);
+    let orphan = leave_a_staging_workspace(&mut fake.sway(), dead_pid());
+    let listing = run_list_windows(&fake);
+    let row = window_row(&listing, FLOATING);
+    assert_eq!(row["workspace"], orphan.as_str());
+    assert_eq!(row["orphaned_staging"], true, "{row}");
+    assert_eq!(window_row(&listing, TILED)["orphaned_staging"], false);
+}
+
+fn run_list_windows(fake: &FakeSway) -> serde_json::Value {
+    run(fake, &["--list-windows"]).json
+}
+
+fn window_row(listing: &serde_json::Value, id: i64) -> serde_json::Value {
+    listing["windows"]
+        .as_array()
+        .expect("windows is an array")
+        .iter()
+        .find(|window| window["container_id"] == id)
+        .unwrap_or_else(|| panic!("{id} isn't listed: {listing}"))
+        .clone()
+}
+
 /// Renames workspace `1` the way a workspace-icon daemon does, one letter
 /// per window it holds, keeping its id: what such a daemon does each time a
 /// window opens there (#178).
