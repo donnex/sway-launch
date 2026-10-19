@@ -244,6 +244,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sees those events. The README also no longer claims each line is Sway's own payload: it is the
   event as the `swayipc` library reads it, which leaves out fields it doesn't know and fills in
   `null` for ones Sway didn't send. (#191)
+- The README's Sway-config example for `--existing --wait` and the advanced example scripts now
+  pass `--timeout 30` when they wait for Firefox, Chromium, Thunar or VS Code. The 5-second default
+  is sized for a terminal, so a browser restoring its session at login or a cold VS Code start
+  routinely failed them, leaving the window open on the wrong workspace or the rest of the layout
+  never launched. The README's "Timing" section now says when to raise it. (#164)
 
 ## [0.1.0] - 2026-10-18
 

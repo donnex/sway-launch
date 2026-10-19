@@ -379,7 +379,7 @@ user unit, an app restoring its session, a launcher such as `fuzzel`:
 ```shell
 # In the Sway config: start Firefox, and put its window on workspace 2 once it opens
 exec firefox
-exec sway-launch --existing --wait -a firefox --workspace 2
+exec sway-launch --existing --wait --timeout 30 -a firefox --workspace 2
 ```
 
 A window already open is used at once. Several matching windows are still an error, at once, since
@@ -1348,7 +1348,9 @@ sway-launch --debug-events --json | jq -r 'select(.event == "window" and .change
 and for each action's confirmation. An action's wait counts from when its command is sent, so the
 `--wait-time` below never shortens it. A layout step's or binding's `timeout` replaces it for that
 step. Each single request to Sway is bounded separately, at 10 seconds, so a compositor that stops
-answering fails with a clear message rather than hanging.
+answering fails with a clear message rather than hanging. The default is sized for a terminal:
+give a browser, an Electron app such as VS Code, or anything else slow to open its first window a
+longer `--timeout` (the example scripts use `--timeout 30` for these), especially at login.
 
 `--wait-time <MS>` (default 20) applies to the actions Sway sends no event for: `--split`,
 `--sticky`, `--new-column`, `--new-row`, `--height`, `--width`, `--position`, `--workspace` together

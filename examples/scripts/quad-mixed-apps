@@ -42,7 +42,7 @@ done
 
 # app_id/class values vary by backend and distro; see "Finding a window's app_id or class" in README.md.
 sway-launch -a foot --split h foot
-sway-launch -a firefox --split v 'firefox --new-window https://example.com'
+sway-launch --timeout 30 -a firefox --split v 'firefox --new-window https://example.com'
 
-sway-launch --new-row -a thunar --split h thunar
-exec sway-launch -c Code code
+sway-launch --timeout 30 --new-row -a thunar --split h thunar
+exec sway-launch --timeout 30 -c Code code

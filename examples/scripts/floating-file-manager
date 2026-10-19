@@ -40,4 +40,4 @@ command -v sway-launch >/dev/null 2>&1 || die "sway-launch not found on PATH. In
 command -v thunar >/dev/null 2>&1 || die "thunar not found on PATH. Install Thunar first."
 
 # app_id/class values vary by backend and distro; see "Finding a window's app_id or class" in README.md.
-exec sway-launch -a thunar --floating --width 900px --height 600px --mark file-manager thunar
+exec sway-launch --timeout 30 -a thunar --floating --width 900px --height 600px --mark file-manager thunar

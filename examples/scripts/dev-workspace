@@ -39,6 +39,6 @@ command -v code >/dev/null 2>&1 || die "code not found on PATH. Install VS Code 
 # app_id/class values vary by backend and distro; see "Finding a window's app_id or class" in README.md.
 # The width goes on the first terminal rather than on VS Code: Sway ignores a resize while a window
 # is still alone on its workspace, and sizing the terminal column to 35% leaves VS Code the other 65%.
-sway-launch -c Code --split h code
+sway-launch --timeout 30 -c Code --split h code
 sway-launch -a foot --split v --width 35ppt foot
 exec sway-launch -a foot foot
