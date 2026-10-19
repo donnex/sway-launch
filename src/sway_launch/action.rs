@@ -21,7 +21,8 @@
 use super::ipc::quote_sway_string;
 use super::process_marker::PID_MARKER_VAR;
 use super::target::LaunchFilter;
-use super::values::{Position, Size, Split, TitlePattern, WorkspaceTarget};
+use super::values::{quote_shell_word, Position, Size, Split, TitlePattern, WorkspaceTarget};
+use std::path::Path;
 use std::{fmt, time};
 
 /// Launches `command` and waits for the window it opens.
@@ -213,8 +214,30 @@ impl ExecAction<'_> {
     /// Lives here, alongside every other action's command text, rather than
     /// inline at the call site: when the two were apart, a separate rendering
     /// of `exec <command>` drifted into something nothing ever sent.
-    pub(super) fn sway_command(&self, token: &str) -> String {
-        match self.setup {
+    ///
+    /// `--cwd`/`--env`'s setup goes into `setup_file` when there is one, and
+    /// the command line only sources it and removes it (#167): the launch
+    /// shell's command line is readable by every local user for as long as
+    /// the program runs, which a variable's value must not be. `Err` only
+    /// when the file's path can't be quoted for Sway.
+    pub(super) fn sway_command(
+        &self,
+        token: &str,
+        setup_file: Option<&Path>,
+    ) -> Result<String, String> {
+        let setup = match (self.setup, setup_file) {
+            (None, _) => None,
+            (Some(setup), None) => Some(setup.to_string()),
+            (Some(_), Some(path)) => {
+                let path = path
+                    .to_str()
+                    .ok_or_else(|| format!("{} is not valid UTF-8", path.display()))
+                    .and_then(quote_shell_word)
+                    .map_err(|error| format!("--cwd/--env setup file: {}", error))?;
+                Some(format!(". {} && rm -f {}", path, path))
+            }
+        };
+        Ok(match setup {
             Some(setup) => format!(
                 "exec export {}={} && {} && ( {} )",
                 PID_MARKER_VAR, token, setup, self.command
@@ -223,7 +246,7 @@ impl ExecAction<'_> {
                 "exec export {}={} && ( {} )",
                 PID_MARKER_VAR, token, self.command
             ),
-        }
+        })
     }
 }
 

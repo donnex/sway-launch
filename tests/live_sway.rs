@@ -1050,7 +1050,7 @@ fn cwd_and_env_reach_the_launched_command() {
             "--cwd",
             "project",
             "--env",
-            "SWAY_LAUNCH_LIVE_TEST_ENV=a value, with; syntax",
+            "SWAY_LAUNCH_LIVE_TEST_ENV=a value, with; syntax 'quoted' back\\slash",
             &format!(
                 "pwd > '{}' && env > '{}' && exec foot",
                 working_directory_file.display(),
@@ -1081,9 +1081,66 @@ fn cwd_and_env_reach_the_launched_command() {
     assert!(
         environment
             .lines()
-            .any(|line| line == "SWAY_LAUNCH_LIVE_TEST_ENV=a value, with; syntax"),
+            .any(|line| line
+                == "SWAY_LAUNCH_LIVE_TEST_ENV=a value, with; syntax 'quoted' back\\slash"),
         "the variable should reach the command unchanged: {environment}"
     );
+
+    // Neither the value nor the directory is on the launch shell's command
+    // line, which every local user can read while foot runs: the shell
+    // names only the setup file, and has removed it (#167).
+    let pid = get_node(&mut connect(), container_id)
+        .pid
+        .expect("foot's window should have a pid");
+    let ancestor_command_lines = ancestor_command_lines(pid as u32);
+    assert!(
+        ancestor_command_lines
+            .iter()
+            .any(|line| line.contains("SWAY_LAUNCH_PID_MARKER")),
+        "the launch shell should be among foot's ancestors: {ancestor_command_lines:?}"
+    );
+    for line in &ancestor_command_lines {
+        assert!(!line.contains("a value, with"), "{line}");
+        assert!(!line.contains("caller/project"), "{line}");
+    }
+    let setup_directory =
+        std::path::Path::new(&std::env::var_os("XDG_RUNTIME_DIR").unwrap()).join("sway-launch");
+    let leftovers: Vec<_> = std::fs::read_dir(setup_directory)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name())
+                .filter(|name| name.to_string_lossy().starts_with("launch-"))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
+/// The command lines of `pid`'s parent and the few processes above it,
+/// arguments joined with spaces.
+fn ancestor_command_lines(pid: u32) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = pid;
+    for _ in 0..4 {
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{current}/stat")) else {
+            break;
+        };
+        let Some(parent) = stat
+            .rsplit_once(") ")
+            .and_then(|(_, rest)| rest.split_whitespace().nth(1))
+            .and_then(|field| field.parse::<u32>().ok())
+        else {
+            break;
+        };
+        if parent <= 1 {
+            break;
+        }
+        let command_line = std::fs::read(format!("/proc/{parent}/cmdline")).unwrap_or_default();
+        lines.push(String::from_utf8_lossy(&command_line).replace('\0', " "));
+        current = parent;
+    }
+    lines
 }
 
 #[test]

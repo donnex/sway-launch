@@ -8,6 +8,7 @@
 //! - `tree` — reading answers out of a tree, purely.
 //! - `query` — fetching a tree so `tree` can read it.
 //! - `process_marker` — correlating a launched window to the process we spawned.
+//! - `setup_file` — keeping `--cwd`/`--env` off the launch's command line.
 //! - `action` — what a single action is, and the command it renders to.
 //! - `confirmation` — deciding whether that command took effect.
 //! - `outcome` — what a run reports back.
@@ -35,6 +36,7 @@ mod launch;
 mod outcome;
 mod process_marker;
 mod query;
+mod setup_file;
 mod target;
 #[cfg(test)]
 mod test_support;

@@ -38,7 +38,7 @@ fn exec_sway_command_prepends_the_marker_to_the_users_command() {
     // a separately rendered "exec foot" that nothing ever sent.
     let action = exec_action("foot --app-id=probe", "", "");
     assert_eq!(
-        action.sway_command("1234-5678"),
+        action.sway_command("1234-5678", None).unwrap(),
         "exec export SWAY_LAUNCH_PID_MARKER=1234-5678 && ( foot --app-id=probe )"
     );
 }
@@ -47,9 +47,55 @@ fn exec_sway_command_prepends_the_marker_to_the_users_command() {
 fn exec_sway_command_keeps_a_command_led_by_a_shell_builtin_intact() {
     let action = exec_action("cd /tmp && exec foot", "", "");
     assert_eq!(
-        action.sway_command("1234-5678"),
+        action.sway_command("1234-5678", None).unwrap(),
         "exec export SWAY_LAUNCH_PID_MARKER=1234-5678 && ( cd /tmp && exec foot )"
     );
+}
+
+#[test]
+fn exec_sway_command_names_only_the_setup_file_never_a_value() {
+    let action = ExecAction {
+        setup: Some("cd '/srv/project' && export API_TOKEN='s3cret'"),
+        ..exec_action("foot", "", "")
+    };
+    let command = action
+        .sway_command(
+            "1234-5678",
+            Some(Path::new("/run/user/1000/sway-launch/launch-1234-5678")),
+        )
+        .unwrap();
+    assert_eq!(
+        command,
+        "exec export SWAY_LAUNCH_PID_MARKER=1234-5678 && \
+         . '/run/user/1000/sway-launch/launch-1234-5678' && \
+         rm -f '/run/user/1000/sway-launch/launch-1234-5678' && ( foot )"
+    );
+    assert!(!command.contains("s3cret"), "{command}");
+    assert!(!command.contains("/srv/project"), "{command}");
+}
+
+#[test]
+fn exec_sway_command_puts_the_setup_inline_without_a_setup_file() {
+    let action = ExecAction {
+        setup: Some("export A='1'"),
+        ..exec_action("foot", "", "")
+    };
+    assert_eq!(
+        action.sway_command("1234-5678", None).unwrap(),
+        "exec export SWAY_LAUNCH_PID_MARKER=1234-5678 && export A='1' && ( foot )"
+    );
+}
+
+#[test]
+fn exec_sway_command_refuses_a_setup_file_path_sway_would_rewrite() {
+    let action = ExecAction {
+        setup: Some("export A='1'"),
+        ..exec_action("foot", "", "")
+    };
+    let error = action
+        .sway_command("1234-5678", Some(Path::new("/run/$user/launch")))
+        .unwrap_err();
+    assert!(error.contains("setup file"), "{error}");
 }
 
 // ActionKind::flag_name

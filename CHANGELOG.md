@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `--env` values (and a step's or binding's `env`) are no longer readable by every local user while
+  the launched program runs. They were part of the launch shell's command line, which anyone on the
+  machine can read through the process list, for as long as the program runs, so an API token
+  passed this way was exposed to the whole machine. The variables and the `--cwd` directory now go
+  into a file only you can read, under `$XDG_RUNTIME_DIR/sway-launch/`, which the launch reads and
+  deletes. Without `XDG_RUNTIME_DIR` they still go on the command line, now with a warning. (#167)
 - A layout or template file can no longer run an arbitrary Sway command, `exec` included, through
   `sway_commands`. An entry that left a quote open (`'title_format "a'`) passed validation, and
   since a step's entries are sent to Sway as one command, the open quote changed how Sway split the

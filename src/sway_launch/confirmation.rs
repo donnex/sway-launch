@@ -29,6 +29,7 @@ use super::query::{
     awaited_existing_container_id, container_state, ensure_container_exists, existing_container,
     missing_container_error, node_by_id, recheck_launched_windows_now, tree_on,
 };
+use super::setup_file::SetupFile;
 use super::target::{LaunchFilter, WindowCriteria};
 use super::tree::{
     find_node, find_parent_layout, height_matches, is_window, position_shows, width_matches,
@@ -1309,7 +1310,13 @@ impl ExecAction<'_> {
         let deadline = deadline_after(timeout)?;
         let token = generate_pid_marker_token();
         register_launch(&token);
-        let sway_command = self.sway_command(&token);
+        // Held to the end of the wait, rollback's late-window watch included,
+        // so a launch shell slow to start still finds its file.
+        let setup_file = match self.setup {
+            Some(setup) => SetupFile::write(setup, &token)?,
+            None => None,
+        };
+        let sway_command = self.sway_command(&token, setup_file.as_ref().map(SetupFile::path))?;
         if verbose {
             diagnostic!(
                 "Sway command: {}",

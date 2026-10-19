@@ -115,6 +115,7 @@ instruction set: where it disagrees with this file or the code, it's stale. The 
   | `tree.rs` | every pure `&Node` predicate: matching, geometry, `ContainerState::from_tree()`, the move guard, and how a window is named (`window_app_id()`/`window_class()`, empty read as none, and the `WindowIdentity` every window report holds) |
   | `query.rs` | fetch-a-tree-then-delegate wrappers, and nothing else |
   | `process_marker.rs` | the PID marker and its `/proc` reads |
+  | `setup_file.rs` | `SetupFile`: a launch's `--cwd`/`--env` setup in a 0600 file, removed on drop (#167) |
   | `action.rs` | `SwayAction`/`ActionKind`/`ExecAction` themselves: fields, `Display`, `sway_command_verb()`, `flag_name()` |
   | `confirmation.rs` | how an action's effect is established: event matching, state checks, polling, the `run_*` drivers |
   | `outcome.rs` | `RunOutcome`/`RunError`/`UnmatchedWindow`/`ActionRecord`/`ActionStatus`/`LaunchOwnership` |
@@ -183,8 +184,14 @@ what it rejects and why:
   resolved (`~`, relative to the caller's directory, must exist; `DirectoryCheck::FormatOnly` under
   `--validate`/`--dry-run` skips only the existence check, #146), then both are rendered as a
   `cd '…' && export NAME='…'` prefix with `render_argv()`'s quoting, carried as
-  `SwayLaunch.launch_setup` and put between the PID marker and the command by
-  `ExecAction::sway_command()`. Only for a launch; `--dry-run` shows the prefix. A binding's
+  `SwayLaunch.launch_setup`. At launch, `SetupFile::write()` puts it in a 0600 file under
+  `$XDG_RUNTIME_DIR/sway-launch/` and `ExecAction::sway_command()` puts only `. '<file>' && rm -f
+  '<file>'` between the PID marker and the command, since the launch shell's command line is
+  world-readable for the program's lifetime (#167); the `SetupFile` is held to the end of
+  `run_wait_matching_exec_event()` and removes the file on drop. With no runtime directory the
+  prefix goes inline, with a warning once per process. Sway passes the `\\` outside quotes through
+  unchanged, so the same rendering reads the same to `sh` from the file. Only for a launch;
+  `--dry-run` shows the prefix itself. A binding's
   `cwd`/`env` is checked by the template's `resolve()` too, with the run's `DirectoryCheck`, so its
   mistakes are the bindings file's, not the template step's (#157).
 - `validate_sway_command()` — `--sway-command`/`sway_commands` (#90), checked for files by

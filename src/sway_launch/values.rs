@@ -972,7 +972,7 @@ pub fn render_argv(words: &[String]) -> Result<String, String> {
 
 /// One word quoted so it passes through Sway's parser and `sh` unchanged;
 /// see `render_argv()` for why each special case is handled as it is.
-fn quote_shell_word(word: &str) -> Result<String, String> {
+pub(super) fn quote_shell_word(word: &str) -> Result<String, String> {
     if let Some(character) = word
         .chars()
         .find(|&c| matches!(c, '$' | '\n' | '\r' | '\0'))

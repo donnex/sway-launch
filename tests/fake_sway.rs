@@ -1642,23 +1642,56 @@ fn a_launch_whose_command_cleared_its_environment_is_still_running() {
     );
 }
 
-#[test]
-fn a_launch_runs_in_its_cwd_with_its_env() {
-    let (sender, receiver) = std::sync::mpsc::channel();
-    let fake = FakeSway::start(SwayVersion::V1_11, move |sway, command| {
+/// A handler that runs every launch for real and opens a `fake-app` window
+/// for it, sending back what the launched process saw (its directory and
+/// environment) and the exec line it was started with.
+fn launches_recording_what_the_process_saw(
+    sender: std::sync::mpsc::Sender<(Option<std::path::PathBuf>, Vec<u8>, String)>,
+) -> impl FnMut(&mut Sway, &str) -> Result<(), String> + Send + 'static {
+    move |sway, command| {
         if command.starts_with("exec ") {
             let token = sway.launch(command);
             let sender = sender.clone();
+            let command = command.to_string();
             sway.when_marked(token, move |sway, pid| {
                 let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).ok();
                 let environ = std::fs::read(format!("/proc/{pid}/environ")).unwrap_or_default();
-                let _ = sender.send((cwd, environ));
+                let _ = sender.send((cwd, environ, command.clone()));
                 let id = sway.open_window(Some("fake-app"), Some(pid));
                 sway.emit("new", id);
             });
         }
         Ok(())
-    });
+    }
+}
+
+/// The `--cwd`/`--env` setup files still in the fake's runtime directory.
+fn setup_files_left(fake: &FakeSway) -> Vec<std::ffi::OsString> {
+    let setup_directory = fake.socket().parent().unwrap().join("sway-launch");
+    std::fs::read_dir(setup_directory)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name())
+                .filter(|name| name.to_string_lossy().starts_with("launch-"))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn environ_has(environ: &[u8], variable: &[u8]) -> bool {
+    environ
+        .split(|byte| *byte == 0)
+        .any(|entry| entry == variable)
+}
+
+#[test]
+fn a_launch_runs_in_its_cwd_with_its_env() {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        launches_recording_what_the_process_saw(sender),
+    );
     let directory = TestTempDir::new();
     let run = run(
         &fake,
@@ -1673,16 +1706,90 @@ fn a_launch_runs_in_its_cwd_with_its_env() {
         ],
     );
     assert!(run.succeeded(), "{}", run.stderr());
-    let (cwd, environ) = receiver
+    let (cwd, environ, command) = receiver
         .recv_timeout(Duration::from_secs(5))
         .expect("the launched process was never seen");
     assert_eq!(cwd.as_deref(), Some(&*directory));
     assert!(
-        environ
-            .split(|byte| *byte == 0)
-            .any(|variable| variable == b"FAKE_SWAY_GREETING=hello world"),
+        environ_has(&environ, b"FAKE_SWAY_GREETING=hello world"),
         "{:?}",
         String::from_utf8_lossy(&environ)
+    );
+    // The launch shell's command line is world-readable while the program
+    // runs, so it names only the setup file, which is gone once used (#167).
+    assert!(!command.contains("hello world"), "{command}");
+    assert!(!command.contains(directory.to_str().unwrap()), "{command}");
+    assert!(
+        setup_files_left(&fake).is_empty(),
+        "{:?}",
+        setup_files_left(&fake)
+    );
+}
+
+#[test]
+fn without_a_runtime_directory_env_goes_on_the_command_line_with_a_warning() {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        launches_recording_what_the_process_saw(sender),
+    );
+    let output = fake
+        .sway_launch()
+        .env_remove("XDG_RUNTIME_DIR")
+        .args([
+            "-a",
+            "fake-app",
+            "--env",
+            "FAKE_SWAY_GREETING=hello",
+            "sleep 30",
+        ])
+        .output()
+        .expect("failed to run sway-launch");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains(
+            "warning: XDG_RUNTIME_DIR is not set, so --cwd/--env go on the launch's command line"
+        ),
+        "{stderr}"
+    );
+    let (_, environ, command) = receiver
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the launched process was never seen");
+    assert!(environ_has(&environ, b"FAKE_SWAY_GREETING=hello"));
+    assert!(
+        command.contains("export FAKE_SWAY_GREETING='hello'"),
+        "{command}"
+    );
+}
+
+#[test]
+fn a_launch_that_times_out_leaves_no_setup_file() {
+    // The exec is accepted but nothing runs it, so no launch shell ever
+    // sources and removes the file: sway-launch removes it itself (#167).
+    let fake = FakeSway::start(SwayVersion::V1_11, |_, _| Ok(()));
+    let run = run(
+        &fake,
+        &[
+            "-a",
+            "fake-app",
+            "--timeout",
+            "1",
+            "--env",
+            "FAKE_SWAY_GREETING=hello",
+            "sleep 30",
+        ],
+    );
+    assert!(!run.succeeded());
+    assert!(
+        run.error().contains("appeared within 1 sec"),
+        "{}",
+        run.error()
+    );
+    assert!(
+        setup_files_left(&fake).is_empty(),
+        "{:?}",
+        setup_files_left(&fake)
     );
 }
 

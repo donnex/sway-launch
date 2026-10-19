@@ -228,9 +228,15 @@ struct Args {
     cwd: Option<String>,
 
     /// Set a variable for the command (repeatable)
+    ///
+    /// The variables and --cwd's directory are written to a file only you
+    /// can read, in $XDG_RUNTIME_DIR/sway-launch/, which the launch reads
+    /// and deletes, so they never appear in the process list. Without
+    /// XDG_RUNTIME_DIR they go on the launch's command line instead, with
+    /// a warning: every local user can read them there while it runs.
     #[clap(long, value_name = "KEY=VALUE", value_parser = sway_launch::parse_env_assignment,
         conflicts_with_all = ["con_id", "existing"], help_heading = HEADING_LAUNCH,
-        display_order = 2)]
+        display_order = 2, verbatim_doc_comment)]
     env: Vec<(String, String)>,
 
     /// Match the window by app_id (exact, case-sensitive)

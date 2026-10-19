@@ -240,6 +240,13 @@ sets a variable for it. A layout step or binding takes the same as `cwd = "~/pro
 `env = { GDK_BACKEND = "x11" }`. Both apply only to a launched command, and a value can't contain a
 `$`, which Sway would replace with one of its config variables.
 
+The variables and the directory don't go on the launch's command line, which every local user can
+read (`ps`, `/proc/<pid>/cmdline`) for as long as the program runs. `sway-launch` writes them to a
+file only you can read, under `$XDG_RUNTIME_DIR/sway-launch/`, which the launch reads and then
+deletes; `sway-launch` deletes it too if the launch fails or times out first. Without
+`XDG_RUNTIME_DIR` they go on the command line instead, with a warning, so don't pass a secret
+through `--env` in that case.
+
 ```shell
 sway-launch --cwd ~/projects/website --env GDK_BACKEND=x11 -c Code 'code .'
 ```

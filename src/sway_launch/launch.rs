@@ -81,7 +81,8 @@ pub struct SwayLaunch<'a> {
 
     /// `cd`/`export` run before a launched command, from `--cwd`/`--env`
     /// (#113), already rendered by `render_launch_setup()`. Only meaningful
-    /// with `Target::Exec`; the front ends refuse it otherwise.
+    /// with `Target::Exec`; the front ends refuse it otherwise. Sent through
+    /// a `SetupFile`, not on the launch's command line (#167).
     pub launch_setup: Option<String>,
 
     /// Containers `Target::Existing` never resolves to, whatever they match:
