@@ -384,6 +384,9 @@ hand (`layout_or_template_only_flags()`), because the derive macro doesn't enfor
 reliably. A new entry in
 `DEBUG_EVENT_SUBSCRIPTIONS` is checked against Sway's documented event list by
 `debug_event_subscriptions_cover_every_sway_ipc_event_type_once`; recheck it when bumping `swayipc`.
+`--debug-events --json` names each event by its `EventType`'s serialization, Sway's own name
+(`barconfig_update`), through `debug_event_type()`, never by case-converting the `Event` variant
+(#191); a variant added there needs an arm too.
 
 ### `--layout`, `--template`, `--dry-run`, `--validate`
 

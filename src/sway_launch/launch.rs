@@ -285,32 +285,55 @@ pub fn debug_events(json: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// One event as `--debug-events --json` prints it: Sway's own payload, the
-/// shape `swaymsg -t subscribe` shows, with an `event` field naming its type
-/// (`window`, `output`, `bar_config_update`, ...), since the payload alone
-/// doesn't say. A payload that isn't an object is kept under `payload`.
+/// One event as `--debug-events --json` prints it: the event's payload as
+/// `swayipc` models it (so a field it doesn't know is dropped, and one Sway
+/// left out reads `null`; `swaymsg -t subscribe -m` shows the raw bytes),
+/// with an `event` field naming its type (`window`, `output`,
+/// `barconfig_update`, ...), since the payload alone doesn't say. A payload
+/// that isn't an object is kept under `payload`.
 fn debug_event_json(event: &Event) -> serde_json::Value {
+    let name = debug_event_type(event)
+        .and_then(|event_type| serde_json::to_value(event_type).ok())
+        .and_then(|name| name.as_str().map(str::to_string))
+        .unwrap_or_else(|| "unknown".to_string());
     let tagged = serde_json::to_value(event).unwrap_or(serde_json::Value::Null);
-    let Some((variant, payload)) = tagged.as_object().and_then(|object| object.iter().next())
-    else {
-        return serde_json::json!({ "event": "unknown", "payload": tagged });
+    let payload = match tagged {
+        serde_json::Value::Object(mut variant) if variant.len() == 1 => variant
+            .values_mut()
+            .next()
+            .map(serde_json::Value::take)
+            .unwrap_or_default(),
+        other => other,
     };
-    let mut name = String::new();
-    for (index, character) in variant.chars().enumerate() {
-        if character.is_uppercase() && index > 0 {
-            name.push('_');
-        }
-        name.push(character.to_ascii_lowercase());
-    }
     match payload {
         serde_json::Value::Object(fields) => {
             let mut object = serde_json::Map::new();
             object.insert("event".to_string(), serde_json::Value::String(name));
-            object.extend(fields.clone());
+            object.extend(fields);
             serde_json::Value::Object(object)
         }
         other => serde_json::json!({ "event": name, "payload": other }),
     }
+}
+
+/// The `EventType` an event arrived as, whose serialization is Sway's own
+/// name for it (`barconfig_update`, not the variant's `bar_config_update`).
+/// `None` for a variant a newer `swayipc` adds, since `Event` is
+/// `#[non_exhaustive]`; recheck this alongside `DEBUG_EVENT_SUBSCRIPTIONS`.
+fn debug_event_type(event: &Event) -> Option<EventType> {
+    Some(match event {
+        Event::Workspace(_) => EventType::Workspace,
+        Event::Output(_) => EventType::Output,
+        Event::Mode(_) => EventType::Mode,
+        Event::Window(_) => EventType::Window,
+        Event::BarConfigUpdate(_) => EventType::BarConfigUpdate,
+        Event::Binding(_) => EventType::Binding,
+        Event::Shutdown(_) => EventType::Shutdown,
+        Event::Tick(_) => EventType::Tick,
+        Event::BarStateUpdate(_) => EventType::BarStateUpdate,
+        Event::Input(_) => EventType::Input,
+        _ => return None,
+    })
 }
 
 impl<'a> SwayLaunch<'a> {

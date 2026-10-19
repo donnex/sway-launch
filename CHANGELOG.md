@@ -183,6 +183,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--help`, `-h` and the man page now link to the guide on the project's repository page instead
   of sending readers to `README.md`, which an installed copy usually doesn't have: neither `cargo
   install` nor the release archive's install steps keep it. (#177)
+- `--debug-events --json` now names a bar config change `barconfig_update`, the name Sway and
+  `swaymsg -t subscribe` use, rather than `bar_config_update`, so a script filtering on Sway's name
+  sees those events. The README also no longer claims each line is Sway's own payload: it is the
+  event as the `swayipc` library reads it, which leaves out fields it doesn't know and fills in
+  `null` for ones Sway didn't send. (#191)
 
 ## [0.1.0] - 2026-10-18
 

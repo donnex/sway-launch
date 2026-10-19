@@ -5357,6 +5357,55 @@ fn debug_events_exits_cleanly_when_its_reader_goes_away() {
     );
 }
 
+#[test]
+fn debug_events_json_names_each_event_as_sway_does() {
+    fresh_workspace();
+    // --debug-events --json names each event by Sway's own type name (#191),
+    // the name a script filters on. Checked here on a tick, which carries a
+    // payload this test chooses, and a window opening. (barconfig_update,
+    // the one name the variant's own spelling got wrong, needs a bar in the
+    // config; the unit tests cover it.)
+    let mut child = KillChildOnDrop(
+        sway_launch_command()
+            .args(["--debug-events", "--json"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("failed to spawn sway-launch --debug-events --json"),
+    );
+    let stdout = child.0.stdout.take().expect("stdout should be piped");
+    let (lines_sender, lines) = mpsc::channel::<serde_json::Value>();
+    std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stdout)
+            .lines()
+            .map_while(Result::ok)
+        {
+            let value = serde_json::from_str(&line)
+                .unwrap_or_else(|error| panic!("not one JSON object per line: {error}: {line}"));
+            if lines_sender.send(value).is_err() {
+                break;
+            }
+        }
+    });
+
+    std::thread::sleep(Duration::from_millis(300));
+    connect()
+        .send_tick("debug-events-probe")
+        .expect("send_tick should succeed");
+    let (container_id, _guard) = launch_foot(&[]);
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let (mut saw_tick, mut saw_window) = (false, false);
+    while !(saw_tick && saw_window) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let event = lines.recv_timeout(remaining).unwrap_or_else(|_| {
+            panic!("no tick and window event seen (tick: {saw_tick}, window: {saw_window})")
+        });
+        saw_tick |= event["event"] == "tick" && event["payload"] == "debug-events-probe";
+        saw_window |= event["event"] == "window" && event["container"]["id"] == container_id;
+    }
+}
+
 /// The repo-root-relative directory a shipped example file lives under,
 /// resolved via CARGO_MANIFEST_DIR rather than a relative path, so these
 /// tests work regardless of the working directory `cargo test` is invoked

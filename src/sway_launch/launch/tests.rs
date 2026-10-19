@@ -1,4 +1,5 @@
 use super::super::confirmation::batch_command;
+use super::super::test_support::leaf_node_value;
 use super::*;
 
 // SwayLaunch::build_actions
@@ -388,6 +389,129 @@ fn debug_event_json_names_the_event_type_beside_sway_s_payload() {
         debug_event_json(&tick),
         serde_json::json!({"event": "tick", "first": true, "payload": "x"})
     );
+}
+
+/// One event of every `swayipc::Event` variant, as `(variant, payload)`,
+/// the smallest payload each deserializes from.
+fn one_event_of_every_kind() -> Vec<(&'static str, serde_json::Value)> {
+    let node = leaf_node_value(7, Some("foot"), None);
+    let color = serde_json::json!("#000000");
+    let colors: serde_json::Map<String, serde_json::Value> = [
+        "background",
+        "statusline",
+        "separator",
+        "focused_background",
+        "focused_statusline",
+        "focused_separator",
+        "focused_workspace_text",
+        "focused_workspace_bg",
+        "focused_workspace_border",
+        "active_workspace_text",
+        "active_workspace_bg",
+        "active_workspace_border",
+        "inactive_workspace_text",
+        "inactive_workspace_bg",
+        "inactive_workspace_border",
+        "urgent_workspace_text",
+        "urgent_workspace_bg",
+        "urgent_workspace_border",
+        "binding_mode_text",
+        "binding_mode_bg",
+        "binding_mode_border",
+    ]
+    .into_iter()
+    .map(|field| (field.to_string(), color.clone()))
+    .collect();
+    vec![
+        (
+            "Workspace",
+            serde_json::json!({"change": "focus", "current": node, "old": null}),
+        ),
+        ("Output", serde_json::json!({"change": "unspecified"})),
+        (
+            "Mode",
+            serde_json::json!({"change": "default", "pango_markup": false}),
+        ),
+        (
+            "Window",
+            serde_json::json!({"change": "new", "container": node}),
+        ),
+        (
+            "BarConfigUpdate",
+            serde_json::json!({
+                "id": "bar-0",
+                "mode": "dock",
+                "position": "top",
+                "status_command": null,
+                "font": "monospace 10",
+                "workspace_buttons": true,
+                "binding_mode_indicator": true,
+                "verbose": false,
+                "colors": colors,
+                "gaps": {"top": 0, "bottom": 0, "right": 0, "left": 0},
+                "bar_height": 0,
+                "status_padding": 1,
+                "status_edge_padding": 3,
+            }),
+        ),
+        (
+            "Binding",
+            serde_json::json!({
+                "change": "run",
+                "binding": {
+                    "command": "nop",
+                    "input_code": 0,
+                    "symbol": "a",
+                    "input_type": "keyboard",
+                },
+            }),
+        ),
+        ("Shutdown", serde_json::json!({"change": "exit"})),
+        ("Tick", serde_json::json!({"first": false, "payload": ""})),
+        (
+            "BarStateUpdate",
+            serde_json::json!({"id": "bar-0", "visible_by_modifier": true}),
+        ),
+        (
+            "Input",
+            serde_json::json!({
+                "change": "added",
+                "input": {"identifier": "0:0:example", "name": "example", "type": "keyboard"},
+            }),
+        ),
+    ]
+}
+
+#[test]
+fn debug_event_json_names_every_event_type_as_sway_does() {
+    // The name a script filters on must be the one Sway's own subscribe
+    // request takes, which for a bar config change isn't the variant's
+    // snake case (`bar_config_update`).
+    let names: std::collections::BTreeSet<String> = one_event_of_every_kind()
+        .into_iter()
+        .map(|(variant, payload)| {
+            let event: swayipc::Event =
+                serde_json::from_value(serde_json::json!({ variant: payload }))
+                    .unwrap_or_else(|error| panic!("{} should deserialize: {}", variant, error));
+            debug_event_json(&event)["event"]
+                .as_str()
+                .expect("every event should carry an `event` name")
+                .to_string()
+        })
+        .collect();
+    let subscribed: std::collections::BTreeSet<String> = DEBUG_EVENT_SUBSCRIPTIONS
+        .iter()
+        .map(|event_type| {
+            serde_json::to_value(event_type)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+
+    assert!(names.contains("barconfig_update"));
+    assert_eq!(names, subscribed);
 }
 
 #[test]

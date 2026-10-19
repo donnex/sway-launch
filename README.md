@@ -1269,7 +1269,9 @@ the usual error object.
 
 `--debug-events` prints every Sway IPC event until stopped with Ctrl-C, for seeing what Sway
 actually sends when something doesn't behave as expected. With `--json`, each event is one line:
-Sway's own payload, as `swaymsg -t subscribe` shows it, plus an `event` field naming its type. For
+Sway's event as the `swayipc` library models it, plus an `event` field naming its type by Sway's own
+name (`window`, `barconfig_update`, ...). A field `swayipc` doesn't know is left out, and one Sway
+didn't send reads `null`; `swaymsg -t subscribe -m '["window"]'` shows the raw events instead. For
 example, the app_id of every window that opens:
 
 ```shell
