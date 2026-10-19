@@ -956,7 +956,8 @@ Sway keeps focus on a fullscreen window when another window opens on its workspa
 new window right after it, so windows launched after it open behind it, unfocused and in reverse
 order. Focusing another window on the workspace also takes it out of fullscreen. In a layout file,
 make a window fullscreen last, on a step of its own with `target_id`, once every other window is
-open and sized.
+open and sized. `--validate` and `--dry-run` warn about a fullscreen step that a later launch
+follows on the same workspace.
 
 ### Focus
 
@@ -1345,7 +1346,8 @@ $ sway-launch --template master-triple-stack --apps foot,foot,foot,foot --dry-ru
 Actions a real run sends together share a line, though a real run leaves out any whose state
 already holds. A run that switches workspace first (`--on-workspace`, a `[layout]` table) lists those
 commands first. `--json` prints `{"steps": [{"target": ..., "actions": [{"kind": ..., "command": ...}]}]}`,
-with a `"setup"` list of those commands ahead of `"steps"` when there are any. Control characters show as visible escapes (`\u{1b}`, `\t`), so a file can't use
+with a `"setup"` list of those commands ahead of `"steps"` when there are any, and a `"warnings"`
+list when the plan has any (see [Validate](#validate)). Control characters show as visible escapes (`\u{1b}`, `\t`), so a file can't use
 a terminal escape sequence to make the preview show something other than what it would run.
 
 The preview is planned, not predicted: `--new-column`/`--new-row` always show, even where a real run
@@ -1368,6 +1370,17 @@ error: broken.toml: step 2: height: Must be <N>px (N >= 1) or <N>ppt (N 1-100), 
 An error names the file holding the mistake: a bad binding is reported against the bindings file
 (or `--apps`), not the template. `--json` prints `{"source": "...", "steps": N, "valid": true}`, or
 the usual error object.
+
+A file can be valid and still not build what it describes. `--validate` and `--dry-run` warn,
+without failing, when a step makes its window fullscreen and a later step launches a window on the
+same workspace: that window would open behind the fullscreen one (see [Fullscreen](#fullscreen)).
+The warning goes to stderr, or into a `"warnings"` list under `--json`:
+
+```console
+$ sway-launch --layout layout.toml --validate
+warning: layout.toml: step 1 makes its window fullscreen before step 2 launches, so step 2's window opens behind it and later windows open in reverse order — make it fullscreen in a final step of its own with target_id
+valid: layout.toml (2 step(s))
+```
 
 ### Debug events
 

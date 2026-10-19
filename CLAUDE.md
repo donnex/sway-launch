@@ -426,6 +426,11 @@ reliably. A new entry in
   a later step fails it before the first window opens (#179); its loop then plans each step again
   against the real ids. A new per-step rule goes in `plan_step()` or `to_sway_launch()`, never in one mode's loop, or
   `--validate` can accept what a real run rejects. Errors are formatted once, by `step_error()`.
+- A file that's valid but builds the wrong shape gets a warning instead (#192):
+  `fullscreen_before_launch()` (pure, over the steps) finds a fullscreen step a later launch follows
+  on the build workspace, and `--validate`/`--dry-run` print it through
+  `fullscreen_before_launch_warnings()`, to stderr or `--json`'s `"warnings"`; the exit status
+  stays 0.
 - A step's `id` names its container; a later `target_id` resolves to it through `resolved_ids`. A
   template's `slot` becomes the step's `id`, so templates use the same mechanism.
 - `run_steps()` applies the run's `BuildLocation` (a template's `[layout]` table, or

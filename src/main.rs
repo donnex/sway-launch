@@ -883,7 +883,7 @@ fn main() {
     };
 
     if args.dry_run {
-        print_dry_run_steps(&[], &[dry_run_step(&sway_launch)], args.json);
+        print_dry_run_steps(&[], &[dry_run_step(&sway_launch)], &[], args.json);
         process::exit(0);
     }
 
@@ -1438,7 +1438,9 @@ fn dry_run_step(sway_launch: &sway_launch::SwayLaunch) -> DryRunStep {
 /// `--layout`/`--template` run sends before its first step (see
 /// `sway_launch::BuildLocation`): numbered first in plain output, and a
 /// `"setup"` list under `--json`, present only when there are any.
-fn print_dry_run_steps(setup: &[String], steps: &[DryRunStep], json: bool) {
+/// `warnings` are the plan's own (already printed to stderr in plain mode),
+/// a `"warnings"` list under `--json`, likewise only when there are any.
+fn print_dry_run_steps(setup: &[String], steps: &[DryRunStep], warnings: &[String], json: bool) {
     if json {
         let steps: Vec<_> = steps
             .iter()
@@ -1456,6 +1458,9 @@ fn print_dry_run_steps(setup: &[String], steps: &[DryRunStep], json: bool) {
         let mut preview = serde_json::json!({ "steps": steps });
         if !setup.is_empty() {
             preview["setup"] = serde_json::json!(setup);
+        }
+        if !warnings.is_empty() {
+            preview["warnings"] = serde_json::json!(warnings);
         }
         print_line(&preview.to_string());
         return;

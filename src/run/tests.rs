@@ -482,3 +482,65 @@ fn an_unresolved_launch_names_its_step_and_the_staging_workspace() {
         .message()
         .starts_with("layout.toml: step 2: its application may still open a window, on workspace \"sway-launch-staging-42\""));
 }
+
+#[test]
+fn fullscreen_before_launch_pairs_a_fullscreen_step_with_the_next_launch() {
+    let steps = layout_steps(
+        "[[step]]\ncommand = \"foot\"\nfullscreen = true\n\n[[step]]\ncon_id = 7\n\n\
+         [[step]]\ncommand = \"foot\"\n\n[[step]]\ncommand = \"foot\"\n",
+    );
+    assert_eq!(fullscreen_before_launch(&steps), vec![(0, 2)]);
+}
+
+#[test]
+fn fullscreen_before_launch_accepts_fullscreen_on_a_final_target_id_step() {
+    let steps = layout_steps(
+        "[[step]]\ncommand = \"foot\"\nid = \"main\"\n\n[[step]]\ncommand = \"foot\"\n\n\
+         [[step]]\ntarget_id = \"main\"\nfullscreen = true\n",
+    );
+    assert!(fullscreen_before_launch(&steps).is_empty());
+}
+
+#[test]
+fn fullscreen_before_launch_flags_a_target_id_fullscreen_step_before_a_launch() {
+    let steps = layout_steps(
+        "[[step]]\ncommand = \"foot\"\nid = \"main\"\n\n[[step]]\ntarget_id = \"main\"\n\
+         fullscreen = true\n\n[[step]]\ncommand = \"foot\"\n",
+    );
+    assert_eq!(fullscreen_before_launch(&steps), vec![(1, 2)]);
+}
+
+#[test]
+fn fullscreen_before_launch_ignores_steps_that_leave_the_build_workspace() {
+    for moved in [
+        "workspace = \"other\"",
+        "workspace_number = 4",
+        "output = \"HEADLESS-2\"",
+        "scratchpad = true",
+    ] {
+        let fullscreen_moved = layout_steps(&format!(
+            "[[step]]\ncommand = \"foot\"\nfullscreen = true\n{moved}\n\n[[step]]\ncommand = \"foot\"\n"
+        ));
+        assert!(
+            fullscreen_before_launch(&fullscreen_moved).is_empty(),
+            "{moved}"
+        );
+        let launch_moved = layout_steps(&format!(
+            "[[step]]\ncommand = \"foot\"\nfullscreen = true\n\n[[step]]\ncommand = \"foot\"\n{moved}\n"
+        ));
+        assert!(
+            fullscreen_before_launch(&launch_moved).is_empty(),
+            "{moved}"
+        );
+    }
+}
+
+#[test]
+fn fullscreen_before_launch_message_names_both_steps_and_the_fix() {
+    let message = fullscreen_before_launch_message("layout.toml", 0, 2);
+    assert!(
+        message.starts_with("layout.toml: step 1 makes its window fullscreen before step 3"),
+        "{message}"
+    );
+    assert!(message.contains("target_id"), "{message}");
+}

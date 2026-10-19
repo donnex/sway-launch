@@ -78,6 +78,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   at `--timeout` or `--app-id` rather than at the compositor; Debian 12 and Ubuntu 22.04 both ship
   Sway 1.7. The run still goes ahead after the warning, and `--verbose` now prints the version it
   found. (#147)
+- `--validate` and `--dry-run` now warn when a layout or template step makes its window fullscreen
+  and a later step launches another window on the same workspace. Sway keeps focus on the
+  fullscreen window, so every window launched after it opens behind it, in reverse order, and the
+  file built the wrong shape with no sign of why. The warning names both steps and suggests making
+  the window fullscreen in a final step with `target_id`; the file still counts as valid. Under
+  `--json` it is a `"warnings"` list. (#192)
 
 ### Changed
 

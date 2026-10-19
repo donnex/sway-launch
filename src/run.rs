@@ -709,6 +709,70 @@ fn orphaned_staging_message(orphaned: &sway_launch::OrphanedStaging) -> String {
     )
 }
 
+/// The warnings `--validate` and `--dry-run` give for a step that makes its
+/// window fullscreen ahead of a later launch (#192): Sway keeps focus on a
+/// fullscreen window and opens each new window right after it, so the later
+/// windows come out behind it in reverse order. On stderr, and for `--json`'s
+/// `"warnings"`. Only a warning: the file is valid, and builds what it says
+/// once the fullscreen step moves to the end.
+fn fullscreen_before_launch_warnings(steps: &[layout::LayoutStep], args: &Args) -> Vec<String> {
+    let source = steps_source(args);
+    let warnings: Vec<String> = fullscreen_before_launch(steps)
+        .into_iter()
+        .map(|(fullscreen, launch)| fullscreen_before_launch_message(&source, fullscreen, launch))
+        .collect();
+    if !args.json {
+        for warning in &warnings {
+            diagnostic!(
+                "{}{}",
+                stderr_label(Severity::Warning),
+                sway_launch::escape_control_characters(warning, true)
+            );
+        }
+    }
+    warnings
+}
+
+/// Each step (0-based) that sets `fullscreen` and leaves its window on the
+/// build workspace, paired with the first later step that launches a window
+/// there. A fullscreen window moved to another workspace, output or the
+/// scratchpad is left out, as is a later launch that moves its own window
+/// away: whether the two still share a workspace isn't known offline, and a
+/// false warning on a file that builds correctly is worse than none.
+fn fullscreen_before_launch(steps: &[layout::LayoutStep]) -> Vec<(usize, usize)> {
+    let leaves_build_workspace = |step: &layout::LayoutStep| {
+        step.workspace.is_some()
+            || step.workspace_number.is_some()
+            || step.output.is_some()
+            || step.scratchpad
+    };
+    steps
+        .iter()
+        .enumerate()
+        .filter(|(_, step)| step.fullscreen && !leaves_build_workspace(step))
+        .filter_map(|(fullscreen, _)| {
+            steps
+                .iter()
+                .enumerate()
+                .skip(fullscreen + 1)
+                .find(|(_, step)| step.command.is_some() && !leaves_build_workspace(step))
+                .map(|(launch, _)| (fullscreen, launch))
+        })
+        .collect()
+}
+
+fn fullscreen_before_launch_message(source: &str, fullscreen: usize, launch: usize) -> String {
+    format!(
+        "{}: step {} makes its window fullscreen before step {} launches, so step {}'s window \
+         opens behind it and later windows open in reverse order — make it fullscreen in a final \
+         step of its own with target_id",
+        source,
+        fullscreen + 1,
+        launch + 1,
+        launch + 1
+    )
+}
+
 /// `run_steps()`'s `--dry-run` handling: plans every step via
 /// `plan_steps_offline()` (see there for how `target_id` resolves with
 /// nothing launched) and prints its planned actions (via
@@ -721,8 +785,9 @@ fn run_steps_dry_run(
 ) -> ! {
     match plan_steps_offline(steps, args) {
         Ok(planned) => {
+            let warnings = fullscreen_before_launch_warnings(steps, args);
             let dry_run_steps: Vec<DryRunStep> = planned.iter().map(dry_run_step).collect();
-            print_dry_run_steps(&build.commands(), &dry_run_steps, args.json);
+            print_dry_run_steps(&build.commands(), &dry_run_steps, &warnings, args.json);
             process::exit(0);
         }
         Err(error) => fail(args.json, &error),
@@ -755,11 +820,15 @@ fn run_steps_validate(steps: &[layout::LayoutStep], args: &Args) -> ! {
         fail(args.json, &error);
     }
 
+    let warnings = fullscreen_before_launch_warnings(steps, args);
+
     if args.json {
-        print_line(
-            &serde_json::json!({ "source": source, "valid": true, "steps": steps.len() })
-                .to_string(),
-        );
+        let mut result =
+            serde_json::json!({ "source": source, "valid": true, "steps": steps.len() });
+        if !warnings.is_empty() {
+            result["warnings"] = serde_json::json!(warnings);
+        }
+        print_line(&result.to_string());
     } else {
         print_line(&format!("valid: {} ({} step(s))", source, steps.len()));
     }

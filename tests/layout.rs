@@ -1185,3 +1185,64 @@ fn a_quote_split_across_sway_commands_entries_is_refused_by_validate() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("unclosed '\"' quote"), "{stderr}");
 }
+
+#[test]
+fn layout_validate_and_dry_run_warn_about_a_launch_after_a_fullscreen_step() {
+    // #192: a valid file, so both modes still succeed, but the later window
+    // would open behind the fullscreen one.
+    let path = TempToml::write(
+        "fullscreen-before-launch",
+        "[[step]]\ncommand = \"foot\"\nfullscreen = true\n\n[[step]]\ncommand = \"foot\"\n",
+    );
+    let warning = format!(
+        "{}: step 1 makes its window fullscreen before step 2 launches",
+        path.display()
+    );
+
+    for mode in ["--validate", "--dry-run"] {
+        let output = sway_launch()
+            .args(["--layout", path.to_str().unwrap(), mode])
+            .output()
+            .expect("failed to run sway-launch binary");
+        assert!(output.status.success(), "{mode}");
+        let stderr = String::from_utf8(output.stderr).expect("stderr should be valid utf8");
+        assert!(stderr.contains("warning:"), "{mode}: {stderr}");
+        assert!(stderr.contains(&warning), "{mode}: {stderr}");
+
+        let output = sway_launch()
+            .args(["--layout", path.to_str().unwrap(), mode, "--json"])
+            .output()
+            .expect("failed to run sway-launch binary");
+        assert!(output.status.success(), "{mode} --json");
+        assert!(output.stderr.is_empty(), "{mode} --json");
+        let result: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("stdout should be JSON");
+        let warnings = result["warnings"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{mode} --json should list warnings: {result}"));
+        assert_eq!(warnings.len(), 1, "{mode}");
+        assert!(
+            warnings[0].as_str().unwrap().starts_with(&warning),
+            "{mode}: {result}"
+        );
+    }
+}
+
+#[test]
+fn layout_validate_gives_no_warning_for_fullscreen_on_a_final_target_id_step() {
+    let path = TempToml::write(
+        "fullscreen-last",
+        "[[step]]\ncommand = \"foot\"\nid = \"main\"\n\n[[step]]\ncommand = \"foot\"\n\n\
+         [[step]]\ntarget_id = \"main\"\nfullscreen = true\n",
+    );
+    let output = sway_launch()
+        .args(["--layout", path.to_str().unwrap(), "--validate"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(output.status.success());
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
