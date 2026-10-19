@@ -282,7 +282,9 @@ confirmed by one engine, `run_batch()` (#133), whether it is sent in a batch or 
   above in one loop. Existence check, subscribe, one state read for the already-there check,
   `--wait-time` once if anything polled is sent, send, then `batch_failure()` maps Sway's per-part
   replies back to actions (Sway runs every part even after one fails, and stops only at a parse
-  error; confirmed live). Each event wakes one state read for every action whose event arrived;
+  error; confirmed live). A `--position center` is judged against the pixel size the same batch
+  set (`requested_frame()`, #145), the frame Sway centered, not the size the client then commits.
+  Each event wakes one state read for every action whose event arrived;
   polled actions are polled in the same loop. Moves and `Scratchpad` stay out of a batch: each
   changes what the next action is judged against. With `--settle`
   (#17, `settle_duration()`), `hold_geometry()` then holds the confirmed pixel sizes and position,

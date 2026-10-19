@@ -32,7 +32,7 @@ use super::query::{
 use super::target::{LaunchFilter, WindowCriteria};
 use super::tree::{
     find_node, find_parent_layout, height_matches, is_window, position_shows, width_matches,
-    ContainerState, WindowIdentity,
+    ContainerState, RequestedFrame, WindowIdentity,
 };
 use super::values::{escape_control_characters, Size, Split, TitlePattern};
 use super::{MOVE_POLL_GRACE, WAIT_TIME_POLL_GRACE, WAIT_TIME_POLL_INTERVAL};
@@ -406,7 +406,16 @@ impl SwayAction<'_> {
     /// confirmed yet" there, never an error: polling only ever exists to
     /// return *faster* than the unconditional sleep already does, never to
     /// turn success into failure.
-    fn poll_shows(&self, tree: &Node, baseline: Option<swayipc::Rect>) -> bool {
+    ///
+    /// `requested` is the frame size the same batch asked for
+    /// (`requested_frame()`), which a `Position::Center` is judged against
+    /// (see `expected_position()`).
+    fn poll_shows(
+        &self,
+        tree: &Node,
+        baseline: Option<swayipc::Rect>,
+        requested: RequestedFrame,
+    ) -> bool {
         let container_id = self.container_id;
         match self.kind {
             ActionKind::Split(split) => {
@@ -422,7 +431,9 @@ impl SwayAction<'_> {
             ActionKind::Width(Size::Pixels(pixels)) => {
                 find_node(tree, container_id).is_some_and(|node| width_matches(node, pixels))
             }
-            ActionKind::Position(position) => position_shows(tree, container_id, &position),
+            ActionKind::Position(position) => {
+                position_shows(tree, container_id, &position, requested)
+            }
             // Unlike Floating's `floating`/node-type split (see
             // node_is_floating()'s doc comment), `sticky` is a plain `bool`
             // on `Node` with no version-dependent quirk found — confirmed
@@ -470,8 +481,8 @@ impl SwayAction<'_> {
     /// `hold_geometry()`: a pixel size or a position, judged as
     /// `poll_shows()` judges it. `false` for every kind `is_held_geometry()`
     /// rejects, and when the container isn't in `tree`.
-    fn geometry_shows(&self, tree: &Node) -> bool {
-        is_held_geometry(self.kind) && self.poll_shows(tree, None)
+    fn geometry_shows(&self, tree: &Node, requested: RequestedFrame) -> bool {
+        is_held_geometry(self.kind) && self.poll_shows(tree, None, requested)
     }
 
     /// Snapshots whatever state a wait-time action's `poll_shows()` needs
@@ -677,6 +688,7 @@ pub(super) fn run_batch(
     };
     let all_actions: Vec<&SwayAction<'_>> = actions.iter().collect();
     let all_verbs = batch_verbs(&all_actions);
+    let requested = requested_frame(actions);
     let fail_batch =
         |verbs: &str, error: String| -> RunError { format!("{verbs}: {error}").into() };
 
@@ -862,7 +874,7 @@ pub(super) fn run_batch(
                 let action = &actions[index];
                 if tree
                     .as_ref()
-                    .is_some_and(|tree| action.poll_shows(tree, baselines[index]))
+                    .is_some_and(|tree| action.poll_shows(tree, baselines[index], requested))
                 {
                     if verbose {
                         diagnostic!(
@@ -1000,6 +1012,37 @@ pub(super) fn run_batch(
     Ok(progress.iter().map(|progress| progress.outcome()).collect())
 }
 
+/// The pixel width and height `actions` (one batch) asks for, which Sway
+/// sets before it runs a `move position center` later in the same command,
+/// so that is the frame it centers (#145). A percentage is left to the tree:
+/// Sway resolves it against the workspace, and that figure isn't known here.
+fn requested_frame(actions: &[SwayAction<'_>]) -> RequestedFrame {
+    let mut requested = RequestedFrame::default();
+    for action in actions {
+        match action.kind {
+            ActionKind::Width(Size::Pixels(pixels)) => requested.width = Some(pixels),
+            ActionKind::Height(Size::Pixels(pixels)) => requested.height = Some(pixels),
+            ActionKind::Width(Size::Percent(_))
+            | ActionKind::Height(Size::Percent(_))
+            | ActionKind::Split(_)
+            | ActionKind::Floating
+            | ActionKind::Sticky
+            | ActionKind::Fullscreen
+            | ActionKind::Focus
+            | ActionKind::NewColumn
+            | ActionKind::NewRow
+            | ActionKind::Workspace(_)
+            | ActionKind::Output(_)
+            | ActionKind::WorkspaceToOutput { .. }
+            | ActionKind::Mark(_)
+            | ActionKind::Position(_)
+            | ActionKind::SwayCommand(_)
+            | ActionKind::Scratchpad => {}
+        }
+    }
+    requested
+}
+
 /// How many times `hold_geometry()` sends the geometry again before giving
 /// up on a client that keeps undoing it. A browser resizes itself once or
 /// twice while it starts; one that never stops is fighting the request, and
@@ -1071,6 +1114,7 @@ fn hold_geometry(
     };
     let container_id = actions[first].container_id;
     let verbose = actions[first].verbose;
+    let requested = requested_frame(actions);
     let held_actions: Vec<&SwayAction<'_>> = held.iter().map(|&index| &actions[index]).collect();
     let command = batch_command(container_id, &held_actions);
     let held_verbs = batch_verbs(&held_actions);
@@ -1104,7 +1148,7 @@ fn hold_geometry(
         let drifted: Vec<usize> = held
             .iter()
             .copied()
-            .filter(|&index| !actions[index].geometry_shows(&tree))
+            .filter(|&index| !actions[index].geometry_shows(&tree, requested))
             .collect();
         if drifted.is_empty() {
             continue;

@@ -7429,6 +7429,76 @@ fn position_center_centers_a_floating_window() {
     assert_eq!(node.deco_rect.y, (workspace_rect.height - 300) / 2);
 }
 
+#[test]
+fn position_center_with_a_requested_size_reports_the_final_placement() {
+    // #145: foot asked for 800x500 commits a size of its own a moment later
+    // (snapped to its cell grid, or the size it had tiled), while Sway keeps
+    // the window where it centered the 800x500 frame it set. Judged on
+    // whichever size the poll read, the same final placement reported
+    // `changed` on one run and `unconfirmed` on the next. README's quick
+    // start, so each run's status must agree with where the window is once
+    // it settled.
+    let workspace = fresh_workspace();
+    let mut connection = connect();
+    let workspace_rect = workspace_rect(&mut connection, &workspace);
+    let expected = (
+        (workspace_rect.width - 800) / 2,
+        (workspace_rect.height - 500) / 2,
+    );
+    for _ in 0..4 {
+        let output = sway_launch_command()
+            .args([
+                "--app-id",
+                "foot",
+                "--timeout",
+                "10",
+                "--json",
+                "--floating",
+                "--width",
+                "800px",
+                "--height",
+                "500px",
+                "--position",
+                "center",
+                "foot",
+            ])
+            .output()
+            .expect("failed to run sway-launch binary");
+        assert!(
+            output.status.success(),
+            "sway-launch failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("stdout should be one JSON object");
+        let container_id = parsed["container_id"]
+            .as_i64()
+            .expect("container_id should be an integer");
+        let _guard = KillOnDrop(container_id);
+        let position = parsed["actions"]
+            .as_array()
+            .expect("actions should be an array")
+            .iter()
+            .find(|action| action["kind"] == "position")
+            .expect("the run should report its position action");
+
+        std::thread::sleep(Duration::from_millis(500));
+        let node = get_settled_node(&mut connection, container_id);
+        assert_eq!(
+            (node.deco_rect.x, node.deco_rect.y),
+            expected,
+            "Sway should have centered the requested 800x500 frame, whatever size foot kept \
+             ({}x{})",
+            node.rect.width,
+            node.rect.height + node.deco_rect.height
+        );
+        assert_eq!(
+            position["status"], "changed",
+            "a window settled where it was centered should report changed, got {parsed}"
+        );
+    }
+}
+
 /// Sets every workspace's outer gaps to `gaps` and resets them to zero when
 /// dropped, even on assertion panic — the setting applies compositor-wide, so
 /// every later test in this shared session would otherwise inherit it.

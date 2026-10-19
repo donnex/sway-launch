@@ -120,8 +120,11 @@ $ sway-launch foot
 returns:
 
 ```shell
-sway-launch --floating --width 800px --height 500px --position center foot
+sway-launch --floating --width 800px --height 500px --position center --settle 500 foot
 ```
+
+`--settle 500` holds the size and position for half a second, putting them back if the application
+changes them as it starts (see [Settle](#settle)).
 
 **3. Say which window you mean.** If an application might already be running, or several windows
 may open at once, tell `sway-launch` which one belongs to the launch with `-a` (a Wayland app_id)
@@ -986,6 +989,11 @@ split rather than the first. A pixel size is confirmed against the window's new 
 has no pixel figure to check against, so it's reported `unconfirmed` after the
 [wait time](#timing-timeout-and-wait-time).
 
+`changed` means Sway applied the size, not that the application kept it. The application draws the
+window and has the last word on its size, a moment after Sway set it: some terminals, `foot`
+included, round a floating window to whole character cells (an 800px-wide `foot` can end up
+796px), and some applications put their own size back, which [`--settle`](#settle) is for.
+
 ### Position
 
 Moves a floating window to `center` or to `<x>,<y>` in pixels. A tiled window's position comes from
@@ -993,6 +1001,10 @@ the layout, and Sway refuses the command for one, so pair this with `--floating`
 relative to the window's workspace, as Sway's own `move position` is: the workspace starts below or
 beside a bar and inside any outer gaps, so `0,0` is its top-left corner, not the output's. `<x>` and
 `<y>` may be negative. To place a window on another monitor, combine `--output` with `--position`.
+
+`center` centers the window's whole frame, borders and title bar included. With a pixel `--width` or
+`--height` in the same call, it's centered on that size, as Sway does, even if the application then
+rounds or changes its size (see [Height and width](#height-and-width)).
 
 ```shell
 sway-launch --floating --position center foot
@@ -1147,7 +1159,8 @@ as `{"kind": ..., "command": ..., "status": ...}`:
   `mark "pinned"`), on its own even when it was sent along with other actions. It's absent for a
   skipped action.
 - `status` is one of:
-  - `changed`: the action ran and changed the window.
+  - `changed`: the action ran and changed the window. For a size or position, this is what Sway
+    applied, which the application can still change (see [Height and width](#height-and-width)).
   - `already_satisfied`: the window was already in that state (floating, on that workspace, ...),
     so nothing was sent.
   - `unconfirmed`: the command was sent but the change wasn't observed in time. Only actions

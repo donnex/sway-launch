@@ -1160,25 +1160,79 @@ fn held_window_tree() -> Node {
 #[test]
 fn geometry_shows_judges_held_sizes_and_positions_from_the_given_tree() {
     let tree = held_window_tree();
-    assert!(targeted(ActionKind::Width(Size::Pixels(700))).geometry_shows(&tree));
-    assert!(!targeted(ActionKind::Width(Size::Pixels(800))).geometry_shows(&tree));
-    assert!(targeted(ActionKind::Height(Size::Pixels(400))).geometry_shows(&tree));
-    assert!(!targeted(ActionKind::Height(Size::Pixels(375))).geometry_shows(&tree));
+    assert!(targeted(ActionKind::Width(Size::Pixels(700)))
+        .geometry_shows(&tree, RequestedFrame::default()));
+    assert!(!targeted(ActionKind::Width(Size::Pixels(800)))
+        .geometry_shows(&tree, RequestedFrame::default()));
+    assert!(targeted(ActionKind::Height(Size::Pixels(400)))
+        .geometry_shows(&tree, RequestedFrame::default()));
+    assert!(!targeted(ActionKind::Height(Size::Pixels(375)))
+        .geometry_shows(&tree, RequestedFrame::default()));
     assert!(
         targeted(ActionKind::Position(Position::Coordinates { x: 10, y: 20 }))
-            .geometry_shows(&tree)
+            .geometry_shows(&tree, RequestedFrame::default())
     );
     assert!(
-        !targeted(ActionKind::Position(Position::Coordinates { x: 0, y: 0 })).geometry_shows(&tree)
+        !targeted(ActionKind::Position(Position::Coordinates { x: 0, y: 0 }))
+            .geometry_shows(&tree, RequestedFrame::default())
     );
 }
 
 #[test]
 fn geometry_shows_nothing_for_a_container_not_in_the_tree_or_a_kind_it_does_not_hold() {
     let tree = state_tree("1", leaf_node_value(7, Some("foot"), None));
-    assert!(!targeted(ActionKind::Width(Size::Pixels(0))).geometry_shows(&tree));
-    assert!(!targeted(ActionKind::Width(Size::Percent(50))).geometry_shows(&held_window_tree()));
-    assert!(!targeted(ActionKind::Floating).geometry_shows(&held_window_tree()));
+    assert!(!targeted(ActionKind::Width(Size::Pixels(0)))
+        .geometry_shows(&tree, RequestedFrame::default()));
+    assert!(!targeted(ActionKind::Width(Size::Percent(50)))
+        .geometry_shows(&held_window_tree(), RequestedFrame::default()));
+    assert!(!targeted(ActionKind::Floating)
+        .geometry_shows(&held_window_tree(), RequestedFrame::default()));
+}
+
+// requested_frame (#145)
+
+#[test]
+fn requested_frame_takes_the_batch_s_pixel_sizes_and_leaves_a_percentage_to_the_tree() {
+    let batch = [
+        targeted(ActionKind::Floating),
+        targeted(ActionKind::Height(Size::Pixels(500))),
+        targeted(ActionKind::Width(Size::Pixels(800))),
+        targeted(ActionKind::Position(Position::Center)),
+    ];
+    assert_eq!(
+        requested_frame(&batch),
+        RequestedFrame {
+            width: Some(800),
+            height: Some(500)
+        }
+    );
+    let percent = [
+        targeted(ActionKind::Width(Size::Percent(50))),
+        targeted(ActionKind::Position(Position::Center)),
+    ];
+    assert_eq!(requested_frame(&percent), RequestedFrame::default());
+}
+
+#[test]
+fn geometry_shows_a_centered_window_against_the_size_its_batch_requested() {
+    // foot asked for 800x500 commits 796x495; Sway centered 800x500 (#145).
+    let mut leaf = leaf_node_value(42, Some("foot"), None);
+    leaf["rect"] = serde_json::json!({"x": 240, "y": 135, "width": 796, "height": 470});
+    leaf["deco_rect"] = serde_json::json!({"x": 240, "y": 110, "width": 796, "height": 25});
+    leaf["current_border_width"] = serde_json::json!(2);
+    let mut workspace = named_node_value(2, "workspace", "1", vec![leaf]);
+    workspace["rect"] = serde_json::json!({"x": 0, "y": 0, "width": 1280, "height": 720});
+    let output = named_node_value(1, "output", "HEADLESS-1", vec![workspace]);
+    let tree: Node = serde_json::from_value(named_node_value(0, "root", "root", vec![output]))
+        .expect("valid Node test fixture");
+    let center = targeted(ActionKind::Position(Position::Center));
+    let requested = RequestedFrame {
+        width: Some(800),
+        height: Some(500),
+    };
+    assert!(center.geometry_shows(&tree, requested));
+    assert!(center.poll_shows(&tree, None, requested));
+    assert!(!center.geometry_shows(&tree, RequestedFrame::default()));
 }
 
 // poll_shows (#187)
@@ -1197,16 +1251,32 @@ fn tree_with_workspace_layout(layout: &str, leaf: serde_json::Value) -> Node {
 #[test]
 fn poll_shows_judges_a_split_by_its_parent_s_layout() {
     let tree = tree_with_workspace_layout("splitv", leaf_node_value(42, Some("foot"), None));
-    assert!(targeted(ActionKind::Split(Split::V)).poll_shows(&tree, None));
-    assert!(!targeted(ActionKind::Split(Split::H)).poll_shows(&tree, None));
+    assert!(targeted(ActionKind::Split(Split::V)).poll_shows(
+        &tree,
+        None,
+        RequestedFrame::default()
+    ));
+    assert!(!targeted(ActionKind::Split(Split::H)).poll_shows(
+        &tree,
+        None,
+        RequestedFrame::default()
+    ));
 }
 
 #[test]
 fn poll_shows_judges_sticky_from_the_window_s_own_field() {
     let mut leaf = leaf_node_value(42, Some("foot"), None);
-    assert!(!targeted(ActionKind::Sticky).poll_shows(&state_tree("3", leaf.clone()), None));
+    assert!(!targeted(ActionKind::Sticky).poll_shows(
+        &state_tree("3", leaf.clone()),
+        None,
+        RequestedFrame::default()
+    ));
     leaf["sticky"] = serde_json::json!(true);
-    assert!(targeted(ActionKind::Sticky).poll_shows(&state_tree("3", leaf), None));
+    assert!(targeted(ActionKind::Sticky).poll_shows(
+        &state_tree("3", leaf),
+        None,
+        RequestedFrame::default()
+    ));
 }
 
 #[test]
@@ -1220,9 +1290,16 @@ fn poll_shows_judges_held_geometry_as_geometry_shows_does() {
         ActionKind::Position(Position::Coordinates { x: 0, y: 0 }),
     ] {
         let action = targeted(kind);
-        assert_eq!(action.poll_shows(&tree, None), action.geometry_shows(&tree));
+        assert_eq!(
+            action.poll_shows(&tree, None, RequestedFrame::default()),
+            action.geometry_shows(&tree, RequestedFrame::default())
+        );
     }
-    assert!(!targeted(ActionKind::Width(Size::Percent(50))).poll_shows(&tree, None));
+    assert!(!targeted(ActionKind::Width(Size::Percent(50))).poll_shows(
+        &tree,
+        None,
+        RequestedFrame::default()
+    ));
 }
 
 #[test]
@@ -1230,9 +1307,13 @@ fn poll_shows_a_move_only_once_the_rect_left_its_baseline() {
     let tree = held_window_tree();
     for kind in [ActionKind::NewColumn, ActionKind::NewRow] {
         let action = targeted(kind);
-        assert!(!action.poll_shows(&tree, None));
-        assert!(!action.poll_shows(&tree, Some(rect(10, 45, 700, 375))));
-        assert!(action.poll_shows(&tree, Some(rect(0, 0, 700, 375))));
+        assert!(!action.poll_shows(&tree, None, RequestedFrame::default()));
+        assert!(!action.poll_shows(
+            &tree,
+            Some(rect(10, 45, 700, 375)),
+            RequestedFrame::default()
+        ));
+        assert!(action.poll_shows(&tree, Some(rect(0, 0, 700, 375)), RequestedFrame::default()));
     }
 }
 
@@ -1245,17 +1326,31 @@ fn poll_shows_a_workspace_to_output_move_once_both_names_match() {
             output,
         })
     };
-    assert!(action("headless-1").poll_shows(&tree, None));
-    assert!(!action("DP-1").poll_shows(&tree, None));
+    assert!(action("headless-1").poll_shows(&tree, None, RequestedFrame::default()));
+    assert!(!action("DP-1").poll_shows(&tree, None, RequestedFrame::default()));
 }
 
 #[test]
 fn poll_shows_nothing_for_a_missing_container_or_a_kind_that_does_not_poll() {
     let elsewhere = state_tree("3", leaf_node_value(7, Some("foot"), None));
-    assert!(!targeted(ActionKind::Sticky).poll_shows(&elsewhere, None));
-    assert!(!targeted(ActionKind::Split(Split::V)).poll_shows(&elsewhere, None));
-    assert!(!targeted(ActionKind::NewColumn).poll_shows(&elsewhere, Some(rect(0, 0, 1, 1))));
+    assert!(!targeted(ActionKind::Sticky).poll_shows(&elsewhere, None, RequestedFrame::default()));
+    assert!(!targeted(ActionKind::Split(Split::V)).poll_shows(
+        &elsewhere,
+        None,
+        RequestedFrame::default()
+    ));
+    assert!(!targeted(ActionKind::NewColumn).poll_shows(
+        &elsewhere,
+        Some(rect(0, 0, 1, 1)),
+        RequestedFrame::default()
+    ));
     let tree = held_window_tree();
-    assert!(!targeted(ActionKind::Floating).poll_shows(&tree, None));
-    assert!(!targeted(ActionKind::SwayCommand("border none")).poll_shows(&tree, None));
+    assert!(!targeted(ActionKind::Floating).poll_shows(&tree, None, RequestedFrame::default()));
+    assert!(
+        !targeted(ActionKind::SwayCommand("border none")).poll_shows(
+            &tree,
+            None,
+            RequestedFrame::default()
+        )
+    );
 }

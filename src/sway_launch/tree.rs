@@ -837,18 +837,33 @@ pub(super) fn node_position(node: &Node, workspace_rect: swayipc::Rect) -> (i32,
     }
 }
 
+/// The frame size the same command asked for alongside a `--position`: a
+/// pixel `--width`/`--height` sent in the same batch, `None` for an axis it
+/// left alone (or set as a percentage). `Default` asks for nothing.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct RequestedFrame {
+    pub(super) width: Option<i32>,
+    pub(super) height: Option<i32>,
+}
+
 /// Whether `container_id`'s window in `tree` sits where `position` requests:
 /// `node_position()` against `expected_position()`, both relative to the
 /// window's own workspace. `false` when the container or its workspace isn't
 /// in `tree`.
-pub(super) fn position_shows(tree: &Node, container_id: i64, position: &Position) -> bool {
+pub(super) fn position_shows(
+    tree: &Node,
+    container_id: i64,
+    position: &Position,
+    requested: RequestedFrame,
+) -> bool {
     let Some(node) = find_node(tree, container_id) else {
         return false;
     };
     let Some(workspace) = find_workspace_node(tree, container_id) else {
         return false;
     };
-    node_position(node, workspace.rect) == expected_position(position, node, workspace.rect)
+    node_position(node, workspace.rect)
+        == expected_position(position, node, workspace.rect, requested)
 }
 
 /// The workspace-relative `(x, y)` `position_shows()` expects `node`'s frame
@@ -856,16 +871,34 @@ pub(super) fn position_shows(tree: &Node, container_id: i64, position: &Position
 /// requested coordinates as given, or for `Position::Center`, the frame
 /// centered within `workspace_rect` — Sway's own `move position center`
 /// centers on the workspace, not on the output.
+///
+/// The frame Sway centers is the one it has just set, so an axis `requested`
+/// names is centered on that size, not on the size the tree shows (#145). A
+/// client commits its own size a moment after Sway asks for one (foot snaps
+/// a floating window to its cell grid; a window can keep its tiled size), so
+/// the tree shows Sway's requested size on one read and the client's on the
+/// next, while the window stays where Sway centered the requested frame.
+/// Judged from the tree, `--position center` was `changed` or `unconfirmed`
+/// depending on which read the poll caught.
+///
+/// An axis the command didn't size comes from the tree: `rect.width`, and
+/// `rect.height + deco_rect.height` for the title bar. `rect` already
+/// includes the side and bottom borders (`window_rect` is the content inside
+/// them), with a `normal`, `pixel` or `none` border alike, on Sway 1.9 and
+/// 1.11 (confirmed live), so no `current_border_width` is added.
 pub(super) fn expected_position(
     position: &Position,
     node: &Node,
     workspace_rect: swayipc::Rect,
+    requested: RequestedFrame,
 ) -> (i32, i32) {
     match position {
         Position::Center => compute_center_position(
             workspace_rect,
-            node.rect.width,
-            node.rect.height + node.deco_rect.height,
+            requested.width.unwrap_or(node.rect.width),
+            requested
+                .height
+                .unwrap_or(node.rect.height + node.deco_rect.height),
         ),
         Position::Coordinates { x, y } => (*x, *y),
     }

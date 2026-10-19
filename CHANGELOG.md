@@ -44,6 +44,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--position center` no longer reports `unconfirmed` for a window it centered correctly when the
+  same call also set a pixel `--width` or `--height`. Sway centers the size it has just set, but the
+  check used whatever size the window showed when it was read, which differs once the application
+  rounds or changes it (foot snaps a floating window to whole character cells), so an identical
+  placement was reported `changed` on one run and `unconfirmed` on the next. The README now also
+  says that a size or position reported `changed` is what Sway applied, which the application can
+  still change, and its quick start uses `--settle`. (#145)
 - A `--concurrent` run now says when a launch may still open its window on the run's hidden
   staging workspace, where the README promised no window was ever left. A launch that timed out or
   was interrupted before its window appeared has nothing to bring back, and an application slower

@@ -907,7 +907,11 @@ fn expected_position_parses_explicit_coordinates() {
         expected_position(
             &Position::Coordinates { x: 100, y: 200 },
             &node,
-            offset_workspace_rect()
+            offset_workspace_rect(),
+            RequestedFrame {
+                width: Some(800),
+                height: Some(500)
+            }
         ),
         (100, 200)
     );
@@ -917,7 +921,12 @@ fn expected_position_parses_explicit_coordinates() {
 fn expected_position_centers_against_the_given_workspace_rect() {
     let node = node_with_geometry(400, 300, 0, 25);
     assert_eq!(
-        expected_position(&Position::Center, &node, rect(0, 0, 1920, 1080)),
+        expected_position(
+            &Position::Center,
+            &node,
+            rect(0, 0, 1920, 1080),
+            RequestedFrame::default()
+        ),
         ((1920 - 400) / 2, (1080 - 325) / 2)
     );
 }
@@ -929,7 +938,12 @@ fn expected_position_centers_on_the_workspace_not_the_output() {
     // "unconfirmed" for a correctly centered window.
     let node = node_with_geometry(400, 300, 0, 0);
     assert_eq!(
-        expected_position(&Position::Center, &node, offset_workspace_rect()),
+        expected_position(
+            &Position::Center,
+            &node,
+            offset_workspace_rect(),
+            RequestedFrame::default()
+        ),
         ((1200 - 400) / 2, (640 - 300) / 2)
     );
 }
@@ -938,8 +952,62 @@ fn expected_position_centers_on_the_workspace_not_the_output() {
 fn expected_position_center_ignores_a_non_origin_workspace_s_offset() {
     let node = node_with_geometry(400, 300, 0, 0);
     assert_eq!(
-        expected_position(&Position::Center, &node, rect(-1280, 23, 1280, 697)),
+        expected_position(
+            &Position::Center,
+            &node,
+            rect(-1280, 23, 1280, 697),
+            RequestedFrame::default()
+        ),
         ((1280 - 400) / 2, (697 - 300) / 2)
+    );
+}
+
+#[test]
+fn expected_position_centers_on_the_requested_size_not_the_one_the_tree_shows() {
+    // Measured live (#145): foot asked for 800x500 commits 796x495, while
+    // Sway centered the 800x500 frame it set, at (240, 110) on 1280x720.
+    // Judged on the tree's size it expected (242, 112), so the same final
+    // placement read `changed` or `unconfirmed` depending on the read.
+    let node = node_with_geometry(796, 470, 2, 25);
+    let workspace = rect(0, 0, 1280, 720);
+    let both = RequestedFrame {
+        width: Some(800),
+        height: Some(500),
+    };
+    assert_eq!(
+        expected_position(&Position::Center, &node, workspace, both),
+        (240, 110)
+    );
+    assert_eq!(
+        expected_position(
+            &Position::Center,
+            &node,
+            workspace,
+            RequestedFrame::default()
+        ),
+        (242, 112)
+    );
+}
+
+#[test]
+fn expected_position_takes_an_axis_the_command_left_alone_from_the_tree() {
+    let node = node_with_geometry(796, 470, 2, 25);
+    let workspace = rect(0, 0, 1280, 720);
+    let width_only = RequestedFrame {
+        width: Some(800),
+        height: None,
+    };
+    let height_only = RequestedFrame {
+        width: None,
+        height: Some(500),
+    };
+    assert_eq!(
+        expected_position(&Position::Center, &node, workspace, width_only),
+        (240, 112)
+    );
+    assert_eq!(
+        expected_position(&Position::Center, &node, workspace, height_only),
+        (242, 110)
     );
 }
 
@@ -1537,17 +1605,20 @@ fn position_shows_compares_the_window_against_its_own_workspace() {
     assert!(position_shows(
         &tree,
         42,
-        &Position::Coordinates { x: 10, y: 20 }
+        &Position::Coordinates { x: 10, y: 20 },
+        RequestedFrame::default()
     ));
     assert!(!position_shows(
         &tree,
         42,
-        &Position::Coordinates { x: 20, y: 10 }
+        &Position::Coordinates { x: 20, y: 10 },
+        RequestedFrame::default()
     ));
     assert!(!position_shows(
         &tree,
         43,
-        &Position::Coordinates { x: 10, y: 20 }
+        &Position::Coordinates { x: 10, y: 20 },
+        RequestedFrame::default()
     ));
 }
 
