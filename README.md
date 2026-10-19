@@ -755,7 +755,8 @@ to with `workspace number N`, use `--capture-number N`, which finds the workspac
 lists their names, so name one with `--capture` instead.
 
 The file opens each window where it has to open to rebuild the same splits, then sets the sizes,
-and finishes with the floating windows' size and position. Marks, sticky and fullscreen are kept
+and finishes with the floating windows' size and position, held for half a second with
+`settle` (see [Settle](#settle)) in case an application changes them as it starts. Marks, sticky and fullscreen are kept
 too, fullscreen on a step of its own at the very end (see [Fullscreen](#fullscreen) for why). It can't know how a window was started, so each step's `command` is a guess from the window's
 app_id (or its class, lowercased): check and edit the commands before running the file. A client
 sets its own app_id, so one that isn't a plain program name (letters, digits, `.`, `_`, `+`, `-`) is

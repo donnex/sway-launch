@@ -290,6 +290,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is sized for a terminal, so a browser restoring its session at login or a cold VS Code start
   routinely failed them, leaving the window open on the wrong workspace or the rest of the layout
   never launched. The README's "Timing" section now says when to raise it. (#164)
+- A floating window rebuilt from a `--capture` file no longer ends up at the size it would have had
+  tiled. An application whose first frame arrives late (foot on a busy machine, for one) brought
+  that size with it after the floating size was already set, and Sway kept it. `--capture` now
+  writes `settle = 500` on each floating window's step, which puts the captured size and position
+  back if the application changes them as it starts. (#194)
 
 ## [0.1.0] - 2026-10-18
 

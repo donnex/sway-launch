@@ -281,12 +281,20 @@ pub fn run_with_stdin(args: &[&str], stdin: &str) -> std::process::Output {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .expect("failed to run sway-launch binary");
-    child
+    // A run that refuses its arguments exits without reading stdin, so the
+    // write can lose the race with that exit: a broken pipe isn't a failure.
+    let written = child
         .stdin
         .take()
         .expect("stdin should be piped")
-        .write_all(stdin.as_bytes())
-        .expect("writing stdin should succeed");
+        .write_all(stdin.as_bytes());
+    if let Err(error) = written {
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::BrokenPipe,
+            "writing stdin failed: {error}"
+        );
+    }
     child
         .wait_with_output()
         .expect("failed to wait for sway-launch")

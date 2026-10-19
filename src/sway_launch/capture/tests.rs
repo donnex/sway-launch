@@ -203,7 +203,7 @@ fn capture_keeps_floating_windows_geometry_marks_and_state() {
         steps(&captured),
         [
             r#"id = "foot"; command = "foot"; app_id = "foot""#,
-            r#"id = "Code"; command = "code"; class = "Code"; mark = "editor"; floating = true; sticky = true; width = "800px"; height = "600px"; position = "100,200""#,
+            r#"id = "Code"; command = "code"; class = "Code"; mark = "editor"; floating = true; sticky = true; width = "800px"; height = "600px"; position = "100,200"; settle = 500"#,
         ]
     );
     assert!(
@@ -406,7 +406,7 @@ fn capture_takes_a_floating_containers_geometry_for_the_one_window_in_it() {
     assert_eq!(
         steps(&capture(&workspace).expect("captures")),
         [
-            r#"id = "a"; command = "a"; app_id = "a"; floating = true; sticky = true; width = "800px"; height = "600px"; position = "100,200""#,
+            r#"id = "a"; command = "a"; app_id = "a"; floating = true; sticky = true; width = "800px"; height = "600px"; position = "100,200"; settle = 500"#,
         ]
     );
 }

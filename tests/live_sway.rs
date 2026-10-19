@@ -380,6 +380,78 @@ impl Drop for KillOnDrop {
     }
 }
 
+/// Kills every window with `app_id` when dropped, even on assertion panic:
+/// for a window a test opens through Sway's own `exec`, or one a failing
+/// run may leave behind, whose id the test never learns (#194).
+struct KillAppIdOnDrop(&'static str);
+
+impl Drop for KillAppIdOnDrop {
+    fn drop(&mut self) {
+        if let Ok(mut connection) = try_connect(live_socket()) {
+            let _ = connection.run_command(format!("[app_id=\"{}\"] kill", self.0));
+        }
+    }
+}
+
+/// Closes every window with `app_id`, wherever it is, and waits until Sway
+/// has removed them, so a test that matches by app_id across the whole tree
+/// can't be broken by a window an earlier test left behind (#194).
+fn close_windows_with_app_id(connection: &mut Connection, app_id: &str) {
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    for con_id in containers_with_app_id(&tree, app_id) {
+        let _ = connection.run_command(format!("[con_id={con_id}] kill"));
+        wait_for_container_gone(connection, con_id);
+    }
+}
+
+/// Blocks until a running process has `argument` as one of its arguments,
+/// exactly, and returns its pid. Sway replies to `exec` before the command's
+/// process exists, so a test that needs it running waits for it (#194).
+fn wait_for_process_with_argument(argument: &str) -> i32 {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let found = std::fs::read_dir("/proc")
+            .expect("/proc should be readable")
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                let pid: i32 = entry.file_name().to_str()?.parse().ok()?;
+                let command_line = std::fs::read(entry.path().join("cmdline")).ok()?;
+                command_line
+                    .split(|byte| *byte == 0)
+                    .any(|candidate| candidate == argument.as_bytes())
+                    .then_some(pid)
+            })
+            .next();
+        if let Some(pid) = found {
+            return pid;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no process with the argument {argument:?} started within 5s"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Blocks until no window with `app_id` is left in the tree, panicking after
+/// 5s: a single read straight after a run can still see a window its
+/// `kill` hasn't removed yet.
+fn wait_for_no_window_with_app_id(connection: &mut Connection, app_id: &str) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let tree = connection.get_tree().expect("get_tree should succeed");
+        let remaining = containers_with_app_id(&tree, app_id);
+        if remaining.is_empty() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "windows {remaining:?} with app_id {app_id} were still open after 5s"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 /// Kills and reaps a long-running child process (e.g. `--debug-events`,
 /// which runs until killed) when dropped, even on assertion panic.
 struct KillChildOnDrop(std::process::Child);
@@ -1705,7 +1777,7 @@ fn settle_applies_the_geometry_again_after_something_else_changes_it() {
     let mut connection = connect();
     let (container_id, _guard) = launch_foot(&["--floating"]);
 
-    let child = sway_launch_command()
+    let mut child = sway_launch_command()
         .args([
             "--con-id",
             &container_id.to_string(),
@@ -1714,7 +1786,7 @@ fn settle_applies_the_geometry_again_after_something_else_changes_it() {
             "--height",
             "300px",
             "--settle",
-            "1000",
+            "2000",
             "--json",
             "--verbose",
         ])
@@ -1722,25 +1794,67 @@ fn settle_applies_the_geometry_again_after_something_else_changes_it() {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .expect("failed to run sway-launch binary");
-    std::thread::sleep(Duration::from_millis(400));
-    for outcome in connection
-        .run_command(format!("[con_id={container_id}] resize set width 600px"))
-        .expect("the competing resize should be sent")
-    {
-        outcome.expect("the competing resize should succeed");
+    let stderr_pipe = child.stderr.take().expect("stderr is piped");
+    let (line_sender, lines) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        for line in std::io::BufRead::lines(std::io::BufReader::new(stderr_pipe)) {
+            let Ok(line) = line else { break };
+            if line_sender.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let mut stderr = String::new();
+    let mut next_line = |timeout: Duration| -> Option<String> {
+        let line = lines.recv_timeout(timeout).ok()?;
+        stderr.push_str(&line);
+        stderr.push('\n');
+        Some(line)
+    };
+
+    // The competing resize has to land during the hold, which starts once
+    // both sizes are confirmed: a fixed sleep before it sometimes landed
+    // first under load (#194), so it waits for --verbose to say so.
+    let mut confirmed = 0;
+    while confirmed < 2 {
+        let line = next_line(Duration::from_secs(20))
+            .expect("sway-launch should confirm both sizes before it ends");
+        confirmed += usize::from(line.contains("Confirmed via poll"));
     }
+    // foot, a floating window, answers a resize by committing a buffer of
+    // the size it was asked for, and Sway then takes that size as the
+    // window's. Under load its answer to sway-launch's resize can arrive
+    // after the competing one and put the width straight back, within one
+    // of the hold's reads, so the competing resize is sent again until the
+    // hold notices one. Three at most, the re-applies the hold allows.
+    let mut reapplied = false;
+    for _ in 0..3 {
+        run_command_ok(
+            &mut connection,
+            &format!("[con_id={container_id}] resize set width 600px"),
+        );
+        let deadline = Instant::now() + Duration::from_millis(250);
+        while let Some(line) = next_line(deadline.saturating_duration_since(Instant::now())) {
+            reapplied |= line.contains("re-applying");
+        }
+        if reapplied {
+            break;
+        }
+    }
+    while next_line(Duration::from_secs(20)).is_some() {}
+    drop(next_line);
+    reader.join().expect("the stderr reader should finish");
     let output = child.wait_with_output().expect("sway-launch should finish");
-    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "sway-launch failed: {stderr}");
     assert!(stderr.contains("re-applying (1 of 3)"), "{stderr}");
-    assert!(stderr.contains("Geometry held for 1000 ms"), "{stderr}");
+    assert!(stderr.contains("Geometry held for 2000 ms"), "{stderr}");
 
     let result: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("stdout is the --json result");
     for action in result["actions"].as_array().expect("actions is an array") {
         assert_eq!(action["status"], "changed", "{result}");
     }
-    let node = get_node(&mut connection, container_id);
+    let node = get_settled_node(&mut connection, container_id);
     assert_eq!(node.rect.width, 400);
     assert_eq!(node.rect.height + node.deco_rect.height, 300);
 }
@@ -3527,6 +3641,9 @@ fn con_id_with_actions_names_a_missing_id_and_a_non_window_before_acting() {
 fn con_id_and_existing_target_an_already_open_window() {
     fresh_workspace();
     let mut connection = connect();
+    // --existing matches across the whole tree, so a foot window another
+    // test left open would make the match ambiguous (#194).
+    close_windows_with_app_id(&mut connection, "foot");
     let (container_id, _guard) = launch_foot(&[]);
 
     let output = sway_launch_command()
@@ -4000,15 +4117,16 @@ fn rollback_on_error_still_kills_a_window_matched_after_its_launcher_exited() {
          [[step]]\ncon_id = 999999999\nmark = \"x\"\n",
     );
 
-    connection
-        .run_command("exec sh -c 'sleep 1; exec foot --app-id=forward-probe'")
-        .expect("exec should succeed")
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()
-        .expect("exec should succeed");
+    let _stand_in = KillAppIdOnDrop("forward-probe");
+    let stand_in_script = "sleep 1; exec foot --app-id=forward-probe";
+    run_command_ok(&mut connection, &format!("exec sh -c '{stand_in_script}'"));
     // Start times are compared in clock ticks (10ms), and a tie reads as a
     // process started after the launch, so the stand-in instance must be
-    // running a few ticks before step 1's command starts.
+    // running a few ticks before step 1's command starts. Sway replies to
+    // `exec` before that process exists, so a fixed sleep after it lost the
+    // race under load (#194): the wait is for the process itself, which
+    // keeps its start time when it execs foot.
+    wait_for_process_with_argument(stand_in_script);
     std::thread::sleep(Duration::from_millis(50));
 
     let output = sway_launch_command()
@@ -4032,14 +4150,7 @@ fn rollback_on_error_still_kills_a_window_matched_after_its_launcher_exited() {
          rolled back: {stderr:?}"
     );
 
-    std::thread::sleep(Duration::from_millis(300));
-    let tree = connection.get_tree().expect("get_tree should succeed");
-    let survivor = first_app_id_window(&tree, "forward-probe");
-    let _guard = survivor.map(KillOnDrop);
-    assert_eq!(
-        survivor, None,
-        "the window should have been closed by --rollback-on-error"
-    );
+    wait_for_no_window_with_app_id(&mut connection, "forward-probe");
 }
 
 #[test]
@@ -6181,57 +6292,78 @@ fn every_shipped_template_round_trips_through_capture() {
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
 
+/// How many times a floating-geometry test runs again when foot undid the
+/// size it was given (#194): under load foot's first frame can arrive late, at
+/// the size it would have had tiled, and Sway adopts it after the floating
+/// size was already confirmed. That's the client's doing, not sway-launch's.
+const FOOT_UNDID_SIZE_ATTEMPTS: usize = 3;
+
 #[test]
 fn capture_keeps_a_floating_windows_geometry_and_mark() {
-    fresh_workspace();
     let mut connection = connect();
-    let built = focused_workspace_name(&mut connection);
-    let (original, original_guard) = launch_foot(&[
-        "--floating",
-        "--width",
-        "500px",
-        "--height",
-        "300px",
-        "--position",
-        "40,50",
-        "--mark",
-        "captured-float",
-    ]);
-    let before = get_settled_node(&mut connection, original);
-    let file = capture_to_file(&built, "capture-floating");
-    drop(original_guard);
+    for attempt in 1..=FOOT_UNDID_SIZE_ATTEMPTS {
+        let last_attempt = attempt == FOOT_UNDID_SIZE_ATTEMPTS;
+        fresh_workspace();
+        let built = focused_workspace_name(&mut connection);
+        let (original, original_guard) = launch_foot(&[
+            "--floating",
+            "--width",
+            "500px",
+            "--height",
+            "300px",
+            "--position",
+            "40,50",
+            "--mark",
+            "captured-float",
+        ]);
+        let before = get_settled_node(&mut connection, original);
+        if before.rect.width != 500 && !last_attempt {
+            drop(original_guard);
+            wait_for_container_gone(&mut connection, original);
+            continue;
+        }
+        let file = capture_to_file(&built, "capture-floating");
+        drop(original_guard);
+        wait_for_container_gone(&mut connection, original);
 
-    fresh_workspace();
-    let output = sway_launch_command()
-        .args(["--layout", file.to_str().unwrap(), "--json"])
-        .output()
-        .expect("failed to run sway-launch binary");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let result: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("stdout is the --json result");
-    let replayed = result["container_ids"][0].as_i64().expect("one window");
-    let _guard = KillOnDrop(replayed);
-    let after = get_settled_node(&mut connection, replayed);
-    assert!(node_is_floating(&after));
-    assert_eq!(after.marks, vec!["captured-float".to_string()]);
-    assert_eq!(
-        (
-            after.rect.width,
-            after.rect.height,
-            after.deco_rect.x,
-            after.deco_rect.y
-        ),
-        (
-            before.rect.width,
-            before.rect.height,
-            before.deco_rect.x,
-            before.deco_rect.y
-        )
-    );
+        fresh_workspace();
+        let output = sway_launch_command()
+            .args(["--layout", file.to_str().unwrap(), "--json"])
+            .output()
+            .expect("failed to run sway-launch binary");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("stdout is the --json result");
+        let replayed = result["container_ids"][0].as_i64().expect("one window");
+        let replayed_guard = KillOnDrop(replayed);
+        let after = get_settled_node(&mut connection, replayed);
+        assert!(node_is_floating(&after));
+        assert_eq!(after.marks, vec!["captured-float".to_string()]);
+        if after.rect.width != before.rect.width && !last_attempt {
+            drop(replayed_guard);
+            wait_for_container_gone(&mut connection, replayed);
+            continue;
+        }
+        assert_eq!(
+            (
+                after.rect.width,
+                after.rect.height,
+                after.deco_rect.x,
+                after.deco_rect.y
+            ),
+            (
+                before.rect.width,
+                before.rect.height,
+                before.deco_rect.x,
+                before.deco_rect.y
+            )
+        );
+        return;
+    }
 }
 
 /// Runs a layout file with `--json` on the focused workspace, asserting it
@@ -7036,6 +7168,10 @@ fn an_existing_wait_step_ahead_of_a_launch_waits_for_the_autostarted_window() {
     for concurrent in [false, true] {
         fresh_workspace();
         let mut connection = connect();
+        // The windows of a failed run, or of the previous pass still closing,
+        // would otherwise be what step 1 matches (#194).
+        let _cleanup = KillAppIdOnDrop("live-wait-190");
+        close_windows_with_app_id(&mut connection, "live-wait-190");
         let mut command = sway_launch_command();
         command.args(["--layout", path.to_str().unwrap(), "--timeout", "10"]);
         if concurrent {
@@ -7047,6 +7183,21 @@ fn an_existing_wait_step_ahead_of_a_launch_waits_for_the_autostarted_window() {
             .spawn()
             .expect("failed to start sway-launch binary");
         std::thread::sleep(Duration::from_millis(1500));
+        if concurrent {
+            // The staged window has to be open before the autostarted one
+            // for this pass to test anything, and under load it can take
+            // longer than the sleep (#194).
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while containers_with_app_id(
+                &connection.get_tree().expect("get_tree should succeed"),
+                "live-wait-190",
+            )
+            .is_empty()
+            {
+                assert!(Instant::now() < deadline, "the staged window never opened");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
         let tree = connection.get_tree().expect("get_tree should succeed");
         let before_autostart = containers_with_app_id(&tree, "live-wait-190");
         run_command_ok(&mut connection, "exec foot --app-id=live-wait-190");
@@ -7729,25 +7880,33 @@ fn position_center_centers_a_floating_window() {
     // covers the case where they differ.
     let mut connection = connect();
 
-    let (container_id, _guard) = launch_foot(&[
-        "--floating",
-        "--width",
-        "400px",
-        "--height",
-        "300px",
-        "--position",
-        "center",
-    ]);
-    std::thread::sleep(Duration::from_millis(300));
+    for attempt in 1..=FOOT_UNDID_SIZE_ATTEMPTS {
+        let (container_id, guard) = launch_foot(&[
+            "--floating",
+            "--width",
+            "400px",
+            "--height",
+            "300px",
+            "--position",
+            "center",
+        ]);
+        std::thread::sleep(Duration::from_millis(300));
 
-    let workspace_rect = workspace_rect(&mut connection, &workspace);
-    let node = get_node(&mut connection, container_id);
-    assert_eq!(node.rect.width, 400);
-    // deco_rect (not rect) is the decoration-inclusive top edge "move
-    // position"/centering actually targets, and it's relative to the
-    // workspace — see position_moves_a_floating_window_to_given_coordinates.
-    assert_eq!(node.deco_rect.x, (workspace_rect.width - 400) / 2);
-    assert_eq!(node.deco_rect.y, (workspace_rect.height - 300) / 2);
+        let workspace_rect = workspace_rect(&mut connection, &workspace);
+        let node = get_node(&mut connection, container_id);
+        if node.rect.width != 400 && attempt < FOOT_UNDID_SIZE_ATTEMPTS {
+            drop(guard);
+            wait_for_container_gone(&mut connection, container_id);
+            continue;
+        }
+        assert_eq!(node.rect.width, 400);
+        // deco_rect (not rect) is the decoration-inclusive top edge "move
+        // position"/centering actually targets, and it's relative to the
+        // workspace — see position_moves_a_floating_window_to_given_coordinates.
+        assert_eq!(node.deco_rect.x, (workspace_rect.width - 400) / 2);
+        assert_eq!(node.deco_rect.y, (workspace_rect.height - 300) / 2);
+        return;
+    }
 }
 
 #[test]

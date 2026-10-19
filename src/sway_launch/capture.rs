@@ -28,6 +28,12 @@ use swayipc::{Node, NodeLayout};
 #[cfg(test)]
 mod tests;
 
+/// How long a replayed floating window's size and position are held, in ms
+/// (#194). A client whose first frame arrives late, at the size it would have
+/// had tiled, has Sway adopt that size after the floating one was confirmed;
+/// `settle` puts the captured geometry back when that happens.
+const CAPTURED_FLOATING_SETTLE_MILLISECONDS: u64 = 500;
+
 /// A workspace's tiled tree as `capture()` rebuilds it: windows, and splits
 /// holding each child with its share of the split.
 enum Shape<'a> {
@@ -153,7 +159,8 @@ impl<'a> Capture<'a> {
     /// class, and carrying its marks and state. A floating window's
     /// `floating` node is the workspace's floating node holding it: the
     /// window itself, or a container Sway floated as a whole, which is what
-    /// carries the floating state, the size and the position.
+    /// carries the floating state, the size and the position, which
+    /// `settle` holds.
     fn launch(
         &mut self,
         window: &'a Node,
@@ -200,6 +207,7 @@ impl<'a> Capture<'a> {
             ));
             let (x, y) = node_position(frame, self.workspace.rect);
             fields.push(("position", toml_string(&format!("{},{}", x, y))));
+            fields.push(("settle", CAPTURED_FLOATING_SETTLE_MILLISECONDS.to_string()));
         }
         self.steps.push(Step {
             comment: window

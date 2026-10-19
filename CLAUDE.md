@@ -396,7 +396,8 @@ doc explains, then fullscreen, as a retarget step of its own (#189: Sway keeps
 focus on a fullscreen window, so later launches open behind it, and `share_of()` ignores the
 `1.0` percent it reports) (`every_shipped_template_round_trips_through_capture` holds it to
 every template's shape). A command guessed from an app_id or class that isn't a plain program name
-(`is_plain_program_name()`) is written in the list form, since the client sets it (#125). It's the
+(`is_plain_program_name()`) is written in the list form, since the client sets it (#125). A floating
+window's step also gets `settle`, so a late first frame can't undo its geometry (#194). It's the
 one recursion over a tree outside `tree.rs`. `--layout` and `--template` build their
 `conflicts_with_all` with `per_window_and()` from `PER_WINDOW_ARGS`, and every other standalone
 mode with `standalone_mode_conflicts()`, which adds `RUN_ARGS` (the flags only a
@@ -616,7 +617,10 @@ follow-up:
   every shipped template (compared with its recorded shape in `tests/template-shapes/`; rewrite
   with `UPDATE_TEMPLATE_SHAPES=1`), layout and basic example script. Every test calls
   `fresh_workspace()` first, adds outputs only through `CreatedOutput` and closes windows through
-  `KillOnDrop`, so each starts from the same state. Assert a specific path through `--json`'s
+  `KillOnDrop` (or `KillAppIdOnDrop`, for a window whose id the test never learns, such as one
+  opened by Sway's own `exec`), so each starts from the same state and one failure doesn't
+  cascade. Wait for the state a step needs (a window, a process, a `--verbose` line), never a fixed
+  sleep that only holds on an idle machine (#194). Assert a specific path through `--json`'s
   per-action status, not elapsed time alone. `--class` has no live test (no X11 client available).
 - **This file's coverage must stay complete.** A change that adds or changes a flag, an action, an
   example script, a `--layout` file or a `--template` file adds or updates its `tests/live_sway.rs`
