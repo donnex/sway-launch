@@ -12,14 +12,14 @@ use super::capture::capture;
 use super::ipc::{ipc_error, new_connection};
 use super::target::{LaunchFilter, WindowCriteria};
 use super::tree::{
-    con_id_target_problem, existing_candidates, find_node, find_parent_layout, find_workspace,
-    focused_workspace, launch_placement_problems, move_skip_reason, position_shows, present_ids,
-    recheck_launched_windows, resolve_awaited_matches, resolve_matches, tiled_window_count,
-    unnamed_build_workspace, window_listing, workspace_named, ContainerState, ListedWindow,
-    MoveDirection, RecheckedWindow, SkipReason, WorkspaceIdentity, WorkspaceLookup,
+    con_id_target_problem, existing_candidates, find_node, find_workspace, focused_workspace,
+    launch_placement_problems, move_skip_reason, present_ids, recheck_launched_windows,
+    resolve_awaited_matches, resolve_matches, tiled_window_count, unnamed_build_workspace,
+    window_listing, workspace_named, ContainerState, ListedWindow, MoveDirection, RecheckedWindow,
+    SkipReason, WorkspaceIdentity, WorkspaceLookup,
 };
-use super::values::{Position, TitlePattern};
-use swayipc::{Connection, Node, NodeLayout};
+use super::values::TitlePattern;
+use swayipc::{Connection, Node};
 
 /// The whole tree, on a connection of its own, with a failure already
 /// worded by `ipc_error()`.
@@ -177,25 +177,6 @@ pub fn containers_still_present(container_ids: &[i64]) -> Result<Vec<i64>, Strin
     Ok(present_ids(&tree, container_ids))
 }
 
-/// The `layout` field of `container_id`'s *parent* node, or `None` if the
-/// container/tree can't be read, or `container_id` has no parent in the
-/// tree (e.g. it's the root). `container_id`'s own node never carries its
-/// own split direction — confirmed against a live Sway compositor,
-/// splitting a window with siblings wraps it in a new split container
-/// (whose `layout` is the requested direction) one level up, and splitting
-/// a solo window instead sets the `layout` of the workspace it's already
-/// the sole child of; the leaf window node's own `layout` field is always
-/// `None`/unset either way. Used by `SwayAction::poll_matches()` to confirm
-/// a `Split` action actually applied before its `run_batch()`
-/// poll grace period falls back to sleeping the rest of `--wait-time`.
-pub(super) fn parent_node_layout(
-    connection: &mut Connection,
-    container_id: i64,
-) -> Option<NodeLayout> {
-    let tree = connection.get_tree().ok()?;
-    find_parent_layout(&tree, container_id)
-}
-
 /// `recheck_launched_windows()` against a fresh tree, or `None` if the tree
 /// can't be read — used by `ExecAction::run_wait_matching_exec_event()` to
 /// notice a launched window setting its app_id/class after mapping.
@@ -257,16 +238,6 @@ pub fn focused_workspace_occupancy() -> Result<Option<(String, usize)>, String> 
     }))
 }
 
-/// `ContainerState::from_tree()` on the caller's `connection`, or `None` if
-/// the tree can't be read or `container_id` isn't in it.
-pub(super) fn container_state_on(
-    connection: &mut Connection,
-    container_id: i64,
-) -> Option<ContainerState> {
-    let tree = connection.get_tree().ok()?;
-    ContainerState::from_tree(&tree, container_id)
-}
-
 /// The whole tree, read on the caller's `connection`, with a failure worded
 /// by `ipc_error()`: for `hold_geometry()`, which has to tell a tree it
 /// couldn't read from a window that no longer matches.
@@ -276,31 +247,9 @@ pub(super) fn tree_on(connection: &mut Connection) -> Result<Node, String> {
 
 /// The tree node with id `container_id`, or `None` if it can't be read
 /// (transient IPC error, or the container's gone) — used by
-/// `SwayAction::poll_matches()`'s `Height`/`Width`/`Position` arms to read
-/// a window's own current geometry, as opposed to `parent_node_layout()`,
-/// which reads its *parent's* state for `Split`.
+/// `SwayAction::poll_baseline()` to snapshot a window's own `rect` before a
+/// `NewColumn`/`NewRow` move.
 pub(super) fn node_by_id(connection: &mut Connection, container_id: i64) -> Option<Node> {
     let tree = connection.get_tree().ok()?;
     find_node(&tree, container_id).cloned()
-}
-
-/// Whether `container_id`'s window is currently positioned where `position`
-/// (`Position::Center` or `Position::Coordinates`) requests. Never propagates
-/// a `None`/error — any failure to read the tree, or to find the container or
-/// its workspace, folds into `false` ("not confirmed yet"), consistent with
-/// `SwayAction::poll_matches()`'s other arms.
-///
-/// Both sides of the comparison are workspace-relative, and both come from
-/// the one `get_tree()`: the workspace node's `rect` is its origin and size.
-/// `node_position()` explains why the window's own fields need converting
-/// into that space and `expected_position()` why `center` is computed from
-/// the workspace rather than the output.
-pub(super) fn position_matches(
-    connection: &mut Connection,
-    container_id: i64,
-    position: &Position,
-) -> bool {
-    connection
-        .get_tree()
-        .is_ok_and(|tree| position_shows(&tree, container_id, position))
 }

@@ -37,7 +37,7 @@ impl fmt::Display for Split {
 
 /// A `--height`/`--width` value, parsed once via `parse_size()`
 /// rather than carried as a string and re-parsed on every use (such as on
-/// every iteration of `SwayAction::poll_matches()`'s `Height`/`Width` arms).
+/// every iteration of `SwayAction::poll_shows()`'s `Height`/`Width` arms).
 /// `Display` renders the same `<n>px`/`<n>ppt` text `sway_command()` needs
 /// to interpolate into the Sway command, and that `SwayAction::Display`
 /// needs for its human-readable `Sway action: ...` line — this makes
@@ -46,7 +46,7 @@ impl fmt::Display for Split {
 ///
 /// `i32`, not `u32`, deliberately: the geometry these values are ultimately
 /// compared against is `swayipc::Rect`'s, which is `i32`. Carrying them as
-/// `u32` would mean casting in `poll_matches()`, where a value above
+/// `u32` would mean casting in `poll_shows()`, where a value above
 /// `i32::MAX` wraps negative and can never match anything the compositor
 /// reports. Negative values never reach here regardless
 /// (`parse_size()` rejects the sign outright), so the

@@ -90,6 +90,7 @@ pub struct Sway {
     handler: Option<Handler>,
     launched_pids: Vec<u32>,
     refusing_tree_reads: bool,
+    tree_reads: usize,
     shared: Weak<Mutex<Sway>>,
 }
 
@@ -181,6 +182,11 @@ impl FakeSway {
     pub fn commands(&self) -> Vec<String> {
         self.sway().commands.clone()
     }
+
+    /// How many times the binary has read the tree so far.
+    pub fn tree_reads(&self) -> usize {
+        self.sway().tree_reads
+    }
 }
 
 impl Drop for FakeSway {
@@ -229,6 +235,7 @@ impl Sway {
             handler,
             launched_pids: Vec::new(),
             refusing_tree_reads: false,
+            tree_reads: 0,
             shared: shared.clone(),
             tree,
         }
@@ -506,7 +513,10 @@ fn serve(mut stream: UnixStream, shared: Weak<Mutex<Sway>>) {
             }
             GET_OUTPUTS => sway.outputs.clone(),
             GET_TREE if sway.refusing_tree_reads => return,
-            GET_TREE => sway.tree.clone(),
+            GET_TREE => {
+                sway.tree_reads += 1;
+                sway.tree.clone()
+            }
             GET_VERSION => sway.version_reply.clone(),
             other => panic!("the fake Sway doesn't answer message type {other}"),
         };

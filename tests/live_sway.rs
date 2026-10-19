@@ -115,7 +115,7 @@ fn find_node(node: &Node, con_id: i64) -> Option<&Node> {
 
 /// The `layout` of `con_id`'s direct parent node — mirrors
 /// `tree.rs`'s private `find_parent_layout()`, which
-/// `SwayAction::poll_matches()` uses to confirm a `Split` action, since a
+/// `SwayAction::poll_shows()` uses to confirm a `Split` action, since a
 /// window's own `layout` field never carries its split direction (see that
 /// function's doc comment).
 fn parent_layout(node: &Node, con_id: i64) -> Option<swayipc::NodeLayout> {
@@ -1779,7 +1779,7 @@ fn sticky_confirms_via_poll_well_under_a_large_wait_time() {
     // Mirrors split_confirms_via_poll_well_under_a_large_wait_time: Sticky
     // has no dedicated WindowChange event (confirmed live — see
     // matching_window_change_event()'s Sticky arm), so it's a wait-time
-    // action confirmed via SwayAction::poll_matches() polling the
+    // action confirmed via SwayAction::poll_shows() polling the
     // container's own `sticky` field. A --wait-time well above the poll
     // grace period, with an assertion comfortably under 2 * --wait-time, is
     // what makes "confirmed via poll" observable rather than falling back
@@ -2877,7 +2877,7 @@ fn new_column_does_not_relocate_a_nested_window_to_a_different_output() {
     let (second_id, _second_guard) =
         launch_foot(&["--workspace", "live-sway-test-new-column-nested"]);
     // Splitting a window that already has a sibling wraps it in a new,
-    // nested split container one level up (see parent_node_layout()'s doc) --
+    // nested split container one level up (see find_parent_layout()'s doc) --
     // splith here matches the workspace's own layout, nesting second_id in
     // the axis-matched worst case rather than the safer mismatched one.
     connection
@@ -3050,7 +3050,7 @@ fn split_combined_with_workspace_configures_the_target_workspace_not_the_origin(
     // Combination coverage: --workspace runs before --split in
     // build_actions()'s fixed order, so a step combining both should
     // configure the *target* workspace's own layout (via the solo-window
-    // "sets the workspace's layout directly" rule — see parent_node_layout's
+    // "sets the workspace's layout directly" rule — see find_parent_layout's
     // doc comment), not whatever origin workspace the window transiently
     // existed on before the move.
     let mut connection = connect();
@@ -3201,7 +3201,7 @@ fn position_confirms_via_poll_for_a_floating_window() {
     fresh_workspace();
     // Regression test for docs/plan-poll-based-wait-time-actions.md's
     // poll-then-fallback mechanism reaching Position: confirms via
-    // SwayAction::poll_matches()'s position_matches() (a get_tree() poll
+    // SwayAction::poll_shows()'s position_shows() (a get_tree() poll
     // for deco_rect.x/deco_rect.y) rather than always
     // sleeping the full --wait-time after the command too.
     let mut connection = connect();
@@ -3242,7 +3242,7 @@ fn position_confirms_via_poll_for_a_fullscreen_window() {
     // Regression test: confirmed live that a fullscreen window's deco_rect
     // stays {0, 0, 0, 0} permanently (stable across a multi-second sweep,
     // not a transient race), since Sway never computes decoration geometry
-    // for a window with no border/titlebar to draw. position_matches()
+    // for a window with no border/titlebar to draw. position_shows()
     // comparing only deco_rect.x/y meant --position against a fullscreen
     // container could never be confirmed via poll -- move position actually
     // succeeds immediately (rect.x/y land on the requested target right
@@ -3299,7 +3299,7 @@ fn position_errors_clearly_for_a_tiled_window() {
     // solo-window clamp is — Sway rejects the command outright ("Only
     // floating containers can be moved to an absolute position"), which
     // run_sway_command()'s `?` propagates as an error *before*
-    // poll_matches()/poll_baseline() are ever reached. So there's no
+    // poll_shows()/poll_baseline() are ever reached. So there's no
     // "poll can never confirm this, fall back gracefully" case to test
     // here after all — this instead confirms that existing, pre-poll
     // error path is unaffected by this feature: it still fails fast and
@@ -4758,7 +4758,7 @@ fn new_column_confirms_via_poll_when_swapping_past_a_sibling() {
     fresh_workspace();
     // Regression test for docs/plan-poll-based-wait-time-actions.md's
     // poll-then-fallback mechanism reaching NewColumn: confirms via
-    // SwayAction::poll_matches()'s rect-snapshot comparison (see
+    // SwayAction::poll_shows()'s rect-snapshot comparison (see
     // poll_baseline()'s doc comment) rather than always sleeping the full
     // --wait-time after the command too. Needs a third window so the first
     // one has a real sibling to swap past, unlike the ordinary two-window
@@ -4877,7 +4877,7 @@ fn new_column_falls_back_gracefully_at_the_edge_with_a_large_wait_time() {
     // confirmed during this feature's development that Sway can still
     // incidentally restructure *other* siblings in this case (wrapping one
     // in a new split container) even though this window's own rect never
-    // changes, which is exactly why poll_matches() compares the target
+    // changes, which is exactly why poll_shows() compares the target
     // window's own rect rather than its parent's children list. Uses a
     // --wait-time much larger than
     // new_column_and_new_row_complete_promptly_when_already_at_the_edge's
@@ -6946,8 +6946,8 @@ fn split_confirms_via_poll_well_under_a_large_wait_time() {
     fresh_workspace();
     // Regression test for docs/plan-poll-based-wait-time-actions.md's
     // poll-then-fallback mechanism: Split now confirms via
-    // SwayAction::poll_matches() (a get_tree() poll of the container's
-    // *parent* layout field — see parent_node_layout()'s doc comment for
+    // SwayAction::poll_shows() (a get_tree() poll of the container's
+    // *parent* layout field — see find_parent_layout()'s doc comment for
     // why it's the parent, not the container's own node) rather than always
     // sleeping the full --wait-time after the command too. run_batch()
     // still sleeps the full --wait-time *before* sending the command
@@ -7087,7 +7087,7 @@ fn height_confirms_via_poll_when_resized_with_a_sibling() {
     fresh_workspace();
     // Regression test for docs/plan-poll-based-wait-time-actions.md's
     // poll-then-fallback mechanism reaching Height: confirms via
-    // SwayAction::poll_matches()'s height_matches() (a get_tree() poll for
+    // SwayAction::poll_shows()'s height_matches() (a get_tree() poll for
     // the decoration-inclusive rect.height + deco_rect.height) rather than
     // always sleeping the full --wait-time after the command too. Needs a
     // vertically-arranged sibling for the resize to take effect at all —
@@ -7377,7 +7377,7 @@ fn run_position_json(container_id: i64, args: &[&str]) -> String {
 #[test]
 fn position_confirms_center_and_coordinates_on_an_offset_workspace() {
     let workspace = fresh_workspace();
-    // Regression test: position_matches() used to center against the
+    // Regression test: position_shows() used to center against the
     // *output* and compare an absolute rect with a workspace-relative target,
     // so it only confirmed when the workspace started at (0, 0) -- true of
     // this suite's `-c /dev/null` compositor, but not of a desktop with a bar

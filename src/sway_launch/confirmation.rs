@@ -26,14 +26,13 @@ use super::process_marker::{
     PID_MARKER_VAR,
 };
 use super::query::{
-    awaited_existing_container_id, container_state, container_state_on, ensure_container_exists,
-    existing_container, missing_container_error, node_by_id, parent_node_layout, position_matches,
-    recheck_launched_windows_now, tree_on,
+    awaited_existing_container_id, container_state, ensure_container_exists, existing_container,
+    missing_container_error, node_by_id, recheck_launched_windows_now, tree_on,
 };
 use super::target::{LaunchFilter, WindowCriteria};
 use super::tree::{
-    find_node, height_matches, is_window, position_shows, width_matches, ContainerState,
-    WindowIdentity,
+    find_node, find_parent_layout, height_matches, is_window, position_shows, width_matches,
+    ContainerState, WindowIdentity,
 };
 use super::values::{escape_control_characters, Size, Split, TitlePattern};
 use super::{MOVE_POLL_GRACE, WAIT_TIME_POLL_GRACE, WAIT_TIME_POLL_INTERVAL};
@@ -107,7 +106,7 @@ impl ActionKind<'_> {
     /// once that returns `true`, so a kind without a real arm there
     /// sees its event arrive, rejects it every time, and times out after a
     /// command that worked. Answering `None` commits it to a `polls()`/
-    /// `poll_matches()` arm instead, or to being reported unconfirmed on every
+    /// `poll_shows()` arm instead, or to being reported unconfirmed on every
     /// run. Every match on `ActionKind` in this file names each variant rather
     /// than ending in `_`, so a new kind can't skip either decision silently.
     fn matching_window_change_event(&self) -> Option<WindowChange> {
@@ -260,7 +259,7 @@ impl SwayAction<'_> {
     /// reporting it as already-there would short-circuit an action into
     /// claiming success over a container that no longer exists. `false` for
     /// every kind that confirms by polling instead, whatever the state, except
-    /// `WorkspaceToOutput`, whose `poll_matches()` arm asks it.
+    /// `WorkspaceToOutput`, whose `poll_shows()` arm asks it.
     ///
     /// `run_batch()` asks it twice, for two different questions. Before the
     /// command runs, to detect a no-op Sway would fire no event for (see
@@ -394,21 +393,20 @@ impl SwayAction<'_> {
         }
     }
 
-    /// Whether the tree currently shows this action's command as having
-    /// taken effect (see the "Polled" bullet under CLAUDE.md's "Actions and
-    /// how each is confirmed"). Only meaningful for variants `polls()` returns `true` for; every other
-    /// variant answers `false` unconditionally.
+    /// Whether `tree` shows this action's command as having taken effect
+    /// (see the "Polled" bullet under CLAUDE.md's "Actions and how each is
+    /// confirmed"). Only meaningful for variants `polls()` returns `true`
+    /// for; every other variant answers `false` unconditionally, and so does
+    /// a container that isn't in `tree`.
     ///
-    /// Reads through the caller's `connection` rather than opening its own:
-    /// `run_batch()` calls this up to 20 times per action inside a 200ms
-    /// grace period, so opening a fresh Sway IPC connection per iteration
-    /// would cost ~20 connects and handshakes for a single action.
-    ///
-    /// Errors reading the tree (transient IPC hiccup, container gone) fold
-    /// into "not confirmed yet" rather than propagating: this only ever
-    /// exists to return *faster* than the unconditional sleep already does,
-    /// never to turn success into failure.
-    fn poll_matches(&self, connection: &mut Connection, baseline: Option<swayipc::Rect>) -> bool {
+    /// Pure, judged from a tree the caller already read: `run_batch()` reads
+    /// one per poll tick and judges every pending action against it, rather
+    /// than each action fetching a whole tree of its own every
+    /// `WAIT_TIME_POLL_INTERVAL` (#187). A tree it couldn't read is "not
+    /// confirmed yet" there, never an error: polling only ever exists to
+    /// return *faster* than the unconditional sleep already does, never to
+    /// turn success into failure.
+    fn poll_shows(&self, tree: &Node, baseline: Option<swayipc::Rect>) -> bool {
         let container_id = self.container_id;
         match self.kind {
             ActionKind::Split(split) => {
@@ -416,21 +414,21 @@ impl SwayAction<'_> {
                     Split::V => NodeLayout::SplitV,
                     Split::H => NodeLayout::SplitH,
                 };
-                parent_node_layout(connection, container_id) == Some(expected)
+                find_parent_layout(tree, container_id) == Some(expected)
             }
-            ActionKind::Height(Size::Pixels(pixels)) => node_by_id(connection, container_id)
-                .is_some_and(|node| height_matches(&node, pixels)),
-            ActionKind::Width(Size::Pixels(pixels)) => node_by_id(connection, container_id)
-                .is_some_and(|node| width_matches(&node, pixels)),
-            ActionKind::Position(position) => position_matches(connection, container_id, &position),
+            ActionKind::Height(Size::Pixels(pixels)) => {
+                find_node(tree, container_id).is_some_and(|node| height_matches(node, pixels))
+            }
+            ActionKind::Width(Size::Pixels(pixels)) => {
+                find_node(tree, container_id).is_some_and(|node| width_matches(node, pixels))
+            }
+            ActionKind::Position(position) => position_shows(tree, container_id, &position),
             // Unlike Floating's `floating`/node-type split (see
             // node_is_floating()'s doc comment), `sticky` is a plain `bool`
             // on `Node` with no version-dependent quirk found — confirmed
             // live that `sticky enable` sets it directly and immediately,
             // even on a still-tiled container.
-            ActionKind::Sticky => {
-                node_by_id(connection, container_id).is_some_and(|node| node.sticky)
-            }
+            ActionKind::Sticky => find_node(tree, container_id).is_some_and(|node| node.sticky),
             // No fixed target exists for "move right"/"move down" — a
             // successful move can land the window almost anywhere in the
             // tree. Instead, `poll_baseline()` snapshots the window's own
@@ -451,10 +449,10 @@ impl SwayAction<'_> {
             // would false-positive on exactly the no-op case this whole
             // mechanism exists to fall back gracefully on.
             ActionKind::NewColumn | ActionKind::NewRow => baseline.is_some_and(|baseline| {
-                node_by_id(connection, container_id).is_some_and(|node| node.rect != baseline)
+                find_node(tree, container_id).is_some_and(|node| node.rect != baseline)
             }),
             ActionKind::WorkspaceToOutput { .. } => {
-                self.state_satisfies(container_state_on(connection, container_id).as_ref())
+                self.state_satisfies(ContainerState::from_tree(tree, container_id).as_ref())
             }
             ActionKind::Height(Size::Percent(_)) | ActionKind::Width(Size::Percent(_)) => false,
             ActionKind::Floating
@@ -470,43 +468,18 @@ impl SwayAction<'_> {
 
     /// Whether `tree` still shows the geometry this action set, for
     /// `hold_geometry()`: a pixel size or a position, judged as
-    /// `poll_matches()` judges it, but from a tree the caller already read.
-    /// `false` for every kind `is_held_geometry()` rejects, and when the
-    /// container isn't in `tree`.
+    /// `poll_shows()` judges it. `false` for every kind `is_held_geometry()`
+    /// rejects, and when the container isn't in `tree`.
     fn geometry_shows(&self, tree: &Node) -> bool {
-        let container_id = self.container_id;
-        match self.kind {
-            ActionKind::Height(Size::Pixels(pixels)) => {
-                find_node(tree, container_id).is_some_and(|node| height_matches(node, pixels))
-            }
-            ActionKind::Width(Size::Pixels(pixels)) => {
-                find_node(tree, container_id).is_some_and(|node| width_matches(node, pixels))
-            }
-            ActionKind::Position(position) => position_shows(tree, container_id, &position),
-            ActionKind::Height(Size::Percent(_))
-            | ActionKind::Width(Size::Percent(_))
-            | ActionKind::Split(_)
-            | ActionKind::Floating
-            | ActionKind::Sticky
-            | ActionKind::Fullscreen
-            | ActionKind::Focus
-            | ActionKind::NewColumn
-            | ActionKind::NewRow
-            | ActionKind::Workspace(_)
-            | ActionKind::Output(_)
-            | ActionKind::WorkspaceToOutput { .. }
-            | ActionKind::Mark(_)
-            | ActionKind::SwayCommand(_)
-            | ActionKind::Scratchpad => false,
-        }
+        is_held_geometry(self.kind) && self.poll_shows(tree, None)
     }
 
-    /// Snapshots whatever state a wait-time action's `poll_matches()` needs
+    /// Snapshots whatever state a wait-time action's `poll_shows()` needs
     /// to compare against *after* the command runs — captured *before* it
     /// runs. Only `NewColumn`/`NewRow` need one (their own current `rect`);
     /// every other action checks against a fixed target derived from its
     /// own fields, with no prior snapshot needed. Returns `None` if the
-    /// tree can't be read, which `poll_matches()` treats as "no matcher
+    /// tree can't be read, which `poll_shows()` treats as "no matcher
     /// applies" for these two variants — without a baseline there's nothing
     /// to compare against, so falling back to the unconditional sleep is
     /// the only sound choice.
@@ -874,13 +847,23 @@ pub(super) fn run_batch(
     // long-lived mode, or needs cancellation.
     let event_receiver = event_stream.map(spawn_event_forwarder);
     loop {
-        if let Some(connection) = poll_connection.as_mut() {
-            for &index in &sent {
+        let polled_now: Vec<usize> = sent
+            .iter()
+            .copied()
+            .filter(|&index| {
+                !actions[index].kind.is_event_confirmed()
+                    && progress[index] == BatchProgress::Waiting
+            })
+            .collect();
+        if let (Some(connection), false) = (poll_connection.as_mut(), polled_now.is_empty()) {
+            // One read per tick, judged for every action still polling (#187).
+            let tree = connection.get_tree().ok();
+            for index in polled_now {
                 let action = &actions[index];
-                if action.kind.is_event_confirmed() || progress[index] != BatchProgress::Waiting {
-                    continue;
-                }
-                if action.poll_matches(connection, baselines[index]) {
+                if tree
+                    .as_ref()
+                    .is_some_and(|tree| action.poll_shows(tree, baselines[index]))
+                {
                     if verbose {
                         diagnostic!(
                             "Confirmed via poll: {} (container id: {})",
@@ -1024,7 +1007,7 @@ pub(super) fn run_batch(
 const MAX_GEOMETRY_REAPPLIES: usize = 3;
 
 /// Whether `kind` is geometry `hold_geometry()` can hold: a pixel size or a
-/// position, the kinds `poll_matches()` can check a figure for.
+/// position, the kinds `poll_shows()` can check a figure for.
 fn is_held_geometry(kind: ActionKind<'_>) -> bool {
     match kind {
         ActionKind::Height(Size::Pixels(_))
@@ -1069,9 +1052,9 @@ fn is_held_geometry(kind: ActionKind<'_>) -> bool {
 /// sending anything: re-sending would only get Sway's `No matching node.`
 /// back (and a re-send that does, the window closing in between, reports
 /// the same error). Each tick reads the tree once, through `tree_on()`, so these three
-/// cases (gone, unreadable, no longer matching) stay apart; `poll_matches()`
-/// folds the first two into the third, which is right for confirming and
-/// wrong here.
+/// cases (gone, unreadable, no longer matching) stay apart; `run_batch()`'s
+/// confirmation poll folds the first two into the third ("not yet"), which
+/// is right for confirming and wrong here.
 fn hold_geometry(
     actions: &[SwayAction<'_>],
     progress: &mut [BatchProgress],

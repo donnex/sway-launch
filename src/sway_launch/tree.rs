@@ -737,6 +737,17 @@ pub(super) fn present_ids(tree: &Node, container_ids: &[i64]) -> Vec<i64> {
         .collect()
 }
 
+/// The `layout` field of `container_id`'s *parent* node in `tree`, or `None`
+/// if the container isn't there or has no parent (the root).
+/// `container_id`'s own node never carries its own split direction —
+/// confirmed against a live Sway compositor, splitting a window with siblings
+/// wraps it in a new split container (whose `layout` is the requested
+/// direction) one level up, and splitting a solo window instead sets the
+/// `layout` of the workspace it's already the sole child of; the leaf window
+/// node's own `layout` field is always `None`/unset either way. Used by
+/// `SwayAction::poll_shows()` to confirm a `Split` action actually applied
+/// before its `run_batch()` poll grace period falls back to sleeping the rest
+/// of `--wait-time`.
 pub(super) fn find_parent_layout(tree: &Node, container_id: i64) -> Option<NodeLayout> {
     let path = ancestors_of(tree, container_id)?;
     let parent_index = path.len().checked_sub(2)?;
@@ -813,9 +824,8 @@ pub(super) fn height_matches(node: &Node, expected_px: i32) -> bool {
 ///   and the position confirms against the pending state later commands act
 ///   on — but a client reading `deco_rect` straight afterwards can see zeros.
 ///
-/// Split out from `position_matches()` so this comparison is ordinary pure
-/// logic with its own tests rather than something only reachable through a
-/// live `get_tree()`; `expected_position()` is split out for the same reason.
+/// Split out from `position_shows()` so this comparison has tests of its
+/// own; `expected_position()` is split out for the same reason.
 pub(super) fn node_position(node: &Node, workspace_rect: swayipc::Rect) -> (i32, i32) {
     if node.deco_rect.width == 0 && node.deco_rect.height == 0 {
         (
@@ -841,7 +851,7 @@ pub(super) fn position_shows(tree: &Node, container_id: i64, position: &Position
     node_position(node, workspace.rect) == expected_position(position, node, workspace.rect)
 }
 
-/// The workspace-relative `(x, y)` `position_matches()` expects `node`'s frame
+/// The workspace-relative `(x, y)` `position_shows()` expects `node`'s frame
 /// to be at (see `node_position()` for why the workspace is the origin): the
 /// requested coordinates as given, or for `Position::Center`, the frame
 /// centered within `workspace_rect` — Sway's own `move position center`

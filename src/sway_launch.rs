@@ -88,7 +88,7 @@ pub fn check_compositor_version() -> Result<(String, Option<String>), String> {
 /// `--wait-time` default, so using it uncapped would make any fallback case
 /// at default settings cost ~220ms instead of ~40ms (`2 * wait_time`),
 /// confirmed live. 200ms comfortably
-/// covers every matcher `poll_matches()` has, all confirmed live to
+/// covers every matcher `poll_shows()` has, all confirmed live to
 /// converge in a handful of milliseconds when they converge at all.
 const WAIT_TIME_POLL_GRACE: time::Duration = time::Duration::from_millis(200);
 

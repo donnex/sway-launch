@@ -1180,3 +1180,82 @@ fn geometry_shows_nothing_for_a_container_not_in_the_tree_or_a_kind_it_does_not_
     assert!(!targeted(ActionKind::Width(Size::Percent(50))).geometry_shows(&held_window_tree()));
     assert!(!targeted(ActionKind::Floating).geometry_shows(&held_window_tree()));
 }
+
+// poll_shows (#187)
+
+/// `state_tree()`, with the workspace's `layout` set to `layout`, which is
+/// what a split of its only window changes.
+fn tree_with_workspace_layout(layout: &str, leaf: serde_json::Value) -> Node {
+    let mut workspace = named_node_value(2, "workspace", "3", vec![leaf]);
+    workspace["layout"] = serde_json::json!(layout);
+    let mut output = named_node_value(1, "output", "HEADLESS-1", vec![workspace]);
+    output["focus"] = serde_json::json!([2]);
+    serde_json::from_value(named_node_value(0, "root", "root", vec![output]))
+        .expect("valid Node test fixture")
+}
+
+#[test]
+fn poll_shows_judges_a_split_by_its_parent_s_layout() {
+    let tree = tree_with_workspace_layout("splitv", leaf_node_value(42, Some("foot"), None));
+    assert!(targeted(ActionKind::Split(Split::V)).poll_shows(&tree, None));
+    assert!(!targeted(ActionKind::Split(Split::H)).poll_shows(&tree, None));
+}
+
+#[test]
+fn poll_shows_judges_sticky_from_the_window_s_own_field() {
+    let mut leaf = leaf_node_value(42, Some("foot"), None);
+    assert!(!targeted(ActionKind::Sticky).poll_shows(&state_tree("3", leaf.clone()), None));
+    leaf["sticky"] = serde_json::json!(true);
+    assert!(targeted(ActionKind::Sticky).poll_shows(&state_tree("3", leaf), None));
+}
+
+#[test]
+fn poll_shows_judges_held_geometry_as_geometry_shows_does() {
+    let tree = held_window_tree();
+    for kind in [
+        ActionKind::Width(Size::Pixels(700)),
+        ActionKind::Width(Size::Pixels(800)),
+        ActionKind::Height(Size::Pixels(400)),
+        ActionKind::Position(Position::Coordinates { x: 10, y: 20 }),
+        ActionKind::Position(Position::Coordinates { x: 0, y: 0 }),
+    ] {
+        let action = targeted(kind);
+        assert_eq!(action.poll_shows(&tree, None), action.geometry_shows(&tree));
+    }
+    assert!(!targeted(ActionKind::Width(Size::Percent(50))).poll_shows(&tree, None));
+}
+
+#[test]
+fn poll_shows_a_move_only_once_the_rect_left_its_baseline() {
+    let tree = held_window_tree();
+    for kind in [ActionKind::NewColumn, ActionKind::NewRow] {
+        let action = targeted(kind);
+        assert!(!action.poll_shows(&tree, None));
+        assert!(!action.poll_shows(&tree, Some(rect(10, 45, 700, 375))));
+        assert!(action.poll_shows(&tree, Some(rect(0, 0, 700, 375))));
+    }
+}
+
+#[test]
+fn poll_shows_a_workspace_to_output_move_once_both_names_match() {
+    let tree = state_tree("3", leaf_node_value(42, Some("foot"), None));
+    let action = |output| {
+        targeted(ActionKind::WorkspaceToOutput {
+            workspace: WorkspaceTarget::Name("3"),
+            output,
+        })
+    };
+    assert!(action("headless-1").poll_shows(&tree, None));
+    assert!(!action("DP-1").poll_shows(&tree, None));
+}
+
+#[test]
+fn poll_shows_nothing_for_a_missing_container_or_a_kind_that_does_not_poll() {
+    let elsewhere = state_tree("3", leaf_node_value(7, Some("foot"), None));
+    assert!(!targeted(ActionKind::Sticky).poll_shows(&elsewhere, None));
+    assert!(!targeted(ActionKind::Split(Split::V)).poll_shows(&elsewhere, None));
+    assert!(!targeted(ActionKind::NewColumn).poll_shows(&elsewhere, Some(rect(0, 0, 1, 1))));
+    let tree = held_window_tree();
+    assert!(!targeted(ActionKind::Floating).poll_shows(&tree, None));
+    assert!(!targeted(ActionKind::SwayCommand("border none")).poll_shows(&tree, None));
+}

@@ -803,6 +803,41 @@ fn a_batch_explains_each_action_under_verbose() {
 }
 
 #[test]
+fn polled_actions_in_a_batch_share_one_tree_read_per_poll() {
+    // #187: four actions polled for the whole grace, none of them ever
+    // confirming. The poll sleeps WAIT_TIME_POLL_INTERVAL (10 ms) between
+    // reads, so a 200 ms grace is at most 21 ticks; one read per action per
+    // tick would be over 80.
+    let fake = FakeSway::accepting_everything(SwayVersion::V1_11);
+    let run = run(
+        &fake,
+        &[
+            "--con-id",
+            &FLOATING.to_string(),
+            "--split",
+            "v",
+            "--sticky",
+            "--height",
+            "300px",
+            "--width",
+            "400px",
+            "--wait-time",
+            "200",
+        ],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert!(
+        action_statuses(&run)
+            .iter()
+            .all(|(_, status)| status == "unconfirmed"),
+        "{}",
+        run.json
+    );
+    let reads = fake.tree_reads();
+    assert!(reads <= 30, "{reads} tree reads");
+}
+
+#[test]
 fn sway_commands_join_the_batch_after_the_mark_and_are_unconfirmed() {
     let fake = FakeSway::start(SwayVersion::V1_11, arranges_on_command);
     let run = run(

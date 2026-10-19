@@ -249,7 +249,8 @@ confirmed by one engine, `run_batch()` (#133), whether it is sent in a batch or 
   the closed container; Sway itself refuses a missing `[con_id=N]` on every supported version,
   #158), `poll_baseline()` is taken,
   then the command is sent and polled for. `polls()` decides whether a kind can be confirmed at
-  all; `poll_matches()` reads the tree on one shared connection; the grace is `poll_grace()`
+  all; `poll_shows()` judges one from a tree the caller read, and every tick reads one tree on a
+  shared connection for every action still polling (#187); the grace is `poll_grace()`
   (`WAIT_TIME_POLL_GRACE`, or the shorter `MOVE_POLL_GRACE` for the `poll_baseline()`-based
   `NewColumn`/`NewRow` check). A kind that can't be confirmed reports `Unconfirmed`, never an
   error.
@@ -286,8 +287,8 @@ confirmed by one engine, `run_batch()` (#133), whether it is sent in a batch or 
   changes what the next action is judged against. With `--settle`
   (#17, `settle_duration()`), `hold_geometry()` then holds the confirmed pixel sizes and position,
   sending them again together when the client undoes them (at most `MAX_GEOMETRY_REAPPLIES`
-  times, then `Unconfirmed`). It reads the tree itself once per tick (`tree_on()`), not through
-  `poll_matches()`, which folds a failed read and a closed window into "doesn't match": an
+  times, then `Unconfirmed`). It reads the tree itself once per tick (`tree_on()`) and tells apart
+  what the confirmation poll folds into "doesn't match", a failed read and a closed window: an
   unreadable tree ends the hold `Unconfirmed`, and a closed window fails without re-sending. An
   error belonging to no one action is prefixed with every verb it stopped (`batch_verbs()`).
 
@@ -865,9 +866,9 @@ comments, name things clearly instead" style). Two rule-specific overrides:
     it. What's left uncovered is mostly IPC-error branches (a `get_tree()` that fails mid-run) and
     `--debug-events`' event loop.
 
-    **Keep the decision pure and let the IPC layer fetch** — the shape `expected_position`/
-    `position_matches` and `state_satisfies`/`container_state` already use — rather than burying a
-    comparison behind a `&mut Connection`. A fake-Sway test can reach it there, but only by
+    **Keep the decision pure and let the IPC layer fetch** — the shape
+    `state_satisfies`/`container_state` and `poll_shows`/`run_batch()`'s one read per tick already
+    use — rather than burying a comparison behind a `&mut Connection`. A fake-Sway test can reach it there, but only by
     scripting a whole compositor exchange for each case a unit test would cover in one line.
 
     `tests/live_sway.rs` is still what shows the IPC code agrees with real Sway, against a
