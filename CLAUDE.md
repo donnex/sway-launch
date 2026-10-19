@@ -199,7 +199,10 @@ what it rejects and why:
 - `validate_sway_command()` — `--sway-command`/`sway_commands` (#90), checked for files by
   `layout::deserialize_sway_commands()` at parse time: the first word must be in
   `SWAY_WINDOW_COMMANDS`, since Sway runs any command behind `[con_id=N]`, `exec`/`bindsym`/`exit`
-  included (confirmed live), and a shared file may only change its own window. No unquoted `,`/`;`,
+  included (confirmed live), and a shared file may only change its own window: `focus` with an
+  argument and `move workspace ...` are refused too, and `swap` isn't listed (#154). Files go
+  through `validate_shared_sway_command()`, which also refuses `SWAY_CLI_ONLY_COMMANDS`
+  (`inhibit_idle`, `shortcuts_inhibitor`): allowed as `--sway-command` only. No unquoted `,`/`;`,
   control character but tab, `$`, or leading `[`, so one entry stays one command, and no unclosed
   quote or trailing unpaired `\` (`open_quoting()`, also applied by `validate_exec_command()`),
   which would carry on into the next entry once a batch joins them (#123). Behind both,

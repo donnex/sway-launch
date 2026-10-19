@@ -363,6 +363,17 @@ fn parse_rejects_a_template_sway_command_acting_on_the_session() {
 }
 
 #[test]
+fn parse_rejects_a_template_sway_command_only_the_command_line_may_send() {
+    let error = parse(
+        "[template]\ndescription = \"A test template.\"\ncategory = \"Test\"\n\n\
+         [[step]]\nslot = \"editor\"\nsway_commands = [\"shortcuts_inhibitor enable\"]\n",
+    )
+    .err()
+    .expect("shortcuts_inhibitor must be refused in a template");
+    assert!(error.contains("--sway-command"), "{error}");
+}
+
+#[test]
 fn resolve_leaves_the_template_layout_context_to_the_run_rather_than_each_step() {
     // The run focuses [layout]'s workspace/output once before the first step
     // (run.rs's BuildLocation); copying it into every step as a move built

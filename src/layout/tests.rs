@@ -86,6 +86,15 @@ fn parse_reads_sway_commands_and_rejects_one_acting_on_the_session() {
 }
 
 #[test]
+fn parse_rejects_a_sway_command_only_the_command_line_may_send() {
+    // #154: accepted as --sway-command, refused in a file someone may share.
+    let error = parse("[[step]]\ncon_id = 42\nsway_commands = [\"inhibit_idle open\"]\n")
+        .err()
+        .expect("inhibit_idle must be refused in a file");
+    assert!(error.contains("--sway-command"), "{error}");
+}
+
+#[test]
 fn parse_rejects_wrong_table_name() {
     // Regression test: a prior version silently parsed [[steps]]
     // (plural, wrong) as a completely empty, successfully-parsed

@@ -844,8 +844,11 @@ pub(super) fn sway_command_split_problem(command: &str, expected: usize) -> Opti
 /// ending the session (confirmed live on Sway 1.11). A layout or template
 /// file is meant to be shared, so a step may only change its own window.
 /// `kill` is left out too: a step that closes its own window has no
-/// layout left to build. Every entry was checked live on Sway 1.9 but
-/// `allow_tearing`, which 1.9 doesn't have and refuses with its own error.
+/// layout left to build, and so is `swap`, which moves another window into
+/// this one's place (#154). `validate_sway_command()` narrows `focus` and
+/// `move` further, and `SWAY_CLI_ONLY_COMMANDS` keeps two out of files.
+/// Every entry was checked live on Sway 1.9 but `allow_tearing`, which 1.9
+/// doesn't have and refuses with its own error.
 pub const SWAY_WINDOW_COMMANDS: &[&str] = &[
     "allow_tearing",
     "border",
@@ -866,11 +869,20 @@ pub const SWAY_WINDOW_COMMANDS: &[&str] = &[
     "splitt",
     "splitv",
     "sticky",
-    "swap",
     "title_format",
     "unmark",
     "urgent",
 ];
+
+/// The `SWAY_WINDOW_COMMANDS` a layout or template file can't send,
+/// only `--sway-command` (#154): each acts on the step's own window but
+/// weakens a control the user set for the session. `inhibit_idle` keeps
+/// swayidle's timeouts from firing, so the screen never locks while the
+/// window is open (confirmed live on Sway 1.11), and `shortcuts_inhibitor
+/// enable` lets the application grab every key, Sway's own bindings
+/// included. A file may come from someone else; the command line is the
+/// user's own.
+pub const SWAY_CLI_ONLY_COMMANDS: &[&str] = &["inhibit_idle", "shortcuts_inhibitor"];
 
 /// Validates one `--sway-command`/`sway_commands` entry (#90): a Sway
 /// command sent as given behind `[con_id=N]`, for a window property no flag
@@ -883,6 +895,16 @@ pub const SWAY_WINDOW_COMMANDS: &[&str] = &[
 /// `$`, which Sway replaces with a config variable from the user's own
 /// config. A leading `[` is refused with its own message, since the
 /// criteria are what this tool supplies.
+///
+/// Two allowed commands reach past the window with some arguments, and are
+/// refused with them (#154): `focus` with any argument (`focus output X`,
+/// `focus left`, `focus parent`) moves focus elsewhere, which in a layout
+/// makes the next launch open in the wrong place or fail
+/// `focus_moved_during_launch()`, so only a bare `focus` is accepted; and
+/// `move workspace ...` can move the window's whole workspace, every other
+/// window on it included (`move workspace to output X`, what
+/// `ActionKind::WorkspaceToOutput` relies on), so it is refused in every
+/// form, `move container to workspace X` being the unambiguous spelling.
 ///
 /// Nor can it end inside an unclosed quote or after an unpaired backslash
 /// (#123): a step's entries reach Sway joined into one command, so an open
@@ -943,7 +965,55 @@ pub fn validate_sway_command(value: &str) -> Result<String, String> {
             SWAY_WINDOW_COMMANDS.join(", ")
         ));
     }
+    if let Some(problem) = reaches_beyond_the_window(command) {
+        return Err(problem);
+    }
     Ok(command.to_string())
+}
+
+fn reaches_beyond_the_window(command: &str) -> Option<String> {
+    let mut words = command.split_whitespace();
+    let name = words.next()?;
+    let argument = words.next();
+    if name.eq_ignore_ascii_case("focus") && argument.is_some() {
+        return Some(
+            "\"focus\" with an argument moves focus away from the window, so it isn't a command \
+             that acts on one window. A bare \"focus\" focuses the step's own window"
+                .to_string(),
+        );
+    }
+    if name.eq_ignore_ascii_case("move")
+        && argument.is_some_and(|word| word.eq_ignore_ascii_case("workspace"))
+    {
+        return Some(
+            "\"move workspace\" can move the whole workspace, every window on it, so it isn't a \
+             command that acts on one window. Use \"move container to workspace <name>\" (or \
+             --workspace) to move just this window"
+                .to_string(),
+        );
+    }
+    None
+}
+
+/// `validate_sway_command()` for an entry in a layout or template
+/// file, which also refuses `SWAY_CLI_ONLY_COMMANDS` (#154).
+pub fn validate_shared_sway_command(value: &str) -> Result<String, String> {
+    let command = validate_sway_command(value)?;
+    let name = command
+        .split_whitespace()
+        .next()
+        .expect("a validated command has a first word");
+    if let Some(cli_only) = SWAY_CLI_ONLY_COMMANDS
+        .iter()
+        .find(|cli_only| cli_only.eq_ignore_ascii_case(name))
+    {
+        return Err(format!(
+            "{:?} can only be given as --sway-command, not in a file — it overrides the \
+             session's idle or shortcut settings, and a file may come from someone else",
+            cli_only
+        ));
+    }
+    Ok(command)
 }
 
 /// Renders a launch command given as a list of words (#77) into the text

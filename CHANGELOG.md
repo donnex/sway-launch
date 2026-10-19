@@ -15,6 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   passed this way was exposed to the whole machine. The variables and the `--cwd` directory now go
   into a file only you can read, under `$XDG_RUNTIME_DIR/sway-launch/`, which the launch reads and
   deletes. Without `XDG_RUNTIME_DIR` they still go on the command line, now with a warning. (#167)
+- A layout or template file can no longer reach past its own window through `sway_commands`.
+  `--sway-command`'s list of allowed commands is meant to let a step change only its own window,
+  but some of their forms acted elsewhere: `move workspace to output <name>` moved the window's
+  whole workspace with every other window on it, `swap container with ...` moved another window
+  into its place, and `focus left`/`focus output <name>`/`focus parent` moved focus away, so the
+  next window in a layout opened somewhere else. `focus` with any argument, `move workspace ...` and
+  `swap` are now refused (a bare `focus` and `move container to workspace <name>` still work), on
+  the command line too. `inhibit_idle` and `shortcuts_inhibitor` are now accepted only as
+  `--sway-command`, not in a layout or template file: a shared file could use the first to keep the
+  screen from ever locking while its window was open. (#154)
 - A layout or template file can no longer run an arbitrary Sway command, `exec` included, through
   `sway_commands`. An entry that left a quote open (`'title_format "a'`) passed validation, and
   since a step's entries are sent to Sway as one command, the open quote changed how Sway split the

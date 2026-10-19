@@ -976,6 +976,66 @@ fn validate_sway_command_rejects_criteria_variables_and_blank() {
 }
 
 #[test]
+fn validate_sway_command_rejects_subcommands_that_reach_past_the_window() {
+    // #154: each acts on another window, a whole workspace, or focus.
+    for command in [
+        "move workspace to output HDMI-A-1",
+        "MOVE Workspace to output HDMI-A-1",
+        "move workspace 2",
+        "swap container with con_id 1",
+        "swap container with mark other",
+        "focus output HDMI-A-1",
+        "focus left",
+        "focus parent",
+        "Focus mode_toggle",
+    ] {
+        let error = validate_sway_command(command).expect_err(command);
+        assert!(error.contains("acts on one window"), "{command}: {error:?}");
+    }
+}
+
+#[test]
+fn validate_sway_command_keeps_the_forms_that_act_on_the_window_itself() {
+    for command in [
+        "focus",
+        "move container to workspace 2",
+        "move to output HDMI-A-1",
+        "move left",
+        "move scratchpad",
+        "inhibit_idle open",
+        "shortcuts_inhibitor enable",
+    ] {
+        assert!(validate_sway_command(command).is_ok(), "{command}");
+    }
+}
+
+#[test]
+fn validate_shared_sway_command_refuses_the_command_line_only_commands() {
+    // #154: a shared file could otherwise keep the screen from locking.
+    for command in [
+        "inhibit_idle open",
+        "Inhibit_Idle visible",
+        "shortcuts_inhibitor enable",
+    ] {
+        let error = validate_shared_sway_command(command).expect_err(command);
+        assert!(error.contains("--sway-command"), "{command}: {error:?}");
+    }
+    assert_eq!(
+        validate_shared_sway_command(" border none "),
+        Ok("border none".to_string())
+    );
+    assert!(validate_shared_sway_command("exit").is_err());
+    assert!(validate_shared_sway_command("focus left").is_err());
+}
+
+#[test]
+fn sway_cli_only_commands_are_all_window_commands() {
+    for command in SWAY_CLI_ONLY_COMMANDS {
+        assert!(SWAY_WINDOW_COMMANDS.contains(command), "{command}");
+    }
+}
+
+#[test]
 fn sway_window_commands_is_sorted_and_unique() {
     let mut sorted = SWAY_WINDOW_COMMANDS.to_vec();
     sorted.sort_unstable();

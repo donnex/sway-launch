@@ -991,7 +991,19 @@ Sway runs any command given window criteria, including ones that act on the whol
 else. So a command must start with one that acts on one window: `allow_tearing`, `border`,
 `floating`, `focus`, `fullscreen`, `inhibit_idle`, `layout`, `mark`, `max_render_time`, `move`,
 `opacity`, `resize`, `scratchpad`, `shortcuts_inhibitor`, `split`/`splith`/`splitv`/`splitt`,
-`sticky`, `swap`, `title_format`, `unmark` or `urgent`. Each entry is one command: an unquoted `,`
+`sticky`, `title_format`, `unmark` or `urgent`. Forms of these that reach past the window are
+refused too: `focus` with any argument (`focus left`, `focus output <name>`, `focus parent`), since
+it moves focus somewhere else and the next window would open there (a bare `focus` is fine), and
+`move workspace ...`, which can move the window's whole workspace with every window on it (use
+`move container to workspace <name>`, or `--workspace`). `swap` isn't allowed, since it moves another
+window into this one's place.
+
+`inhibit_idle` and `shortcuts_inhibitor` work as `--sway-command` only, and are refused in a layout
+or template file: the first keeps the screen from locking while the window is open, the second lets
+the application grab every key, Sway's own bindings included, and neither is a setting a file from
+someone else should be able to change for you.
+
+Each entry is one command: an unquoted `,`
 or `;`, a newline, and a leading `[` (the criteria are `sway-launch`'s to add) are refused, and so
 is a `$`, which Sway would replace with a variable from your own config. So is an entry that ends
 inside an unclosed quote or after an unpaired `\`: a step's entries reach Sway as one command, so

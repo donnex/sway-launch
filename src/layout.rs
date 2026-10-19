@@ -38,9 +38,10 @@ where
     deserializer.deserialize_any(CommandVisitor).map(Some)
 }
 
-/// A step's `sway_commands` (#90), each checked by `validate_sway_command()`
-/// as the file is parsed, so an entry Sway could run as more than one window
-/// command is reported against the file, not partway through a run.
+/// A step's `sway_commands` (#90), each checked by
+/// `validate_shared_sway_command()` as the file is parsed, so an entry Sway
+/// could run as more than one window command, or one only `--sway-command`
+/// may send (#154), is reported against the file, not partway through a run.
 pub fn deserialize_sway_commands<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -49,7 +50,7 @@ where
     commands
         .iter()
         .map(|command| {
-            sway_launch::validate_sway_command(command)
+            sway_launch::validate_shared_sway_command(command)
                 .map_err(|error| serde::de::Error::custom(format!("{:?}: {}", command, error)))
         })
         .collect()

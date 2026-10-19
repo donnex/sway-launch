@@ -64,9 +64,9 @@ pub use values::{
     parse_position, parse_size, parse_title_pattern, parse_workspace_number, render_argv,
     require_non_blank, settle_duration, validate_exec_command, validate_non_blank_argument,
     validate_output_argument, validate_settle_argument, validate_settle_milliseconds,
-    validate_sway_command, validate_sway_string_argument, validate_timeout_argument,
-    validate_timeout_seconds, validate_workspace_argument, workspace_choice, DirectoryCheck,
-    Position, Size, Split, TitlePattern, WorkspaceTarget,
+    validate_shared_sway_command, validate_sway_command, validate_sway_string_argument,
+    validate_timeout_argument, validate_timeout_seconds, validate_workspace_argument,
+    workspace_choice, DirectoryCheck, Position, Size, Split, TitlePattern, WorkspaceTarget,
 };
 
 /// The compositor's version, checked against the oldest supported Sway

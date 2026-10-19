@@ -1622,6 +1622,72 @@ fn a_layout_steps_sway_commands_take_effect_and_session_commands_are_refused() {
 }
 
 #[test]
+fn an_idle_inhibitor_is_sent_from_the_command_line_but_refused_in_a_file() {
+    // #154: `inhibit_idle` keeps the screen from locking, so only the
+    // user's own command line may send it; the window-reaching forms of
+    // `focus`, `move workspace` and `swap` are refused everywhere.
+    fresh_workspace();
+    let mut connection = connect();
+    let (container_id, _guard) = launch_foot(&[]);
+
+    let refused = TempToml::write(
+        "sway-commands-inhibit-idle",
+        &format!("[[step]]\ncon_id = {container_id}\nsway_commands = [\"inhibit_idle open\"]\n"),
+    );
+    let output = sway_launch_command()
+        .args(["--layout", refused.to_str().unwrap()])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("--sway-command"), "{stderr}");
+    let inhibitors = get_node(&mut connection, container_id).idle_inhibitors;
+    assert_eq!(
+        inhibitors.map(|inhibitors| inhibitors.user),
+        Some(swayipc::UserIdleInhibitType::None)
+    );
+
+    for command in [
+        "focus output HDMI-A-1",
+        "move workspace to output HDMI-A-1",
+        "swap container with con_id 1",
+    ] {
+        let output = sway_launch_command()
+            .args([
+                "--con-id",
+                &container_id.to_string(),
+                "--sway-command",
+                command,
+            ])
+            .output()
+            .expect("failed to run sway-launch binary");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{command}");
+        assert!(stderr.contains("acts on one window"), "{command}: {stderr}");
+    }
+
+    let output = sway_launch_command()
+        .args([
+            "--con-id",
+            &container_id.to_string(),
+            "--sway-command",
+            "inhibit_idle open",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let inhibitors = get_node(&mut connection, container_id).idle_inhibitors;
+    assert_eq!(
+        inhibitors.map(|inhibitors| inhibitors.user),
+        Some(swayipc::UserIdleInhibitType::Open)
+    );
+}
+
+#[test]
 fn settle_applies_the_geometry_again_after_something_else_changes_it() {
     // #17: a browser sets its own size just after mapping. No browser is
     // available here, so the test plays the client, resizing the window over
