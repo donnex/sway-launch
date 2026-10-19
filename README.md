@@ -729,8 +729,14 @@ Arrange a workspace by hand once, then let `sway-launch` write the layout file t
 ```shell
 sway-launch --capture > my-workspace.toml        # the focused workspace
 sway-launch --capture 3 > three.toml             # workspace "3"
+sway-launch --capture-number 3 > three.toml      # workspace "3: web", or whichever has number 3
 sway-launch --layout my-workspace.toml --on-workspace 4
 ```
+
+`--capture` takes a workspace's exact name. For workspaces named `<number>: <label>` and switched
+to with `workspace number N`, use `--capture-number N`, which finds the workspace the same way;
+`--capture 3` on such a workspace fails and suggests it. When two workspaces share the number, it
+lists their names, so name one with `--capture` instead.
 
 The file opens each window where it has to open to rebuild the same splits, then sets the sizes,
 and finishes with the floating windows' size and position. Marks, sticky and fullscreen are kept
@@ -1521,6 +1527,7 @@ Run and output:
 Inspect:
       --list-windows               List every open window and exit
       --capture [<WORKSPACE>]      Print a layout file that rebuilds a workspace, and exit
+      --capture-number <N>         Like --capture, for the workspace with this number
       --list-templates             List the built-in templates and exit
       --show-template <NAME|FILE>  Print a template's TOML and exit
   -d, --debug-events               Print every Sway event until interrupted

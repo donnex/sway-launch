@@ -560,6 +560,17 @@ struct Args {
     ]), help_heading = HEADING_INSPECT, verbatim_doc_comment)]
     capture: Option<Option<String>>,
 
+    /// Like --capture, for the workspace with this number
+    ///
+    /// Found the way Sway's "workspace number N" finds it: 1 matches a
+    /// workspace named "1: term", which --capture 1 doesn't.
+    #[clap(long, value_name = "N", value_parser = sway_launch::parse_workspace_number,
+        conflicts_with_all = standalone_mode_conflicts(&[
+        "debug_events", "layout", "template", "completions", "list_templates", "list_windows",
+        "show_template", "dry_run", "json", "capture",
+    ]), help_heading = HEADING_INSPECT, verbatim_doc_comment)]
+    capture_number: Option<i32>,
+
     /// List the built-in templates and exit
     #[clap(long, conflicts_with_all = standalone_mode_conflicts(&[
         "debug_events", "layout", "template", "completions", "dry_run", "show_template",
@@ -680,13 +691,22 @@ fn main() {
         process::exit(0);
     }
 
-    if let Some(workspace) = &args.capture {
-        match sway_launch::capture_workspace(workspace.as_deref()) {
+    if args.capture.is_some() || args.capture_number.is_some() {
+        let flag = if args.capture_number.is_some() {
+            "--capture-number"
+        } else {
+            "--capture"
+        };
+        let workspace = sway_launch::WorkspaceTarget::from_pair(
+            args.capture.as_ref().and_then(|name| name.as_deref()),
+            args.capture_number,
+        );
+        match sway_launch::capture_workspace(workspace) {
             Ok(layout) => {
                 print_str(&layout);
                 process::exit(0);
             }
-            Err(error) => fail(false, &format!("--capture: {}", error)),
+            Err(error) => fail(false, &format!("{}: {}", flag, error)),
         }
     }
 

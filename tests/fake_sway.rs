@@ -1278,6 +1278,41 @@ fn capture_without_a_name_captures_the_focused_workspace_and_reports_a_missing_o
     );
 }
 
+#[test]
+fn capture_number_captures_the_workspace_with_that_number() {
+    for version in SwayVersion::ALL {
+        let fake = FakeSway::accepting_everything(version);
+        let output = fake
+            .sway_launch()
+            .args(["--capture-number", "1"])
+            .output()
+            .expect("failed to run sway-launch");
+        assert!(
+            output.status.success(),
+            "{version:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("id = \"fixture-tiled\""),
+            "{version:?}: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+
+        let missing = fake
+            .sway_launch()
+            .args(["--capture-number", "9"])
+            .output()
+            .expect("failed to run sway-launch");
+        assert_eq!(missing.status.code(), Some(1));
+        assert!(
+            String::from_utf8_lossy(&missing.stderr)
+                .contains("--capture-number: no workspace has number 9"),
+            "{version:?}: {}",
+            String::from_utf8_lossy(&missing.stderr)
+        );
+    }
+}
+
 /// A handler that runs every `exec` for real and, once the launched process
 /// exists, opens a window for it with `app_id`, owned by that process.
 fn opens_a_window_for_each_launch(

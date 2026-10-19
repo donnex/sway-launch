@@ -615,6 +615,38 @@ fn capture_conflicts_with_a_per_window_flag_and_json() {
 }
 
 #[test]
+fn capture_number_conflicts_with_capture_a_per_window_flag_and_json() {
+    for (other, flag) in [
+        (vec!["--capture", "1"], "--capture"),
+        (vec!["--floating"], "--floating"),
+        (vec!["--json"], "--json"),
+    ] {
+        let output = sway_launch()
+            .args(["--capture-number", "1"])
+            .args(other)
+            .output()
+            .expect("failed to run sway-launch binary");
+        assert_conflict_error(&output, "--capture-number", flag);
+    }
+}
+
+#[test]
+fn capture_number_refuses_a_value_that_is_not_a_workspace_number() {
+    for value in ["-1", "web"] {
+        let output = sway_launch()
+            .arg(format!("--capture-number={value}"))
+            .output()
+            .expect("failed to run sway-launch binary");
+        assert_eq!(output.status.code(), Some(2), "{value}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("is not a workspace number"),
+            "{value}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
 fn debug_events_conflicts_with_a_command() {
     // --debug-events never acts on a window, so a command alongside it could
     // only be discarded -- it used to parse cleanly and dump events while

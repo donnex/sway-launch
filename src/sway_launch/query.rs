@@ -15,8 +15,9 @@ use super::tree::{
     build_workspace_anchor, con_id_target_problem, existing_candidates, find_node, find_workspace,
     focused_workspace, launch_placement_problems, move_skip_reason, present_ids,
     recheck_launched_windows, resolve_awaited_matches, resolve_matches, tiled_window_count,
-    unnamed_build_workspace, window_listing, window_processes, workspace_named, ContainerState,
-    ListedWindow, MoveDirection, RecheckedWindow, SkipReason, WorkspaceIdentity, WorkspaceLookup,
+    unnamed_build_workspace, window_listing, window_processes, workspace_to_capture,
+    ContainerState, ListedWindow, MoveDirection, RecheckedWindow, SkipReason, WorkspaceIdentity,
+    WorkspaceLookup,
 };
 use super::values::{TitlePattern, WorkspaceTarget};
 use swayipc::{Connection, Node};
@@ -52,13 +53,12 @@ pub fn list_windows(criteria: WindowCriteria) -> Result<Vec<ListedWindow>, Strin
     Ok(window_listing(&tree, criteria))
 }
 
-/// `--capture` (#31): the `--layout` file rebuilding the workspace named
-/// `name`, or the focused one.
-pub fn capture_workspace(name: Option<&str>) -> Result<String, String> {
+/// `--capture` (#31): the `--layout` file rebuilding the workspace `target`
+/// names (`workspace_to_capture()`), or the focused one.
+pub fn capture_workspace(target: Option<WorkspaceTarget>) -> Result<String, String> {
     let tree = fetch_tree()?;
-    let workspace = match name {
-        Some(name) => workspace_named(&tree, name)
-            .ok_or_else(|| format!("no workspace is named {:?}", name))?,
+    let workspace = match target {
+        Some(target) => workspace_to_capture(&tree, target)?,
         None => focused_workspace(&tree).ok_or_else(|| "no workspace is focused".to_string())?,
     };
     capture(workspace)

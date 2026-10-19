@@ -352,7 +352,7 @@ Never an error: an unreachable compositor skips the check and is left for the ru
 
 - stdout carries exactly one value: the container id, or the `--json` object. The exceptions are
   modes whose output *is* the job (`--debug-events`, `--dry-run`, `--validate`, `--list-templates`,
-  `--list-windows`, `--show-template`, `--completions`, `--capture`).
+  `--list-windows`, `--show-template`, `--completions`, `--capture`/`--capture-number`).
 - Every stdout write goes through `print_line()`/`print_str()`, so a closed pipe is a clean exit
   (`exit_on_write_failure()`), never a panic. `run_steps()`'s per-step ids use
   `print_line_deferring_failure()`, so a closed stdout never stops a layout halfway.
@@ -372,12 +372,16 @@ Never an error: an unreachable compositor skips the check and is left for the ru
 
 ### Standalone modes
 
-`--completions`, `--list-templates`, `--show-template`, `--list-windows`, `--capture` and
-`--debug-events` are dispatched first in `main()`, before any target is resolved. `--capture`'s
-`capture()` builds each split level by level, since splitting a container's only child changes its
-layout instead of nesting one: every child's first window opens beside its siblings first, then each
-nested child's is split and focused. Sizes come next, through each child's first window, in the
-order its module doc explains, then fullscreen, as a retarget step of its own (#189: Sway keeps
+`--completions`, `--list-templates`, `--show-template`, `--list-windows`, `--capture`/
+`--capture-number` and `--debug-events` are dispatched first in `main()`, before any target is
+resolved. `--capture <NAME>` and `--capture-number <N>` become a `WorkspaceTarget`, resolved by
+`tree::workspace_to_capture()`: a number the way `WorkspaceTarget::matches()` decides it, several
+sharing it refused with their names, and a name that matches nothing but is a workspace's number
+answered with a hint to use `--capture-number` (#163). `--capture`'s `capture()` builds each
+split level by level, since splitting a container's only child changes its layout instead of
+nesting one: every child's first window opens beside its siblings first, then each nested child's
+is split and focused. Sizes come next, through each child's first window, in the order its module
+doc explains, then fullscreen, as a retarget step of its own (#189: Sway keeps
 focus on a fullscreen window, so later launches open behind it, and `share_of()` ignores the
 `1.0` percent it reports) (`every_shipped_template_round_trips_through_capture` holds it to
 every template's shape). A command guessed from an app_id or class that isn't a plain program name

@@ -126,6 +126,7 @@ const CLI_ONLY_ARGS: &[&str] = &[
     "list_windows",
     "show_template",
     "capture",
+    "capture_number",
     "bindings",
     "apps",
     "param",
@@ -321,6 +322,7 @@ const STANDALONE_MODES: &[&str] = &[
     "list_windows",
     "show_template",
     "capture",
+    "capture_number",
 ];
 
 /// Flags a `LayoutStep` mirrors that still aren't per-window: they're

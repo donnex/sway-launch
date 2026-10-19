@@ -6260,6 +6260,48 @@ fn run_layout_for_ids(file: &TempToml) -> (Vec<i64>, Vec<KillOnDrop>) {
 }
 
 #[test]
+fn capture_number_captures_a_numbered_workspace_capture_only_suggests_it_for() {
+    // #163: workspaces named `<number>: <label>` are switched to with
+    // `workspace number N`, and a bar shows them as N, but `--capture N`
+    // takes only an exact name.
+    let workspace = fresh_workspace();
+    let mut connection = connect();
+    let numbered = format!("163: {workspace}");
+    run_command_ok(&mut connection, &format!("workspace \"{numbered}\""));
+    let (_window, _guard) = launch_foot(&["--mark", "captured-by-number"]);
+    run_command_ok(&mut connection, &format!("workspace \"{workspace}\""));
+
+    let by_name = sway_launch_command()
+        .args(["--capture", "163"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert_eq!(by_name.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&by_name.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "no workspace is named \"163\", but \"{numbered}\" has number 163: use \
+             --capture-number 163"
+        )),
+        "{stderr}"
+    );
+
+    let by_number = sway_launch_command()
+        .args(["--capture-number", "163"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        by_number.status.success(),
+        "{}",
+        String::from_utf8_lossy(&by_number.stderr)
+    );
+    let captured = String::from_utf8_lossy(&by_number.stdout);
+    assert!(
+        captured.contains("mark = \"captured-by-number\""),
+        "{captured}"
+    );
+}
+
+#[test]
 fn capture_rebuilds_a_workspace_holding_a_fullscreen_window() {
     let built = fresh_workspace();
     // #189: Sway leaves focus on a fullscreen window when another opens on

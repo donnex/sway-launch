@@ -509,6 +509,64 @@ pub(super) fn workspace_named<'a>(tree: &'a Node, name: &str) -> Option<&'a Node
     })
 }
 
+/// The workspace `--capture <NAME>`/`--capture-number <N>` names (#163). A
+/// number is found the way Sway's `workspace number N` finds it, so `1` finds
+/// `1: term`; several workspaces sharing it are refused with their names,
+/// since a capture of the wrong one would look right. A name that matches no
+/// workspace but is the number of one gets a hint to use `--capture-number`,
+/// since a bar shows `1: term` as 1 and `--capture 1` is the natural guess.
+pub(super) fn workspace_to_capture<'a>(
+    tree: &'a Node,
+    target: WorkspaceTarget,
+) -> Result<&'a Node, String> {
+    let numbered = |number: i32| -> Vec<&'a Node> {
+        descendants(tree)
+            .filter(|node| {
+                node.node_type == NodeType::Workspace
+                    && WorkspaceTarget::Number(number).matches(node.name.as_deref(), node.num)
+            })
+            .collect()
+    };
+    let names = |workspaces: &[&Node]| -> String {
+        workspaces
+            .iter()
+            .map(|workspace| format!("{:?}", workspace.name.as_deref().unwrap_or_default()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    match target {
+        WorkspaceTarget::Name(name) => workspace_named(tree, name).ok_or_else(|| {
+            let hint = name
+                .parse::<i32>()
+                .ok()
+                .filter(|number| *number >= 0)
+                .map(|number| (number, numbered(number)))
+                .filter(|(_, workspaces)| !workspaces.is_empty());
+            match hint {
+                Some((number, workspaces)) => format!(
+                    "no workspace is named {:?}, but {} {} number {}: use --capture-number {}",
+                    name,
+                    names(&workspaces),
+                    if workspaces.len() == 1 { "has" } else { "have" },
+                    number,
+                    number
+                ),
+                None => format!("no workspace is named {:?}", name),
+            }
+        }),
+        WorkspaceTarget::Number(number) => match numbered(number).as_slice() {
+            [] => Err(format!("no workspace has number {}", number)),
+            [workspace] => Ok(workspace),
+            several => Err(format!(
+                "{} workspaces have number {} ({}): name one with --capture",
+                several.len(),
+                number,
+                names(several)
+            )),
+        },
+    }
+}
+
 /// How many tiled windows `workspace` holds, at any depth. Floating windows
 /// don't count: they don't take part in the tiled shape a run builds.
 pub(super) fn tiled_window_count(workspace: &Node) -> usize {

@@ -1731,3 +1731,89 @@ fn skip_reason_explanation_names_the_reason_and_the_move_it_refused() {
         }
     }
 }
+
+// workspace_to_capture
+
+/// One output holding `1: term`, `3: web`, `3: mail`, `notes` and `7`, each
+/// with the `num` Sway would give it.
+fn numbered_workspaces_tree() -> Node {
+    let workspaces = [
+        (2, "1: term", 1),
+        (3, "3: web", 3),
+        (4, "3: mail", 3),
+        (5, "notes", -1),
+        (6, "7", 7),
+    ]
+    .into_iter()
+    .map(|(id, name, number)| {
+        let mut workspace = named_node_value(id, "workspace", name, vec![]);
+        workspace["num"] = serde_json::json!(number);
+        workspace
+    })
+    .collect();
+    let output = named_node_value(1, "output", "HEADLESS-1", workspaces);
+    serde_json::from_value(named_node_value(0, "root", "root", vec![output]))
+        .expect("valid Node test fixture")
+}
+
+#[test]
+fn workspace_to_capture_finds_a_workspace_by_name_or_by_its_only_number() {
+    let tree = numbered_workspaces_tree();
+    for (target, id) in [
+        (WorkspaceTarget::Name("1: TERM"), 2),
+        (WorkspaceTarget::Name("7"), 6),
+        (WorkspaceTarget::Number(1), 2),
+        (WorkspaceTarget::Number(7), 6),
+    ] {
+        assert_eq!(
+            workspace_to_capture(&tree, target).map(|workspace| workspace.id),
+            Ok(id),
+            "{target:?}"
+        );
+    }
+}
+
+#[test]
+fn workspace_to_capture_refuses_a_number_several_workspaces_share() {
+    let error = workspace_to_capture(&numbered_workspaces_tree(), WorkspaceTarget::Number(3))
+        .expect_err("two workspaces have number 3");
+    assert_eq!(
+        error,
+        "2 workspaces have number 3 (\"3: web\", \"3: mail\"): name one with --capture"
+    );
+}
+
+#[test]
+fn workspace_to_capture_reports_a_missing_number() {
+    assert_eq!(
+        workspace_to_capture(&numbered_workspaces_tree(), WorkspaceTarget::Number(4))
+            .map(|workspace| workspace.id),
+        Err("no workspace has number 4".to_string())
+    );
+}
+
+#[test]
+fn workspace_to_capture_suggests_capture_number_for_a_name_that_is_a_workspace_number() {
+    // #163: a bar shows `1: term` as 1, so `--capture 1` is the natural guess.
+    let tree = numbered_workspaces_tree();
+    for (name, expected) in [
+        (
+            "1",
+            "no workspace is named \"1\", but \"1: term\" has number 1: use --capture-number 1",
+        ),
+        (
+            "3",
+            "no workspace is named \"3\", but \"3: web\", \"3: mail\" have number 3: use \
+             --capture-number 3",
+        ),
+        ("4", "no workspace is named \"4\""),
+        ("-1", "no workspace is named \"-1\""),
+        ("term", "no workspace is named \"term\""),
+    ] {
+        assert_eq!(
+            workspace_to_capture(&tree, WorkspaceTarget::Name(name)).map(|workspace| workspace.id),
+            Err(expected.to_string()),
+            "{name}"
+        );
+    }
+}

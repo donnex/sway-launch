@@ -51,6 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `--capture-number N` captures a workspace by its number, the way Sway's `workspace number N`
+  finds it, so `--capture-number 1` captures a workspace named `1: term`. `--capture` only takes an
+  exact name, so with workspaces named `<number>: <label>` the README's own `--capture 3` example
+  failed with `no workspace is named "3"` and no hint why; that error now names the workspace with
+  that number and suggests `--capture-number`. (#163)
 - `sway-launch` now warns when the compositor it talks to is older than Sway 1.9, the oldest
   supported version, or isn't Sway at all (i3, reached through `I3SOCK`). Such a run used to go
   ahead silently and fail however the difference surfaced, typically as a timeout, which pointed
