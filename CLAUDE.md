@@ -403,8 +403,12 @@ reliably. A new entry in
   template's `slot` becomes the step's `id`, so templates use the same mechanism.
 - `run_steps()` applies the run's `BuildLocation` (a template's `[layout]` table, or
   `--on-workspace`/`--on-output`, each overriding its half of it) once before the first step, so the shape is built in place. Every workspace switch goes through `focus_command()`, whose `--no-auto-back-and-forth` keeps Sway's `workspace_auto_back_and_forth` from switching to the previous workspace instead (#142). It warns when that
-  workspace already holds tiled windows, and sets `require_launch_on_focused_workspace`, which
-  fails a launch if focus moved while it waited (`focus_moved_during_launch()`, #45/#105), and
+  workspace already holds tiled windows. A launching run then records the build workspace once
+  (`BuildLocation::anchor()`, deciding in `tree::build_workspace_anchor()`: the focused workspace,
+  refused unless it is the one the location names, #156) and hands it to every step as
+  `SwayLaunch.build_workspace`, which fails a launch if focus isn't on it as the step starts or left
+  it while the window opened (`focus_moved_during_launch()`, #45/#105), never against focus as
+  the step started, since another run's switch in between would make both runs build there; and
   `warn_on_misplaced_launch` for a launching step: before its actions, `SwayLaunch::run()` reads
   the tree once and `tree::launch_placement_problems()` says whether a config rule (`assign`,
   `for_window`) put the window off the focused workspace or floated it, unless the step moves or
@@ -419,7 +423,12 @@ reliably. A new entry in
   takes one lock (#129). With no `--on-workspace`, only a launching run reads it from the tree
   (`unnamed_build_workspace()`: the focused one, or the one `--on-output` shows), so a
   retarget-only run still makes no IPC call of its own. Held until the process exits.
-  `--no-lock` skips it; no runtime directory skips it with a `--verbose` note. It is why
+  Then a launching run takes the session lock (`acquire_session_lock()`, #156), keyed on the
+  canonical Sway socket (`session_socket()`, `session_lock_identity()`), since focus is one value
+  per session and two layouts building at once take it from each other: `wait_for_lock()` retries
+  `try_lock()` until the run's own `--timeout`, then fails with
+  `session_lock_timeout_message()`, so runs started together build one after another.
+  `--no-lock` skips both; no runtime directory skips both with a `--verbose` note. It is why
   `rust-version` is 1.89.
 - `--concurrent` (#73), or a top-level `concurrent = true` in a layout or bindings file (#121,
   OR-ed with the flag into `run_steps()`'s `concurrent` argument; a template file can't set it, since
@@ -443,7 +452,8 @@ reliably. A new entry in
 - A run tracks a workspace by its node id (`tree::WorkspaceIdentity`, read through
   `query::workspace_now()` with a `WorkspaceLookup`), never by a name read earlier: workspace-icon
   daemons rename a workspace whenever a window opens on it, keeping its id (#178). So
-  `focus_moved_during_launch()` compares ids, and `Staging` keeps the build workspace's id and
+  `focus_moved_during_launch()` compares ids, and `Staging` keeps the build workspace's id (taken
+  from the run's `BuildWorkspace`, after `Staging::enter()` checks focus is still on it, #156) and
   sends each `bring()`/`leave()` the name it has right then, re-reading which workspace that is
   after each, since Sway destroys an empty build workspace when focus leaves for the staging one.
   The run lock's key still uses the name (#129).

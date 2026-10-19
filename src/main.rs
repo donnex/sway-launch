@@ -493,7 +493,7 @@ struct Args {
     #[clap(long, help_heading = HEADING_LAYOUTS, verbatim_doc_comment)]
     rollback_on_error: bool,
 
-    /// Run even if the same layout is already being built on this workspace
+    /// Run even if another layout is already being built
     #[clap(long, help_heading = HEADING_LAYOUTS)]
     no_lock: bool,
 
@@ -835,7 +835,7 @@ fn main() {
         timeout: time::Duration::from_secs(args.timeout),
         wait_time: time::Duration::from_millis(args.wait_time),
         verbose: args.verbose,
-        require_launch_on_focused_workspace: false,
+        build_workspace: None,
         warn_on_misplaced_launch: false,
         catch_late_window: false,
         excluded_containers: Vec::new(),

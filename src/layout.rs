@@ -290,7 +290,7 @@ impl LayoutStep {
                 .map(time::Duration::from_millis)
                 .unwrap_or(default_wait_time),
             verbose,
-            require_launch_on_focused_workspace: false,
+            build_workspace: None,
             warn_on_misplaced_launch: false,
             catch_late_window: false,
             excluded_containers: Vec::new(),

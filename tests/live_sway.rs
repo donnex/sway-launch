@@ -4327,6 +4327,84 @@ fn concurrent_template_runs_report_disjoint_container_ids() {
         .expect("workspace switch should succeed");
 }
 
+#[test]
+fn two_templates_started_together_each_build_on_their_own_workspace() {
+    fresh_workspace();
+    // #156: focus is one value for the whole session, so two runs started
+    // together (several `exec sway-launch --template ... --on-workspace N`
+    // lines at login) used to take it from each other: all four windows
+    // ended up interleaved on one workspace, the other left empty, and both
+    // runs exited 0 (4 of 4 trials). A launching run now waits for the other
+    // to finish, so each shape lands on its own workspace, the one its
+    // recorded shape names.
+    let mut connection = connect();
+    let spawn = |template: &str| {
+        sway_launch_command()
+            .args([
+                "--template",
+                template,
+                "--apps",
+                "foot,foot",
+                "--on-workspace",
+                &format!("template-shape-{template}"),
+                "--timeout",
+                "20",
+                "--json",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn sway-launch")
+    };
+    for trial in 1..=2 {
+        let children = [
+            ("dual-column", spawn("dual-column")),
+            ("dual-row", spawn("dual-row")),
+        ];
+        let runs: Vec<(&str, std::process::Output)> = children
+            .into_iter()
+            .map(|(template, child)| {
+                (
+                    template,
+                    child.wait_with_output().expect("the run should exit"),
+                )
+            })
+            .collect();
+        let parsed: Vec<(&str, serde_json::Value)> = runs
+            .iter()
+            .map(|(template, output)| {
+                let parsed =
+                    serde_json::from_slice(&output.stdout).unwrap_or(serde_json::Value::Null);
+                (*template, parsed)
+            })
+            .collect();
+        let _guards: Vec<KillOnDrop> = parsed
+            .iter()
+            .flat_map(|(_, parsed)| {
+                parsed["container_ids"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .filter_map(|id| id.as_i64())
+            .map(KillOnDrop)
+            .collect();
+        for ((template, output), (_, parsed)) in runs.iter().zip(&parsed) {
+            assert!(
+                output.status.success(),
+                "trial {trial}: {template} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let shape = rendered_shape_of(&mut connection, parsed);
+            assert_eq!(
+                Some(shape),
+                recorded_template_shape(template),
+                "trial {trial}: {template} should build its own shape on its own workspace"
+            );
+        }
+    }
+}
+
 fn first_app_id_window(node: &Node, app_id: &str) -> Option<i64> {
     if node.app_id.as_deref() == Some(app_id) {
         return Some(node.id);

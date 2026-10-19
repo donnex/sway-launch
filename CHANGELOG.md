@@ -44,6 +44,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Two layouts or templates started at the same moment on different workspaces no longer build into
+  one workspace while both report success. Every new window opens wherever focus is, and focus is
+  one value for the whole Sway session, so the second run's switch to its workspace took focus from
+  the first before it had launched anything: all the windows ended up interleaved on one
+  workspace, and the other was left empty. This is how layouts are usually started at login, with
+  several `exec sway-launch --template ... --on-workspace N` lines in the Sway config. (#156)
+
+  A run that launches windows now takes a lock for the whole Sway session, so runs started together
+  build one after another, each on its own workspace; a run waits up to its `--timeout` for the
+  others, then fails with "another layout is running in this Sway session". `--no-lock` skips this
+  lock too. A run also notes the workspace it builds on once it has switched there, and a step that
+  finds focus elsewhere, as it starts as well as while its window opens, now fails naming both
+  workspaces, instead of building on whichever workspace has focus.
+
 - `--position center` no longer reports `unconfirmed` for a window it centered correctly when the
   same call also set a pixel `--width` or `--height`. Sway centers the size it has just set, but the
   check used whatever size the window showed when it was read, which differs once the application

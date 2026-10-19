@@ -12,7 +12,7 @@ fn minimal_sway_launch() -> SwayLaunch<'static> {
         verbose: false,
         timeout: time::Duration::from_secs(5),
         wait_time: time::Duration::from_millis(20),
-        require_launch_on_focused_workspace: false,
+        build_workspace: None,
         warn_on_misplaced_launch: false,
         catch_late_window: false,
         excluded_containers: Vec::new(),
@@ -563,7 +563,11 @@ fn workspace(id: i64, name: &str) -> WorkspaceIdentity {
 #[test]
 fn focus_moved_during_launch_is_silent_while_focus_stays_put() {
     assert_eq!(
-        focus_moved_during_launch(&workspace(5, "1"), Some(&workspace(5, "1"))),
+        focus_moved_during_launch(
+            &workspace(5, "1"),
+            Some(&workspace(5, "1")),
+            FocusCheck::WhileOpening
+        ),
         None
     );
 }
@@ -571,27 +575,69 @@ fn focus_moved_during_launch_is_silent_while_focus_stays_put() {
 #[test]
 fn focus_moved_during_launch_ignores_a_rename_of_the_same_workspace() {
     assert_eq!(
-        focus_moved_during_launch(&workspace(5, "1"), Some(&workspace(5, "1: foot"))),
+        focus_moved_during_launch(
+            &workspace(5, "1"),
+            Some(&workspace(5, "1: foot")),
+            FocusCheck::WhileOpening
+        ),
         None
     );
 }
 
 #[test]
 fn focus_moved_during_launch_names_both_workspaces() {
-    let message = focus_moved_during_launch(&workspace(5, "1"), Some(&workspace(6, "21")))
-        .expect("focus moved");
+    let message = focus_moved_during_launch(
+        &workspace(5, "1"),
+        Some(&workspace(6, "21")),
+        FocusCheck::WhileOpening,
+    )
+    .expect("focus moved");
     assert!(
         message.contains("focus moved from workspace \"1\" to \"21\""),
         "{message}"
     );
-    assert!(focus_moved_during_launch(&workspace(5, "1"), None)
-        .expect("focus left")
-        .contains("left workspace \"1\""));
+    assert!(
+        focus_moved_during_launch(&workspace(5, "1"), None, FocusCheck::WhileOpening)
+            .expect("focus left")
+            .contains("left workspace \"1\"")
+    );
 }
 
 #[test]
 fn focus_moved_during_launch_tells_a_new_workspace_under_the_same_name_apart() {
-    assert!(focus_moved_during_launch(&workspace(5, "1"), Some(&workspace(9, "1"))).is_some());
+    assert!(focus_moved_during_launch(
+        &workspace(5, "1"),
+        Some(&workspace(9, "1")),
+        FocusCheck::WhileOpening
+    )
+    .is_some());
+}
+
+#[test]
+fn focus_moved_during_launch_says_when_focus_was_found_elsewhere() {
+    // #156: a step checks focus before it launches too, against the
+    // workspace the run recorded, and --concurrent before staging.
+    for (when, expected) in [
+        (
+            FocusCheck::BeforeLaunch,
+            "before this step's window was launched",
+        ),
+        (
+            FocusCheck::WhileOpening,
+            "while this step's window was opening",
+        ),
+        (
+            FocusCheck::BeforeStaging,
+            "before this run's windows were launched",
+        ),
+    ] {
+        let message = focus_moved_during_launch(&workspace(5, "A"), Some(&workspace(6, "B")), when)
+            .expect("focus moved");
+        assert!(
+            message.contains(&format!("from workspace \"A\" to \"B\" {expected}")),
+            "{message}"
+        );
+    }
 }
 
 #[test]

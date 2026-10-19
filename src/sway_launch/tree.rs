@@ -14,7 +14,7 @@
 //! reach each case.
 
 use super::target::{LaunchFilter, WindowCriteria};
-use super::values::{Position, TitlePattern};
+use super::values::{Position, TitlePattern, WorkspaceTarget};
 use swayipc::{Node, NodeLayout, NodeType};
 
 /// `node`'s direct children, tiling (`nodes`) first, then floating
@@ -449,6 +449,53 @@ pub(super) fn unnamed_build_workspace<'a>(
             .iter()
             .find(|node| node.id == *id && node.node_type == NodeType::Workspace)
     })
+}
+
+/// The workspace a `--layout`/`--template` run builds on, read once right
+/// after `BuildLocation::apply()` focused it (#156): the focused workspace,
+/// as long as it is the one the build location names. Focus is one value for
+/// the whole Sway session, so another run's `apply()` (or a keybinding)
+/// landing between this run's `apply()` and this read would otherwise make
+/// the other run's workspace this run's build workspace, and both would
+/// build there, each reporting success. A named workspace is checked by
+/// `WorkspaceTarget::matches()`; with only an output, the workspace must be
+/// on that output (with both, the workspace wins: an existing workspace on
+/// another output is focused where it is).
+pub(super) fn build_workspace_anchor(
+    tree: &Node,
+    workspace: Option<WorkspaceTarget>,
+    output: Option<&str>,
+) -> Result<WorkspaceIdentity, String> {
+    let focused =
+        focused_workspace(tree).ok_or_else(|| "no workspace is focused to build on".to_string())?;
+    let name = focused.name.clone().unwrap_or_default();
+    let wanted = match (workspace, output) {
+        (Some(target), _) if !target.matches(focused.name.as_deref(), focused.num) => {
+            Some(match target {
+                WorkspaceTarget::Name(wanted) => format!("workspace {:?}", wanted),
+                WorkspaceTarget::Number(wanted) => format!("workspace number {}", wanted),
+            })
+        }
+        (None, Some(output))
+            if !ancestors_of(tree, focused.id)
+                .and_then(|path| name_of_nearest(&path, NodeType::Output))
+                .is_some_and(|name| name.eq_ignore_ascii_case(output)) =>
+        {
+            Some(format!("output {:?}", output))
+        }
+        _ => None,
+    };
+    match wanted {
+        Some(wanted) => Err(format!(
+            "focus moved to workspace {:?} before the first step, away from {} where this run \
+             switched to build, so the layout would be built on the wrong workspace",
+            name, wanted
+        )),
+        None => Ok(WorkspaceIdentity {
+            id: focused.id,
+            name,
+        }),
+    }
 }
 
 /// The workspace named `name`, compared ignoring case as Sway does.

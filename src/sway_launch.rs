@@ -41,8 +41,8 @@ mod test_support;
 mod tree;
 mod values;
 
-pub use ipc::{kill_container, KillError};
-pub use launch::{debug_events, ActionRequest, BuildLocation, Staging, SwayLaunch};
+pub use ipc::{kill_container, session_socket, KillError};
+pub use launch::{debug_events, ActionRequest, BuildLocation, BuildWorkspace, Staging, SwayLaunch};
 pub use outcome::{
     ActionRecord, ActionStatus, LaunchOwnership, RunError, RunOutcome, UnmatchedWindow,
 };

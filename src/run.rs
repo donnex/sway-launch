@@ -56,9 +56,15 @@ pub(crate) fn run_steps(
     }
 
     // Held until the process exits, so a second run of the same layout on
-    // the same workspace can't interleave its windows with this one's.
+    // the same workspace can't interleave its windows with this one's, and a
+    // launching run of any other layout in this Sway session waits for this
+    // one rather than taking focus from it (#156).
     let launches = steps.iter().any(|step| step.command.is_some());
     let _run_lock = match acquire_run_lock(build, launches, lock_source, args) {
+        Ok(lock) => lock,
+        Err(error) => fail(args.json, &format!("{}: {}", steps_source(args), error)),
+    };
+    let _session_lock = match acquire_session_lock(launches, args) {
         Ok(lock) => lock,
         Err(error) => fail(args.json, &format!("{}: {}", steps_source(args), error)),
     };
@@ -74,6 +80,17 @@ pub(crate) fn run_steps(
     if let Err(error) = build.apply(args.verbose) {
         fail(args.json, &format!("{}: {}", steps_source(args), error));
     }
+    // Recorded once, here, and every launch checked against it (#156): focus
+    // is one value for the whole session, so a step can't trust it to still
+    // be where this run put it.
+    let build_workspace = if launches {
+        match build.anchor() {
+            Ok(build_workspace) => Some(build_workspace),
+            Err(error) => fail(args.json, &format!("{}: {}", steps_source(args), error)),
+        }
+    } else {
+        None
+    };
     // Only a run that launches windows builds a shape; one that only
     // retargets existing windows never needs to read the tree here.
     let mut warnings = if launches {
@@ -106,10 +123,9 @@ pub(crate) fn run_steps(
         );
     }
 
-    let mut staged = if concurrent && launches {
-        Some(stage_launches(steps, args))
-    } else {
-        None
+    let mut staged = match (&build_workspace, concurrent) {
+        (Some(build_workspace), true) => Some(stage_launches(steps, build_workspace, args)),
+        _ => None,
     };
     if let Some((index, error)) = staged
         .as_mut()
@@ -167,7 +183,7 @@ pub(crate) fn run_steps(
 
         let sway_launch = match plan_step(step, args, &progress.resolved_ids) {
             Ok(sway_launch) => sway_launch::SwayLaunch {
-                require_launch_on_focused_workspace: true,
+                build_workspace: build_workspace.clone(),
                 warn_on_misplaced_launch: step.command.is_some(),
                 // A timeout that --continue-on-timeout carries on past isn't
                 // rolled back, so a late window would only be left open.
@@ -370,14 +386,7 @@ fn acquire_run_lock(
     lock_source: &str,
     args: &Args,
 ) -> Result<Option<std::fs::File>, String> {
-    if args.no_lock {
-        return Ok(None);
-    }
-    let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR").filter(|dir| !dir.is_empty())
-    else {
-        if args.verbose {
-            diagnostic!("XDG_RUNTIME_DIR is not set; running without a run lock");
-        }
+    let Some(directory) = lock_directory(args)? else {
         return Ok(None);
     };
     // A run that only retargets existing windows makes no IPC call of its
@@ -391,19 +400,11 @@ fn acquire_run_lock(
     let workspace = build.workspace.or(unnamed_workspace
         .as_deref()
         .map(sway_launch::WorkspaceTarget::Name));
-    let directory = Path::new(&runtime_dir).join("sway-launch");
-    std::fs::create_dir_all(&directory)
-        .map_err(|error| format!("run lock: {}: {}", directory.display(), error))?;
     let path = directory.join(run_lock_file_name(&run_lock_identity(
         lock_source,
         workspace,
     )));
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&path)
-        .map_err(|error| format!("run lock: {}: {}", path.display(), error))?;
+    let file = open_lock_file(&path)?;
     match file.try_lock() {
         Ok(()) => Ok(Some(file)),
         Err(std::fs::TryLockError::WouldBlock) => Err(run_lock_held_message(
@@ -415,6 +416,116 @@ fn acquire_run_lock(
             Err(format!("run lock: {}: {}", path.display(), error))
         }
     }
+}
+
+/// Where the run locks live, `$XDG_RUNTIME_DIR/sway-launch/`, created when
+/// missing. `None` when locking is off (`--no-lock`) or there is no runtime
+/// directory, with a `--verbose` note for the second.
+fn lock_directory(args: &Args) -> Result<Option<std::path::PathBuf>, String> {
+    if args.no_lock {
+        return Ok(None);
+    }
+    let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR").filter(|dir| !dir.is_empty())
+    else {
+        if args.verbose {
+            diagnostic!("XDG_RUNTIME_DIR is not set; running without a run lock");
+        }
+        return Ok(None);
+    };
+    let directory = Path::new(&runtime_dir).join("sway-launch");
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| format!("run lock: {}: {}", directory.display(), error))?;
+    Ok(Some(directory))
+}
+
+fn open_lock_file(path: &Path) -> Result<std::fs::File, String> {
+    std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)
+        .map_err(|error| format!("run lock: {}: {}", path.display(), error))
+}
+
+/// The session lock's identity for the Sway listening at `socket`: led by a
+/// NUL, which no path holds, so it can never equal a `run_lock_identity()`.
+fn session_lock_identity(socket: &Path) -> String {
+    format!("\0session\0{}", socket.display())
+}
+
+/// Takes the session-wide lock (#156), after the run's own lock: one per
+/// Sway session (`sway_launch::session_socket()`), taken by every launching
+/// `--layout`/`--template` run, so runs started together (several `exec
+/// sway-launch --template ...` lines in a Sway config) build one after
+/// another instead of taking focus from each other. A run waits for it up to
+/// its own `--timeout` (`wait_for_lock()`), then gives up with
+/// `session_lock_timeout_message()`. `None` when the run doesn't launch,
+/// locking is off, or there's no runtime directory or socket (the run then
+/// fails on the socket itself).
+fn acquire_session_lock(launches: bool, args: &Args) -> Result<Option<std::fs::File>, String> {
+    if !launches {
+        return Ok(None);
+    }
+    let Some(socket) = sway_launch::session_socket() else {
+        return Ok(None);
+    };
+    let Some(directory) = lock_directory(args)? else {
+        return Ok(None);
+    };
+    let path = directory.join(run_lock_file_name(&session_lock_identity(&socket)));
+    let file = open_lock_file(&path)?;
+    let timeout = time::Duration::from_secs(args.timeout);
+    let waiting = || {
+        if args.verbose {
+            diagnostic!("Waiting for another layout running in this Sway session to finish");
+        }
+    };
+    match wait_for_lock(&file, timeout, waiting) {
+        Ok(true) => Ok(Some(file)),
+        Ok(false) => Err(session_lock_timeout_message(args.timeout)),
+        Err(error) => Err(format!("run lock: {}: {}", path.display(), error)),
+    }
+}
+
+/// How often `wait_for_lock()` tries a lock another run holds.
+const LOCK_RETRY_INTERVAL: time::Duration = time::Duration::from_millis(50);
+
+/// Takes `file`'s exclusive lock, trying again every `LOCK_RETRY_INTERVAL`
+/// while another process holds it, for up to `timeout`: `Ok(false)` once that
+/// runs out. A blocking `File::lock` has no limit, so a stuck run would
+/// hold every later one up forever. `waiting` runs once, the first time the
+/// lock is found held.
+fn wait_for_lock(
+    file: &std::fs::File,
+    timeout: time::Duration,
+    waiting: impl FnOnce(),
+) -> std::io::Result<bool> {
+    let deadline = time::Instant::now() + timeout;
+    let mut waiting = Some(waiting);
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(true),
+            Err(std::fs::TryLockError::WouldBlock) => {}
+            Err(std::fs::TryLockError::Error(error)) => return Err(error),
+        }
+        if let Some(waiting) = waiting.take() {
+            waiting();
+        }
+        let left = deadline.saturating_duration_since(time::Instant::now());
+        if left.is_zero() {
+            return Ok(false);
+        }
+        std::thread::sleep(left.min(LOCK_RETRY_INTERVAL));
+    }
+}
+
+fn session_lock_timeout_message(timeout_seconds: u64) -> String {
+    format!(
+        "another layout is running in this Sway session, and was still running after {}s \
+         (--timeout); layouts started together build one after another, so raise --timeout to \
+         wait longer, or pass --no-lock to run alongside it",
+        timeout_seconds
+    )
 }
 
 fn run_lock_held_message(workspace: &str) -> String {
@@ -678,8 +789,12 @@ fn staged_window_taken_error(container_id: i64, owner: usize) -> sway_launch::Ru
 /// again here without error. Two steps ending up with the same window (a
 /// single-instance application handing both requests to one process, whose
 /// window each then adopts) can't be told apart, so the later one fails.
-fn stage_launches(steps: &[layout::LayoutStep], args: &Args) -> StagedLaunches {
-    let staging = match sway_launch::Staging::enter(args.verbose) {
+fn stage_launches(
+    steps: &[layout::LayoutStep],
+    build_workspace: &sway_launch::BuildWorkspace,
+    args: &Args,
+) -> StagedLaunches {
+    let staging = match sway_launch::Staging::enter(build_workspace, args.verbose) {
         Ok(staging) => staging,
         Err(error) => fail(args.json, &format!("{}: {}", steps_source(args), error)),
     };
@@ -751,7 +866,7 @@ fn launch_only<'a>(
     sway_launch::SwayLaunch {
         actions: sway_launch::ActionRequest::default(),
         // The window opens on the staging workspace wherever focus goes.
-        require_launch_on_focused_workspace: false,
+        build_workspace: None,
         warn_on_misplaced_launch: false,
         catch_late_window: args.rollback_on_error && !args.continue_on_timeout,
         ..planned
@@ -782,7 +897,7 @@ fn arrange_staged(
     sway_launch::SwayLaunch {
         target: sway_launch::Target::ConId(container_id),
         launch_setup: None,
-        require_launch_on_focused_workspace: false,
+        build_workspace: None,
         catch_late_window: false,
         ..planned
     }

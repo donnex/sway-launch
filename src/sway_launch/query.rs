@@ -12,13 +12,13 @@ use super::capture::capture;
 use super::ipc::{ipc_error, new_connection};
 use super::target::{LaunchFilter, WindowCriteria};
 use super::tree::{
-    con_id_target_problem, existing_candidates, find_node, find_workspace, focused_workspace,
-    launch_placement_problems, move_skip_reason, present_ids, recheck_launched_windows,
-    resolve_awaited_matches, resolve_matches, tiled_window_count, unnamed_build_workspace,
-    window_listing, workspace_named, ContainerState, ListedWindow, MoveDirection, RecheckedWindow,
-    SkipReason, WorkspaceIdentity, WorkspaceLookup,
+    build_workspace_anchor, con_id_target_problem, existing_candidates, find_node, find_workspace,
+    focused_workspace, launch_placement_problems, move_skip_reason, present_ids,
+    recheck_launched_windows, resolve_awaited_matches, resolve_matches, tiled_window_count,
+    unnamed_build_workspace, window_listing, workspace_named, ContainerState, ListedWindow,
+    MoveDirection, RecheckedWindow, SkipReason, WorkspaceIdentity, WorkspaceLookup,
 };
-use super::values::TitlePattern;
+use super::values::{TitlePattern, WorkspaceTarget};
 use swayipc::{Connection, Node};
 
 /// The whole tree, on a connection of its own, with a failure already
@@ -193,6 +193,16 @@ pub(super) fn recheck_launched_windows_now(
         filter,
         title,
     ))
+}
+
+/// `build_workspace_anchor()` over a fresh tree: the workspace a layout run
+/// builds on, read right after its build location was focused (#156).
+pub(super) fn build_workspace_anchor_now(
+    workspace: Option<WorkspaceTarget>,
+    output: Option<&str>,
+) -> Result<WorkspaceIdentity, String> {
+    let tree = fetch_tree()?;
+    build_workspace_anchor(&tree, workspace, output)
 }
 
 /// `find_workspace()` over a fresh tree: the workspace `lookup` names, by id

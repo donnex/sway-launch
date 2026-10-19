@@ -18,8 +18,8 @@ use super::outcome::{
     ActionOutcome, ActionRecord, ActionStatus, LaunchOwnership, RunError, RunOutcome,
 };
 use super::query::{
-    current_move_skip_reason, ensure_con_id_target, find_existing_container_id,
-    launch_placement_problems_now, workspace_now,
+    build_workspace_anchor_now, current_move_skip_reason, ensure_con_id_target,
+    find_existing_container_id, launch_placement_problems_now, workspace_now,
 };
 use super::target::Target;
 use super::tree::{MoveDirection, SkipReason, WorkspaceIdentity, WorkspaceLookup};
@@ -59,11 +59,13 @@ pub struct SwayLaunch<'a> {
     pub verbose: bool,
     pub timeout: time::Duration,
     pub wait_time: time::Duration,
-    /// Fail a launch if focus left the workspace it started on before its
-    /// window appeared — `--layout`/`--template` set this, since their shapes
-    /// are built where focus is, and every step launched after such a switch
-    /// would open on the other workspace, splitting the shape in two.
-    pub require_launch_on_focused_workspace: bool,
+    /// The workspace a `--layout`/`--template` run builds on, recorded once
+    /// after `BuildLocation::apply()` (`BuildLocation::anchor()`, #156). A
+    /// launch fails if focus isn't on it as the step starts, or left it before
+    /// the window appeared: their shapes are built where focus is, and every
+    /// step launched after such a switch would open on the other workspace,
+    /// splitting the shape in two, or building into another run's.
+    pub build_workspace: Option<BuildWorkspace>,
 
     /// Before the first action, check that the window opened tiled on the
     /// focused workspace, and report in `RunOutcome::warnings` when a config
@@ -139,6 +141,13 @@ impl BuildLocation<'_> {
         output.into_iter().chain(workspace).collect()
     }
 
+    /// The workspace the run builds on, read once right after `apply()`, and
+    /// refused when it isn't the one this location names
+    /// (`tree::build_workspace_anchor()`, #156).
+    pub fn anchor(&self) -> Result<BuildWorkspace, String> {
+        build_workspace_anchor_now(self.workspace, self.output).map(BuildWorkspace)
+    }
+
     pub fn apply(&self, verbose: bool) -> Result<(), String> {
         for command in self.commands() {
             if verbose {
@@ -150,6 +159,50 @@ impl BuildLocation<'_> {
             run_sway_command(&command).map_err(|error| format!("{}: {}", command, error))?;
         }
         Ok(())
+    }
+}
+
+/// A layout run's build workspace, by node id (`WorkspaceIdentity`), as
+/// `BuildLocation::anchor()` recorded it: what every launching step and
+/// `Staging::enter()` check focus against, rather than against focus as each
+/// one starts (#156).
+#[derive(Clone, Debug)]
+pub struct BuildWorkspace(WorkspaceIdentity);
+
+impl BuildWorkspace {
+    /// Fails, naming both workspaces, unless focus is on this workspace now.
+    fn check_focus(&self, when: FocusCheck) -> Result<(), String> {
+        let focused_now = workspace_now(WorkspaceLookup::Focused)?;
+        if focused_now.as_ref().map(|workspace| workspace.id) == Some(self.0.id) {
+            return Ok(());
+        }
+        // Only for the message: the workspace may have been renamed since.
+        let expected_now = workspace_now(WorkspaceLookup::Id(self.0.id))
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| self.0.clone());
+        match focus_moved_during_launch(&expected_now, focused_now.as_ref(), when) {
+            Some(message) => Err(message),
+            None => Ok(()),
+        }
+    }
+}
+
+/// When `BuildWorkspace::check_focus()` runs, for its message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FocusCheck {
+    BeforeLaunch,
+    WhileOpening,
+    BeforeStaging,
+}
+
+impl FocusCheck {
+    fn when(self) -> &'static str {
+        match self {
+            FocusCheck::BeforeLaunch => "before this step's window was launched",
+            FocusCheck::WhileOpening => "while this step's window was opening",
+            FocusCheck::BeforeStaging => "before this run's windows were launched",
+        }
     }
 }
 
@@ -171,13 +224,12 @@ pub struct Staging {
 }
 
 impl Staging {
-    /// Remembers the focused workspace as the build workspace and switches
-    /// to a staging workspace unique to this process.
-    pub fn enter(verbose: bool) -> Result<Staging, String> {
-        let build_workspace = workspace_now(WorkspaceLookup::Focused)?
-            .ok_or_else(|| "no workspace is focused to build on".to_string())?;
+    /// Checks focus is still on the run's build workspace, then switches to
+    /// a staging workspace unique to this process.
+    pub fn enter(build_workspace: &BuildWorkspace, verbose: bool) -> Result<Staging, String> {
+        build_workspace.check_focus(FocusCheck::BeforeStaging)?;
         let staging = Staging {
-            build_workspace: std::cell::RefCell::new(build_workspace),
+            build_workspace: std::cell::RefCell::new(build_workspace.0.clone()),
             staging_workspace: format!("sway-launch-staging-{}", std::process::id()),
         };
         staging.send(
@@ -522,11 +574,10 @@ impl<'a> SwayLaunch<'a> {
 
     pub fn run(&self) -> Result<RunOutcome, RunError> {
         let launching = matches!(self.target, Target::Exec { .. });
-        let expected_workspace = if launching && self.require_launch_on_focused_workspace {
-            workspace_now(WorkspaceLookup::Focused)?
-        } else {
-            None
-        };
+        let build_workspace = self.build_workspace.as_ref().filter(|_| launching);
+        if let Some(build_workspace) = build_workspace {
+            build_workspace.check_focus(FocusCheck::BeforeLaunch)?;
+        }
 
         let (container_id, launch_ownership) = self.resolve_container_id()?;
 
@@ -542,21 +593,10 @@ impl<'a> SwayLaunch<'a> {
             ..error
         };
 
-        if let Some(expected) = expected_workspace {
-            let focused_now =
-                workspace_now(WorkspaceLookup::Focused).map_err(|error| resolved(error.into()))?;
-            if focused_now.as_ref().map(|workspace| workspace.id) != Some(expected.id) {
-                // Only for the message: the workspace may have been renamed since.
-                let expected_now = workspace_now(WorkspaceLookup::Id(expected.id))
-                    .ok()
-                    .flatten()
-                    .unwrap_or(expected);
-                if let Some(message) =
-                    focus_moved_during_launch(&expected_now, focused_now.as_ref())
-                {
-                    return Err(resolved(RunError::from(message)));
-                }
-            }
+        if let Some(build_workspace) = build_workspace {
+            build_workspace
+                .check_focus(FocusCheck::WhileOpening)
+                .map_err(|error| resolved(error.into()))?;
         }
 
         let warnings = if self.warn_on_misplaced_launch {
@@ -619,8 +659,13 @@ fn plan_groups<'p, 'a>(plan: &'p [SwayAction<'a>]) -> Vec<&'p [SwayAction<'a>]> 
     groups
 }
 
-/// Why a launch fails when focus was on `expected` as it started and is on
-/// `focused_now` once its window appeared, or `None` when it didn't move.
+/// Why a launch fails when focus should be on the build workspace `expected`
+/// and is on `focused_now`, or `None` when it didn't move. Checked as each
+/// launching step starts, once its window appeared, and before `--concurrent`
+/// staging (`FocusCheck`), always against the workspace the run recorded
+/// after focusing its build location (#156), never against focus as the step
+/// started: another run focusing its own workspace in between would
+/// otherwise have both runs build there.
 ///
 /// Sway places a window on the workspace its `exec` ran on, wherever focus
 /// has gone since, so the launched window itself is still where it belongs
@@ -634,17 +679,21 @@ fn plan_groups<'p, 'a>(plan: &'p [SwayAction<'a>]) -> Vec<&'p [SwayAction<'a>]> 
 fn focus_moved_during_launch(
     expected: &WorkspaceIdentity,
     focused_now: Option<&WorkspaceIdentity>,
+    when: FocusCheck,
 ) -> Option<String> {
     match focused_now {
         Some(workspace) if workspace.id == expected.id => None,
         Some(workspace) => Some(format!(
-            "focus moved from workspace {:?} to {:?} while this step's window was opening, so \
-             later steps would build on the wrong workspace",
-            expected.name, workspace.name
+            "focus moved from workspace {:?} to {:?} {}, so the layout would be built on the \
+             wrong workspace",
+            expected.name,
+            workspace.name,
+            when.when()
         )),
         None => Some(format!(
-            "focus left workspace {:?} while this step's window was opening",
-            expected.name
+            "focus left workspace {:?} {}",
+            expected.name,
+            when.when()
         )),
     }
 }

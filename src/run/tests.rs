@@ -117,6 +117,98 @@ fn run_lock_held_message_names_the_workspace_and_the_way_out() {
 }
 
 #[test]
+fn session_lock_identity_is_one_per_socket_and_never_a_layout_s() {
+    let here = session_lock_identity(Path::new("/run/user/1000/sway-ipc.1000.7.sock"));
+    assert_eq!(
+        here,
+        session_lock_identity(Path::new("/run/user/1000/sway-ipc.1000.7.sock"))
+    );
+    assert_ne!(
+        here,
+        session_lock_identity(Path::new("/run/user/1000/sway-ipc.1000.8.sock"))
+    );
+    assert!(here.starts_with('\0'), "{here:?}");
+}
+
+/// A lock file of its own under the system temporary directory, removed
+/// when dropped.
+struct TemporaryLockFile(std::path::PathBuf);
+
+impl TemporaryLockFile {
+    fn new(name: &str) -> Self {
+        Self(std::env::temp_dir().join(format!(
+            "sway-launch-unit-{}-{}.lock",
+            name,
+            std::process::id()
+        )))
+    }
+
+    fn open(&self) -> std::fs::File {
+        open_lock_file(&self.0).expect("the lock file should open")
+    }
+}
+
+impl Drop for TemporaryLockFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+#[test]
+fn wait_for_lock_takes_a_free_lock_at_once_without_waiting() {
+    let path = TemporaryLockFile::new("free");
+    let file = path.open();
+    let taken = wait_for_lock(&file, time::Duration::ZERO, || {
+        panic!("a free lock is never waited for")
+    });
+    assert!(taken.expect("no I/O error"));
+}
+
+#[test]
+fn wait_for_lock_gives_up_once_its_timeout_runs_out() {
+    // #156: a run waiting on another layout gives up after its --timeout.
+    let path = TemporaryLockFile::new("held");
+    let holder = path.open();
+    holder.lock().expect("the holder takes the lock");
+    let mut waited = 0;
+    let started = time::Instant::now();
+    let taken = wait_for_lock(&path.open(), time::Duration::from_millis(200), || {
+        waited += 1
+    });
+    assert!(!taken.expect("no I/O error"));
+    assert_eq!(waited, 1);
+    assert!(started.elapsed() >= time::Duration::from_millis(200));
+}
+
+#[test]
+fn wait_for_lock_takes_the_lock_once_its_holder_lets_go() {
+    let path = TemporaryLockFile::new("released");
+    let holder = path.open();
+    holder.lock().expect("the holder takes the lock");
+    let releaser = std::thread::spawn(move || {
+        std::thread::sleep(time::Duration::from_millis(150));
+        drop(holder);
+    });
+    let taken = wait_for_lock(&path.open(), time::Duration::from_secs(10), || {});
+    releaser.join().expect("the releasing thread");
+    assert!(taken.expect("no I/O error"));
+}
+
+#[test]
+fn session_lock_timeout_message_says_what_held_it_up_and_the_ways_out() {
+    let message = session_lock_timeout_message(5);
+    assert!(
+        message.contains("another layout is running in this Sway session"),
+        "{message}"
+    );
+    assert!(message.contains("after 5s"), "{message}");
+    assert!(
+        message.contains("--timeout") && message.contains("--no-lock"),
+        "{message}"
+    );
+}
+
+#[test]
 fn occupied_workspace_message_names_the_workspace_and_the_way_out() {
     let message = occupied_workspace_message("1", 2);
     assert!(message.contains("workspace \"1\" already has 2 tiled window(s)"));

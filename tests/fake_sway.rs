@@ -3253,3 +3253,157 @@ fn a_bare_con_id_layout_step_asks_the_compositor_nothing() {
     assert!(run.succeeded(), "{}", run.stderr());
     assert!(!run.stderr().contains("warning:"), "{}", run.stderr());
 }
+
+/// Moves Sway's focus to workspace `id`, as a keybinding or another run's
+/// own `workspace` switch would: the fixture's focused window loses it.
+fn focus_workspace(sway: &mut Sway, id: i64) {
+    sway.node_mut(FLOATING)["focused"] = serde_json::json!(false);
+    sway.node_mut(id)["focused"] = serde_json::json!(true);
+}
+
+#[test]
+fn a_step_fails_before_launching_once_focus_left_the_run_s_workspace() {
+    // #156: each launch checks focus against the workspace the run recorded
+    // after switching there, not against focus as the step starts. Here the
+    // first step's own command moves focus to workspace 2 between the
+    // steps, the way another run's switch did: the second step used to
+    // build on 2 and report success; it now fails before launching.
+    let fake = FakeSway::start(SwayVersion::V1_11, |sway, command| {
+        if command.starts_with("exec ") {
+            let token = sway.launch(command);
+            sway.when_marked(token, |sway, pid| {
+                let id = sway.open_window(Some("fake-app"), Some(pid));
+                sway.emit("new", id);
+            });
+        } else if command.ends_with("border none") {
+            add_workspace(sway, 50, "2");
+            focus_workspace(sway, 50);
+        }
+        Ok(())
+    });
+    let layout = TempToml::write(
+        "focus-taken-between-steps",
+        "[[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n\
+         sway_commands = [\"border none\"]\n\n\
+         [[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n",
+    );
+    let run = run(&fake, &["--layout", layout.to_str().unwrap()]);
+    assert!(!run.succeeded(), "{}", run.json);
+    assert!(
+        run.error().contains("step 2:")
+            && run.error().contains(
+                "focus moved from workspace \"1\" to \"2\" before this step's window was launched"
+            ),
+        "{}",
+        run.error()
+    );
+    let launches = fake
+        .commands()
+        .iter()
+        .filter(|command| command.starts_with("exec "))
+        .count();
+    assert_eq!(launches, 1, "{:?}", fake.commands());
+}
+
+#[test]
+fn launching_layout_runs_in_one_session_wait_for_each_other_up_to_their_timeout() {
+    // #156: two layouts started together used to take focus from each other
+    // and build into one workspace. A launching run now holds a lock for the
+    // whole Sway session: another waits for it, up to its own --timeout, and
+    // --no-lock runs alongside it. The first launch never gets a window, so
+    // the first run holds the lock until its own timeout.
+    let mut launches = 0;
+    let fake = FakeSway::start(SwayVersion::V1_11, move |sway, command| {
+        if command.starts_with("exec ") {
+            launches += 1;
+            let token = sway.launch(command);
+            if launches > 1 {
+                sway.when_marked(token, |sway, pid| {
+                    let id = sway.open_window(Some("fake-app"), Some(pid));
+                    sway.emit("new", id);
+                });
+            }
+        }
+        Ok(())
+    });
+    let step = "[[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n";
+    // The first run's app_id matches no window, so it can't adopt the one
+    // the run alongside it opens.
+    let layouts: Vec<TempToml> = ["first", "alongside", "impatient", "patient"]
+        .iter()
+        .map(|name| {
+            let contents = if *name == "first" {
+                step.replace("\"fake-app\"", "\"never-opens\"")
+            } else {
+                step.to_string()
+            };
+            TempToml::write(&format!("session-lock-{name}"), &contents)
+        })
+        .collect();
+    let exec_count = || {
+        fake.commands()
+            .iter()
+            .filter(|command| command.starts_with("exec "))
+            .count()
+    };
+
+    let mut first = fake
+        .sway_launch()
+        .args(["--layout", layouts[0].to_str().unwrap(), "--timeout", "4"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("failed to spawn sway-launch");
+    let started = std::time::Instant::now();
+    while exec_count() == 0 {
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the first run never launched"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let alongside = run(
+        &fake,
+        &["--layout", layouts[1].to_str().unwrap(), "--no-lock"],
+    );
+    assert!(alongside.succeeded(), "{}", alongside.stderr());
+
+    let impatient = run(
+        &fake,
+        &["--layout", layouts[2].to_str().unwrap(), "--timeout", "1"],
+    );
+    assert!(!impatient.succeeded(), "{}", impatient.json);
+    assert!(
+        impatient
+            .error()
+            .contains("another layout is running in this Sway session"),
+        "{}",
+        impatient.error()
+    );
+    assert_eq!(exec_count(), 2, "the impatient run launched anyway");
+
+    let patient = run(
+        &fake,
+        &[
+            "--layout",
+            layouts[3].to_str().unwrap(),
+            "--timeout",
+            "20",
+            "--verbose",
+        ],
+    );
+    assert!(patient.succeeded(), "{}", patient.stderr());
+    assert!(
+        patient
+            .stderr()
+            .contains("Waiting for another layout running in this Sway session"),
+        "{}",
+        patient.stderr()
+    );
+    let first_status = first.try_wait().expect("the first run's status");
+    assert!(
+        first_status.is_some_and(|status| !status.success()),
+        "the patient run launched while the first was still running: {first_status:?}"
+    );
+}

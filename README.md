@@ -825,9 +825,10 @@ run launched and `--json` reports its partial progress. If the step's applicatio
 starting, `--rollback-on-error` first waits up to 2 seconds for its window, so that one is closed
 too. The run exits 130, 143 or 129. A second signal exits at once, skipping the cleanup.
 
-**Focus moving away.** A step whose application is still starting when focus moves to another
-workspace (a keybinding, a notification click, another script) fails, naming both workspaces:
-every later step would otherwise open on the other workspace and split the layout in two.
+**Focus moving away.** A run notes the workspace it builds on once it has switched there. A step
+that finds focus on another workspace (a keybinding, a notification click, another script), as it
+starts or while its application is still starting, fails, naming both workspaces: every later step
+would otherwise open on the other workspace and split the layout in two.
 
 **One run at a time.** A run takes a lock on its file (or built-in template name) and the workspace
 it builds on, so a second run of the same layout on the same workspace (a key pressed twice, a login
@@ -837,10 +838,17 @@ A workspace is the same however it's named: `--on-workspace Dev` and `dev` are o
 a numbered workspace is known by its number, so `--on-workspace-number 3`, a run started on `3: web`
 and that workspace after an icon daemon renamed it all take one lock (two workspaces sharing a
 number share it too). With only `--on-output`, the workspace is the one that output shows. A layout
-piped in on stdin is known by its contents. Different layouts, or the same one on different
-workspaces, run side by side. The lock lives under
-`$XDG_RUNTIME_DIR/sway-launch/` and is released when the run ends, even if it crashes. `--no-lock`
-runs anyway.
+piped in on stdin is known by its contents.
+
+**Layouts started together take turns.** New windows open wherever focus is, and there is one focus
+for the whole Sway session, so two layouts can't both be built at once, even on different
+workspaces. A run that launches windows also takes a lock for the Sway session, so runs started
+together (several `exec sway-launch --template ... --on-workspace N` lines in your Sway config)
+build one after another, each on its own workspace. A run waits up to its `--timeout` for the
+others, then fails with `another layout is running in this Sway session`. A run that only retargets
+open windows doesn't wait. The locks live under `$XDG_RUNTIME_DIR/sway-launch/` and are released when
+the run ends, even if it crashes. `--no-lock` skips both, so the run neither refuses a repeat nor
+waits.
 
 ## Actions reference
 
@@ -1401,6 +1409,12 @@ app_id the rule doesn't match.
 **A layout run says another run is still in progress.** The same layout is already being built on
 that workspace; wait for it, or pass `--no-lock`.
 
+**A layout run says another layout is running in this Sway session.** It waited its `--timeout` for
+another layout run to finish, and that one was still going (a long `--timeout` of its own, or an
+`--existing --wait` step). Raise `--timeout`, chain the runs (`sway-launch --template a ... &&
+sway-launch --template b ...`), or pass `--no-lock` to run alongside it, at the risk of the two
+building into each other's workspace.
+
 ## Command-line reference
 
 `sway-launch -h` prints the summary below, and `sway-launch --help` (or `man sway-launch`) the full
@@ -1467,7 +1481,7 @@ Layouts and templates:
       --concurrent                Start every step's application at once, then arrange them in order
       --continue-on-timeout       Carry on past a step whose window doesn't appear in time
       --rollback-on-error         Close the windows this run launched if a step fails
-      --no-lock                   Run even if the same layout is already being built on this workspace
+      --no-lock                   Run even if another layout is already being built
 
 Run and output:
   -t, --timeout <SECONDS>  Seconds to wait for the window, and for each action to be confirmed [default: 5]

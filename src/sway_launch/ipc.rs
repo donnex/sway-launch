@@ -236,6 +236,14 @@ fn running_sway_sockets() -> Vec<PathBuf> {
     running
 }
 
+/// The compositor this process talks to, as the socket `socket_path()`
+/// finds, canonicalized when it exists, so two spellings of one socket name
+/// one session: what the session-wide layout lock is keyed on (#156). `None`
+/// when the environment names no socket, which the run then fails on itself.
+pub fn session_socket() -> Option<PathBuf> {
+    socket_path().map(|socket| std::fs::canonicalize(&socket.path).unwrap_or(socket.path))
+}
+
 /// The Sway IPC socket path from the environment. `None` when neither
 /// variable is set, which fails `new_connection()` and `event_loop()` with
 /// `undiscovered_socket_error()`.

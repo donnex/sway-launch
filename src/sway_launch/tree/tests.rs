@@ -1595,6 +1595,70 @@ fn unnamed_build_workspace_is_the_focused_one_or_the_one_an_output_shows() {
     assert_eq!(name(Some("HEADLESS-3")), None);
 }
 
+// build_workspace_anchor
+
+/// `two_output_tree()` with Sway's `num` set on each workspace, as Sway sets
+/// it: the leading number of its name.
+fn two_output_tree_with_numbers() -> Node {
+    let mut tree = two_output_tree();
+    for output in &mut tree.nodes {
+        for workspace in &mut output.nodes {
+            workspace.num = workspace
+                .name
+                .as_deref()
+                .and_then(|name| name.split(':').next())
+                .and_then(|number| number.parse().ok());
+        }
+    }
+    tree
+}
+
+#[test]
+fn build_workspace_anchor_records_the_focused_workspace_the_run_switched_to() {
+    let tree = two_output_tree_with_numbers();
+    for (workspace, output) in [
+        (None, None),
+        (Some(WorkspaceTarget::Name("1: WEB")), None),
+        (Some(WorkspaceTarget::Number(1)), None),
+        (None, Some("headless-1")),
+        // An existing workspace is focused on its own output.
+        (Some(WorkspaceTarget::Name("1: web")), Some("HEADLESS-2")),
+    ] {
+        assert_eq!(
+            build_workspace_anchor(&tree, workspace, output),
+            Ok(identity(2, "1: web")),
+            "{workspace:?} {output:?}"
+        );
+    }
+}
+
+#[test]
+fn build_workspace_anchor_refuses_focus_another_run_took_first() {
+    // #156: another run's own switch landing between this run's switch and
+    // this read must fail the run, not become its build workspace.
+    let tree = two_output_tree_with_numbers();
+    for (workspace, output, wanted) in [
+        (
+            Some(WorkspaceTarget::Name("B")),
+            None,
+            "away from workspace \"B\"",
+        ),
+        (
+            Some(WorkspaceTarget::Number(2)),
+            None,
+            "away from workspace number 2",
+        ),
+        (None, Some("HEADLESS-2"), "away from output \"HEADLESS-2\""),
+    ] {
+        let error = build_workspace_anchor(&tree, workspace, output).expect_err("focus moved");
+        assert!(
+            error.contains("focus moved to workspace \"1: web\" before the first step")
+                && error.contains(wanted),
+            "{error}"
+        );
+    }
+}
+
 // position_shows
 
 #[test]
