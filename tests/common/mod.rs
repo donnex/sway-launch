@@ -130,13 +130,20 @@ impl Deref for TempToml {
 /// runtime directory keeps a `--layout`/`--template` run's lock file out of
 /// the developer's own `$XDG_RUNTIME_DIR/sway-launch/`; a test may still set
 /// its own, which replaces it.
+///
+/// `PATH` starts with `path_with_swaynag_stub()`'s stand-in, which records
+/// each call under the runtime directory for `swaynag_calls()` to read.
 pub fn sway_launch() -> SwayLaunchCommand {
     let runtime_directory = TestTempDir::new();
+    let swaynag_calls = runtime_directory.join("swaynag-calls");
+    fs::create_dir(&swaynag_calls).expect("failed to create the swaynag call directory");
     let mut command = Command::new(env!("CARGO_BIN_EXE_sway-launch"));
     command
         .env("SWAYSOCK", "/nonexistent/sway-launch-test-socket")
         .env_remove("I3SOCK")
-        .env("XDG_RUNTIME_DIR", &*runtime_directory);
+        .env("XDG_RUNTIME_DIR", &*runtime_directory)
+        .env("PATH", path_with_swaynag_stub())
+        .env("SWAYNAG_STUB_CALLS", &swaynag_calls);
     SwayLaunchCommand {
         command,
         _runtime_directory: runtime_directory,
@@ -149,6 +156,75 @@ pub fn sway_launch() -> SwayLaunchCommand {
 pub struct SwayLaunchCommand {
     command: Command,
     _runtime_directory: TestTempDir,
+}
+
+impl SwayLaunchCommand {
+    /// The argument lists the stand-in `swaynag` was run with, one string per
+    /// call, arguments joined by spaces. swaynag is spawned and not waited
+    /// for, so this waits up to `wait` for a first call to land; pass a short
+    /// `wait` to check that none does.
+    pub fn swaynag_calls(&self, wait: std::time::Duration) -> Vec<String> {
+        let directory = self._runtime_directory.join("swaynag-calls");
+        let deadline = std::time::Instant::now() + wait;
+        loop {
+            let mut calls: Vec<String> = fs::read_dir(&directory)
+                .expect("the swaynag call directory should be readable")
+                .map(|entry| entry.expect("directory entry should be readable").path())
+                .filter(|path| {
+                    !path
+                        .file_name()
+                        .is_some_and(|name| name.to_string_lossy().starts_with('.'))
+                })
+                .map(|path| fs::read_to_string(path).expect("a swaynag call should be readable"))
+                .collect();
+            if !calls.is_empty() || std::time::Instant::now() >= deadline {
+                calls.sort();
+                return calls;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+}
+
+/// `PATH` with a stand-in `swaynag` ahead of everything else (#148).
+///
+/// A failed run whose stderr isn't a terminal shows its error with swaynag,
+/// and every test runs the binary with stderr piped, so without this a test
+/// inside a Sway session would put a real swaynag bar on the developer's
+/// screen, and the live suite one on its compositor. The stand-in records
+/// its arguments in a file under `$SWAYNAG_STUB_CALLS` when that's set (as
+/// `sway_launch()` sets it) and otherwise does nothing. It's written once per
+/// test process, into Cargo's per-target scratch directory, and renamed into
+/// place so a concurrent writer never leaves it half-written.
+pub fn path_with_swaynag_stub() -> std::ffi::OsString {
+    static STUB_DIRECTORY: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    let directory = STUB_DIRECTORY.get_or_init(|| {
+        let directory = Path::new(env!("CARGO_TARGET_TMPDIR")).join("swaynag-stub");
+        fs::create_dir_all(&directory).expect("failed to create the swaynag stub directory");
+        let temporary = directory.join(format!(".swaynag.{}", process::id()));
+        fs::write(
+            &temporary,
+            "#!/bin/sh\n\
+             [ -n \"${SWAYNAG_STUB_CALLS:-}\" ] || exit 0\n\
+             printf '%s' \"$*\" >\"$SWAYNAG_STUB_CALLS/.$$\"\n\
+             mv \"$SWAYNAG_STUB_CALLS/.$$\" \"$SWAYNAG_STUB_CALLS/$$\"\n",
+        )
+        .expect("failed to write the swaynag stub");
+        let mut permissions = fs::metadata(&temporary)
+            .expect("the swaynag stub should exist")
+            .permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+        fs::set_permissions(&temporary, permissions).expect("failed to chmod the swaynag stub");
+        fs::rename(&temporary, directory.join("swaynag"))
+            .expect("failed to move the swaynag stub into place");
+        directory
+    });
+    let mut path = directory.as_os_str().to_os_string();
+    if let Some(inherited) = std::env::var_os("PATH") {
+        path.push(":");
+        path.push(inherited);
+    }
+    path
 }
 
 impl Deref for SwayLaunchCommand {

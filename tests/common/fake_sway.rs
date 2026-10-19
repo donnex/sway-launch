@@ -155,13 +155,16 @@ impl FakeSway {
     ///
     /// `I3SOCK` is removed for the same reason `common::sway_launch()`
     /// removes it, and `XDG_RUNTIME_DIR` is this server's own directory, so a
-    /// layout run's lock file never meets another test's.
+    /// layout run's lock file never meets another test's. `PATH` starts with
+    /// `path_with_swaynag_stub()`'s stand-in, so a failure never shows a real
+    /// swaynag.
     pub fn sway_launch(&self) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_sway-launch"));
         command
             .env("SWAYSOCK", &self.socket)
             .env_remove("I3SOCK")
-            .env("XDG_RUNTIME_DIR", &*self.directory);
+            .env("XDG_RUNTIME_DIR", &*self.directory)
+            .env("PATH", super::path_with_swaynag_stub());
         command
     }
 

@@ -8,9 +8,9 @@ use std::{process, time};
 use crate::{
     check_compositor_version, dry_run_step, exit_on_write_failure_with_status, fail,
     fail_with_rollback, input_label, is_stdin, join_ids, layout, print_dry_run_steps, print_line,
-    print_line_deferring_failure, stderr_label, step_action_records_json, sway_launch,
-    unmatched_windows_json, write_line, Args, DryRunStep, PartialProgress, RollbackOutcome,
-    Severity,
+    print_line_deferring_failure, show_failure_with_swaynag, stderr_label,
+    step_action_records_json, sway_launch, swaynag_message, unmatched_windows_json, write_line,
+    Args, DryRunStep, PartialProgress, RollbackOutcome, Severity,
 };
 
 /// Runs every step sequentially, in the order they appear, stopping at the
@@ -348,6 +348,16 @@ pub(crate) fn run_steps(
     // what tells a calling script the layout is incomplete, so a closed
     // stdout below exits with it too.
     let status = if timed_out_steps.is_empty() { 0 } else { 1 };
+    if !timed_out_steps.is_empty() {
+        let errors: Vec<&str> = timed_out_steps
+            .iter()
+            .filter_map(|entry| entry["error"].as_str())
+            .collect();
+        show_failure_with_swaynag(
+            args.json,
+            &swaynag_message(&errors.join("; "), &RollbackOutcome::default()),
+        );
+    }
     let unresolved_launches = staged.map(|staged| staged.unresolved).unwrap_or_default();
     if !args.json {
         for launch in &unresolved_launches {

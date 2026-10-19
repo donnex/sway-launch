@@ -51,6 +51,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A failed run whose stderr isn't a terminal, such as one started from a Sway keybinding, an `exec`
+  line in the Sway config or a login script, now also shows its error in a swaynag bar. Until now
+  the explanation went only to stderr, which nobody reads there, so a layout bound to a key that
+  failed left half a layout or nothing, with the reason in Sway's log at best. The bar shows the
+  error on one line, with what `--rollback-on-error` closed, and a `--continue-on-timeout` run whose
+  steps timed out shows them too. swaynag ships with Sway, and is started without waiting for it,
+  so exit status and timing are unchanged. It's never used under `--json`, `--dry-run` or
+  `--validate`. Turn it off with `--no-swaynag`, or with `no_swaynag = true` at the top of a layout
+  or bindings file. (#148)
 - A `--concurrent` run now warns about windows an earlier `--concurrent` run left on its hidden
   staging workspace (`sway-launch-staging-<pid>`) when it was killed outright, crashed, or was
   interrupted twice. Nothing pointed to those windows before; the only way to find them was to

@@ -376,8 +376,10 @@ class HeadlessSway:
             time.sleep(0.05)
 
     def run_sway_launch(self, sway_launch_binary, args, timeout):
+        # --no-swaynag: a failure's swaynag bar would land on the compositor
+        # being screenshotted; the error is in the raised exception already.
         subprocess.run(
-            [str(sway_launch_binary), *args],
+            [str(sway_launch_binary), "--no-swaynag", *args],
             env=self._ipc_env(),
             check=True,
             capture_output=True,

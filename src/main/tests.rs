@@ -143,6 +143,7 @@ const CLI_ONLY_ARGS: &[&str] = &[
     "concurrent",
     "json",
     "verbose",
+    "no_swaynag",
     // clap's own auto-generated arguments.
     "help",
     "version",
@@ -403,7 +404,14 @@ fn run_args_conflict_with_every_standalone_mode_but_layout_and_template() {
 /// `CLI_ONLY_ARGS` that are neither a standalone mode nor in `RUN_ARGS`:
 /// they mean something to a direct-CLI run and to the standalone modes
 /// alike, so no list of conflicts covers them all.
-const GENERAL_ARGS: &[&str] = &["dry_run", "json", "verbose", "help", "version"];
+const GENERAL_ARGS: &[&str] = &[
+    "dry_run",
+    "json",
+    "verbose",
+    "no_swaynag",
+    "help",
+    "version",
+];
 
 /// The `RUN_ARGS` that `main()` checks require `--template`, on their own
 /// rather than through `layout_or_template_only_flags()`.
@@ -1279,4 +1287,32 @@ fn step_action_records_json_tags_each_entry_with_a_1_based_step_number() {
 #[test]
 fn step_action_records_json_is_empty_for_no_actions() {
     assert!(step_action_records_json(0, Vec::new()).is_empty());
+}
+
+#[test]
+fn wants_swaynag_only_when_nobody_reads_stderr_and_nothing_opted_out() {
+    assert!(wants_swaynag(true, false, false, false));
+    assert!(!wants_swaynag(false, false, false, false), "--no-swaynag");
+    assert!(!wants_swaynag(true, true, false, false), "--json");
+    assert!(!wants_swaynag(true, false, true, false), "a terminal");
+    assert!(!wants_swaynag(true, false, false, true), "interrupted");
+}
+
+#[test]
+fn swaynag_message_is_one_escaped_line_with_the_rollback_summary() {
+    assert_eq!(
+        swaynag_message("step 2: launch failed", &RollbackOutcome::default()),
+        "sway-launch: step 2: launch failed"
+    );
+    assert_eq!(
+        swaynag_message(
+            "step 2: timed out\n  saw 1 window:\n\tfoot\x1b[31m",
+            &RollbackOutcome {
+                rolled_back: vec![10, 20],
+                failed: vec![30],
+            }
+        ),
+        "sway-launch: step 2: timed out saw 1 window: foot\\u{1b}[31m \
+         (rolled back 2 container(s)) (failed to roll back 1 container(s): 30)"
+    );
 }

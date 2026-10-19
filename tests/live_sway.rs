@@ -89,11 +89,15 @@ fn try_connect(socket: &std::path::Path) -> Result<Connection, String> {
         .map_err(|error| error.to_string())
 }
 
-/// The binary under test, aimed explicitly at the throwaway compositor.
+/// The binary under test, aimed explicitly at the throwaway compositor, with
+/// `common::path_with_swaynag_stub()` keeping a failure off its screen.
 fn sway_launch_command() -> Command {
     let socket = live_socket();
     let mut command = Command::new(env!("CARGO_BIN_EXE_sway-launch"));
-    command.env("SWAYSOCK", socket).env("I3SOCK", socket);
+    command
+        .env("SWAYSOCK", socket)
+        .env("I3SOCK", socket)
+        .env("PATH", common::path_with_swaynag_stub());
     command
 }
 
@@ -691,6 +695,7 @@ fn rollback_on_error_stops_trying_once_the_compositor_stops_answering() {
         Command::new(env!("CARGO_BIN_EXE_sway-launch"))
             .env("SWAYSOCK", &socket_path)
             .env_remove("I3SOCK")
+            .env("PATH", common::path_with_swaynag_stub())
             .args([
                 "--layout",
                 path.to_str().unwrap(),
@@ -6569,7 +6574,7 @@ fn every_basic_example_script_launches_successfully() {
     let path_with_fake_bin_first = format!(
         "{}:{}",
         bin_dir.display(),
-        std::env::var("PATH").unwrap_or_default()
+        common::path_with_swaynag_stub().to_string_lossy()
     );
 
     // (script, app_id its windows carry, expected window count). Only
@@ -9957,4 +9962,102 @@ fn a_concurrent_layout_survives_a_daemon_renaming_its_workspace() {
     // #178: moving the second staged window by the old name used to create
     // a second workspace under it, splitting the layout and exiting 0.
     assert_a_renamed_workspace_holds_the_whole_layout(&["--concurrent"]);
+}
+
+/// The pids of every running `swaynag` whose arguments contain `marker`.
+fn swaynag_processes(marker: &str) -> Vec<i32> {
+    std::fs::read_dir("/proc")
+        .expect("/proc should be readable")
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let pid: i32 = entry.file_name().to_str()?.parse().ok()?;
+            let command_line = std::fs::read(entry.path().join("cmdline")).ok()?;
+            let arguments: Vec<String> = command_line
+                .split(|byte| *byte == 0)
+                .map(|argument| String::from_utf8_lossy(argument).into_owned())
+                .collect();
+            let is_swaynag = arguments
+                .first()
+                .is_some_and(|program| program.rsplit('/').next() == Some("swaynag"));
+            (is_swaynag && arguments.iter().any(|argument| argument.contains(marker)))
+                .then_some(pid)
+        })
+        .collect()
+}
+
+/// A failing `--existing --wait` run for an app_id nothing opens, with the
+/// real `PATH`, so a real swaynag would show on the throwaway compositor.
+fn failing_run_with_real_swaynag(app_id: &str, extra: &[&str]) -> std::process::Output {
+    let output = sway_launch_command()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .args(["--existing", "--wait", "-a", app_id, "--timeout", "1"])
+        .args(extra)
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
+#[test]
+fn a_failure_with_stderr_piped_shows_a_swaynag_bar() {
+    // Real swaynag against real Sway (#148): it has to accept the arguments
+    // and stay up on the compositor, not exit at once, for a keybinding's
+    // failure to be seen.
+    fresh_workspace();
+    let marker = format!("live-swaynag-shown-{}", std::process::id());
+    failing_run_with_real_swaynag(&marker, &[]);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let pids = loop {
+        let pids = swaynag_processes(&marker);
+        if !pids.is_empty() || Instant::now() >= deadline {
+            break pids;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(pids.len(), 1, "expected one swaynag showing {marker}");
+    std::thread::sleep(Duration::from_millis(500));
+    let still_showing = swaynag_processes(&marker);
+    for pid in &pids {
+        let _ = Command::new("kill").arg(pid.to_string()).status();
+    }
+    assert_eq!(
+        still_showing, pids,
+        "swaynag exited instead of showing its bar"
+    );
+}
+
+#[test]
+fn no_swaynag_keeps_a_failure_off_the_compositor() {
+    fresh_workspace();
+    let marker = format!("live-swaynag-off-{}", std::process::id());
+    failing_run_with_real_swaynag(&marker, &["--no-swaynag"]);
+    let layout = TempToml::write(
+        "no-swaynag",
+        &format!(
+            "no_swaynag = true\n[[step]]\nexisting = true\nwait = true\n\
+             app_id = \"{marker}\"\ntimeout = 1\n"
+        ),
+    );
+    let output = sway_launch_command()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .args(["--layout", layout.to_str().unwrap()])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert_eq!(output.status.code(), Some(1));
+    std::thread::sleep(Duration::from_millis(500));
+    let pids = swaynag_processes(&marker);
+    for pid in &pids {
+        let _ = Command::new("kill").arg(pid.to_string()).status();
+    }
+    assert_eq!(
+        pids,
+        Vec::<i32>::new(),
+        "--no-swaynag or no_swaynag = true still showed swaynag"
+    );
 }

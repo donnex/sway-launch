@@ -1067,6 +1067,19 @@ fn parse_bindings_reads_a_top_level_concurrent_key_off_by_default() {
 }
 
 #[test]
+fn parse_bindings_reads_a_top_level_no_swaynag_key_off_by_default() {
+    let binding = "[[binding]]\nslot = \"editor\"\ncommand = \"foot\"\n";
+    assert!(
+        !parse_bindings(binding)
+            .expect("bindings should parse")
+            .no_swaynag
+    );
+    let off =
+        parse_bindings(&format!("no_swaynag = true\n{binding}")).expect("bindings should parse");
+    assert!(off.no_swaynag);
+}
+
+#[test]
 fn parse_rejects_a_concurrent_key_in_a_template() {
     // Deliberate (#121): a template names no applications, so whether they
     // can launch at once is the bindings file's to say, not the template's.

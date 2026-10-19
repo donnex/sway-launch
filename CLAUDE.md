@@ -365,6 +365,14 @@ Never an error: an unreachable compositor skips the check and is left for the ru
   (`severity_label()`, colored only when `stderr_wants_color()`), or a JSON object under `--json`.
   Text that can quote a user's file is passed through `escape_control_characters()`, which also
   escapes the bidi formatting characters a terminal would reorder the line around (#182).
+- `fail_with_rollback()` (and `run_steps()` for a `--continue-on-timeout` run that timed out) also
+  shows the failure with swaynag (#148), through `show_failure_with_swaynag()`: spawned in its own
+  process group and never waited for, only when `wants_swaynag()` says so (stderr not a terminal,
+  no `--json`, not interrupted, and `SWAYNAG_ON_FAILURE`, which `main()` sets from `--no-swaynag`/
+  `--json`/`--dry-run`/`--validate` and a layout or bindings file's `no_swaynag = true` clears once
+  parsed). The text is `swaynag_message()`'s one line. Every test helper that runs the binary puts
+  `path_with_swaynag_stub()`'s stand-in first on `PATH`, since tests pipe stderr; a new one must too,
+  or a test run in a Sway session puts a real bar on screen.
 - `--json` success is `RunOutcome` rendered by `actions_json()`/`action_record_json()`: each action
   has `kind` (`flag_name()`), `command` (absent when skipped) and a `status` of `changed`,
   `already_satisfied`, `unconfirmed` or `skipped` (with `reason`). A failed run's error object

@@ -532,8 +532,9 @@ generate-my-layout | sway-launch --layout -
 generate-my-bindings | sway-launch --template quad-grid --bindings -
 ```
 
-Besides its steps, a layout file takes one top-level key, `concurrent = true`, which runs it as
-[`--concurrent`](#running-layouts) does.
+Besides its steps, a layout file takes two top-level keys: `concurrent = true`, which runs it as
+[`--concurrent`](#running-layouts) does, and `no_swaynag = true`, which keeps its failures off
+swaynag as [`--no-swaynag`](#running-layouts) does.
 
 The per-window flags (`--split`, `--floating`, ...) can't be combined with `--layout`, since it
 would be unclear which step they applied to. `--timeout`, `--wait-time`, `--verbose` and `--json`
@@ -601,7 +602,8 @@ step's `workspace`/`workspace_number`/`output` (where the window goes), `timeout
 the slot a slow application fills can wait longer than the rest) and `settle` (so the slot a browser
 fills can hold its size, see [Settle](#settle)). Besides its bindings and `[params]`, a bindings
 file takes a top-level `concurrent = true`, which runs the template as
-[`--concurrent`](#running-layouts) does.
+[`--concurrent`](#running-layouts) does, and `no_swaynag = true`, as
+[`--no-swaynag`](#running-layouts) does.
 
 A template step takes the same action keys a layout step has. Its window comes from `slot`, or from
 `target_id`, which acts again on an earlier slot's window (a slot's name is its step's `id`). Each
@@ -889,6 +891,23 @@ others, then fails with `another layout is running in this Sway session`. A run 
 open windows doesn't wait. The locks live under `$XDG_RUNTIME_DIR/sway-launch/` and are released when
 the run ends, even if it crashes. `--no-lock` skips both, so the run neither refuses a repeat nor
 waits.
+
+**Failures you can see: swaynag.** A run started from a keybinding, an `exec` line in your Sway
+config or a login script has nobody reading its stderr, so a failure there would otherwise leave
+half a layout, or nothing, with the reason only in Sway's log. So whenever stderr isn't a terminal,
+a failed run also shows its error in a swaynag bar (swaynag ships with Sway), on one line with what
+`--rollback-on-error` closed:
+
+```text
+bindsym $mod+F1 exec sway-launch --layout ~/layouts/dev.toml --on-workspace 1
+```
+
+A `--continue-on-timeout` run whose steps timed out shows them the same way. swaynag is started and
+left running, so the run's exit status and timing don't change. It's never shown under `--json`,
+whose caller is a program, for `--dry-run` or `--validate`, or for a run that was interrupted. A
+run from a script that reports failures itself can turn it off with `--no-swaynag`, or a layout or
+bindings file with a top-level `no_swaynag = true`; a failure to read or parse that file still
+shows. This applies to a single `sway-launch` command as well as to layouts.
 
 ## Actions reference
 
@@ -1206,7 +1225,8 @@ whose output is the point (`--list-windows`, `--capture`, `--list-templates`, `-
 The exit status is 0 on success, 1 when the run fails, 2 for invalid arguments, and 130, 143 or 129
 when a layout or template run is interrupted by SIGINT, SIGTERM or SIGHUP. A failure's message on stderr starts
 with `error:` (and a rollback problem with `warning:`), colored only when stderr is a terminal and
-`NO_COLOR` is unset.
+`NO_COLOR` is unset. When stderr isn't a terminal, a failure is also shown with swaynag (see
+[Running layouts](#running-layouts)).
 
 ### JSON output
 
@@ -1545,6 +1565,7 @@ Run and output:
       --validate           Check a --layout/--template run's files without running it
       --json               Print the result as a JSON object instead of a bare container id
   -v, --verbose            Explain what the run is doing on stderr
+      --no-swaynag         Don't also show a failure with swaynag
 
 Inspect:
       --list-windows               List every open window and exit

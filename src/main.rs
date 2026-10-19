@@ -2,6 +2,7 @@ use clap::{error::ErrorKind, CommandFactory, Parser};
 use std::collections::HashMap;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{io, process, time};
 
 use run::{run_lock_source, run_steps};
@@ -537,6 +538,16 @@ struct Args {
     #[clap(short, long, help_heading = HEADING_RUN)]
     verbose: bool,
 
+    /// Don't also show a failure with swaynag
+    ///
+    /// When stderr isn't a terminal, as when a Sway keybinding or exec line
+    /// runs sway-launch, a failed run also shows its error in a swaynag bar,
+    /// since nobody reads stderr there. Never under --json, --dry-run or
+    /// --validate. A layout or bindings file can also turn it off, with a
+    /// top-level no_swaynag = true.
+    #[clap(long, help_heading = HEADING_RUN, verbatim_doc_comment)]
+    no_swaynag: bool,
+
     /// List every open window and exit
     ///
     /// Shows each window's container id, app_id, class, workspace, marks and
@@ -664,6 +675,10 @@ fn main() {
     }
 
     let args = Args::parse();
+    SWAYNAG_ON_FAILURE.store(
+        !(args.no_swaynag || args.json || args.dry_run || args.validate),
+        Ordering::Relaxed,
+    );
 
     if let Some(shell) = args.completions {
         // Generated into a buffer rather than straight to stdout:
@@ -1253,9 +1268,81 @@ fn fail_with_rollback(
             );
         }
     }
+    show_failure_with_swaynag(json, &swaynag_message(message, rollback));
     // An interrupted run ends the way the signal itself would have ended it,
     // so a calling shell sees the interruption.
     process::exit(sway_launch::interrupt::exit_status().unwrap_or(1));
+}
+
+/// Whether a failure is also shown with swaynag (#148): set once by `main()`
+/// from `--no-swaynag`, `--json`, `--dry-run` and `--validate`, and cleared by
+/// a layout or bindings file's `no_swaynag = true` once it has parsed, so a
+/// failure reading or parsing that file still shows. A global because every
+/// failure path reaches `fail_with_rollback()` with no `Args` at hand.
+static SWAYNAG_ON_FAILURE: AtomicBool = AtomicBool::new(false);
+
+/// A layout or bindings file's `no_swaynag = true`.
+fn disable_swaynag() {
+    SWAYNAG_ON_FAILURE.store(false, Ordering::Relaxed);
+}
+
+/// Whether a failure is shown with swaynag: only when nobody can be reading
+/// stderr (a Sway keybinding or `exec` line, a login script), never for a
+/// program reading `--json`, and not for a run that was interrupted, which
+/// whoever sent the signal already knows about. Pure so every case is
+/// testable without a terminal.
+fn wants_swaynag(enabled: bool, json: bool, stderr_is_terminal: bool, interrupted: bool) -> bool {
+    enabled && !json && !stderr_is_terminal && !interrupted
+}
+
+/// swaynag's one-line message for a failure: the error with its line breaks
+/// and runs of whitespace folded into single spaces, since swaynag shows one
+/// line, then what `--rollback-on-error` did. Control characters are escaped
+/// as on stderr, since the error can quote a user's file.
+fn swaynag_message(message: &str, rollback: &RollbackOutcome) -> String {
+    let mut text = format!(
+        "sway-launch: {}",
+        message.split_whitespace().collect::<Vec<_>>().join(" ")
+    );
+    if !rollback.rolled_back.is_empty() {
+        text.push_str(&format!(
+            " (rolled back {} container(s))",
+            rollback.rolled_back.len()
+        ));
+    }
+    if !rollback.failed.is_empty() {
+        text.push_str(&format!(
+            " (failed to roll back {} container(s): {})",
+            rollback.failed.len(),
+            join_ids(&rollback.failed)
+        ));
+    }
+    sway_launch::escape_control_characters(&text, false)
+}
+
+/// Shows `text` in a swaynag bar when `wants_swaynag()` says so (#148).
+/// swaynag ships with Sway. It's spawned and left running, never waited for,
+/// so the run's exit status and timing are what they'd be without it; in its
+/// own process group, so a signal to the caller's group (a `timeout`
+/// wrapper's) doesn't close the bar with it. A swaynag that can't be started
+/// changes nothing: the error is on stderr all the same.
+fn show_failure_with_swaynag(json: bool, text: &str) {
+    use std::os::unix::process::CommandExt;
+    if !wants_swaynag(
+        SWAYNAG_ON_FAILURE.load(Ordering::Relaxed),
+        json,
+        io::stderr().is_terminal(),
+        sway_launch::interrupt::exit_status().is_some(),
+    ) {
+        return;
+    }
+    let _ = process::Command::new("swaynag")
+        .args(["-t", "error", "-m", text])
+        .stdin(process::Stdio::null())
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .process_group(0)
+        .spawn();
 }
 
 /// The fields every `--json` description of a window starts with, so
@@ -1467,6 +1554,9 @@ fn run_layout(path: &Path, args: &Args) -> ! {
         Ok(parsed_layout) => parsed_layout,
         Err(error) => fail(args.json, &format!("{}: {}", input_label(path), error)),
     };
+    if parsed_layout.no_swaynag {
+        disable_swaynag();
+    }
     if let Err(error) = input_directory(path).and_then(|directory| match directory {
         Some(directory) => parsed_layout.anchor_cwds(&directory),
         None => Ok(()),
@@ -1828,6 +1918,9 @@ fn run_template(path: &Path, bindings_source: BindingsSource, args: &Args) -> ! 
                     &format!("{}: {}", input_label(bindings_path), error),
                 ),
             };
+            if bindings.no_swaynag {
+                disable_swaynag();
+            }
             if let Err(error) = input_directory(bindings_path).and_then(|directory| match directory
             {
                 Some(directory) => bindings.anchor_cwds(&directory),

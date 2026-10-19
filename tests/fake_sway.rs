@@ -2042,6 +2042,53 @@ app_id = "fake-app"
     );
 }
 
+#[test]
+fn continue_on_timeout_shows_its_timed_out_steps_with_swaynag() {
+    // A run that carried on past a timeout still exits 1, so it's a failure a
+    // keybinding's user needs to see as much as one that stopped (#148).
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        opens_a_window_for_each_launch("fake-app"),
+    );
+    let layout = TempToml::write(
+        "continue-on-timeout-swaynag",
+        "[[step]]\ncommand = \"sleep 30\"\napp_id = \"slow-app\"\ntimeout = 1\n",
+    );
+    let calls = TestTempDir::new();
+    let output = fake
+        .sway_launch()
+        .args([
+            "--layout",
+            layout.to_str().unwrap(),
+            "--continue-on-timeout",
+        ])
+        .env("SWAYNAG_STUB_CALLS", &*calls)
+        .output()
+        .expect("failed to run sway-launch");
+    assert_eq!(output.status.code(), Some(1));
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let call = loop {
+        let call = std::fs::read_dir(&*calls)
+            .expect("the call directory should be readable")
+            .map(|entry| entry.expect("entry should be readable").path())
+            .find(|path| !path.file_name().unwrap().to_string_lossy().starts_with('.'));
+        if let Some(path) = call {
+            break std::fs::read_to_string(path).expect("the call should be readable");
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "swaynag was never shown; stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(
+        call.starts_with("-t error -m sway-launch: ") && call.contains("step 1: launch"),
+        "{call}"
+    );
+}
+
 /// A layout whose second step times out a second before its window opens
 /// (with `opens_windows_after()`'s 1.5s delay), while the third step is
 /// still waiting for its own (#181).

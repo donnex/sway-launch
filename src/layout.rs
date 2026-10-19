@@ -70,6 +70,10 @@ pub struct Layout {
     /// told apart when launched at once.
     #[serde(default)]
     pub concurrent: bool,
+    /// `no_swaynag = true` keeps a failure off swaynag, as `--no-swaynag`
+    /// does (#148).
+    #[serde(default)]
+    pub no_swaynag: bool,
 }
 
 // Serialize is test-only, purely so main.rs's schema-parity test can read

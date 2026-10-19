@@ -381,6 +381,11 @@ pub struct Bindings {
     /// applications and so can't know whether they're safe to launch at once.
     #[serde(default)]
     pub concurrent: bool,
+    /// `no_swaynag = true` keeps a failure off swaynag, as `--no-swaynag`
+    /// does (#148). Here rather than in the template for the same reason as
+    /// `concurrent`: how a run is started is the bindings' business.
+    #[serde(default)]
+    pub no_swaynag: bool,
 }
 
 impl Bindings {

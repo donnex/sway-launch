@@ -52,6 +52,15 @@ fn parse_reads_a_top_level_concurrent_key_off_by_default() {
 }
 
 #[test]
+fn parse_reads_a_top_level_no_swaynag_key_off_by_default() {
+    let step = "[[step]]\ncommand = \"foot\"\n";
+    assert!(!parse(step).expect("layout should parse").no_swaynag);
+    let off = parse(&format!("no_swaynag = true\n{step}")).expect("layout should parse");
+    assert!(off.no_swaynag);
+    assert!(parse(&format!("no_swaynag = \"yes\"\n{step}")).is_err());
+}
+
+#[test]
 fn parse_rejects_malformed_toml() {
     assert!(parse("this is not toml [[[").is_err());
 }
