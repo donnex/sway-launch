@@ -10108,13 +10108,19 @@ fn assert_a_renamed_workspace_holds_the_whole_layout(extra_arguments: &[&str]) {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(ids.len(), 2, "{ids:?}");
-    let first = workspace_of(&mut connection, ids[0]);
+    // One tree for both windows: the daemon may still be renaming, so two
+    // reads can see one workspace under two names.
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    let workspace_name = |id: i64| {
+        workspace_containing(&tree, id, None).unwrap_or_else(|| panic!("{id} is on no workspace"))
+    };
+    let first = workspace_name(ids[0]);
     assert!(
         first.starts_with(&format!("{base}: ")),
         "the daemon never renamed {base:?}: the window is on {first:?}"
     );
     assert_eq!(
-        workspace_of(&mut connection, ids[1]),
+        workspace_name(ids[1]),
         first,
         "the layout was split across two workspaces"
     );
