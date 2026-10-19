@@ -42,6 +42,7 @@ fn signal_names_name_every_caught_signal() {
     assert_eq!(signal_name(signal_hook::consts::SIGINT), "SIGINT");
     assert_eq!(signal_name(signal_hook::consts::SIGTERM), "SIGTERM");
     assert_eq!(signal_name(signal_hook::consts::SIGHUP), "SIGHUP");
+    assert_eq!(signal_name(signal_hook::consts::SIGQUIT), "SIGQUIT");
     for signal in CAUGHT_SIGNALS {
         assert_ne!(signal_name(signal), "a signal");
     }

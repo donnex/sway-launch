@@ -120,7 +120,7 @@ instruction set: where it disagrees with this file or the code, it's stale. The 
   | `confirmation.rs` | how an action's effect is established: event matching, state checks, polling, the `run_*` drivers |
   | `outcome.rs` | `RunOutcome`/`RunError`/`UnmatchedWindow`/`ActionRecord`/`ActionStatus`/`LaunchOwnership` |
   | `late_window.rs` | `LateWindowWatch`: `--continue-on-timeout`'s watch for a timed-out launch's late window, moved to the scratchpad (#181) |
-  | `interrupt.rs` | SIGINT/SIGTERM/SIGHUP as a flag (`install()`, `check()`), and the interruptible `sleep()`/`recv()` every long wait uses |
+  | `interrupt.rs` | SIGINT/SIGTERM/SIGHUP/SIGQUIT as a flag (`install()`, `check()`), and the interruptible `sleep()`/`recv()` every long wait uses |
   | `capture.rs` | `--capture` (#31): `capture()`, a workspace `Node` to the `--layout` file rebuilding it, pure |
   | `launch.rs` | `SwayLaunch`, `ActionRequest`, `BuildLocation`, `build_actions()`/`execute_plan()`/`run()`, `debug_events()` |
 
@@ -512,8 +512,8 @@ reliably. A new entry in
   still goes to stdout, then the run exits 1, a closed stdout included
   (`exit_on_write_failure_with_status()`, #165). A binding's `timeout`/`wait_time` override the step's
   like its placement does.
-- `run_steps()` installs the signal handlers (`interrupt::install()`: SIGINT, SIGTERM and SIGHUP,
-  #15/#128) before its first step and checks them before each one; every wait that can run long (`run_batch()`,
+- `run_steps()` installs the signal handlers (`interrupt::install()`: SIGINT, SIGTERM, SIGHUP and
+  SIGQUIT, #15/#128/#193) before its first step and checks them before each one; every wait that can run long (`run_batch()`,
   the exec and `--existing --wait` loops, `--wait-time`'s sleeps) goes through
   `interrupt::recv()`/`interrupt::sleep()`, so a signal fails the run through `fail_step()` within
   50ms, and `fail_with_rollback()` exits `128 + signal`. A direct-CLI run installs nothing and

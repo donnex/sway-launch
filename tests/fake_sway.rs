@@ -3053,7 +3053,7 @@ fn stderr_error_json(output: &Output) -> Value {
 
 #[test]
 fn a_signal_during_a_layout_fails_it_with_rollback_and_the_signal_s_status() {
-    for (signal, status) in [("INT", 130), ("TERM", 143), ("HUP", 129)] {
+    for (signal, status) in [("INT", 130), ("TERM", 143), ("HUP", 129), ("QUIT", 131)] {
         let fake = FakeSway::start(
             SwayVersion::V1_11,
             opens_windows_after(vec![Duration::ZERO, Duration::from_secs(60)]),

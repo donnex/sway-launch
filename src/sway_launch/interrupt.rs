@@ -1,8 +1,10 @@
-//! SIGINT/SIGTERM/SIGHUP during a `--layout`/`--template` run (#15, #128).
+//! SIGINT/SIGTERM/SIGHUP/SIGQUIT during a `--layout`/`--template` run (#15,
+//! #128, #193).
 //!
 //! Left to the default disposition, each of these signals killed the process
 //! on the spot (SIGHUP is what a run gets when the terminal it was started
-//! from closes, or an ssh session drops): every window launched so far stayed open, `--rollback-on-error` never
+//! from closes, or an ssh session drops; SIGQUIT is `Ctrl-\`): every window
+//! launched so far stayed open, `--rollback-on-error` never
 //! ran, and `--json` reported nothing. `install()` turns a signal into a flag
 //! instead, and every wait that can last long checks it at least every
 //! `CHECK_INTERVAL`, so the run fails through its ordinary error path, with
@@ -24,10 +26,11 @@ struct Received {
 static RECEIVED: OnceLock<Received> = OnceLock::new();
 
 /// The signals `install()` catches.
-const CAUGHT_SIGNALS: [i32; 3] = [
+const CAUGHT_SIGNALS: [i32; 4] = [
     signal_hook::consts::SIGINT,
     signal_hook::consts::SIGTERM,
     signal_hook::consts::SIGHUP,
+    signal_hook::consts::SIGQUIT,
 ];
 
 /// Catches `CAUGHT_SIGNALS` from here on. A second one, of any of them,
@@ -72,6 +75,7 @@ pub(super) fn signal_name(signal: i32) -> &'static str {
         signal_hook::consts::SIGINT => "SIGINT",
         signal_hook::consts::SIGTERM => "SIGTERM",
         signal_hook::consts::SIGHUP => "SIGHUP",
+        signal_hook::consts::SIGQUIT => "SIGQUIT",
         _ => "a signal",
     }
 }

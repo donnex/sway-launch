@@ -119,12 +119,12 @@ pub(crate) fn run_steps(
     let mut late_windows = sway_launch::LateWindowWatch::default();
     let mut late_container_ids = Vec::new();
 
-    // From here on windows get launched, so a SIGINT/SIGTERM/SIGHUP fails the run
+    // From here on windows get launched, so a SIGINT/SIGTERM/SIGHUP/SIGQUIT fails the run
     // through fail_step(), with rollback and partial progress, rather than
     // killing it outright (#15).
     if let Err(error) = sway_launch::interrupt::install() {
         diagnostic!(
-            "{}couldn't catch SIGINT/SIGTERM/SIGHUP ({}); an interrupted run won't roll back",
+            "{}couldn't catch SIGINT/SIGTERM/SIGHUP/SIGQUIT ({}); an interrupted run won't roll back",
             stderr_label(Severity::Warning),
             error
         );

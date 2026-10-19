@@ -93,6 +93,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than from a terminal in the file's project. `--cwd` on the command line and a file read
   from stdin (`-`) still resolve against the current directory, and a relative `command` path is
   still found the same way as before. (#176)
+- `Ctrl-\` (SIGQUIT) during a layout or template run now cleans up the way Ctrl-C does instead of
+  quitting on the spot: `--rollback-on-error` closes what the run launched, `--json` reports its
+  partial progress, and with `--concurrent` the windows are brought back from the hidden staging
+  workspace rather than left there. The run exits 131. A second signal still exits at once. (#193)
 
 ### Fixed
 

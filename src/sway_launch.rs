@@ -12,7 +12,7 @@
 //! - `action` — what a single action is, and the command it renders to.
 //! - `confirmation` — deciding whether that command took effect.
 //! - `outcome` — what a run reports back.
-//! - `interrupt` — turning SIGINT/SIGTERM/SIGHUP into an ordinary failure.
+//! - `interrupt` — turning SIGINT/SIGTERM/SIGHUP/SIGQUIT into an ordinary failure.
 //! - `late_window` — moving a timed-out launch's late window out of a
 //!   `--continue-on-timeout` layout's way.
 //! - `capture` — turning a workspace's tree into the `--layout` file that
