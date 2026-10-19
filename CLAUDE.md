@@ -119,6 +119,7 @@ instruction set: where it disagrees with this file or the code, it's stale. The 
   | `action.rs` | `SwayAction`/`ActionKind`/`ExecAction` themselves: fields, `Display`, `sway_command_verb()`, `flag_name()` |
   | `confirmation.rs` | how an action's effect is established: event matching, state checks, polling, the `run_*` drivers |
   | `outcome.rs` | `RunOutcome`/`RunError`/`UnmatchedWindow`/`ActionRecord`/`ActionStatus`/`LaunchOwnership` |
+  | `late_window.rs` | `LateWindowWatch`: `--continue-on-timeout`'s watch for a timed-out launch's late window, moved to the scratchpad (#181) |
   | `interrupt.rs` | SIGINT/SIGTERM/SIGHUP as a flag (`install()`, `check()`), and the interruptible `sleep()`/`recv()` every long wait uses |
   | `capture.rs` | `--capture` (#31): `capture()`, a workspace `Node` to the `--layout` file rebuilding it, pure |
   | `launch.rs` | `SwayLaunch`, `ActionRequest`, `BuildLocation`, `build_actions()`/`execute_plan()`/`run()`, `debug_events()` |
@@ -128,7 +129,8 @@ instruction set: where it disagrees with this file or the code, it's stale. The 
 - Only `ipc.rs` opens connections, sends commands and subscribes to events. Its callers are
   `query.rs` (every tree and output read), `confirmation.rs`'s `run_*` drivers and
   `hold_geometry()`, `launch.rs`'s `BuildLocation::apply()`, `Staging` (through `send()`) and
-  `debug_events()`, and `run.rs`'s rollback through `kill_container()`; a new caller is added to
+  `debug_events()`, `late_window.rs`'s `LateWindowWatch`, and `run.rs`'s rollback through
+  `kill_container()`; a new caller is added to
   this list in the same change. A new predicate goes in `tree.rs`; if it can't answer
   from a `&Node`, the fetching half goes in `query.rs` and the deciding half still goes in
   `tree.rs`, where a unit test can reach every case without scripting a compositor.
@@ -467,7 +469,14 @@ reliably. A new entry in
 - `--continue-on-timeout` (#19) carries `run_steps()` past a step whose `RunError` has
   `window_timed_out` (set only where no window was resolved: a launch's timeout and
   `--existing --wait`'s), recording it in `timed_out_steps`; a later `target_id` naming its id is
-  skipped (`skipped_steps`). Any other failure still goes through `fail_step()`. The result object
+  skipped (`skipped_steps`). A sequential launch's timeout hands over its marker token
+  (`RunError.launch_token`), and `LateWindowWatch` (`late_window.rs`, #181) watches for a window
+  carrying it for the rest of the run, on its own subscription plus a tree scan before each step
+  and at the end (`take_new()`, `finish()`): it moves each one to the scratchpad, and
+  `record_late_windows()` warns, sets the step's `late_container_id`, excludes it from later
+  `Existing` resolution and records it for rollback only. `abandon_launch()` keeps a later launch
+  from taking such a window as its fallback (`is_abandoned_launchs_window()`); a `--concurrent`
+  launch isn't watched (#126 covers it). Any other failure still goes through `fail_step()`. The result object
   still goes to stdout, then the run exits 1, a closed stdout included
   (`exit_on_write_failure_with_status()`, #165). A binding's `timeout`/`wait_time` override the step's
   like its placement does.

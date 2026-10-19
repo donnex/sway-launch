@@ -111,6 +111,10 @@ pub(crate) fn run_steps(
     let mut timed_out_steps = Vec::new();
     let mut missing_ids = HashSet::new();
     let mut skipped_steps = Vec::new();
+    // A timed-out launch's window that opens later is moved out of the
+    // layout's way rather than left to join it (#181).
+    let mut late_windows = sway_launch::LateWindowWatch::default();
+    let mut late_container_ids = Vec::new();
 
     // From here on windows get launched, so a SIGINT/SIGTERM/SIGHUP fails the run
     // through fail_step(), with rollback and partial progress, rather than
@@ -144,6 +148,13 @@ pub(crate) fn run_steps(
     }
 
     for (index, step) in steps.iter().enumerate() {
+        record_late_windows(
+            late_windows.take_new(),
+            args,
+            &mut progress,
+            &mut timed_out_steps,
+            &mut late_container_ids,
+        );
         if let Err(message) = sway_launch::interrupt::check() {
             progress.fail(
                 &mut staged,
@@ -185,14 +196,15 @@ pub(crate) fn run_steps(
             Ok(sway_launch) => sway_launch::SwayLaunch {
                 build_workspace: build_workspace.clone(),
                 warn_on_misplaced_launch: step.command.is_some(),
-                // A timeout that --continue-on-timeout carries on past isn't
-                // rolled back, so a late window would only be left open.
+                // A timeout that --continue-on-timeout carries on past is
+                // watched for the rest of the run instead (LateWindowWatch).
                 catch_late_window: args.rollback_on_error && !args.continue_on_timeout,
                 excluded_containers: staged
                     .as_ref()
                     .map(|staged| staged_window_owners(&staged.windows, Some(index)))
                     .unwrap_or_default()
                     .into_keys()
+                    .chain(late_container_ids.iter().copied())
                     .collect(),
                 ..sway_launch
             },
@@ -270,6 +282,33 @@ pub(crate) fn run_steps(
                 if let Some(id) = step.id.as_deref() {
                     missing_ids.insert(id.to_string());
                 }
+                // A --concurrent launch's late window opens on the staging
+                // workspace instead, reported as an unresolved launch (#126).
+                if let (None, Some(token)) = (&staged, error.launch_token.as_deref()) {
+                    let already_reported = error
+                        .unmatched_windows
+                        .iter()
+                        .map(|window| window.identity.container_id)
+                        .collect();
+                    if let Err(watch_error) = late_windows.watch(index, token, already_reported) {
+                        diagnostic!(
+                            "{}{}",
+                            stderr_label(Severity::Warning),
+                            sway_launch::escape_control_characters(
+                                &step_error(
+                                    args,
+                                    index,
+                                    &format!(
+                                        "can't watch for its window opening later ({}), so it \
+                                         may still open inside the layout",
+                                        watch_error
+                                    )
+                                ),
+                                true
+                            )
+                        );
+                    }
+                }
             }
             Err(error) => {
                 // A step can launch its window and then fail on a later
@@ -282,10 +321,25 @@ pub(crate) fn run_steps(
                 // something this run never saw. error.container_id still
                 // names it either way.
                 progress.record_failed(step, &error);
+                record_late_windows(
+                    late_windows.finish(),
+                    args,
+                    &mut progress,
+                    &mut timed_out_steps,
+                    &mut late_container_ids,
+                );
                 progress.fail(&mut staged, steps, args, index, error)
             }
         }
     }
+
+    record_late_windows(
+        late_windows.finish(),
+        args,
+        &mut progress,
+        &mut timed_out_steps,
+        &mut late_container_ids,
+    );
 
     // Each timed-out step was already reported as it happened; the status is
     // what tells a calling script the layout is incomplete, so a closed
@@ -331,6 +385,52 @@ pub(crate) fn run_steps(
         exit_on_write_failure_with_status(&error, status);
     }
     process::exit(status);
+}
+
+/// Reports each window `LateWindowWatch` caught: a warning on stderr, its
+/// step's `timed_out_steps` entry's `late_container_id` (the first, should
+/// an application open several), excluded from later steps' `Existing`
+/// resolution, and recorded for `--rollback-on-error`, since its process
+/// carries this run's marker. It isn't part of the layout, so it stays out
+/// of `container_ids`/`containers`.
+fn record_late_windows(
+    caught: Vec<sway_launch::LateWindow>,
+    args: &Args,
+    progress: &mut RunProgress,
+    timed_out_steps: &mut [serde_json::Value],
+    late_container_ids: &mut Vec<i64>,
+) {
+    for window in caught {
+        let placement = match &window.move_error {
+            None => "moved it to the scratchpad, out of the layout's way".to_string(),
+            Some(error) => format!("couldn't move it to the scratchpad: {}", error),
+        };
+        diagnostic!(
+            "{}{}",
+            stderr_label(Severity::Warning),
+            sway_launch::escape_control_characters(
+                &step_error(
+                    args,
+                    window.step,
+                    &format!(
+                        "its window (con_id {}) opened after the step timed out; {}",
+                        window.container_id, placement
+                    )
+                ),
+                true
+            )
+        );
+        if let Some(entry) = timed_out_steps
+            .iter_mut()
+            .find(|entry| entry["step"] == window.step + 1)
+        {
+            if entry.get("late_container_id").is_none() {
+                entry["late_container_id"] = serde_json::json!(window.container_id);
+            }
+        }
+        late_container_ids.push(window.container_id);
+        progress.record_late(window.container_id);
+    }
 }
 
 /// The layout half of a run lock's identity: the file by its canonical path,
@@ -955,6 +1055,13 @@ impl RunProgress {
         if ownership == Some(sway_launch::LaunchOwnership::Launched) {
             self.launched_container_ids.push(container_id);
         }
+    }
+
+    /// Records a timed-out launch's late window (`record_late_windows()`)
+    /// for rollback only: it was moved out of the layout, so it isn't
+    /// progress.
+    fn record_late(&mut self, container_id: i64) {
+        self.launched_container_ids.push(container_id);
     }
 
     /// Records every window a failed step is known to have opened or

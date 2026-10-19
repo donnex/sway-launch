@@ -20,10 +20,10 @@ use super::ipc::{
 };
 use super::outcome::{ActionOutcome, LaunchOwnership, RunError, UnmatchedWindow};
 use super::process_marker::{
-    generate_pid_marker_token, is_sibling_launchs_window, launch_evidence, launch_shell_running,
-    launched_command_running, process_start_ticks, register_launch, scan_marker_presence,
-    LaunchEvidence, MarkerPresence, MarkerTracker, MARKER_SCAN_INTERVAL, PID_MARKER_FALLBACK_GRACE,
-    PID_MARKER_VAR,
+    generate_pid_marker_token, is_abandoned_launchs_window, is_sibling_launchs_window,
+    launch_evidence, launch_shell_running, launched_command_running, process_start_ticks,
+    register_launch, scan_marker_presence, LaunchEvidence, MarkerPresence, MarkerTracker,
+    MARKER_SCAN_INTERVAL, PID_MARKER_FALLBACK_GRACE, PID_MARKER_VAR,
 };
 use super::query::{
     awaited_existing_container_id, container_state, ensure_container_exists, existing_container,
@@ -1435,6 +1435,7 @@ impl ExecAction<'_> {
                     also_launched: launched.into_iter().skip(1).collect(),
                     window_timed_out: true,
                     unresolved_launch: container_id.is_none(),
+                    launch_token: container_id.is_none().then(|| token.clone()),
                 });
             }
 
@@ -1545,6 +1546,7 @@ impl ExecAction<'_> {
                         also_launched: Vec::new(),
                         window_timed_out: false,
                         unresolved_launch: late_window.is_none(),
+                        launch_token: None,
                     });
                 }
             };
@@ -1651,6 +1653,21 @@ impl ExecAction<'_> {
                     diagnostic!(
                         "Event content-matches but container id {} is another launch's, still \
                          running alongside this one — not a fallback candidate",
+                        window.container.id
+                    );
+                }
+                continue;
+            }
+
+            if window
+                .container
+                .pid
+                .is_some_and(is_abandoned_launchs_window)
+            {
+                if verbose {
+                    diagnostic!(
+                        "Event content-matches but container id {} is an earlier step's late \
+                         window, from a launch that timed out — not a fallback candidate",
                         window.container.id
                     );
                 }

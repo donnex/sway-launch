@@ -784,6 +784,16 @@ pub(super) fn present_ids(tree: &Node, container_ids: &[i64]) -> Vec<i64> {
         .collect()
 }
 
+/// Every window in `tree` that names its process, as `(container id, pid)`,
+/// scratchpad included: what `LateWindowWatch` checks for a timed-out
+/// launch's marker (#181).
+pub(super) fn window_processes(tree: &Node) -> Vec<(i64, i32)> {
+    descendants(tree)
+        .filter(|node| is_window(node))
+        .filter_map(|node| node.pid.map(|pid| (node.id, pid)))
+        .collect()
+}
+
 /// The `layout` field of `container_id`'s *parent* node in `tree`, or `None`
 /// if the container isn't there or has no parent (the root).
 /// `container_id`'s own node never carries its own split direction —

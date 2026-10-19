@@ -9001,6 +9001,81 @@ fn continue_on_timeout_carries_a_template_past_a_slot_whose_binding_timeout_ran_
 }
 
 #[test]
+fn continue_on_timeout_moves_a_slow_step_s_late_window_to_the_scratchpad() {
+    // #181: the slow step's window opens after its one-second timeout,
+    // while the third step is still waiting for its own. It used to join
+    // the bottom row and take focus; now it's moved out of the way.
+    fresh_workspace();
+    let mut connection = connect();
+    let layout = TempToml::write(
+        "continue-on-timeout-late-window",
+        "[[step]]\nid = \"one\"\ncommand = \"foot --app-id=live-late -T one\"\n\
+         app_id = \"live-late\"\nsplit = \"v\"\n\n\
+         [[step]]\nid = \"slow\"\ncommand = \"sleep 1.5 && foot --app-id=live-late -T slow\"\n\
+         app_id = \"live-late\"\ntimeout = 1\n\n\
+         [[step]]\nid = \"three\"\ncommand = \"sleep 2 && foot --app-id=live-late -T three\"\n\
+         app_id = \"live-late\"\nsplit = \"h\"\n\n\
+         [[step]]\nid = \"four\"\ncommand = \"foot --app-id=live-late -T four\"\n\
+         app_id = \"live-late\"\n",
+    );
+
+    let output = sway_launch_command()
+        .args([
+            "--layout",
+            layout.to_str().unwrap(),
+            "--continue-on-timeout",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "stdout should be the run's JSON result ({error}); stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
+    let _guards: Vec<KillOnDrop> = json["container_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|id| KillOnDrop(id.as_i64().unwrap()))
+        .collect();
+    let late = json["timed_out_steps"][0]["late_container_id"]
+        .as_i64()
+        .unwrap_or_else(|| {
+            panic!(
+                "the slow step's late window should be reported: {json}; stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+        });
+    let _late_guard = KillOnDrop(late);
+
+    assert_eq!(output.status.code(), Some(1), "{json}");
+    assert_eq!(json["timed_out_steps"][0]["step"], 2, "{json}");
+    let three = json["containers"]["three"].as_i64().unwrap();
+    let four = json["containers"]["four"].as_i64().unwrap();
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        workspace_containing(&tree, late, None),
+        Some("__i3_scratch"),
+        "the late window should be in the scratchpad"
+    );
+    assert_eq!(
+        find_node(&tree, late).unwrap().name.as_deref(),
+        Some("slow")
+    );
+    // The bottom row is the two windows the layout names, not three.
+    let row = parent_node(&tree, three).unwrap();
+    assert_eq!(row.layout, swayipc::NodeLayout::SplitH);
+    let row_ids: Vec<i64> = row.nodes.iter().map(|node| node.id).collect();
+    assert_eq!(row_ids, vec![three, four], "{json}");
+    assert!(
+        find_node(&tree, four).unwrap().focused,
+        "four should keep focus"
+    );
+}
+
+#[test]
 fn sigint_during_a_layout_rolls_back_what_it_launched() {
     fresh_workspace();
     let mut connection = connect();

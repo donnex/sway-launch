@@ -13,6 +13,8 @@
 //! - `confirmation` — deciding whether that command took effect.
 //! - `outcome` — what a run reports back.
 //! - `interrupt` — turning SIGINT/SIGTERM/SIGHUP into an ordinary failure.
+//! - `late_window` — moving a timed-out launch's late window out of a
+//!   `--continue-on-timeout` layout's way.
 //! - `capture` — turning a workspace's tree into the `--layout` file that
 //!   rebuilds it, purely.
 //! - `launch` — turning one invocation into an ordered plan, and running it.
@@ -32,6 +34,7 @@ mod capture;
 mod confirmation;
 pub mod interrupt;
 mod ipc;
+mod late_window;
 mod launch;
 mod outcome;
 mod process_marker;
@@ -44,6 +47,7 @@ mod tree;
 mod values;
 
 pub use ipc::{kill_container, session_socket, KillError};
+pub use late_window::{LateWindow, LateWindowWatch};
 pub use launch::{debug_events, ActionRequest, BuildLocation, BuildWorkspace, Staging, SwayLaunch};
 pub use outcome::{
     ActionRecord, ActionStatus, LaunchOwnership, RunError, RunOutcome, UnmatchedWindow,

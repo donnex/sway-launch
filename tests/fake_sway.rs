@@ -1969,6 +1969,109 @@ app_id = "fake-app"
     );
 }
 
+/// A layout whose second step times out a second before its window opens
+/// (with `opens_windows_after()`'s 1.5s delay), while the third step is
+/// still waiting for its own (#181).
+const LATE_SECOND_STEP_LAYOUT: &str = r#"
+[[step]]
+id = "one"
+command = "sleep 30"
+app_id = "fake-app"
+
+[[step]]
+id = "slow"
+command = "sleep 30"
+app_id = "fake-app"
+timeout = 1
+
+[[step]]
+id = "three"
+command = "sleep 30"
+app_id = "fake-app"
+"#;
+
+#[test]
+fn continue_on_timeout_moves_a_late_window_to_the_scratchpad_and_reports_it() {
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        opens_windows_after(vec![
+            Duration::ZERO,
+            Duration::from_millis(1500),
+            Duration::from_millis(1000),
+        ]),
+    );
+    let layout = TempToml::write("continue-on-timeout-late", LATE_SECOND_STEP_LAYOUT);
+    let (output, json) = run_reporting_on_stdout(
+        &fake,
+        &[
+            "--layout",
+            layout.to_str().unwrap(),
+            "--continue-on-timeout",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1), "{json}");
+    // The third step waited through the late window's New event without
+    // taking it for its own.
+    assert_eq!(
+        json["container_ids"],
+        serde_json::json!([100, 102]),
+        "{json}"
+    );
+    assert_eq!(json["timed_out_steps"][0]["step"], 2, "{json}");
+    assert_eq!(
+        json["timed_out_steps"][0]["late_container_id"], 101,
+        "{json}"
+    );
+    assert!(
+        fake.commands()
+            .contains(&"[con_id=101] move scratchpad".to_string()),
+        "{:?}",
+        fake.commands()
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(
+            "step 2: its window (con_id 101) opened after the step timed out; moved \
+                         it to the scratchpad"
+        ),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn continue_on_timeout_rolls_back_a_late_window_when_a_later_step_fails() {
+    let fake = FakeSway::start(
+        SwayVersion::V1_11,
+        opens_windows_after(vec![
+            Duration::ZERO,
+            Duration::from_millis(1500),
+            Duration::from_millis(1000),
+        ]),
+    );
+    let layout = TempToml::write(
+        "continue-on-timeout-late-rollback",
+        &format!("{LATE_SECOND_STEP_LAYOUT}\n[[step]]\ncon_id = 4242\nfloating = true\n"),
+    );
+    let run = run(
+        &fake,
+        &[
+            "--layout",
+            layout.to_str().unwrap(),
+            "--continue-on-timeout",
+            "--rollback-on-error",
+        ],
+    );
+    assert!(!run.succeeded());
+    assert!(run.error().contains("step 4"), "{}", run.error());
+    assert_eq!(
+        run.json["rolled_back"],
+        serde_json::json!([101, 102, 100]),
+        "{}",
+        run.json
+    );
+    assert!(!fake.sway().contains(101));
+}
+
 #[test]
 fn continue_on_timeout_still_exits_1_when_stdout_is_closed() {
     // #165: a closed stdout used to exit 0 at the deferred id write, or at

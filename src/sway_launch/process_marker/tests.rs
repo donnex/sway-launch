@@ -272,6 +272,32 @@ fn is_sibling_launchs_window_counts_only_its_groups_launches() {
     child.wait().ok();
 }
 
+#[test]
+fn is_abandoned_launchs_window_counts_only_abandoned_launches() {
+    // The registry is process-wide, and this is the only test touching it.
+    let token = format!("{}-abandoned-test", std::process::id());
+    let mut child = std::process::Command::new("sleep")
+        .arg("30")
+        .env(PID_MARKER_VAR, &token)
+        .spawn()
+        .expect("sleep should start");
+    let pid = child.id() as i32;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !process_has_env_var(pid, PID_MARKER_VAR, &token) {
+        assert!(std::time::Instant::now() < deadline, "sleep never started");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    assert!(!is_abandoned_launchs_window(pid));
+    abandon_launch("some-other-launch");
+    assert!(!is_abandoned_launchs_window(pid));
+    abandon_launch(&token);
+    assert!(is_abandoned_launchs_window(pid));
+
+    child.kill().ok();
+    child.wait().ok();
+}
+
 /// A process table for `marked_ancestor()`: pid -> (marked, parent).
 fn ancestry(table: &[(i32, bool, Option<i32>)]) -> impl FnMut(i32) -> (bool, Option<i32>) + '_ {
     move |pid| {

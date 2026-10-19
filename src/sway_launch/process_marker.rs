@@ -223,17 +223,48 @@ pub(super) fn is_sibling_launchs_window(pid: i32, own_token: &str) -> bool {
         .filter(|token| *token != own_token)
         .cloned()
         .collect();
-    if siblings.is_empty() {
+    carries_any_token(pid, &siblings)
+}
+
+/// Tokens of every launch `abandon_launch()` gave up on: a timed-out
+/// `--continue-on-timeout` step's, whose window may still open (#181).
+static ABANDONED_LAUNCHES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn abandoned_launches() -> std::sync::MutexGuard<'static, Vec<String>> {
+    ABANDONED_LAUNCHES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Records that the launch behind `token` timed out and its run carried on,
+/// so `is_abandoned_launchs_window()` can keep a later launch from adopting
+/// its window while `LateWindowWatch` moves it out of the way.
+pub(super) fn abandon_launch(token: &str) {
+    abandoned_launches().push(token.to_string());
+}
+
+/// Whether the window owned by `pid` is a launch's that this process gave
+/// up on (`abandon_launch()`): with the right app_id, a later step's launch
+/// would otherwise take it as a fallback candidate (#181).
+pub(super) fn is_abandoned_launchs_window(pid: i32) -> bool {
+    let abandoned = abandoned_launches().clone();
+    carries_any_token(pid, &abandoned)
+}
+
+/// Whether `pid`, or one of its ancestors, carries one of `tokens`.
+/// Nothing is read when `tokens` is empty.
+fn carries_any_token(pid: i32, tokens: &[String]) -> bool {
+    if tokens.is_empty() {
         return false;
     }
-    let is_sibling = |process: i32| {
+    let carries = |process: i32| {
         launch_tokens(process)
             .iter()
-            .any(|token| siblings.contains(token))
+            .any(|token| tokens.contains(token))
     };
-    is_sibling(pid)
+    carries(pid)
         || marked_ancestor(pid, MAX_ANCESTRY_DEPTH, |ancestor| {
-            (is_sibling(ancestor), parent_pid(ancestor))
+            (carries(ancestor), parent_pid(ancestor))
         })
         .is_some()
 }

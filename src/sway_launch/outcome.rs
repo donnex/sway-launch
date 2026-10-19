@@ -108,6 +108,10 @@ pub struct RunError {
     /// step names. `--concurrent` reports these, since such a window opens on
     /// the staging workspace, out of sight (#126).
     pub unresolved_launch: bool,
+    /// A timed-out launch's PID-marker token, when no window was resolved
+    /// for it: what `LateWindowWatch` looks for in a window that opens later
+    /// (#181). `None` for every other failure.
+    pub launch_token: Option<String>,
 }
 
 impl From<String> for RunError {
@@ -120,6 +124,7 @@ impl From<String> for RunError {
             also_launched: Vec::new(),
             window_timed_out: false,
             unresolved_launch: false,
+            launch_token: None,
         }
     }
 }

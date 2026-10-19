@@ -509,6 +509,18 @@ fn present_ids_is_empty_when_every_id_is_gone() {
 }
 
 #[test]
+fn window_processes_lists_every_window_with_a_pid_tiled_and_floating() {
+    let mut tiled = leaf_node_value(10, Some("foot"), None);
+    tiled["pid"] = serde_json::json!(1234);
+    let unnamed = leaf_node_value(11, Some("foot"), None);
+    let mut floating = leaf_node_value(12, Some("foot"), None);
+    floating["pid"] = serde_json::json!(5678);
+    let split = container_node_value(2, vec![tiled, unnamed], vec![]);
+    let tree = node_tree(1, vec![split], vec![floating]);
+    assert_eq!(window_processes(&tree), vec![(10, 1234), (12, 5678)]);
+}
+
+#[test]
 fn find_parent_layout_returns_the_direct_parents_layout() {
     let leaf = leaf_node_value(10, Some("foot"), None);
     let mut parent_value = container_node_value(2, vec![leaf], vec![]);

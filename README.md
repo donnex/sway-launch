@@ -791,9 +791,17 @@ A binding's `timeout` gives just that slot longer. `--continue-on-timeout` inste
 and carries on; a later step that targets the missing window (`target_id`) is skipped too. The run
 still exits non-zero, so a calling script knows the layout is incomplete. Each such step gets a
 warning on stderr, and `--json` lists them under `timed_out_steps` (`step`, `error`, and any
-`unmatched_windows`) and `skipped_steps` (`step`, `target_id`). Plain output prints a container id
+`unmatched_windows` and `late_container_id`) and `skipped_steps` (`step`, `target_id`). Plain output prints a container id
 only for each step that has one, so match steps to windows with `--json`'s `containers` when steps
 may be missing. Only a missing window counts: a step that fails any other way still stops the run.
+
+A slow application is usually still starting when its step gives up, and its window would then
+open inside the layout, beside whatever a later step just placed. Until the run ends,
+`--continue-on-timeout` watches for it instead: such a window is moved to the scratchpad
+(`swaymsg scratchpad show` brings it back), with a warning on stderr, and reported as its
+`timed_out_steps` entry's `late_container_id`. `--rollback-on-error` closes it with the rest when a
+later step fails. A window that opens after the run has ended is no longer watched for and opens
+wherever focus is.
 
 **Clean up on failure: `--rollback-on-error`.** A failed run leaves whatever earlier steps launched
 open, and the failing step's own window too when it launched one and then failed on an action.

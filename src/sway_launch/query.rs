@@ -15,8 +15,8 @@ use super::tree::{
     build_workspace_anchor, con_id_target_problem, existing_candidates, find_node, find_workspace,
     focused_workspace, launch_placement_problems, move_skip_reason, present_ids,
     recheck_launched_windows, resolve_awaited_matches, resolve_matches, tiled_window_count,
-    unnamed_build_workspace, window_listing, workspace_named, ContainerState, ListedWindow,
-    MoveDirection, RecheckedWindow, SkipReason, WorkspaceIdentity, WorkspaceLookup,
+    unnamed_build_workspace, window_listing, window_processes, workspace_named, ContainerState,
+    ListedWindow, MoveDirection, RecheckedWindow, SkipReason, WorkspaceIdentity, WorkspaceLookup,
 };
 use super::values::{TitlePattern, WorkspaceTarget};
 use swayipc::{Connection, Node};
@@ -175,6 +175,11 @@ pub(super) fn missing_container_error(container_id: i64) -> String {
 pub fn containers_still_present(container_ids: &[i64]) -> Result<Vec<i64>, String> {
     let tree = fetch_tree()?;
     Ok(present_ids(&tree, container_ids))
+}
+
+/// `window_processes()` over a fresh tree.
+pub(super) fn window_processes_now() -> Result<Vec<(i64, i32)>, String> {
+    Ok(window_processes(&fetch_tree()?))
 }
 
 /// `recheck_launched_windows()` against a fresh tree, or `None` if the tree
