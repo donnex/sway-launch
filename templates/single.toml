@@ -1,0 +1,16 @@
+# One tiled window filling the workspace, split vertically.
+# Run with, e.g.:
+#   sway-launch --template single --apps foot --on-workspace build
+# or with per-slot app_id/class matching via a --bindings file; see
+# README.md's "Templates" section. Useful when presets are kept as
+# template + bindings files and one of them is a single window. The
+# window is split vertically, so the next window opened on the workspace
+# stacks below it.
+
+[template]
+description = "One tiled window filling the workspace, split vertically."
+category = "Grid"
+
+[[step]]
+slot = "window"
+split = "v"

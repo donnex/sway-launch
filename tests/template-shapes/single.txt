@@ -1,0 +1,2 @@
+workspace template-shape-single
+  window

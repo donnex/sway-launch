@@ -4773,6 +4773,43 @@ fn template_layout_context_moves_a_step_without_its_own_workspace_to_the_templat
     assert_eq!(workspace, Some("live-sway-test-template-layout-context"));
 }
 
+#[test]
+fn single_template_stacks_the_next_window_below_its_own() {
+    // #196: the built-in single template's window fills the workspace and
+    // is split vertically, so a window opened after it lands below it.
+    fresh_workspace();
+    let mut connection = connect();
+    let output = sway_launch_command()
+        .args(["--template", "single", "--apps", "foot", "--timeout", "10"])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "sway-launch --template single failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let window: i64 = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .expect("stdout should be a container id");
+    let _window_guard = KillOnDrop(window);
+
+    let (next, _next_guard) = launch_foot(&[]);
+    let tree = connection.get_tree().expect("get_tree should succeed");
+    assert_eq!(
+        parent_layout(&tree, next),
+        Some(swayipc::NodeLayout::SplitV)
+    );
+    let (above, below) = (
+        find_node(&tree, window).unwrap().rect,
+        find_node(&tree, next).unwrap().rect,
+    );
+    assert!(
+        below.y > above.y && below.x == above.x,
+        "the next window should open below the single window: {above:?} then {below:?}"
+    );
+}
+
 /// Runs `template` with one foot per slot (four for these tests) and returns
 /// the `--json` output, asserting the run succeeded.
 fn run_four_slot_template(template: &str, extra_args: &[&str]) -> serde_json::Value {

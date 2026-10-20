@@ -703,6 +703,7 @@ Each screenshot is a real `--template` run on a live Sway, with every slot label
 
 | Preview | Category | Template | Shape | Slots |
 | --- | --- | --- | --- | --- |
+| [<img src="screenshots/single.png" width="120" alt="single template layout">](screenshots/single.png) | Grid | [`single`](templates/single.toml) | One tiled window filling the workspace, split vertically | 1 |
 | [<img src="screenshots/dual-row.png" width="120" alt="dual-row template layout">](screenshots/dual-row.png) | Grid | [`dual-row`](templates/dual-row.toml) | Two windows side by side, one row | 2 |
 | [<img src="screenshots/dual-column.png" width="120" alt="dual-column template layout">](screenshots/dual-column.png) | Grid | [`dual-column`](templates/dual-column.toml) | Two windows stacked, one column | 2 |
 | [<img src="screenshots/triple-row.png" width="120" alt="triple-row template layout">](screenshots/triple-row.png) | Grid | [`triple-row`](templates/triple-row.toml) | Three windows side by side, one row | 3 |

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A built-in `single` template: one tiled window filling the workspace, split vertically so the
+  next window opened there stacks below it. Until now every built-in template but the floating
+  one had two or more slots, so a launcher keeping its presets as `--template` plus `--bindings`
+  files had nothing to name for a one-window preset, and had to run `sway-launch` directly, without
+  `--on-workspace`, the run lock or the other things only a template or layout run does. Its one
+  slot is `window`. (#196)
+
 ## [0.2.0] - 2026-10-19
 
 Mostly the outcome of a four-run code review: six security fixes, a handful of new flags and
