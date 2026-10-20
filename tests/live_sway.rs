@@ -1865,35 +1865,48 @@ fn settle_fails_without_re_sending_when_the_window_closes_mid_hold() {
     // the geometry was sent again and the run failed with Sway's own
     // "No matching node." under the wrong action's name. The run may still
     // re-apply the width before the window goes (seen live: twice), so only
-    // how it ends is asserted.
+    // how it ends is asserted. Under load foot can snap the width to its
+    // cell grid before it is ever confirmed; then there is nothing to hold
+    // and the run ends before the kill, so that attempt is retried.
     fresh_workspace();
     let mut connection = connect();
-    let (container_id, _guard) = launch_foot(&["--floating"]);
-
-    let child = sway_launch_command()
-        .args([
-            "--con-id",
-            &container_id.to_string(),
-            "--width",
-            "400px",
-            "--settle",
-            "3000",
-            "--json",
-            "--verbose",
-        ])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .expect("failed to run sway-launch binary");
-    std::thread::sleep(Duration::from_millis(600));
-    for outcome in connection
-        .run_command(format!("[con_id={container_id}] kill"))
-        .expect("the kill should be sent")
-    {
-        outcome.expect("the kill should succeed");
-    }
-    let output = child.wait_with_output().expect("sway-launch should finish");
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let (container_id, stderr, output) = (1..=FOOT_UNDID_SIZE_ATTEMPTS)
+        .find_map(|attempt| {
+            let (container_id, guard) = launch_foot(&["--floating"]);
+            let child = sway_launch_command()
+                .args([
+                    "--con-id",
+                    &container_id.to_string(),
+                    "--width",
+                    "400px",
+                    "--settle",
+                    "3000",
+                    "--json",
+                    "--verbose",
+                ])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("failed to run sway-launch binary");
+            std::thread::sleep(Duration::from_millis(600));
+            for outcome in connection
+                .run_command(format!("[con_id={container_id}] kill"))
+                .expect("the kill should be sent")
+            {
+                outcome.expect("the kill should succeed");
+            }
+            let output = child.wait_with_output().expect("sway-launch should finish");
+            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+            drop(guard);
+            let never_confirmed = output.status.success()
+                && stderr.contains("Poll grace period elapsed without confirmation");
+            (!never_confirmed || attempt == FOOT_UNDID_SIZE_ATTEMPTS).then_some((
+                container_id,
+                stderr,
+                output,
+            ))
+        })
+        .expect("the last attempt always returns");
     assert!(!output.status.success(), "sway-launch succeeded: {stderr}");
     assert!(
         stderr.contains(&format!(
@@ -9674,9 +9687,9 @@ fn on_output_refuses_a_build_workspace_holding_windows_on_another_output() {
     let new_output = created_output.name().to_string();
     let path = TempToml::write(
         "on-output-occupied-elsewhere",
-        "[[step]]\ncommand = \"foot\"\napp_id = \"foot\"\n",
+        "[[step]]\ncommand = \"foot --app-id=live-on-output-refused\"\n\
+         app_id = \"live-on-output-refused\"\n",
     );
-    let windows_before = count_app_id_windows(&connection.get_tree().expect("get_tree"), "foot");
 
     let output = sway_launch_command()
         .args([
@@ -9700,9 +9713,11 @@ fn on_output_refuses_a_build_workspace_holding_windows_on_another_output() {
         "{stderr}"
     );
     let tree = connection.get_tree().expect("get_tree should succeed");
+    // Counted by its own app_id: a foot window an earlier test killed can
+    // still be closing, so a count of every foot window can drop by itself.
     assert_eq!(
-        count_app_id_windows(&tree, "foot"),
-        windows_before,
+        count_app_id_windows(&tree, "live-on-output-refused"),
+        0,
         "nothing launched"
     );
 }
