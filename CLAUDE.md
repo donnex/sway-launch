@@ -1752,6 +1752,56 @@ would be legally meaningless). The user explicitly signed off on this after bein
 (2026-08-21). Don't flag it in a future content-policy review, and don't use this as precedent for
 writing any other real name without the same explicit confirmation.
 
+### Posting outside the project: nothing private, ever
+
+**THIS RULE CAN NEVER BE BROKEN. NO EXCEPTIONS, EVER.** Not for a small comment, not for a detail
+that seems harmless, not because the user seemed to imply it was fine, not to save time, not "just
+this once". It overrides every other content rule, including any confirm-first policy: permission
+to use a real name in the project's own files, docs or commits never covers posting it anywhere
+outside the project.
+
+**Where it applies:** anything written where people outside the project can read it. That means an
+issue, comment, pull request, review, discussion, commit message or release note in another
+project's repository or tracker (GitHub, GitLab, any forge, a mailing list, a forum, a chat), and
+the user's own public projects too.
+
+**What may never appear there. Nothing from the project, at all:**
+
+- the names of the project, its repositories, folders, files, scripts, functions, branches or
+  settings;
+- its issue or pull-request numbers, titles or links, and its commit hashes;
+- hostnames, machine names, domains, IP addresses, usernames, paths, accounts, services or internal
+  URLs;
+- code, config, logs, error output or screenshots copied from it, even a single line;
+- a description of the project's setup, tools or purpose specific enough to identify it.
+
+**Write it generically instead.** Describe the problem as it would happen to anyone ("a wrapper
+script that opens the tool in a terminal window", "a laptop with an external monitor"). Build every
+example, reproduction and log from scratch with placeholder names (`example.org`, `host-a`,
+`my-script`). A minimal reproduction made for the report is fine; a copy of anything from the
+project is not.
+
+**Check before posting, every time.** Draft the whole text first, then reread the title, body,
+labels and any attachment line by line against the list above, as a separate final step just
+before submitting.
+
+**When unsure, ask. When even a little unsure, ask.** Whether a detail counts as private, whether a
+place counts as outside the project, whether a reproduction is generic enough: any doubt at all
+means asking the user before posting, never deciding alone.
+
+**Not for the project's own private tracker.** In an issue tracker only the project's own people
+can read, naming the project's files, issues and hosts is normal, and this section doesn't apply.
+If it's unclear whether a tracker is private, treat it as public and ask.
+
+**If something private was posted anyway**, tell the user at once, so it can be removed or edited;
+never leave it to be noticed later.
+
+Project-specific adaptation: this repository's own GitHub issues are the project's own tracker, so
+naming its files, functions and issue numbers there is normal, under the "Issues" section's rules.
+Its tracker is public, though, so nothing from the maintainer's other projects (the canonical
+repository included) may appear in it, and this section applies in full to anything posted
+upstream, such as a Sway, `swayipc` or `foot` bug report.
+
 ## Issues
 
 For tracking issues on GitHub (github.com or a GitHub Enterprise Server host), managed with the
