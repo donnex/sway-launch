@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-02
+
 ### Fixed
 
 - After a `--concurrent` run, `workspace back_and_forth` no longer switches to an empty
