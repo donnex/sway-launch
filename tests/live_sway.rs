@@ -7136,6 +7136,49 @@ fn concurrent_run_warns_about_a_dead_runs_staging_workspace_and_leaves_it_alone(
     no_staging_workspace_is_left(&mut connection);
 }
 
+#[test]
+fn concurrent_run_leaves_sways_previous_workspace_as_it_found_it() {
+    // #202: a --concurrent run switches to its staging workspace and back,
+    // and each switch sets Sway's previous workspace; afterwards `workspace
+    // back_and_forth` must still return to where the user came from, not
+    // to a recreated staging workspace.
+    let build_workspace = fresh_workspace();
+    let previous = format!("{build_workspace}-previous");
+    let mut connection = connect();
+    run_command_ok(&mut connection, &format!("workspace {previous}"));
+    run_command_ok(&mut connection, &format!("workspace {build_workspace}"));
+
+    let output = sway_launch_command()
+        .args([
+            "--template",
+            "dual-column",
+            "--apps",
+            "foot,foot",
+            "--concurrent",
+            "--json",
+        ])
+        .output()
+        .expect("failed to run sway-launch binary");
+    assert!(
+        output.status.success(),
+        "--concurrent template failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("--json prints JSON");
+    let _built: Vec<KillOnDrop> = parsed["container_ids"]
+        .as_array()
+        .unwrap_or_else(|| panic!("container_ids should be present: {parsed}"))
+        .iter()
+        .map(|id| KillOnDrop(id.as_i64().unwrap()))
+        .collect();
+    assert_eq!(focused_workspace_name(&mut connection), build_workspace);
+    no_staging_workspace_is_left(&mut connection);
+
+    run_command_ok(&mut connection, "workspace back_and_forth");
+    assert_eq!(focused_workspace_name(&mut connection), previous);
+}
+
 /// Every container in `node` (scratchpad included) whose app_id is `app_id`.
 fn containers_with_app_id(node: &Node, app_id: &str) -> Vec<i64> {
     let own = (node.app_id.as_deref() == Some(app_id)).then_some(node.id);

@@ -2394,6 +2394,169 @@ fn concurrent_launches_every_step_on_a_staging_workspace_then_arranges_in_order(
     assert!(position(&format!("[con_id={second}] mark \"second\"")) > second_moved);
 }
 
+/// A two-step `--concurrent` run against a fake Sway whose previous
+/// workspace is `previous`, if any, returning the commands it sent.
+fn concurrent_run_commands(previous: Option<&str>) -> Vec<String> {
+    let mut launches = opens_a_window_for_each_launch("fake-app");
+    let fake = FakeSway::start(SwayVersion::V1_11, move |sway, command| {
+        if command.starts_with("exec ") {
+            launches(sway, command)
+        } else if command.starts_with("[con_id=") {
+            arranges_on_command(sway, command)
+        } else {
+            Ok(())
+        }
+    });
+    if let Some(previous) = previous {
+        fake.sway().set_previous_workspace(previous);
+    }
+    let layout = TempToml::write(
+        "concurrent-previous",
+        "[[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n\n\
+         [[step]]\ncommand = \"sleep 30\"\napp_id = \"fake-app\"\n",
+    );
+    let run = run(
+        &fake,
+        &["--layout", layout.to_str().unwrap(), "--concurrent"],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert!(
+        !run.stderr().contains("previous workspace"),
+        "{}",
+        run.stderr()
+    );
+    fake.commands()
+}
+
+#[test]
+fn a_concurrent_run_puts_sways_previous_workspace_back_after_staging() {
+    // #202: the probe learns the previous workspace before staging, and
+    // leaving staging switches by way of it, so `workspace back_and_forth`
+    // returns there rather than to the staging workspace.
+    let commands = concurrent_run_commands(Some("elsewhere"));
+    let position = |wanted: &str| {
+        commands
+            .iter()
+            .position(|command| command == wanted || command.starts_with(wanted))
+            .unwrap_or_else(|| panic!("{wanted:?} never sent: {commands:?}"))
+    };
+    let probe = position("workspace back_and_forth; workspace --no-auto-back-and-forth \"1\"");
+    let staging = position("workspace --no-auto-back-and-forth \"sway-launch-staging-");
+    let last_launch = commands
+        .iter()
+        .rposition(|command| command.starts_with("exec "))
+        .expect("launched");
+    let restore = position(
+        "workspace --no-auto-back-and-forth \"elsewhere\"; \
+         workspace --no-auto-back-and-forth \"1\"",
+    );
+    let first_move = position("[con_id=");
+    assert!(probe < staging, "{commands:?}");
+    assert!(
+        last_launch < restore && restore < first_move,
+        "{commands:?}"
+    );
+}
+
+#[test]
+fn a_concurrent_run_with_no_previous_workspace_just_returns_to_the_build_workspace() {
+    let commands = concurrent_run_commands(None);
+    assert!(
+        commands
+            .iter()
+            .any(|command| command.starts_with("workspace back_and_forth; ")),
+        "{commands:?}"
+    );
+    let returns: Vec<&String> = commands
+        .iter()
+        .filter(|command| command.as_str() == "workspace --no-auto-back-and-forth \"1\"")
+        .collect();
+    assert_eq!(returns.len(), 1, "{commands:?}");
+}
+
+#[test]
+fn a_concurrent_run_warns_and_carries_on_when_the_previous_workspace_cant_be_learned() {
+    // The probe's switch back fails: the run still builds, with a warning
+    // that `back_and_forth` will find the staging workspace, and leaving
+    // staging restores nothing.
+    let mut launches = opens_a_window_for_each_launch("fake-app");
+    let mut refused_once = false;
+    let fake = FakeSway::start(SwayVersion::V1_11, move |sway, command| {
+        if command.starts_with("exec ") {
+            launches(sway, command)
+        } else if command.starts_with("[con_id=") {
+            arranges_on_command(sway, command)
+        } else if command == "workspace --no-auto-back-and-forth \"1\"" && !refused_once {
+            refused_once = true;
+            Err("refused".to_string())
+        } else {
+            Ok(())
+        }
+    });
+    fake.sway().set_previous_workspace("elsewhere");
+    let layout = TempToml::write("concurrent-probe-fails", ONE_LAUNCH_LAYOUT);
+    let run = run(
+        &fake,
+        &["--layout", layout.to_str().unwrap(), "--concurrent"],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert!(
+        run.stderr()
+            .contains("couldn't learn Sway's previous workspace"),
+        "{}",
+        run.stderr()
+    );
+    assert!(
+        !fake
+            .commands()
+            .iter()
+            .any(|command| command.contains("\"elsewhere\"")),
+        "{:?}",
+        fake.commands()
+    );
+}
+
+#[test]
+fn a_concurrent_run_still_returns_to_the_build_workspace_when_restoring_fails() {
+    // Sway refuses the switch to the previous workspace: the build
+    // workspace is focused on its own, and the run warns and carries on.
+    let mut launches = opens_a_window_for_each_launch("fake-app");
+    let fake = FakeSway::start(SwayVersion::V1_11, move |sway, command| {
+        if command.starts_with("exec ") {
+            launches(sway, command)
+        } else if command.starts_with("[con_id=") {
+            arranges_on_command(sway, command)
+        } else if command == "workspace --no-auto-back-and-forth \"elsewhere\"" {
+            Err("refused".to_string())
+        } else {
+            Ok(())
+        }
+    });
+    fake.sway().set_previous_workspace("elsewhere");
+    let layout = TempToml::write("concurrent-restore-fails", ONE_LAUNCH_LAYOUT);
+    let run = run(
+        &fake,
+        &["--layout", layout.to_str().unwrap(), "--concurrent"],
+    );
+    assert!(run.succeeded(), "{}", run.stderr());
+    assert!(
+        run.stderr()
+            .contains("couldn't make \"elsewhere\" Sway's previous workspace again"),
+        "{}",
+        run.stderr()
+    );
+    let commands = fake.commands();
+    let restore = commands
+        .iter()
+        .position(|command| command.starts_with("workspace --no-auto-back-and-forth \"elsewhere\""))
+        .unwrap_or_else(|| panic!("never restored: {commands:?}"));
+    assert_eq!(
+        commands[restore + 1],
+        "workspace --no-auto-back-and-forth \"1\"",
+        "{commands:?}"
+    );
+}
+
 /// The pid of a process that has already exited, for a staging workspace
 /// whose run is gone.
 fn dead_pid() -> u32 {

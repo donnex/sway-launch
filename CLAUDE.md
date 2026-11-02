@@ -128,8 +128,8 @@ instruction set: where it disagrees with this file or the code, it's stale. The 
 
 - Only `ipc.rs` opens connections, sends commands and subscribes to events. Its callers are
   `query.rs` (every tree and output read), `confirmation.rs`'s `run_*` drivers and
-  `hold_geometry()`, `launch.rs`'s `BuildLocation::apply()`, `Staging` (through `send()`) and
-  `debug_events()`, `late_window.rs`'s `LateWindowWatch`, and `run.rs`'s rollback through
+  `hold_geometry()`, `launch.rs`'s `BuildLocation::apply()`, `Staging` (through `send()`,
+  `previous_workspace()` and `run_sway_commands()`) and `debug_events()`, `late_window.rs`'s `LateWindowWatch`, and `run.rs`'s rollback through
   `kill_container()`; a new caller is added to
   this list in the same change. A new predicate goes in `tree.rs`; if it can't answer
   from a `&Node`, the fetching half goes in `query.rs` and the deciding half still goes in
@@ -491,6 +491,14 @@ reliably. A new entry in
   `tree::orphaned_staging_workspaces()`: a run killed outright leaves its windows there. Warn only,
   by decision (#132): their windows are never moved. `window_listing()` takes the same liveness
   check, for `--list-windows`' `orphaned` flag.
+  Every switch sets Sway's previous workspace (what `workspace back_and_forth` returns to), which
+  IPC doesn't report (#202): `Staging::enter()` learns it with `ipc::previous_workspace()`
+  (`workspace back_and_forth; <build workspace>` as one message, which Sway runs before drawing a
+  frame, and the first workspace `focus` event leaving the build workspace names it, decided by
+  `probed_previous_workspace()`), and `Staging::leave()` switches to it and on to the build
+  workspace in one message, so it is previous again. A probe failure is a warning, never an error.
+  The fake Sway answers `back_and_forth` from `set_previous_workspace()`, refusing it like Sway
+  when none is set.
 - A run tracks a workspace by its node id (`tree::WorkspaceIdentity`, read through
   `query::workspace_now()` with a `WorkspaceLookup`), never by a name read earlier: workspace-icon
   daemons rename a workspace whenever a window opens on it, keeping its id (#178). So

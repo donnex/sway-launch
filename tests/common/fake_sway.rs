@@ -38,6 +38,7 @@ const SUBSCRIBE: u32 = 2;
 const GET_OUTPUTS: u32 = 3;
 const GET_TREE: u32 = 4;
 const GET_VERSION: u32 = 7;
+const WORKSPACE_EVENT: u32 = 1 << 31;
 const WINDOW_EVENT: u32 = (1 << 31) | 3;
 
 /// The fixtures' tiled window on workspace `1`.
@@ -87,6 +88,8 @@ pub struct Sway {
     next_id: i64,
     commands: Vec<String>,
     subscribers: Vec<UnixStream>,
+    workspace_subscribers: Vec<UnixStream>,
+    previous_workspace: Option<String>,
     handler: Option<Handler>,
     launched_pids: Vec<u32>,
     refusing_tree_reads: bool,
@@ -235,6 +238,8 @@ impl Sway {
             next_id: 100,
             commands: Vec::new(),
             subscribers: Vec::new(),
+            workspace_subscribers: Vec::new(),
+            previous_workspace: None,
             handler,
             launched_pids: Vec::new(),
             refusing_tree_reads: false,
@@ -251,6 +256,40 @@ impl Sway {
 
     pub fn node_mut(&mut self, id: i64) -> &mut Value {
         find_mut(&mut self.tree, id).unwrap_or_else(|| panic!("no node {id} in the fake tree"))
+    }
+
+    /// Gives the seat a previous workspace called `name`, the one `workspace
+    /// back_and_forth` switches to. A fresh Sway has none, nor does this
+    /// server until a test sets one.
+    pub fn set_previous_workspace(&mut self, name: &str) {
+        self.previous_workspace = Some(name.to_string());
+    }
+
+    /// Answers `workspace back_and_forth` the way Sway does (#202): with no
+    /// previous workspace, a parse error, which stops Sway reading the rest
+    /// of the message; otherwise a workspace `focus` event from workspace
+    /// `1` to the previous one. Focus itself stays put in the tree, since
+    /// the binary always switches straight back in the same message.
+    fn back_and_forth(&mut self) -> Result<(), Value> {
+        let Some(previous) = self.previous_workspace.clone() else {
+            return Err(json!({
+                "success": false,
+                "parse_error": true,
+                "error": "There is no previous workspace",
+            }));
+        };
+        let old = self.node(WORKSPACE).clone();
+        let mut current = old.clone();
+        current["id"] = json!(self.next_id);
+        self.next_id += 1;
+        current["name"] = json!(previous);
+        current["nodes"] = json!([]);
+        current["floating_nodes"] = json!([]);
+        let payload = json!({ "change": "focus", "old": old, "current": current }).to_string();
+        let frame = frame(WORKSPACE_EVENT, &payload);
+        self.workspace_subscribers
+            .retain_mut(|subscriber| subscriber.write_all(&frame).is_ok());
+        Ok(())
     }
 
     /// Replaces the recorded `GET_VERSION` reply, standing in for a
@@ -417,9 +456,19 @@ impl Sway {
     /// unsplit.
     fn run_command(&mut self, command: &str) -> Value {
         self.commands.push(command.to_string());
-        let outcomes: Vec<Value> = sub_commands(command)
-            .into_iter()
-            .map(|part| {
+        let mut outcomes = Vec::new();
+        for part in sub_commands(command) {
+            if part == "workspace back_and_forth" {
+                match self.back_and_forth() {
+                    Ok(()) => outcomes.push(json!({ "success": true })),
+                    Err(parse_error) => {
+                        outcomes.push(parse_error);
+                        break;
+                    }
+                }
+                continue;
+            }
+            outcomes.push({
                 let outcome = match target_con_id(&part) {
                     Some(id) if !self.contains(id) => Err(self.missing_container_error.clone()),
                     _ => match self.handler.take() {
@@ -435,33 +484,47 @@ impl Sway {
                     Ok(()) => json!({ "success": true }),
                     Err(error) => json!({ "success": false, "parse_error": false, "error": error }),
                 }
-            })
-            .collect();
+            });
+        }
         Value::Array(outcomes)
     }
 }
 
 /// `command` split the way Sway splits a criteria-led command: the
 /// `[...]` prefix repeated in front of each part, parts separated by a `,`
-/// outside double quotes. A command without a criteria prefix (a launch's
-/// `exec`) is one part, whatever it contains.
+/// outside double quotes. A launch's `exec` is one part, whatever it
+/// contains; any other command without a criteria prefix is split on `;`
+/// outside double quotes (a workspace switch pair, #202).
 fn sub_commands(command: &str) -> Vec<String> {
     let Some((criteria, rest)) = command
         .strip_prefix('[')
         .and_then(|rest| rest.split_once("] "))
     else {
-        return vec![command.to_string()];
+        if command.starts_with("exec ") {
+            return vec![command.to_string()];
+        }
+        return split_outside_double_quotes(command, ';')
+            .into_iter()
+            .map(|part| part.trim().to_string())
+            .collect();
     };
+    split_outside_double_quotes(rest, ',')
+        .into_iter()
+        .map(|part| format!("[{criteria}] {}", part.trim()))
+        .collect()
+}
+
+fn split_outside_double_quotes(command: &str, separator: char) -> Vec<String> {
     let mut parts = Vec::new();
     let mut current = String::new();
     let mut quoted = false;
     let mut escaped = false;
-    for character in rest.chars() {
+    for character in command.chars() {
         match character {
             _ if escaped => escaped = false,
             '\\' => escaped = true,
             '"' => quoted = !quoted,
-            ',' if !quoted => {
+            _ if character == separator && !quoted => {
                 parts.push(std::mem::take(&mut current));
                 continue;
             }
@@ -471,9 +534,6 @@ fn sub_commands(command: &str) -> Vec<String> {
     }
     parts.push(current);
     parts
-        .into_iter()
-        .map(|part| format!("[{criteria}] {}", part.trim()))
-        .collect()
 }
 
 /// Serves one client connection until it closes.
@@ -510,6 +570,11 @@ fn serve(mut stream: UnixStream, shared: Weak<Mutex<Sway>>) {
                 if events.iter().any(|event| event == "window") {
                     if let Ok(subscriber) = stream.try_clone() {
                         sway.subscribers.push(subscriber);
+                    }
+                }
+                if events.iter().any(|event| event == "workspace") {
+                    if let Ok(subscriber) = stream.try_clone() {
+                        sway.workspace_subscribers.push(subscriber);
                     }
                 }
                 json!({ "success": true })

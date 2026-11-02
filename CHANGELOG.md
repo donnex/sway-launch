@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- After a `--concurrent` run, `workspace back_and_forth` no longer switches to an empty
+  `sway-launch-staging-<pid>` workspace. Switching to the staging workspace and back made it Sway's
+  previous workspace; the run now notes which workspace was previous before it starts and makes
+  that one previous again when it leaves staging, without a visible switch. (#202)
+
 ## [0.2.1] - 2026-10-20
 
 ### Added

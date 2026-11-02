@@ -13,7 +13,7 @@
 use super::action::{ActionKind, ExecAction, SwayAction};
 use super::confirmation::{run_batch, run_wait_for_existing_window};
 use super::ipc::event_loop;
-use super::ipc::{quote_sway_string, run_sway_command};
+use super::ipc::{previous_workspace, quote_sway_string, run_sway_command, run_sway_commands};
 use super::outcome::{
     ActionOutcome, ActionRecord, ActionStatus, LaunchOwnership, RunError, RunOutcome,
 };
@@ -276,34 +276,126 @@ impl FocusCheck {
 /// workspace-renaming daemon renames it as the windows arrive, and moving the
 /// next one by the old name would make Sway create a second workspace under
 /// that name and build the rest of the shape there (#178).
+///
+/// Every switch sets Sway's previous workspace, the one `workspace
+/// back_and_forth` returns to, so leaving staging would leave the staging
+/// workspace there. `enter()` learns the previous workspace first
+/// (`previous_workspace()`) and `leave()` puts it back (#202).
 pub struct Staging {
     build_workspace: std::cell::RefCell<WorkspaceIdentity>,
     staging_workspace: String,
+    previous_workspace: Option<String>,
 }
 
 impl Staging {
-    /// Checks focus is still on the run's build workspace, then switches to
-    /// a staging workspace unique to this process.
-    pub fn enter(build_workspace: &BuildWorkspace, verbose: bool) -> Result<Staging, String> {
+    /// Checks focus is still on the run's build workspace, learns Sway's
+    /// previous workspace, then switches to a staging workspace unique to
+    /// this process. The second value is a warning for the caller to show
+    /// when the previous workspace couldn't be learned: the run goes on, and
+    /// only `workspace back_and_forth` afterwards is affected.
+    pub fn enter(
+        build_workspace: &BuildWorkspace,
+        verbose: bool,
+    ) -> Result<(Staging, Option<String>), String> {
         build_workspace.check_focus(FocusCheck::BeforeStaging)?;
+        // Its name as of now: a workspace-renaming daemon may have renamed
+        // it since it was anchored (#178).
+        let current_name = workspace_now(WorkspaceLookup::Id(build_workspace.0.id))?.map_or_else(
+            || build_workspace.0.name.clone(),
+            |workspace| workspace.name,
+        );
+        let return_to = WorkspaceTarget::Name(&current_name).focus_command();
+        if verbose {
+            diagnostic!(
+                "Sway command: workspace back_and_forth; {}",
+                super::values::escape_control_characters(&return_to, false)
+            );
+        }
+        let (previous_workspace, warning) =
+            match previous_workspace(build_workspace.0.id, &return_to) {
+                Ok(previous) => (previous, None),
+                Err(error) => (
+                    None,
+                    Some(format!(
+                        "couldn't learn Sway's previous workspace ({}), so `workspace \
+                         back_and_forth` will go to this run's staging workspace afterwards",
+                        error
+                    )),
+                ),
+            };
+        if verbose {
+            match &previous_workspace {
+                Some(name) => diagnostic!(
+                    "Previous workspace: {:?}",
+                    super::values::escape_control_characters(name, false)
+                ),
+                None if warning.is_none() => diagnostic!("No previous workspace to restore"),
+                None => {}
+            }
+        }
         let staging = Staging {
             build_workspace: std::cell::RefCell::new(build_workspace.0.clone()),
             staging_workspace: format!("{}{}", STAGING_WORKSPACE_PREFIX, std::process::id()),
+            previous_workspace,
         };
         staging.send(
             &WorkspaceTarget::Name(&staging.staging_workspace).focus_command(),
             verbose,
         )?;
-        Ok(staging)
+        Ok((staging, warning))
     }
 
-    /// Focuses the build workspace again. Sway destroys an empty workspace
-    /// once focus leaves it, so the one focused here can be a new workspace
-    /// under the old name; it is the build workspace from now on.
+    /// Focuses the build workspace again, by way of the previous workspace
+    /// `enter()` learned, so that one is previous again rather than the
+    /// staging workspace: both switches go as one message, which Sway runs
+    /// before it draws a frame. When that fails, the build workspace is
+    /// focused on its own and the failure returned, for a warning. Sway
+    /// destroys an empty workspace once focus leaves it, so the one focused
+    /// here can be a new workspace under the old name; it is the build
+    /// workspace from now on.
     pub fn leave(&self, verbose: bool) -> Result<(), String> {
         let name = self.build_workspace_name()?;
-        self.send(&WorkspaceTarget::Name(&name).focus_command(), verbose)?;
-        self.remember(WorkspaceLookup::Named(&name))
+        let focus_build = WorkspaceTarget::Name(&name).focus_command();
+        let restore_failure = match &self.previous_workspace {
+            Some(previous) => self
+                .focus_by_way_of(previous, &focus_build, verbose)
+                .err()
+                .map(|error| {
+                    format!(
+                        "couldn't make {:?} Sway's previous workspace again ({}), so `workspace \
+                         back_and_forth` will go to this run's staging workspace",
+                        previous, error
+                    )
+                }),
+            None => None,
+        };
+        if self.previous_workspace.is_none() || restore_failure.is_some() {
+            self.send(&focus_build, verbose)?;
+        }
+        self.remember(WorkspaceLookup::Named(&name))?;
+        restore_failure.map_or(Ok(()), Err)
+    }
+
+    fn focus_by_way_of(
+        &self,
+        previous: &str,
+        focus_build: &str,
+        verbose: bool,
+    ) -> Result<(), String> {
+        let command = format!(
+            "{}; {}",
+            WorkspaceTarget::Name(previous).focus_command(),
+            focus_build
+        );
+        if verbose {
+            diagnostic!(
+                "Sway command: {}",
+                super::values::escape_control_characters(&command, false)
+            );
+        }
+        run_sway_commands(&command, 2)?
+            .into_iter()
+            .try_for_each(|outcome| outcome.map_err(|error| format!("{}: {}", command, error)))
     }
 
     /// The build workspace's name as of now: the current name of the

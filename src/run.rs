@@ -1004,7 +1004,16 @@ fn stage_launches(
     args: &Args,
 ) -> StagedLaunches {
     let staging = match sway_launch::Staging::enter(build_workspace, args.verbose) {
-        Ok(staging) => staging,
+        Ok((staging, warning)) => {
+            if let Some(warning) = warning {
+                diagnostic!(
+                    "{}{}",
+                    stderr_label(Severity::Warning),
+                    sway_launch::escape_control_characters(&warning, false)
+                );
+            }
+            staging
+        }
         Err(error) => fail(args.json, &format!("{}: {}", steps_source(args), error)),
     };
     let no_ids = HashMap::new();

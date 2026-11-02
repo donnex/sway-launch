@@ -5,8 +5,9 @@
 //! to report a failure — but nothing about what any particular command means.
 //! Everything here but the pure helpers (`preferred_socket_path()`,
 //! `ipc_error()`, `connect_error_at()`, `undiscovered_socket_error()`,
-//! `is_sway_socket_name()`, `first_outcome_error()` and `quote_sway_string()`,
-//! which are unit-tested)
+//! `is_sway_socket_name()`, `first_outcome_error()`, `probe_switched()`,
+//! `probed_previous_workspace()` and `quote_sway_string()`, which are
+//! unit-tested)
 //! needs a compositor to talk to: `tests/fake_sway.rs` provides a fake one,
 //! and `tests/live_sway.rs` a real one.
 
@@ -404,6 +405,87 @@ pub(super) fn single_outcome_error<E: fmt::Display>(
     }
 
     first_outcome_error(outcomes, command)
+}
+
+/// Which workspace Sway's `workspace back_and_forth` would switch to, or
+/// `None` when there is none yet (#202). Sway's IPC doesn't report it, so it
+/// is learned the one way Sway shows it: `workspace back_and_forth` and
+/// `return_to` (the command focusing the workspace with node id `from_id`,
+/// which has focus now) go as one message, and the first workspace `focus`
+/// event away from `from_id` names it. Sway runs both before it draws a
+/// frame, so nothing flickers, focus ends where it started, and the
+/// previous workspace is still the same one afterwards (all confirmed live
+/// on Sway 1.11). Without a previous workspace Sway refuses the first
+/// command as a parse error and so never runs the second.
+pub(super) fn previous_workspace(from_id: i64, return_to: &str) -> Result<Option<String>, String> {
+    let command = format!("workspace back_and_forth; {}", return_to);
+    if let Some(problem) = sway_command_split_problem(&command, 2) {
+        return Err(problem);
+    }
+    let events = spawn_event_forwarder(event_loop(&[EventType::Workspace])?);
+    let outcomes = new_connection()?.run_command(&command).map_err(ipc_error)?;
+    if !probe_switched(outcomes, &command)? {
+        return Ok(None);
+    }
+    let deadline = time::Instant::now() + IPC_ROUND_TRIP_TIMEOUT;
+    loop {
+        let left = deadline.saturating_duration_since(time::Instant::now());
+        let event = match super::interrupt::recv(&events, left) {
+            Ok(event) => event.map_err(ipc_error)?,
+            Err(super::interrupt::WaitEnd::Interrupted(error)) => return Err(error),
+            Err(_) => {
+                return Err(format!(
+                    "Sway accepted {:?} but sent no workspace focus event for it",
+                    command
+                ))
+            }
+        };
+        if let Event::Workspace(event) = event {
+            if let Some(name) = probed_previous_workspace(&event, from_id) {
+                return Ok(Some(name));
+            }
+        }
+    }
+}
+
+/// The pure half of `previous_workspace()`'s reply: `true` when Sway ran
+/// both commands, so a focus event is on its way; `false` when it refused
+/// the first, as it does when there is no previous workspace, and stopped
+/// there; an error when it switched away and couldn't come back.
+pub(super) fn probe_switched<E: fmt::Display>(
+    outcomes: Vec<Result<(), E>>,
+    command: &str,
+) -> Result<bool, String> {
+    match outcomes.as_slice() {
+        [Err(_)] => Ok(false),
+        [Ok(()), Ok(())] => Ok(true),
+        [Ok(()), Err(error)] => Err(format!(
+            "{}: Sway switched to the previous workspace and couldn't switch back: {}",
+            command, error
+        )),
+        _ => Err(format!(
+            "{}: Sway answered with {} outcomes, not the 2 commands sent",
+            command,
+            outcomes.len()
+        )),
+    }
+}
+
+/// The previous workspace's name, when `event` is focus leaving the
+/// workspace with node id `from_id`.
+pub(super) fn probed_previous_workspace(
+    event: &swayipc::WorkspaceEvent,
+    from_id: i64,
+) -> Option<String> {
+    if event.change != swayipc::WorkspaceChange::Focus
+        || event.old.as_ref().map(|old| old.id) != Some(from_id)
+    {
+        return None;
+    }
+    event
+        .current
+        .as_ref()
+        .and_then(|current| current.name.clone())
 }
 
 /// Why `kill_container()` failed, split by whether the compositor answered.

@@ -1,4 +1,6 @@
 use super::*;
+use crate::sway_launch::test_support::leaf_node_value;
+use swayipc::WorkspaceEvent;
 
 // preferred_socket_path
 
@@ -418,4 +420,70 @@ fn version_report_warns_about_an_unrecognized_reply() {
     assert!(warning
         .unwrap()
         .contains("didn't answer a version request as Sway does (the reply has no i3-ipc header)"));
+}
+
+// probe_switched
+
+#[test]
+fn probe_switched_is_false_when_sway_refused_back_and_forth() {
+    // What Sway answers with no previous workspace: one parse error, the
+    // second command never run.
+    let outcomes: Vec<Result<(), String>> = vec![Err("There is no previous workspace".into())];
+    assert_eq!(probe_switched(outcomes, "probe"), Ok(false));
+}
+
+#[test]
+fn probe_switched_is_true_when_both_commands_ran() {
+    let outcomes: Vec<Result<(), String>> = vec![Ok(()), Ok(())];
+    assert_eq!(probe_switched(outcomes, "probe"), Ok(true));
+}
+
+#[test]
+fn probe_switched_fails_when_sway_could_not_switch_back() {
+    let outcomes: Vec<Result<(), String>> = vec![Ok(()), Err("boom".into())];
+    let error = probe_switched(outcomes, "probe").unwrap_err();
+    assert!(error.contains("couldn't switch back: boom"), "{error}");
+}
+
+#[test]
+fn probe_switched_fails_on_an_unexpected_number_of_outcomes() {
+    let outcomes: Vec<Result<(), String>> = vec![Ok(())];
+    let error = probe_switched(outcomes, "probe").unwrap_err();
+    assert!(error.contains("1 outcomes"), "{error}");
+}
+
+// probed_previous_workspace
+
+fn workspace_event(change: &str, old: Option<(i64, &str)>, current: (i64, &str)) -> WorkspaceEvent {
+    let node = |(id, name): (i64, &str)| {
+        let mut value = leaf_node_value(id, None, None);
+        value["type"] = serde_json::json!("workspace");
+        value["name"] = serde_json::json!(name);
+        value
+    };
+    serde_json::from_value(serde_json::json!({
+        "change": change,
+        "old": old.map(node),
+        "current": node(current),
+    }))
+    .expect("valid WorkspaceEvent test fixture")
+}
+
+#[test]
+fn probed_previous_workspace_names_where_focus_went_from_the_build_workspace() {
+    let event = workspace_event("focus", Some((4, "2")), (9, "1"));
+    assert_eq!(probed_previous_workspace(&event, 4), Some("1".to_string()));
+}
+
+#[test]
+fn probed_previous_workspace_ignores_focus_leaving_another_workspace() {
+    // The probe's own return switch, or a switch someone else made.
+    let event = workspace_event("focus", Some((9, "1")), (4, "2"));
+    assert_eq!(probed_previous_workspace(&event, 4), None);
+}
+
+#[test]
+fn probed_previous_workspace_ignores_other_changes() {
+    let event = workspace_event("init", None, (9, "1"));
+    assert_eq!(probed_previous_workspace(&event, 4), None);
 }

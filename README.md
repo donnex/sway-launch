@@ -792,7 +792,9 @@ a warning on stderr and under `--json`'s `unresolved_launches` (`step`, `staging
 seconds for its window and closes it, so only an application slower than that is left. An `existing` step
 sees the same windows it would in a sequential run: a later step's window, already open on the
 staging workspace, is never one it chooses between or waits for. Focus visibly jumps to the
-staging workspace while the applications start. A single-instance application can't be told apart
+staging workspace while the applications start, and back again afterwards, by way of the
+workspace Sway had as previous, so `workspace back_and_forth` still returns there rather than to the
+staging workspace. A single-instance application can't be told apart
 this way: when two steps' launches end up with the same window, the run fails, so run such layouts
 without `--concurrent`. A run that is killed outright (`SIGKILL`, a second Ctrl-C, a crash) can't
 bring its windows back, so a `--concurrent` run first looks for staging workspaces whose run is no
