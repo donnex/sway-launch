@@ -1116,8 +1116,9 @@ Run a script directly with `sh <script>`; make it executable first with `chmod +
   guaranteed present on the target system (e.g. `sort`, `cut`, `awk`); confirmation is for
   genuinely new tooling (e.g. `jq`, `httpie`, `fzf`), not coreutils.
 - Do not use a `.sh` file extension
-- Name scripts in lowercase. Use `-` as word separator for scripts run directly by the user (e.g.
-  `run-commands`). No separator for scripts called from other scripts (e.g. `runcommands`).
+- Name scripts in lowercase, with `-` as the word separator in every multi-word name (e.g.
+  `run-checks`, `check-changelog`), whoever runs it: a person, another script, CI or a launcher. A
+  single-word name needs no separator.
 
 ### Established patterns
 
@@ -1345,16 +1346,18 @@ only to topic branches.
   same task — don't bundle work together just because it happened at the same time if the concerns
   themselves are distinct.
 - Prefix commit titles with the **scope** of the change, followed by a colon and an uppercase
-  description. Match the prefix casing to the actual file or directory name. One file → its exact
-  path (`src/main.rs:`, `CLAUDE.md:`). Several files sharing one concern → the directory that
-  contains them (`src:`). When one concern spans files in a few unrelated places that share no
-  useful directory (only the repo root), list them comma-separated instead, most central first
-  (`src, tests, README.md:`). Keep the list short enough that the title stays under 80
-  characters; past that, use the shortest scope that still says where the change is, and name the
-  files in the body's bullets. End the title with the issue number when the work is tied to a
-  tracked issue: `(#12)`.
-  - Project-specific adaptation (#16): `*.md` may stand for the root Markdown files in such a list
-    (`src, tests, *.md:`).
+  description. The scope names the **one area the change is about**: a single path, never a list
+  of files or directories. Match the prefix casing to the actual file or directory name. One file
+  → its exact path (`src/main.rs:`, `CLAUDE.md:`). Several files → the directory that holds the
+  ones the change is about (`src/sway_launch:`). Files that change only because the change
+  carries them along don't count toward the scope: the docs, changelog, examples, tests and
+  snapshots that the project's sync rules require in the same commit. A parser change that also
+  updates `README.md`, the design doc and `CHANGELOG.md` is `src/parser.rs: Add the thing`, not
+  `src, README.md, DESIGN.md, CHANGELOG.md: Add the thing`. When the change itself spans several
+  areas, name the one at its center (the module most of it is about) or, when there is none,
+  their nearest shared directory (`src:`). Never list paths comma-separated, however few: name
+  every file in the body's per-file bullets instead. End the title with the issue number when the
+  work is tied to a tracked issue: `(#12)`.
 - Keep the title under 80 characters. Only exceed this if absolutely unavoidable.
 - Put detailed descriptions in the commit body, not the title. For a commit spanning several
   files, use a one- or two-line prose summary followed by per-file bullets (`- src/main.rs: ...`)
@@ -1467,14 +1470,18 @@ A `new-issues.md` file in the repo root holds issue drafts the user wants filed 
 Look for it at the start of a session, before starting each new task or
 step, and after each commit; long work checks between its steps too.
 When it exists, run the `new-issues` skill, which holds the procedure:
-reword the drafts, ask once whether to file them, wait one minute at
-most, then carry on with the work whether or not an answer came. The
-pause never stops, rolls back or skips work, and an unanswered question
-is not a no: ask again at the top of every later reply, in this session
-or the next, until the user answers. Without the skill, follow that
-outline.
+ask once whether to go through the drafts now, wait one minute at most,
+then carry on with the work whether or not an answer came. The pause
+never stops, rolls back or skips work, and an unanswered question is not
+a no: ask again at the top of every later reply, in this session or the
+next, until the user answers. Going through them means rewording every
+draft first, then putting them to the user one at a time: file it, add
+it to a batch, drop it, or settle a missing detail first, while a draft
+that is only a question gets its answer and a prompt to continue.
+Nothing is filed until every draft is decided. Without the skill, follow
+that outline.
 
-### Shortcuts: `issues`, `ideas`, `changes`
+### Shortcuts: `issues`, `ideas`, `batch`, `changes`
 
 A message consisting of only one of these words (ignoring surrounding
 whitespace) runs the skill of the same name, which holds the procedure;
@@ -1483,6 +1490,9 @@ inside a longer message the word is ordinary text.
 - **`issues`**: review the open issues, the ones waiting on a decision
   as short decision cards.
 - **`ideas`**: review the open idea issues the same way.
+- **`batch`**: pick a batch of 3-10 open issues, plan them, implement
+  them on a batch branch and verify them one by one; resumes the active
+  batch at its phase.
 - **`changes`**, optionally followed by a period (`changes since
   yesterday`): summarize what changed as a shareable page.
 
@@ -1668,6 +1678,34 @@ script on every push, so a version-bump commit that didn't finalize `CHANGELOG.m
 `dev`, before a tag exists; the release-time failure is only a last line of defence. Keep `scripts/run-checks` in sync with this file's Rust/Shell/Python
 conventions above whenever the checks change, and both workflow files with any tool it newly
 needs installed.
+
+### Watching CI status
+
+A workflow nobody looks at is red for days. When a session's tooling watches the project's CI and
+reports a red run, treat that report as taking priority over whatever else is in progress.
+
+- **What counts as red**: the latest finished run of any workflow on the default branch or the
+  integration branch (e.g. `dev`) ended in failure. A run still going doesn't clear an older red
+  one; a newer green one does. Other branches are the business of whoever is working on them.
+- **What the report gives**: the branch, the workflow, the failed jobs and a link to the run, so it
+  can be acted on without looking anything up.
+- **What to do in an attended session**: stop the current work at the next safe point and ask the
+  user how to proceed, showing the report. Don't push more commits onto a red branch in the
+  meantime, and don't start fixing it unasked.
+- **What to do in an unattended run** (a queue of issues, a review sweep, any long work nobody is
+  watching): note the report in the run's own report and carry on; nobody is there to answer a
+  question.
+- **How the forge is found**: from the project's own remote, never from a hardcoded host: a GitHub
+  remote is read through GitHub's CLI, a self-hosted forge through its own CLI with the login
+  matching the remote's host. A project with no workflow files, or no CLI or login for its forge,
+  is simply not watched; that is never an error.
+- **How often**: every few minutes is enough (e.g. every 15), with every network call bounded by a
+  timeout, so a slow or unreachable forge only delays the next report and never blocks the
+  session.
+
+Project-specific adaptation: here the watch is one of the maintainer's periodic review timers,
+kept outside the repository like the issue-triage one (see "Remind about the open issue count"),
+reading `main` and `dev` through `gh`.
 
 ## Content
 
