@@ -64,7 +64,7 @@ rules both apply in full because of this — there's no "private repo" fallback 
   CI installs". Running the scripts in
   `examples/scripts/` against a live Sway session is still useful for eyeballing real layouts, but
   is no longer the only way these code paths get exercised.
-- Tool versions: CI pins `markdownlint-cli@0.49.1` (`npm install -g markdownlint-cli@0.49.1`) and
+- Tool versions: CI pins `markdownlint-cli@0.50.0` (`npm install -g markdownlint-cli@0.50.0`) and
   `cargo-llvm-cov@0.9.1` (`cargo install cargo-llvm-cov --version 0.9.1 --locked`); use the same
   versions locally, since each linter's findings and the coverage gate's counts depend on the
   version, so a pass under a different one guarantees nothing in CI. Both are bumped deliberately
